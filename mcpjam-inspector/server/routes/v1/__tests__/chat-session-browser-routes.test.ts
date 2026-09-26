@@ -202,7 +202,7 @@ describe("conversation browser commands", () => {
         {
           turnId: "command:c1",
           toolCallId: "c1",
-          screenshotUrl: "https://storage.test/image",
+          screenshotUrl: "https://example.convex.site/web/artifact?t=image.sig",
         },
       ],
     });
@@ -210,9 +210,32 @@ describe("conversation browser commands", () => {
       await (await request("artifact", { commandId: "c1" })).json(),
     ).toMatchObject({
       sessionId: "session",
-      url: "https://storage.test/image",
+      url: "https://example.convex.site/web/artifact?t=image.sig",
     });
     expect(mocks.provision).not.toHaveBeenCalled();
+  });
+  it("serves screenshots only as signed artifact links (MJ-005)", async () => {
+    mocks.query.mockResolvedValue({
+      browserInteractionSteps: [
+        {
+          turnId: "command:c1",
+          toolCallId: "c1",
+          screenshotUrl:
+            "https://deployment.convex.cloud/api/storage/0000-1111",
+        },
+      ],
+    });
+    const artifact = await request("artifact", { commandId: "c1" });
+    expect(artifact.status).toBe(404);
+    expect(await artifact.text()).not.toContain("/api/storage/");
+
+    const trace = await request("trace");
+    expect(trace.status).toBe(200);
+    const body = await trace.json();
+    expect(JSON.stringify(body)).not.toContain("/api/storage/");
+    expect(body.screenshots).toEqual([
+      expect.objectContaining({ toolCallId: "c1", status: "not_captured" }),
+    ]);
   });
   it("guards close against a different boot and never provisions", async () => {
     expect((await request("close")).status).toBe(200);

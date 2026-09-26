@@ -28,6 +28,8 @@ vi.mock("convex/react", () => ({
       : mocks.updateTestSuite,
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
@@ -77,11 +79,17 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
+}));
+// "Where it runs" renders the server-group picker, whose data hooks this
+// suite does not stand up; its own behavior is covered by its tests.
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => null,
 }));
 vi.mock("@mcpjam/design-system/popover", () => ({
   Popover: ({ children }: { children: React.ReactNode }) => <>{children}</>,

@@ -22,6 +22,8 @@ export type AuthoringStatus = {
     serverId?: string;
   }>;
   suiteServers?: string[];
+  /** How the job was started. An import is followed on its own surface. */
+  source?: "markdown" | "generation" | "agent" | "import";
   status: "pending" | "completed" | "failed" | "cancelled";
   phase: string;
   error: string | null;

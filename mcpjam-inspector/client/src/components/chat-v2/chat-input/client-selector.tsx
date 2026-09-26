@@ -1,7 +1,7 @@
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, MoreHorizontal, Plus, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -25,28 +25,8 @@ import type { HostListItem } from "@/hooks/useClients";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import type { HostThemeMode } from "@/lib/client-styles";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
-import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { getCatalogHost, getCatalogHosts } from "@mcpjam/sdk/host-compat";
-import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
-
-// Quick-add priority. These templates surface first in the Add-host strip;
-// everything else follows in template order and spills into the overflow (⋯).
-const QUICK_ADD_ORDER = [
-  "mcpjam",
-  "claude",
-  "chatgpt",
-  "copilot",
-  "cursor",
-  "vscode",
-  "mistral",
-  "goose",
-] as const;
-
-// How many logos render inline before the rest collapse into the "⋯" overflow
-// (sized to fit the 260px dropdown alongside the "Add host" label).
-const QUICK_ADD_VISIBLE = 6;
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -128,10 +108,6 @@ export function ClientSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
-    undefined,
-  );
-  const catalogState = useHostCatalog();
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const onOpenChangeRef = useRef(onOpenChange);
@@ -270,27 +246,13 @@ export function ClientSelector({
     onPromoteLead(hostId);
   };
 
-  const orderedCatalogHosts = useMemo(() => {
-    if (catalogState.status !== "live") return [];
-    const hostsById = new Map(
-      getCatalogHosts(catalogState.catalog).map((host) => [host.id, host]),
-    );
-    const priority = QUICK_ADD_ORDER.flatMap((id) => {
-      const host = hostsById.get(id);
-      if (!host) return [];
-      hostsById.delete(id);
-      return [host];
-    });
-    const rest = [...hostsById.values()].sort((a, b) =>
-      a.label.localeCompare(b.label),
-    );
-    return [...priority, ...rest];
-  }, [catalogState]);
-
-  const openCreateWithTemplate = (templateId?: string) => {
-    setCreateTemplateId(templateId);
-    setShowCreate(true);
+  const openCreate = () => {
     setIsOpen(false);
+    if (projectId) {
+      setShowCreate(true);
+      return;
+    }
+    navigateApp(routePaths.hosts);
   };
 
   return (
@@ -565,64 +527,17 @@ export function ClientSelector({
               })}
             </CommandList>
 
-            {
-              <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsOpen(false);
-                    navigateApp(routePaths.hosts);
-                  }}
-                  className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
-                  data-testid="client-add-host"
-                >
-                  <Plus className="size-3.5" />
-                  <span>Manage clients</span>
-                </button>
-                {projectId && (
-                  <span className="flex flex-1 items-center justify-between gap-0.5">
-                    {orderedCatalogHosts
-                      .slice(0, QUICK_ADD_VISIBLE)
-                      .map((host) => {
-                        const catalogHost =
-                          catalogState.status === "live"
-                            ? getCatalogHost(catalogState.catalog, host.id)
-                            : undefined;
-                        if (!catalogHost) return null;
-                        return (
-                          <button
-                            key={host.id}
-                            type="button"
-                            aria-label={`Add ${catalogHost.label} client`}
-                            title={`Add ${catalogHost.label}`}
-                            data-testid={`client-quick-add-${host.id}`}
-                            onClick={() => openCreateWithTemplate(host.id)}
-                            className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
-                          >
-                            <img
-                              src={getHostLogoSrc(host.id, modalThemeMode)}
-                              alt=""
-                              className="size-4 object-contain"
-                            />
-                          </button>
-                        );
-                      })}
-                  </span>
-                )}
-                {projectId && orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
-                  <button
-                    type="button"
-                    aria-label="More clients"
-                    title="More clients"
-                    data-testid="client-quick-add-more"
-                    onClick={() => openCreateWithTemplate(undefined)}
-                    className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </button>
-                ) : null}
-              </div>
-            }
+            <div className="border-t p-1">
+              <button
+                type="button"
+                onClick={openCreate}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                data-testid="client-add-host"
+              >
+                <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+                Add clients
+              </button>
+            </div>
           </Command>
         </PopoverContent>
       </Popover>
@@ -630,12 +545,8 @@ export function ClientSelector({
       {projectId ? (
         <CreateHostDialog
           isOpen={showCreate}
-          onClose={() => {
-            setShowCreate(false);
-            setCreateTemplateId(undefined);
-          }}
+          onClose={() => setShowCreate(false)}
           projectId={projectId}
-          initialTemplateId={createTemplateId}
           onCreated={(hostId) => onHostChange(hostId)}
         />
       ) : null}

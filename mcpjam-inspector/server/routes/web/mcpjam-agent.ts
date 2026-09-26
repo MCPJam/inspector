@@ -1,4 +1,9 @@
 import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
+import {
+  AGENT_MAX_STEPS,
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL_DEFINITION,
+} from "../../../shared/mcpjam-agent-model.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
@@ -430,6 +435,17 @@ mcpjamAgent.post("/", async (c) => {
         .join("\n\n");
 
       const authHeader = c.req.header("authorization");
+      // Ask MCPJam is paid by MCPJam for SIGNED-IN callers only. A guest keeps
+      // the path it has always had — its own cookie/IP spend buckets on the
+      // customer rail — because a cookie is free, and platform-paying for one
+      // is a farm waiting to happen (the 2026-09-15 wave). It also keeps the
+      // `guest-ai-on-mcpjam-money` page meaningful: no guest ever produces a
+      // `record_only` row on this surface.
+      //
+      // Keyed on `guestId`, not the `authMethod` label — the same rule the
+      // rest of this server uses for "is this actually a guest".
+      const isGuest = Boolean(c.get("guestId"));
+      const billingFeature = isGuest ? undefined : MCPJAM_AGENT_BILLING_FEATURE;
       const builtInTools = authHeader && !body.evalScope
         ? resolveHostTools(
             { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
@@ -437,6 +453,8 @@ mcpjamAgent.post("/", async (c) => {
               authHeader,
               projectId: body.projectId,
               chatSessionId: body.chatSessionId,
+              // Web search follows the turn: platform-paid when the turn is.
+              ...(billingFeature ? { billingFeature } : {}),
             }
           )
         : undefined;
@@ -445,7 +463,13 @@ mcpjamAgent.post("/", async (c) => {
         manager,
         prepare: {
           selectedServerIds,
-          modelDefinition: body.model as never,
+          // `body.model` is IGNORED. The agent used to ride the caller's
+          // last-used Playground model, which could be a frontier or BYOK
+          // model — fine while the customer paid for it, not something MCPJam
+          // can hand out. The backend only honours the platform-billing claim
+          // for this exact id, so sending anything else would refuse the turn
+          // rather than quietly bill someone.
+          modelDefinition: MCPJAM_AGENT_MODEL_DEFINITION as never,
           systemPrompt: effectiveSystemPrompt,
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,
@@ -492,6 +516,19 @@ mcpjamAgent.post("/", async (c) => {
           clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
+          // The step ceiling is a product property of Ask MCPJam, not a
+          // billing decision — the same reasoning that pins the model for
+          // guests too. Gating it on the claim would hand a guest on the
+          // customer rail a LONGER agent loop (30, the chat default) than a
+          // signed-in user gets on MCPJam's, and would make the same agent
+          // behave differently here than on the v1 Slack/Discord route, which
+          // sends it unconditionally.
+          maxSteps: AGENT_MAX_STEPS,
+          // The claim itself IS a billing decision. Sent on every per-step
+          // Convex request, alongside the service token that makes it
+          // credible. Absent for guests, whose steps stay on the customer rail
+          // exactly as before.
+          ...(billingFeature ? { billingFeature } : {}),
           c,
         },
       });

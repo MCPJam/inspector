@@ -1,5 +1,26 @@
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import {
+  localServerCheckQueue,
+  localCheckScope,
+  localCheckOwner,
+  localCheckMetadata,
+  LocalCheckError,
+  withLocalCheckSignal,
+} from "./local-server-check-queue.js";
+import { connectionKey } from "@mcpjam/sdk";
+import type { AuthorizedOAuthConnection } from "../../shared/oauth-connections.js";
+import { connectionLabels } from "../../shared/oauth-connections.js";
+import {
+  getManagerConnections,
+  setManagerConnections,
+  registerLocalConnectionScope,
+} from "./mcp-connections.js";
 import type { Context } from "hono";
-import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  MCPServerConfig,
+  HttpServerConfig,
+} from "@mcpjam/sdk";
 import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
 import {
   registerLocalMrtrCollector,
@@ -20,6 +41,7 @@ import {
 import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
+  isCredentialRefusalError,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
@@ -39,6 +61,12 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import {
+  bindCredentialHeaders,
+  bindingForAuthorizedHeaders,
+  type CredentialHeaderBinding,
+} from "./credential-header-binding.js";
+import { hostedMcpBaseFetch } from "./hosted-mcp-base-fetch.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -60,6 +88,7 @@ import { HOSTED_MODE } from "../config.js";
 import {
   materializePluginStdioForConnect,
   releasePluginLease,
+  retainPluginLease,
 } from "../services/plugins/local-stdio.js";
 import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
 
@@ -123,7 +152,14 @@ type LocalAuthorizeBatchSuccess = {
   permissions: { chatOnly: boolean };
   serverConfig: LocalAuthorizeServerConfig;
   oauthAccessToken?: string | null;
+  oauthConnections?: AuthorizedOAuthConnection[];
   internalLogContext?: InternalLogContext;
+  /**
+   * Set locally (never by the backend) once stored headers were revealed: the
+   * header names and the origins the backend bound them to. The transport
+   * attaches those headers to bound origins only.
+   */
+  credentialBinding?: CredentialHeaderBinding;
 };
 
 type LocalAuthorizeBatchFailure = {
@@ -199,7 +235,11 @@ export async function authorizeBatchLocal(
   bearerToken: string,
   projectId: string,
   serverIds: string[],
-  workosApiKeyActingAs?: WorkosApiKeyActingAs
+  workosApiKeyActingAs?: WorkosApiKeyActingAs,
+  connectionOptions?: {
+    includeConnections?: boolean;
+    connectionIds?: Record<string, string>;
+  },
 ): Promise<LocalAuthorizeBatchResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -246,10 +286,11 @@ export async function authorizeBatchLocal(
     response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ projectId, serverIds }),
-      signal: controller.signal,
+      body: JSON.stringify({ projectId, serverIds, ...connectionOptions }),
+      signal: withLocalCheckSignal(controller.signal),
     });
   } catch (error) {
+    localCheckScope.getStore()?.throwIfAborted();
     const isAbort =
       error instanceof Error &&
       (error.name === "AbortError" ||
@@ -337,7 +378,11 @@ export async function authorizeServerLocal(
   bearerToken: string,
   projectId: string,
   serverId: string,
-  workosApiKeyActingAs?: WorkosApiKeyActingAs
+  workosApiKeyActingAs?: WorkosApiKeyActingAs,
+  connectionOptions?: {
+    includeConnections?: boolean;
+    connectionIds?: Record<string, string>;
+  },
 ): Promise<
   LocalAuthorizeBatchSuccess & {
     organizationId?: string | null;
@@ -349,7 +394,8 @@ export async function authorizeServerLocal(
     bearerToken,
     projectId,
     [serverId],
-    workosApiKeyActingAs
+    workosApiKeyActingAs,
+    connectionOptions,
   );
   const result = batch.results[serverId];
   if (!result) {
@@ -580,6 +626,7 @@ export function toMCPServerConfig(
       projectId: string;
       serverId: string;
       serverName: string;
+      connectionId?: string;
     };
     /**
      * XAA re-mint hook. When the server uses Cross-App Access, the connect
@@ -765,6 +812,19 @@ export function toMCPServerConfig(
     url,
     requestInit: { headers },
   };
+  // The transport rule (credential unification §3.7): revealed stored
+  // headers ride only on requests — and redirect hops — whose origin the
+  // backend bound them to. A hop anywhere else is dialed without them.
+  //
+  // Over `hostedMcpBaseFetch()` — bare `fetch` outside hosted mode, the pinned
+  // egress-guarded transport inside it — so setting a per-server fetch here
+  // can never trade away the MJ-001 guard for the transport rule.
+  if (authResult.credentialBinding) {
+    http.baseFetch = bindCredentialHeaders(
+      hostedMcpBaseFetch(),
+      authResult.credentialBinding
+    );
+  }
   // Plugin-declared transports are authoritative: `sse` skips the Streamable
   // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
   // without a declaration keep the SDK's URL-heuristic + fallback behavior.
@@ -839,6 +899,7 @@ export function toMCPServerConfig(
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
+      connectionId: options.refreshContext.connectionId,
       // In local mode this process is the one that can reach a private
       // authorization server. Covers the in-flight 401 during a long session,
       // not just the connect. `!HOSTED_MODE` rather than `true`:
@@ -913,8 +974,15 @@ async function applyLocalRuntimeResolution<
     (result.serverConfig.transportType === "http" &&
       result.serverConfig.hasHeaders === true &&
       !hasNonEmptyStringRecord(result.serverConfig.headers));
+  // No client-side origin check: the reveal below sends the URL this
+  // connection will dial, and the backend refuses it when the stored
+  // credentials were saved for another origin.
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
+      expectedTargetUrl:
+        result.serverConfig.transportType === "http"
+          ? result.serverConfig.url
+          : null,
       bearerToken,
       projectId,
       serverId,
@@ -938,7 +1006,20 @@ async function applyLocalRuntimeResolution<
                 ...(secrets.headers ?? {}),
               },
             },
+      ...(result.serverConfig.transportType === "http" && secrets.headers
+        ? {
+            credentialBinding: {
+              headerNames: Object.keys(secrets.headers),
+              boundOrigins: secrets.boundOrigins ?? [],
+            },
+          }
+        : {}),
     };
+  } else if (result.serverConfig.transportType === "http") {
+    // Stored headers the authorize response carried inline: no reveal ran,
+    // but they are held to an origin on the wire all the same.
+    const binding = bindingForAuthorizedHeaders(result.serverConfig);
+    if (binding) result = { ...result, credentialBinding: binding };
   }
 
   if (result.serverConfig.transportType === "stdio") {
@@ -1059,6 +1140,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
     config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
       ? (
           await fetchRuntimeServerSecrets({
+            expectedTargetUrl: null,
             bearerToken: args.bearerToken,
             projectId: args.projectId,
             serverId: args.serverId,
@@ -1151,6 +1233,7 @@ export async function resolveLocalStdioServerConfig(
       { serverId }
     );
   }
+  localCheckScope.getStore()?.throwIfAborted();
   result = await applyLocalRuntimeResolution(result, {
     bearerToken,
     projectId,
@@ -1204,6 +1287,7 @@ export async function resolveLocalServerForConnect(
      * resolver path.
      */
     defaults?: ConnectionDefaults;
+    onPluginLease?: (release: () => void) => void;
   }
 ): Promise<{
   config: MCPServerConfig;
@@ -1215,7 +1299,14 @@ export async function resolveLocalServerForConnect(
    */
   effectiveAuth: EffectiveAuthMethod;
 }> {
-  let result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
+  let result = await authorizeServerLocal(
+    c,
+    bearerToken,
+    projectId,
+    serverId,
+    undefined,
+    { includeConnections: true },
+  );
 
   // One resolver decides the flow for every dispatch below: canonical
   // authMethod wins ("auto" selects XAA when configured, "discover"
@@ -1322,6 +1413,9 @@ export async function resolveLocalServerForConnect(
           { serverName: options?.serverDisplayName ?? serverId }
         );
     } catch (error) {
+      // Refused, not unavailable: the policy or origin answer is what the
+      // user needs, and a bare connect would only end in a reauthorize.
+      if (isCredentialRefusalError(error)) throw error;
       logger.debug(
         "[discover connect] silent token refresh unavailable; attempting unauthenticated connect",
         {
@@ -1342,11 +1436,16 @@ export async function resolveLocalServerForConnect(
   let xaaUnauthorizedHandler:
     | (() => Promise<{ accessToken: string }>)
     | undefined;
+  localCheckScope.getStore()?.throwIfAborted();
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    // No client-side origin check for a preregistered/DCR secret: the mint
+    // resolves it with this server's URL as the declared target, and the
+    // backend refuses a secret saved for another origin (or registered with
+    // another authorization server).
     const xaaFailureTarget = {
       serverId,
       serverName: options?.serverDisplayName ?? serverId,
@@ -1424,6 +1523,7 @@ export async function resolveLocalServerForConnect(
     };
   }
 
+  localCheckScope.getStore()?.throwIfAborted();
   result = await applyLocalRuntimeResolution(result, {
     bearerToken,
     projectId,
@@ -1432,6 +1532,7 @@ export async function resolveLocalServerForConnect(
     // key `releasePluginLease` gets on the disconnect route and on connect
     // failure — so the lease binds to it here.
     managerKey: options?.serverDisplayName ?? serverId,
+    onPluginLease: options?.onPluginLease,
     serverDisplayName: options?.serverDisplayName,
   });
 
@@ -1465,6 +1566,8 @@ export async function resolveLocalServerForConnect(
       projectId,
       serverId,
       serverName: options?.serverDisplayName ?? serverId,
+      connectionId: result.oauthConnections?.find((c) => c.isDefault)
+        ?.connectionId,
     },
     xaaUnauthorizedHandler,
     xaaPolicy,
@@ -1489,6 +1592,7 @@ export async function resolveLocalServerForConnect(
  * (the legacy `{serverConfig}` body was removed in the local-mode purge).
  */
 export interface LocalConnectRequestParams {
+  check?: { requestId: string; intent: "manual" | "automatic" };
   serverId: string;
   projectId: string;
   serverDisplayName: string;
@@ -1579,6 +1683,7 @@ export function parseLocalConnectRequestBody(
       bearer,
       clientCapabilities,
       defaults: parseConnectionDefaults(raw.connectionDefaults),
+      check: localCheckMetadata(raw._serverCheck),
     },
   };
 }
@@ -1672,10 +1777,114 @@ export function buildConnectSuccessEnvelope(
 export async function executeLocalServerConnect(
   c: Context,
   params: LocalConnectRequestParams,
-  options: { removeOnFailure: boolean }
+  options: { removeOnFailure: boolean },
+) {
+  const check = params.check ?? localCheckMetadata(undefined);
+  try {
+    const response = await localServerCheckQueue.run(
+      {
+        ...check,
+        owner: localCheckOwner(c),
+        key: params.serverDisplayName,
+        target: JSON.stringify([params.projectId, params.serverId]),
+        signal: c.req.raw.signal,
+      },
+      async (signal) => {
+        const owned = new Set<string>();
+        let lease: (() => void) | undefined;
+        const cleanups = new Map<string, Promise<void>>();
+        let cleanupStarted: number | undefined;
+        const cleanup = () => {
+          cleanupStarted ??= Date.now();
+          for (const key of owned)
+            if (!cleanups.has(key)) {
+              cleanups.set(
+                key,
+                c.mcpClientManager
+                  .disconnectServer(key)
+                  .catch((error) => {
+                    logger.warn("[local-server-check.queue] cleanup failed", {
+                      key,
+                      error: String(error),
+                    });
+                  })
+                  .finally(() => releasePluginLease(key)),
+              );
+            }
+        };
+        signal.addEventListener("abort", cleanup, { once: true });
+        try {
+          const response = await localCheckScope.run(signal, () =>
+            executeLocalServerConnectAttempt(
+              c,
+              params,
+              options,
+              owned,
+              (release) => {
+                lease = release;
+              },
+            ),
+          );
+          signal.throwIfAborted();
+          if (response.ok && lease) {
+            retainPluginLease(params.serverDisplayName, lease);
+            lease = undefined;
+          }
+          return response;
+        } finally {
+          signal.removeEventListener("abort", cleanup);
+          if (signal.aborted) {
+            cleanup();
+            await Promise.allSettled(cleanups.values());
+            logger.info("[local-server-check.queue] cleanup completed", {
+              connections: owned.size,
+              cleanupMs: Date.now() - (cleanupStarted ?? Date.now()),
+            });
+          }
+          lease?.();
+        }
+      },
+    );
+    // Duplicate HTTP callers each need a readable response body.
+    return response.clone();
+  } catch (error) {
+    if (error instanceof LocalCheckError) {
+      if (error.status === 429) c.header("Retry-After", "2");
+      return c.json(
+        {
+          success: false,
+          code: error.reason,
+          error: error.message,
+          details: { reason: error.reason },
+        },
+        error.status,
+      );
+    }
+    if (
+      c.req.raw.signal.aborted ||
+      (error instanceof Error && error.name === "AbortError")
+    )
+      return c.json(
+        { success: false, error: "Connection cancelled" },
+        499 as ContentfulStatusCode,
+      );
+    if (error instanceof Error && error.name === "TimeoutError")
+      return c.json({ success: false, error: error.message }, 504);
+    throw error;
+  }
+}
+
+async function executeLocalServerConnectAttempt(
+  c: Context,
+  params: LocalConnectRequestParams,
+  options: { removeOnFailure: boolean },
+  owned: Set<string>,
+  onPluginLease: (release: () => void) => void
 ) {
   const { serverId, projectId, serverDisplayName, bearer } = params;
   const mcpClientManager = c.mcpClientManager;
+  const signal = localCheckScope.getStore()!;
+  signal.throwIfAborted();
 
   let resolved: Awaited<ReturnType<typeof resolveLocalServerForConnect>>;
   try {
@@ -1688,9 +1897,11 @@ export async function executeLocalServerConnect(
         serverDisplayName,
         clientCapabilities: params.clientCapabilities,
         defaults: params.defaults,
+        onPluginLease,
       }
     );
   } catch (error) {
+    signal.throwIfAborted();
     if (error instanceof WebRouteError) {
       return respondWithLocalRouteError(c, error);
     }
@@ -1706,6 +1917,11 @@ export async function executeLocalServerConnect(
     );
   }
 
+  signal.throwIfAborted();
+  registerLocalConnectionScope(mcpClientManager, serverDisplayName, {
+    serverId,
+    projectId,
+  });
   // Tolerate "nothing to disconnect" — first-time connects have nothing in
   // the manager yet, and stale-or-already-disconnected entries on reconnect
   // shouldn't fail the call. Same tolerance as the legacy DELETE handler.
@@ -1733,8 +1949,14 @@ export async function executeLocalServerConnect(
   const connectConfig = withLocalMrtrElicitationCapability(resolved.config);
 
   try {
-    await mcpClientManager.connectToServer(serverDisplayName, connectConfig);
+    signal.throwIfAborted();
+    owned.add(serverDisplayName);
+    await mcpClientManager.connectToServer(serverDisplayName, connectConfig, {
+      signal,
+    });
+    signal.throwIfAborted();
   } catch (error) {
+    signal.throwIfAborted();
     // Nothing is running from the materialized bundle, so its GC lease must go
     // with the failed entry — otherwise a plugin whose component never starts
     // would pin its cache entry until the inspector process exits.
@@ -1831,6 +2053,84 @@ export async function executeLocalServerConnect(
     );
   }
 
+  // The bare key remains the default for inspection/evals. Chat owns stable
+  // account keys, including an alias for the default: rebinding the bare key
+  // must not redirect an in-flight turn to another credential.
+  const previousGroups = getManagerConnections(mcpClientManager) ?? {};
+  const accounts = resolved.authorizeResult.oauthConnections ?? [];
+  // See the note in routes/web/auth.ts: labels are unique per group.
+  const accountLabels = connectionLabels(accounts);
+  const connected = [];
+  for (const [index, account] of accounts.entries()) {
+    signal.throwIfAborted();
+    if (
+      !account.accessToken ||
+      account.needsReauth ||
+      !("url" in connectConfig)
+    )
+      continue;
+    const key = connectionKey(serverDisplayName, account.connectionId, false);
+    const headers = new Headers(connectConfig.requestInit?.headers);
+    headers.set("Authorization", `Bearer ${account.accessToken}`);
+    registerLocalMrtrCollector(mcpClientManager, key);
+    try {
+      const existing = mcpClientManager.getServerConfig(key) as
+        | HttpServerConfig
+        | undefined;
+      const sameToken =
+        existing &&
+        new Headers(existing.requestInit?.headers).get("Authorization") ===
+          headers.get("Authorization");
+      if (
+        !sameToken ||
+        mcpClientManager.getConnectionStatus(key) !== "connected"
+      ) {
+        await mcpClientManager.disconnectServer(key).catch(() => undefined);
+        signal.throwIfAborted();
+        owned.add(key);
+        await mcpClientManager.connectToServer(key, {
+          ...(connectConfig as HttpServerConfig),
+          requestInit: { ...connectConfig.requestInit, headers },
+          onUnauthorized: buildHostedOAuthUnauthorizedHandler({
+            bearerToken: bearer,
+            projectId,
+            serverId,
+            serverName: serverDisplayName,
+            connectionId: account.connectionId,
+            allowPrivateAuthorizationServerFallback: true,
+          }),
+        }, { signal });
+        signal.throwIfAborted();
+      }
+      connected.push({
+        serverId,
+        key,
+        connectionId: account.connectionId,
+        label: accountLabels[index],
+        profile: account.profile,
+        isDefault: account.isDefault,
+      });
+    } catch (error) {
+      signal.throwIfAborted();
+      logger.debug("Account connection unavailable", {
+        serverId,
+        connectionId: account.connectionId,
+        error: String(error),
+      });
+      await mcpClientManager.removeServer(key).catch(() => undefined);
+    }
+  }
+  signal.throwIfAborted();
+  for (const previous of previousGroups[serverDisplayName] ?? []) {
+    if (!connected.some((c) => c.key === previous.key))
+      await mcpClientManager.removeServer(previous.key).catch(() => undefined);
+  }
+  const { [serverDisplayName]: _previous, ...otherGroups } = previousGroups;
+  setManagerConnections(mcpClientManager, {
+    ...otherGroups,
+    ...(connected.length ? { [serverDisplayName]: connected } : {}),
+  });
+
   // Capture the inspection snapshot synchronously so a fast follow-up
   // disconnect/reconnect on the same server can't tear down the manager
   // mid-`listTools`. Only the Convex write is fire-and-forget — failures
@@ -1843,6 +2143,7 @@ export async function executeLocalServerConnect(
     serverId,
     { logPrefix: "connect-inspection" }
   );
+  signal.throwIfAborted();
   void persistConnectInspection({
     convexBearer: bearer,
     projectId,

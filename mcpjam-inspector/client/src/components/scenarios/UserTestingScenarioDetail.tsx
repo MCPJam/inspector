@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { ScenarioShareEmptyPanel } from "@/components/scenarios/ScenarioShareEmptyPanel";
 import { ScenarioShareDialog } from "@/components/scenarios/ScenarioShareDialog";
@@ -18,6 +19,7 @@ import { ScenarioFindingsTab } from "@/components/scenarios/findings/scenario-fi
 import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPerTurnFeedbackToggle";
 import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
+import { isStudyNameTakenError } from "@/components/scenarios/UserTestingScenarioCreateFlow";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import {
@@ -68,15 +70,18 @@ import { toast } from "@/lib/toast";
 /**
  * One User Testing scenario.
  *
- * Detail (`/user-testing/:id`): Insights | Sessions under one header carrying
- * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the same
- * action row and holds Settings — environment, sharing permissions, ratings —
- * beside a docked live Preview. Only the back link differs: Edit is
- * a sub-route, so it returns to the scenario rather than out to the list.
+ * Detail (`/user-testing/:id`): Findings | Insights | Sessions under one
+ * header carrying Edit / Open preview / Share. Edit (`/user-testing/:id/edit`)
+ * holds Settings — name, description, environment, sharing permissions,
+ * ratings — under a plain header: back to the study (named after it), the
+ * word "Settings", and no action row. Edit is this page, Open preview is a
+ * look at the study rather than a setting, and sharing has its own card on
+ * Settings; the back link naming the study while the title named it again
+ * read as two of the same thing.
  *
- * Preview embeds the share link, so opening Edit starts a REAL guest session —
- * it shows up in Sessions. The embed tags itself `?surface=preview` so that
- * session is labelled.
+ * Open preview (detail page only) opens the share link in a new tab, tagged
+ * `?surface=preview`: the creator's own run is a real guest session, and the
+ * tag is what labels it as preview traffic in Sessions.
  *
  * Insights are per-scenario — `ScenarioUsagePanel` is scenario-scoped. There is
  * deliberately no project-wide insights view: aggregating across scenarios that
@@ -118,6 +123,168 @@ const SETTINGS_CARD =
   "space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm";
 const SETTINGS_CARD_TITLE =
   "text-base font-medium tracking-tight text-foreground";
+
+/**
+ * The study's name as a Settings field, saved on blur or Enter.
+ *
+ * On Edit the header no longer carries the name — the back link already does,
+ * and the two side by side read as a duplicate — so this is where it is
+ * changed. It keeps the same guards as the Description field below:
+ *  - "dirty" is measured against the name the draft was SEEDED with, so a
+ *    collaborator's rename that lands while this field is focused is adopted
+ *    on blur rather than overwritten with the old name;
+ *  - a save that finishes after a newer one leaves the field alone;
+ *  - leaving Edit without a blur (browser Back) still saves what was typed.
+ *
+ * A taken name is said ON the field (the backend's `CONFLICT` on `name`, the
+ * same refusal the create flow places), and the draft is kept so it can be
+ * corrected — unless the field is gone by the time the refusal lands (the
+ * back link's mousedown blurs, then navigates), in which case it toasts, so
+ * the refusal is never silent. Any other failure toasts and reverts.
+ */
+function StudyNameField({
+  name,
+  onSave,
+}: {
+  name: string;
+  onSave: (name: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(name);
+  const [taken, setTaken] = useState<string | null>(null);
+  const focusedRef = useRef(false);
+  // Set by Escape, read by the blur it triggers: discard rather than save.
+  const discardRef = useRef(false);
+  // What the draft was last seeded with — see "dirty" above.
+  const seedRef = useRef(name);
+  // Which save owns the field. Only the newest may touch it on completion.
+  const saveGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  // Read after awaits and on unmount, where this render's values are stale.
+  const nameRef = useRef(name);
+  nameRef.current = name;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+
+  useEffect(() => {
+    if (focusedRef.current) return;
+    seedRef.current = name;
+    setDraft(name);
+  }, [name]);
+
+  const adoptStored = () => {
+    seedRef.current = nameRef.current;
+    setDraft(nameRef.current);
+  };
+
+  const save = async (next: string) => {
+    const generation = ++saveGenerationRef.current;
+    // Marked before the write, as Description does, so a blur or unmount
+    // while it is in flight does not send it a second time.
+    seedRef.current = next;
+    try {
+      await onSaveRef.current(next);
+      if (generation !== saveGenerationRef.current || !mountedRef.current) {
+        return;
+      }
+      setTaken(null);
+    } catch (err) {
+      if (generation !== saveGenerationRef.current) return;
+      if (isStudyNameTakenError(err)) {
+        if (!mountedRef.current) {
+          toast.error(
+            `A study named "${next}" already exists in this project, so the name was not changed.`,
+          );
+          return;
+        }
+        // Keep the refused name in the field, but measured against what is
+        // actually stored, so leaving it untouched does not read as "saved".
+        seedRef.current = nameRef.current;
+        setTaken(next);
+        return;
+      }
+      toast.error(getBillingErrorMessage(err, "Failed to rename the study"));
+      if (mountedRef.current) adoptStored();
+    }
+  };
+
+  const commit = () => {
+    focusedRef.current = false;
+    const discard = discardRef.current;
+    discardRef.current = false;
+    const next = draftRef.current.trim();
+    if (discard || !next) {
+      // Empty is not a name, and Escape is not a save.
+      adoptStored();
+      setTaken(null);
+      return;
+    }
+    // Untouched, or already what is stored: adopt the stored name, which may
+    // be a collaborator's rename that landed while this field held focus.
+    if (next === seedRef.current.trim() || next === nameRef.current.trim()) {
+      adoptStored();
+      return;
+    }
+    void save(next);
+  };
+
+  // Leaving Edit unmounts this field without a blur. Save only what the user
+  // really changed, as Description's flush does.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!focusedRef.current) return;
+      focusedRef.current = false;
+      const next = draftRef.current.trim();
+      if (!next || next === seedRef.current.trim()) return;
+      void save(next);
+    };
+    // Mount/unmount only: everything it reads is a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      <Input
+        aria-label="Study name"
+        data-testid="user-testing-name"
+        value={draft}
+        maxLength={200}
+        placeholder="Study name"
+        aria-invalid={taken ? true : undefined}
+        aria-describedby={taken ? "user-testing-name-taken" : undefined}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onChange={(e) => {
+          setTaken(null);
+          setDraft(e.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            discardRef.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      {taken ? (
+        <p
+          id="user-testing-name-taken"
+          className="text-xs text-destructive"
+          role="alert"
+          data-testid="user-testing-name-taken"
+        >
+          A study named &ldquo;{taken}&rdquo; already exists in this project.
+          Give this one a different name.
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 export function UserTestingScenarioDetail({
   scenario,
@@ -309,10 +476,10 @@ export function UserTestingScenarioDetail({
         setComposer(previous);
         toast.error(
           isAdhocUnavailable(err)
-            ? "This workspace's backend doesn't support editing a scenario's setup yet."
+            ? "This workspace's backend doesn't support editing a study's setup yet."
             : getBillingErrorMessage(
                 err,
-                "Could not update this scenario's setup",
+                "Could not update this study's setup",
               ),
         );
       } finally {
@@ -377,7 +544,7 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(getBillingErrorMessage(err, "Failed to rename the scenario"));
+      toast.error(getBillingErrorMessage(err, "Failed to rename the study"));
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -513,12 +680,12 @@ export function UserTestingScenarioDetail({
     setIsDeleting(true);
     try {
       await deleteScenario({ scenarioId: scenario.scenarioId } as any);
-      toast.success("Scenario deleted");
+      toast.success("Study deleted");
       setDeleteOpen(false);
       onDeleted();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to delete the scenario",
+        err instanceof Error ? err.message : "Failed to delete the study",
       );
       // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
       // swallowing here would dismiss the confirmation on a delete that
@@ -535,15 +702,25 @@ export function UserTestingScenarioDetail({
         value={scenario.name}
         onSave={handleRename}
         variant="h1"
-        placeholder="Scenario name"
+        placeholder="Study name"
         // `shrink` overrides the design-system button's own shrink-0, which
         // otherwise keeps the name at full width and pushes the tabs off.
         className="-ml-2 min-w-0 shrink px-2 text-xl font-semibold tracking-tight"
         inputClassName="min-w-[8rem] max-w-full text-xl font-semibold tracking-tight"
       />
+    </div>
+  );
+
+  // Edit's title is the PAGE, not the study: the back link beside it already
+  // names the study, and the name is edited in its own card below.
+  const editHeaderTitle = (
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <h1 className="text-xl font-semibold tracking-tight text-foreground">
+        Settings
+      </h1>
       {/* Host-backed scenarios get no Environment section — nothing else on
           Edit names the client they run against, so the header does. */}
-      {editMode && !composerActive && scenario.namedHostName ? (
+      {!composerActive && scenario.namedHostName ? (
         <span
           className="shrink-0 text-sm text-muted-foreground"
           data-testid="user-testing-host-client"
@@ -554,9 +731,10 @@ export function UserTestingScenarioDetail({
     </div>
   );
 
-  // One action row, identical on the detail tabs and on Edit: Edit, Open
-  // preview, and the single primary Share. Sharing has no other entry point on
-  // either surface — a second affordance was the thing this row replaced.
+  // The detail tabs' action row: Edit, Open preview, and the single primary
+  // Share (a modal over this page). Not shown on Edit: Edit is that page,
+  // Open preview is not a setting, and Settings has its own Sharing
+  // permissions card.
   const headerActions = (
     <>
       <Button
@@ -565,10 +743,6 @@ export function UserTestingScenarioDetail({
         size="sm"
         className="rounded-lg"
         data-testid="user-testing-edit-button"
-        // On Edit this is the current page, so it is marked rather than
-        // hidden: dropping a button out of the row on one route makes the
-        // shared header stop reading as the same header.
-        aria-current={editMode ? "page" : undefined}
         onClick={() =>
           navigate(buildUserTestingScenarioEditPath(scenario.scenarioId))
         }
@@ -599,7 +773,7 @@ export function UserTestingScenarioDetail({
                session (BB-176). The visible label stays short; the hover and
                accessible name carry the rest. */
             title="Opens this study exactly as a tester sees it, in a new tab"
-            aria-label="Open preview — this study as a tester sees it"
+            aria-label="Open preview: this study as a tester sees it"
           >
             <Eye className="mr-1.5 size-3.5" />
             Open preview
@@ -627,16 +801,15 @@ export function UserTestingScenarioDetail({
         resource="user-testing study"
       >
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          {/* Back goes to the scenario, not the list: Edit is a sub-route, and
-            its own Edit button is inert here, so the list would strand it. */}
+          {/* Back goes to the scenario, not the list: Edit is a sub-route of
+            it, and the list would leave no one-click way back. */}
           <DetailPageHeader
-            backLabel={scenario.name || "Scenario"}
+            backLabel={scenario.name || "Study"}
             onBack={() =>
               navigate(buildUserTestingScenarioPath(scenario.scenarioId))
             }
             backTestId="user-testing-detail-back"
-            title={headerTitle}
-            actions={headerActions}
+            title={editHeaderTitle}
           />
           <div
             className="relative min-h-0 flex-1 overflow-hidden"
@@ -666,20 +839,38 @@ export function UserTestingScenarioDetail({
               reads as one long form that happens to have gaps. */}
             <div className="h-full overflow-y-auto px-6 py-6 sm:px-8">
               <div className="mx-auto w-full max-w-[960px] space-y-6">
-                <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                  Settings
-                </h1>
                 <div className="space-y-6">
                   <div className="min-w-0 space-y-6">
+                    <section
+                      className={SETTINGS_CARD}
+                      data-testid="user-testing-name-section"
+                    >
+                      <h2 className={SETTINGS_CARD_TITLE}>Study name</h2>
+                      <StudyNameField
+                        name={scenario.name}
+                        onSave={async (name) => {
+                          await updateScenario({
+                            scenarioId: scenario.scenarioId,
+                            name,
+                          } as any);
+                        }}
+                      />
+                    </section>
+
                     {/* Off the header row as of BB-202: a field that grows next to
                   the title crowds the tabs. Still the only editor for it. */}
                     <section
                       className={SETTINGS_CARD}
                       data-testid="user-testing-description-section"
                     >
-                      <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
+                      <div className="space-y-1">
+                        <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
+                        <p className="text-xs text-muted-foreground">
+                          For you and your project. Testers don&apos;t see it.
+                        </p>
+                      </div>
                       <TextareaAutosize
-                        aria-label="Scenario description"
+                        aria-label="Study description"
                         data-testid="user-testing-description"
                         value={descriptionDraft}
                         onChange={(e) => setDescriptionDraft(e.target.value)}
@@ -704,8 +895,8 @@ export function UserTestingScenarioDetail({
                         <div className="min-w-0 text-sm">
                           <p className="font-medium text-foreground">
                             {environmentError.code === "ENV_ARCHIVED"
-                              ? "This scenario's environment is archived — the share link no longer opens."
-                              : "This scenario's environment can't be loaded right now — the share link won't open."}
+                              ? "This study's environment is archived, so the share link no longer opens."
+                              : "This study's environment can't be loaded right now, so the share link won't open."}
                           </p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {environmentError.message} Its sessions are
@@ -815,21 +1006,15 @@ export function UserTestingScenarioDetail({
                     data-testid="user-testing-delete"
                   >
                     <Trash2 className="mr-1.5 size-4" />
-                    Delete scenario
+                    Delete study
                   </Button>
                 </div>
               </div>
             </div>
           </div>
 
-          <ScenarioShareDialog
-            scenario={scenario}
-            open={shareOpen}
-            onOpenChange={setShareOpen}
-          />
-
           <ScenarioDeleteConfirmDialog
-            entityLabel="scenario"
+            entityLabel="study"
             open={deleteOpen}
             onOpenChange={setDeleteOpen}
             scenarioName={scenario.name}
@@ -885,6 +1070,14 @@ export function UserTestingScenarioDetail({
             >
               <ScenarioFindingsTab
                 scenarioId={scenario.scenarioId}
+                // Insights' empty panel, titled for Findings: the same ways to a
+                // first session on either tab, instead of a blank frame.
+                emptyState={
+                  <ScenarioShareEmptyPanel
+                    scenario={scenario}
+                    surface="findings"
+                  />
+                }
                 onOpenSession={(threadId) =>
                   navigate(
                     buildUserTestingScenarioPath(scenario.scenarioId, {
@@ -991,7 +1184,7 @@ export function UserTestingScenarioDetail({
       />
 
       <ScenarioDeleteConfirmDialog
-        entityLabel="scenario"
+        entityLabel="study"
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         scenarioName={scenario.name}

@@ -57,6 +57,7 @@ import {
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { markDeprecated as markDeprecatedResponse } from "./deprecation.js";
 import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
@@ -182,19 +183,11 @@ function toLegacyHostDetailDto(detail: HostDetailRow) {
   return { id: detail.hostId, name: detail.name, config: detail.config };
 }
 
-/**
- * Mark an alias response as deprecated on the wire (RFC 8594).
- *
- * On the response rather than in the body: a body field would only reach
- * callers who parse for it, while the header reaches every proxy, log and
- * client library that already looks.
- */
+/** The `/clients` successor every `/hosts` alias response points at. */
+const CLIENTS_SUCCESSOR = "/api/v1/projects/{projectId}/clients";
+
 function markDeprecated(c: Context): void {
-  c.header("Deprecation", "true");
-  c.header(
-    "Link",
-    '</api/v1/projects/{projectId}/clients>; rel="successor-version"',
-  );
+  markDeprecatedResponse(c, CLIENTS_SUCCESSOR);
 }
 
 /**
@@ -481,7 +474,7 @@ const READ_ONLY_CONFIG_KEYS = ["id", "schemaVersion"] as const;
  *
  * The rest of the config is passed through opaquely, but the model cannot be:
  * it is stored verbatim and compared verbatim downstream, so a padded
- * `" anthropic/claude-sonnet-4-5 "` would be persisted as a distinct — and
+ * `" anthropic/claude-sonnet-4.5 "` would be persisted as a distinct — and
  * unrecognized — model id. Trimming matches the environment contract's
  * `normalizeModelId`, which is the other write boundary this value reaches.
  * Only ever a trim; the id itself is never rewritten.
@@ -522,7 +515,7 @@ const createClientSchema = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });

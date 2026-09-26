@@ -62,7 +62,9 @@ export function EvalsHeader({
   onAddCase?: () => void;
   children?: ReactNode;
   parentCrumb?: EvalsHeaderParentCrumb;
-  detailCrumb?: { label: string; onClick?: () => void };
+  detailCrumb?:
+    | { label: string; onClick?: () => void }
+    | readonly { label: string; onClick?: () => void }[];
   onCurrentCrumbClick?: () => void;
   landingView?: EvalLandingView;
   onLandingViewChange?: (view: EvalLandingView) => void;
@@ -71,6 +73,11 @@ export function EvalsHeader({
   isDetail?: boolean;
 }) {
   const isDetail = isDetailProp ?? Boolean(children || parentCrumb);
+  const detailCrumbs = detailCrumb
+    ? Array.isArray(detailCrumb)
+      ? detailCrumb
+      : [detailCrumb]
+    : [];
 
   if (isDetail) {
     return (
@@ -133,22 +140,22 @@ export function EvalsHeader({
                 )}
               </BreadcrumbItem>
             ) : null}
-            {detailCrumb ? (
-              <>
+            {detailCrumbs.map((crumb) => (
+              <span key={crumb.label} className="contents">
                 <BreadcrumbSeparator>/</BreadcrumbSeparator>
                 <BreadcrumbItem>
-                  {detailCrumb.onClick ? (
+                  {crumb.onClick ? (
                     <BreadcrumbLink asChild>
-                      <button type="button" onClick={detailCrumb.onClick}>
-                        {detailCrumb.label}
+                      <button type="button" onClick={crumb.onClick}>
+                        {crumb.label}
                       </button>
                     </BreadcrumbLink>
                   ) : (
-                    <BreadcrumbPage>{detailCrumb.label}</BreadcrumbPage>
+                    <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
                   )}
                 </BreadcrumbItem>
-              </>
-            ) : null}
+              </span>
+            ))}
           </BreadcrumbList>
         </Breadcrumb>
       </div>
