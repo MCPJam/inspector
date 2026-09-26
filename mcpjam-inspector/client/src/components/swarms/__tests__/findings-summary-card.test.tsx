@@ -122,4 +122,37 @@ describe("FindingsSummaryCard", () => {
     );
     expect(screen.queryByTestId("findings-footnotes")).not.toBeInTheDocument();
   });
+
+  it("names why sessions didn't run in its own block, beside the count", () => {
+    // MCPJam/inspector#5188: the paragraph counts the refused sessions; the
+    // refusal itself is its own line, never folded into the paragraph.
+    render(
+      <FindingsSummaryCard
+        sessionCount={0}
+        summary={["No sessions launched.", "3 of 3 sessions failed to launch."]}
+        launchReason="Persona turn failed: 400 invalid identity"
+      />,
+    );
+    const reason = screen.getByTestId("findings-launch-reason");
+    expect(reason).toHaveTextContent("Why sessions didn't run");
+    expect(reason).toHaveTextContent(
+      "Persona turn failed: 400 invalid identity",
+    );
+    expect(screen.getByTestId("findings-headline").textContent).toBe(
+      "No sessions launched. 3 of 3 sessions failed to launch.",
+    );
+  });
+
+  it("renders no reason block without a reason", () => {
+    render(
+      <FindingsSummaryCard
+        sessionCount={3}
+        summary={["First sentence."]}
+        launchReason="   "
+      />,
+    );
+    expect(
+      screen.queryByTestId("findings-launch-reason"),
+    ).not.toBeInTheDocument();
+  });
 });
