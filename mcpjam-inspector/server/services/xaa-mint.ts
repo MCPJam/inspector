@@ -1,3 +1,4 @@
+import { localCheckScope } from "../utils/local-server-check-queue.js";
 // Cross-App Access (XAA) token-mint orchestration, extracted from the XAA
 // router so BOTH the debugger's `/proxy/token` endpoint AND the connect-page
 // server-side mint depend on one implementation. Keeping the jwt-bearer body
@@ -23,6 +24,7 @@ import {
   fetchXaaDcrAuthorizedTarget,
   type XaaDcrRegistration,
 } from "./xaa-dcr.js";
+import { credentialOrigin } from "../utils/credential-header-binding.js";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -86,6 +88,11 @@ type ResolveServerSecretFn = (args: {
   projectId: string;
   bearerToken: string;
   clientIp?: string | null;
+  /**
+   * The resource the secret is about to be spent for. The backend refuses the
+   * reveal when the secret was saved for another origin.
+   */
+  targetUrl?: string;
 }) => Promise<ServerClientSecretResult>;
 
 // RFC 9728: ask the resource (the MCP server URL) which authorization server
@@ -106,7 +113,7 @@ async function discoverIssuerFromResourceMetadata(
   }
 
   for (const candidate of candidates) {
-    const result = await fetchOAuthMetadata(candidate, httpsOnly);
+    const result = await fetchOAuthMetadata(candidate, httpsOnly, undefined, localCheckScope.getStore());
     if ("metadata" in result) {
       const issuer = extractAuthorizationServer(result.metadata);
       if (issuer) {
@@ -183,7 +190,7 @@ export async function discoverServerTargetTokenEndpoint(
   }
 
   for (const candidate of candidates) {
-    const result = await fetchOAuthMetadata(candidate, httpsOnly);
+    const result = await fetchOAuthMetadata(candidate, httpsOnly, undefined, localCheckScope.getStore());
     if ("metadata" in result) {
       const verdict = evaluateDiscovery(result.metadata, {
         requestedIssuer: issuer,
@@ -331,6 +338,8 @@ export async function resolveServerTarget(deps: {
   projectId?: string;
   bearerToken: string;
   clientIp?: string | null;
+  /** Forwarded to the reveal as the declared target (see ResolveServerSecretFn). */
+  targetUrl?: string;
 }): Promise<ResolvedServerTarget> {
   if (!deps.resolveServerSecret) {
     throw new WebRouteError(
@@ -352,7 +361,46 @@ export async function resolveServerTarget(deps: {
     projectId: deps.projectId,
     bearerToken: deps.bearerToken,
     clientIp: deps.clientIp,
+    ...(deps.targetUrl ? { targetUrl: deps.targetUrl } : {}),
   });
+
+  // The backend approved the secret for `targetUrl`; everything below —
+  // discovery, the token endpoint, the grant — is derived from the
+  // `serverUrl` it returned. Those must be the same origin, or the secret
+  // would be spent somewhere other than where it was approved (a row
+  // repointed between this connection's snapshot and the reveal). Checked
+  // BEFORE discovery, so nothing is dialled at the other origin either.
+  if (
+    deps.targetUrl &&
+    resolved.clientSecret &&
+    credentialOrigin(resolved.serverUrl) !== credentialOrigin(deps.targetUrl)
+  ) {
+    const targetOrigin = credentialOrigin(resolved.serverUrl);
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "This server's address changed after this connection was set up, so its saved client secret was not used. Reload and connect again.",
+      {
+        secretOriginMismatch: true,
+        boundOrigin: null,
+        targetOrigin,
+      }
+    );
+  }
+
+  // A released secret must say the backend checked where it is going: the
+  // returned `serverUrl` (and the declared target, when there is one). A
+  // response without that acknowledgement came from a backend that did not
+  // make the check, and a secret it released may have been saved for another
+  // origin — so it is not spent, with or without a declared target. Fails
+  // closed.
+  if (resolved.clientSecret && !resolved.targetEnforced) {
+    throw new WebRouteError(
+      503,
+      ErrorCode.SERVER_UNREACHABLE,
+      "The saved client secret for this server could not be confirmed for this address, so it was not used. Try again shortly."
+    );
+  }
 
   const target = await resolveAuthorizedServerTarget({
     resource: resolved.serverUrl ?? undefined,
@@ -739,6 +787,12 @@ export async function mintXaaAccessToken(args: {
       serverId: args.serverId,
       projectId: args.projectId,
       bearerToken: args.bearerToken,
+      // MJ-003 at spend time, decided by the backend: the reveal names the
+      // resource the secret is for, and a secret saved for another origin is
+      // refused there (a public client stores no secret and is never bound).
+      // DCR needs no twin of this: a stored registration is reused only when
+      // its fingerprint matches the current resource URL.
+      ...(args.resource ? { targetUrl: args.resource } : {}),
     });
     if (!target.clientId) {
       throw new WebRouteError(
@@ -817,6 +871,7 @@ export async function mintXaaAccessToken(args: {
   }
 
   const proxyResult = await executeOAuthProxy({
+    signal: localCheckScope.getStore(),
     url: target.tokenEndpoint,
     method: "POST",
     body: tokenRequest.body,

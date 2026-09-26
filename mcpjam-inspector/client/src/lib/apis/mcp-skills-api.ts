@@ -1,6 +1,7 @@
 import { authFetch } from "@/lib/session-token";
 import { runByMode } from "@/lib/apis/mode-client";
 import { webPost } from "@/lib/apis/web/base";
+import { uploadBlobAsApiActor } from "@/lib/convex-blob-upload";
 import type {
   Skill,
   SkillListItem,
@@ -104,6 +105,9 @@ function parseSkillMd(text: string): { description: string; body: string } {
     .replace(/^'(.*)'$/s, "$1");
   return { description, body };
 }
+
+/** The upload route's cap for one supporting file (the backend's own cap). */
+const MAX_SKILL_FILE_BYTES = 2 * 1024 * 1024;
 
 /** The path of an uploaded file WITHIN its skill dir (strip the top folder). */
 function skillRelativePath(file: File): string {
@@ -289,6 +293,16 @@ export async function uploadSkillFolder(
     const rawSkillMd = await skillMdFile.text();
     const { description, body } = parseSkillMd(rawSkillMd);
     const supporting = files.filter((f) => f !== skillMdFile);
+    // Say which files are over the cap before anything is created, rather
+    // than creating the skill and rolling it back.
+    const oversized = supporting.filter((f) => f.size > MAX_SKILL_FILE_BYTES);
+    if (oversized.length > 0) {
+      throw new Error(
+        `Supporting files must be 2 MB or smaller: ${oversized
+          .map(skillRelativePath)
+          .join(", ")}.`,
+      );
+    }
     let createdCloudSkillId: string | null = null;
     const skill = await uploadSkill(
       {
@@ -310,10 +324,11 @@ export async function uploadSkillFolder(
       },
     );
 
-    // 2. Upload supporting files DIRECTLY to Convex (bypasses inspector body
-    // limits), then batch-register them. ATOMIC from the user's perspective:
-    // any failure best-effort deletes the just-created skill and throws, so a
-    // retry starts clean instead of half-saved.
+    // 2. Upload supporting files to the backend's upload route (MJ-006; the
+    // bytes skip the inspector's body limits), then batch-register them.
+    // ATOMIC from the user's perspective: any failure best-effort deletes the
+    // just-created skill and throws, so a retry starts clean instead of
+    // half-saved.
     if (supporting.length === 0) return skill;
 
     const failedPaths: string[] = [];
@@ -340,23 +355,12 @@ export async function uploadSkillFolder(
       for (const f of supporting) {
         const path = skillRelativePath(f);
         try {
-          const { uploadUrl } = await webPost<
-            { projectId: string; skillId: string },
-            { uploadUrl: string }
-          >("/api/web/skills/files/upload-url", {
-            projectId: source.projectId,
-            skillId,
-          });
           const buf = await f.arrayBuffer();
-          const putRes = await fetch(uploadUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": f.type || "application/octet-stream",
-            },
-            body: buf,
-          });
-          if (!putRes.ok) throw new Error(`upload failed (${putRes.status})`);
-          const { storageId } = (await putRes.json()) as { storageId: string };
+          const storageId = await uploadBlobAsApiActor(
+            { purpose: "skill-file", projectId: source.projectId, skillId },
+            buf,
+            f.type || "application/octet-stream",
+          );
           attachInputs.push({
             path,
             storageId,
