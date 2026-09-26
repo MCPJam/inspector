@@ -623,6 +623,19 @@ Your LLM provider rejected the API key for this request.
 - Add or update your API key under **Settings → LLM Providers**.
 - Verify the key in the provider's dashboard.
 
+### Provider not allowlisted
+
+`provider/not_allowlisted`
+
+This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. This is a setting on MCPJam's side, not a problem with your API key. Retrying or changing your key won't help.
+
+**Likely causes**
+- MCPJam's hosted gateway does not have this model's provider on its provider allowlist.
+
+**Next steps**
+- Choose a model from a different provider.
+- Add your own key for this provider under **Settings → LLM Providers** (BYOK) to run the model on your key instead of MCPJam's gateway.
+
 ### Provider quota
 
 `provider/quota`

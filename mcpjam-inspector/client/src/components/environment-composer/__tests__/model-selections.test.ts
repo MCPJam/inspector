@@ -128,9 +128,10 @@ describe("syncExplicitModelSelections", () => {
     const hosted = { ...org, explicitModelSelections: { [SAME_ID]: HOSTED } };
     expect(sameModelSelection(org, hosted)).toBe(false);
     expect(sameModelSelection(org, { ...org })).toBe(true);
-    expect(expandModelChoices(org)).toEqual([
-      { modelId: SAME_ID, modelSelection: ORG },
-    ]);
+    expect(expandModelChoices(org)).toEqual({
+      cells: [{ modelId: SAME_ID, modelSelection: ORG }],
+      skipped: [],
+    });
   });
 
   it("an environment's stored selection seeds the stack", () => {

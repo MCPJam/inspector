@@ -2593,6 +2593,66 @@ describe("v1 write routes", () => {
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
+    it("judges an ENVIRONMENT target on its MODEL OVERRIDE, not the host's model", async () => {
+      // The host pins a model Codex runs (gpt-5.5); the environment overrides
+      // it with one the pinned Codex CLI runs without tools. The run executes
+      // the override, so the dry run must refuse — judging the host's model
+      // would answer 202 and fail (or run tool-less) after siblings started.
+      vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc_token");
+      vi.stubEnv("E2B_API_KEY", "e2b-test");
+      vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
+      try {
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({
+            ...SUITE_DOC,
+            environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          }),
+          "projectEnvironments:listEnvironments": () => [
+            { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging" },
+            { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Prod" },
+          ],
+          "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+            environmentRef: { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 1 },
+            hostId: "hostharnessxxxxxxxxxxxxxxxxxxxxx",
+            selectedServerIds: ["s_env"],
+            modelId: "openai/gpt-5.6-luna",
+            effectiveModelId: "openai/gpt-5.6-luna",
+            modelSource: "environment",
+          }),
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_env"],
+            serverNames: ["env server"],
+            source: "environment",
+          }),
+          "hostConfigsV2:getSuiteConfig": () => ({ hostStyle: "mcpjam" }),
+          "hosts:getHost": () => ({
+            config: { harness: "codex", modelId: "openai/gpt-5.5" },
+          }),
+        });
+        mockPendingLaunches();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+          {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            targets: [{ environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }],
+          }
+        );
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as any;
+        expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+        expect(body.message).toContain(
+          "the Codex harness can't run this host's model"
+        );
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("REJECTS a knob this route does not carry instead of dropping it", async () => {
       // `serverIds` and `refreshSnapshot` are single-run-only, and they are
       // precisely what a caller adapting a working single-run body will try.

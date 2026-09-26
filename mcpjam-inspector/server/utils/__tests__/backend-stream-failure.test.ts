@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { originOf } from "@mcpjam/sdk";
 import {
+  PROVIDER_NOT_ALLOWLISTED_CODE,
   describeBackendStreamFailure,
   describeStreamErrorChunkFailure,
   isMcpjamOwnedFailureCode,
@@ -169,6 +170,61 @@ describe("isUserOwnedDenialCode", () => {
     // costs the blindness this work exists to remove.
     expect(isUserOwnedDenialCode("something_new")).toBe(false);
     expect(isUserOwnedDenialCode(undefined)).toBe(false);
+  });
+});
+
+describe("provider_not_allowlisted", () => {
+  // The backend's wording for a provider MCPJam's hosted gateway has not
+  // enabled. It rides a 401/403, so read by status it would be
+  // `provider/auth_error` — "update your API key" — for a key never used.
+  const detail = JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message:
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist.',
+    statusCode: 403,
+    isRetryable: false,
+    details:
+      "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.",
+  });
+
+  it.each([401, 403])(
+    "reads a non-OK %i carrying the code as the allowlist slug, owned by MCPJam",
+    (status) => {
+      const normalized = describeBackendStreamFailure(
+        status,
+        detail,
+        PROVIDER_NOT_ALLOWLISTED_CODE,
+      );
+
+      expect(normalized.slug).toBe("provider/not_allowlisted");
+      expect(originOf(normalized)).toBe("mcpjam");
+      expect(normalized.nextSteps.join(" ")).not.toMatch(
+        /update your api key/i,
+      );
+    },
+  );
+
+  it("reads the mid-stream error chunk the same way", () => {
+    const normalized = describeStreamErrorChunkFailure(
+      403,
+      detail,
+      PROVIDER_NOT_ALLOWLISTED_CODE,
+    );
+
+    expect(normalized.slug).toBe("provider/not_allowlisted");
+    expect(originOf(normalized)).toBe("mcpjam");
+  });
+
+  it("is an MCPJam-owned code, never a user-owned denial", () => {
+    expect(isMcpjamOwnedFailureCode(PROVIDER_NOT_ALLOWLISTED_CODE)).toBe(true);
+    expect(isUserOwnedDenialCode(PROVIDER_NOT_ALLOWLISTED_CODE)).toBe(false);
+  });
+
+  it("round-trips the mid-stream body through the chunk parser", () => {
+    expect(parseStreamErrorChunkText(detail)).toMatchObject({
+      code: PROVIDER_NOT_ALLOWLISTED_CODE,
+      statusCode: 403,
+    });
   });
 });
 

@@ -1048,7 +1048,21 @@ chatV2.post("/", async (c) => {
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
         xaaEnterprisePolicyOn: xaaPolicy != null,
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session is an eval
+        // surface and may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.web.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         throw new WebRouteError(
           503,

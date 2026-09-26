@@ -151,6 +151,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // --- Ours ----------------------------------------------------------------
   "sdk/not_yet_supported_in_stateless": "mcpjam",
   "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
+  // The hosted AI gateway refused the provider because MCPJam's own gateway
+  // team has not enabled it. No user input can change that; the fix is ours.
+  "provider/not_allowlisted": "mcpjam",
 
   // A missing challenge alone does not establish who must act.
   "oauth/no_bearer_challenge": "ambiguous",
@@ -798,6 +801,24 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Verify the key in the provider's dashboard.",
     ],
     "provider-auth-error",
+  ),
+  // The backend's `provider_not_allowlisted` code: the hosted gateway's
+  // provider allowlist, not a key, refused the request. Deliberately carries
+  // no API-key remedy — the user's keys were never involved, and retrying
+  // sends the same request into the same refusal.
+  "provider/not_allowlisted": entry(
+    "provider/not_allowlisted",
+    "Model provider not enabled on MCPJam",
+    "This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. Retrying or changing your API key won't help.",
+    [
+      "MCPJam's hosted gateway does not have this model's provider on its provider allowlist.",
+    ],
+    [
+      "Choose a model from a different provider.",
+      "Add your own key for this provider under Settings → LLM Providers (BYOK) to run the model on your key instead of MCPJam's gateway.",
+    ],
+    "provider-not-allowlisted",
+    "warning",
   ),
   // The backend refuses on one of two allowances and says which in its own
   // copy, so these are two slugs rather than one that lists both and makes the

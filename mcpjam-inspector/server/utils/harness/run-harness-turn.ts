@@ -200,7 +200,10 @@ import {
   emitInsufficientScopeChunk,
   emitScopeStepUpRequiredChunk,
 } from "../../routes/web/hosted-elicitation.js";
-import { harnessToolApprovalRefusalReason } from "./harness-availability.js";
+import {
+  harnessModelPurposeForSourceType,
+  harnessToolApprovalRefusalReason,
+} from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -1126,12 +1129,20 @@ export async function runHarnessTurn(
       //       account, so there is no substitution to catch here — asking
       //       `supportsModel` would only be asking the adapter to rubber-stamp
       //       a value nothing consumes.
+      //       Read from the version-keyed evidence table at the adapter's
+      //       pinned CLI version. An UNVERIFIED pair runs only in Playground
+      //       chat (`sourceType: "direct"`), matching the pre-flight's purpose
+      //       rule; evals, scenarios and swarms refuse it here too.
       if (
         harnessAdapter.modelAccess !== "external-account" &&
-        !harnessAdapter.supportsModel(modelId)
+        !harnessAdapter.supportsModel(modelId, {
+          allowUnknown:
+            harnessModelPurposeForSourceType(sourceType) === "chat",
+        })
       ) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}": ` +
+            `${harnessAdapter.modelSupport(modelId).reason}.`,
         );
       }
       //   (a2) capability/hook invariant for plugin BUNDLE install: advertising
