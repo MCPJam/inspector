@@ -8,6 +8,12 @@ export async function savePreparedEvalSuites(
     projectId: string;
     server: { id: string; name: string };
     mutate: Mutation;
+    /**
+     * The backend creates environment suites in one call
+     * (`createSuiteWithEnvironments`): one environment per picked client,
+     * each with this server.
+     */
+    environmentSuites?: boolean;
   },
 ): Promise<EvalSuite[]> {
   const suites = input.suites.filter((suite) => suite.cases.length);
@@ -28,12 +34,21 @@ export async function savePreparedEvalSuites(
       projectId: input.projectId,
       name: `${input.server.name}: ${suite.title}`,
       description: suite.description,
-      environment: { servers: [input.server.name] },
-      namedHostId: input.clients[0].id,
-      hostAttachments: input.clients.map((client) => ({
-        namedHostId: client.id,
-        selectedServerIds: [input.server.id],
-      })),
+      ...(input.environmentSuites
+        ? {
+            environmentTargets: input.clients.map((client) => ({
+              hostId: client.id,
+              serverIds: [input.server.id],
+            })),
+          }
+        : {
+            environment: { servers: [input.server.name] },
+            namedHostId: input.clients[0].id,
+            hostAttachments: input.clients.map((client) => ({
+              namedHostId: client.id,
+              selectedServerIds: [input.server.id],
+            })),
+          }),
       idempotencyKey: `prepared:${input.reviewKey}:${suite.id}`,
     });
     if (!saved?._id) throw new Error("Could not save the prepared suite.");

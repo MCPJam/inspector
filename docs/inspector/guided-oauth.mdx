@@ -78,7 +78,7 @@ When you connect a server using OAuth 2.0, Inspector automatically records a tra
 
 **On the connection card**, if OAuth fails, a banner identifies the exact step where the failure occurred (for example, "OAuth failed during Token Request").
 
-**In the server detail panel**, the **Last OAuth Trace** section shows:
+**In the server detail panel**, the **Last OAuth Trace** section is collapsed by default. Click the chevron next to **Last OAuth Trace** to expand it. Inside, each step and the **HTTP History** log are also collapsed by default — error steps open automatically so failures are immediately visible. The section shows:
 
 - Each OAuth step (discovery, client registration, PKCE, authorization redirect, token exchange) with a status indicator and message
 - The error text for any failed step
@@ -112,7 +112,7 @@ The trace shows:
 
 - **Source** - Which part of the flow produced the trace (`interactive_connect`, `callback`, `refresh`, or `hosted_callback`)
 - **Current step** - The step the flow reached before completing or failing
-- **Step-by-step breakdown** - Each OAuth step with its status (`success`, `pending`, or `error`), a summary message, and optional HTTP request/response details
+- **Step-by-step breakdown** - Each OAuth step collapsed by default (error steps open automatically), with its status conveyed by title color, a summary message, and optional HTTP request/response details
 - **HTTP history** - A bounded list of all HTTP calls made during the flow, with headers and bodies sanitized to redact sensitive values such as tokens and secrets
 - **Failure highlight** - If a step failed, the error panel on the server card and the overview both identify the specific step that caused the failure
 
@@ -174,6 +174,8 @@ When an OAuth error appears in the request log, a **Continue in OAuth Debugger**
 The enable/connect toggle on a server card or detail modal reuses existing credentials only — it will not launch a new OAuth consent screen. If the existing tokens are expired or missing and a fresh consent flow is required, the toggle reports a re-authentication error instead of redirecting you to the authorization server.
 
 To start a full OAuth flow, use the explicit **Reconnect** button on the server card or detail modal. This is the only path that will open the OAuth consent screen when new credentials are needed.
+
+When a server has [multiple accounts](#multiple-oauth-accounts) connected, the **Reconnect** option in each account row's menu (in the server detail modal's Config tab) replaces only that row's credential. The other accounts are not affected. Using the top-level **Reconnect** button on the card replaces the default account's credential.
 
 ## Desktop app behavior
 

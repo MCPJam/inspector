@@ -187,3 +187,72 @@ export function samePageToolBinding(
     a.registrationSeq === b.registrationSeq
   );
 }
+
+export interface McpConnectionAttribution {
+  serverId: string;
+  connectionId: string;
+  label: string;
+  profileId?: string;
+}
+export function mergeMcpToolConnectionMetadata(
+  metadata: unknown,
+  connection: McpConnectionAttribution | undefined,
+) {
+  const base = toProviderMetadata(metadata);
+  if (!connection || base.mcpjam?.connection)
+    return Object.keys(base).length ? base : undefined;
+  return { ...base, mcpjam: { ...base.mcpjam, connection: { ...connection } } };
+}
+export function toolConnectionAttribution(
+  tool: unknown,
+  input: unknown,
+  toolCallId?: unknown,
+): McpConnectionAttribution | undefined {
+  const t = tool as
+    | {
+        _connectionForInput?: (input: unknown) => {
+          serverId: string;
+          connectionId: string;
+          label: string;
+          profile?: { id: string };
+        };
+        _connectionForCall?: (id: string) => {
+          serverId: string;
+          connectionId: string;
+          label: string;
+          profile?: { id: string };
+        };
+      }
+    | undefined;
+  const c =
+    (typeof toolCallId === "string"
+      ? t?._connectionForCall?.(toolCallId)
+      : undefined) ?? t?._connectionForInput?.(input);
+  return c
+    ? {
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+        ...(c.profile ? { profileId: c.profile.id } : {}),
+      }
+    : undefined;
+}
+
+/**
+ * The connection a tool call was routed through, when one was recorded. Absent
+ * for every server with a single credential — attribution is only stamped once
+ * a server has more than one connection live.
+ */
+export function readMcpToolConnectionId(
+  metadata: unknown
+): string | undefined {
+  if (!isRecord(metadata)) return undefined;
+  const mcpjam = metadata[MCPJAM_PROVIDER_METADATA_KEY];
+  if (!isRecord(mcpjam)) return undefined;
+  const connection = mcpjam.connection;
+  if (!isRecord(connection)) return undefined;
+  const connectionId = connection.connectionId;
+  return typeof connectionId === "string" && connectionId.length > 0
+    ? connectionId
+    : undefined;
+}

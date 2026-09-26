@@ -280,6 +280,50 @@ describe("engine failure telemetry", () => {
     );
   });
 
+  it("keeps the code on a mid-stream provider_not_allowlisted chunk so the client can pick its banner", async () => {
+    // Every other mid-stream chunk reaches the client as its bare sentence
+    // (see above). This one cannot: without the code the client falls back to
+    // the generic error box, and the allowlist banner — no retry, no API-key
+    // advice — is chosen from the code alone.
+    const message =
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
+    const details =
+      "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.";
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      {
+        type: "error",
+        errorText: JSON.stringify({
+          code: "provider_not_allowlisted",
+          message,
+          statusCode: 403,
+          isRetryable: false,
+          details,
+        }),
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+    const onEngineError = vi.fn();
+
+    await runTurn({ failureReporter: reporter, onEngineError });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("provider_not_allowlisted");
+    expect(calls[0].normalized?.slug).toBe("provider/not_allowlisted");
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+
+    const chunks = errorChunks();
+    expect(chunks).toHaveLength(1);
+    expect(Object.keys(chunks[0]).sort()).toEqual(["errorText", "type"]);
+    expect(JSON.parse(chunks[0].errorText)).toEqual({
+      code: "provider_not_allowlisted",
+      message,
+      statusCode: 403,
+      isRetryable: false,
+      details,
+    });
+  });
+
   it("does not claim a mid-stream provider 5xx as MCPJam's", async () => {
     // `statusCode` in an error chunk is the UPSTREAM provider's, copied off
     // its error — not our backend's response status. Reading it with the
