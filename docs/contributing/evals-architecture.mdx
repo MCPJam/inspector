@@ -108,7 +108,7 @@ A canonicalize-time guard in the SDK rejects sandbox shapes that leak a `deny` k
 
 ## Result ingestion API (`eval-ingest`)
 
-External results enter through five `POST` endpoints, implemented as a thin proxy in `mcpjam-inspector/server/routes/v1/eval-ingest.ts` over the Convex `/v1/evals/ingest/*` surface:
+External results enter through these `POST` endpoints, implemented as a thin proxy in `mcpjam-inspector/server/routes/v1/eval-ingest.ts` over the Convex `/v1/evals/ingest/*` surface:
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -116,13 +116,14 @@ External results enter through five `POST` endpoints, implemented as a thin prox
 | `POST /api/v1/projects/:projectId/eval-ingest/runs/start` | Open a run for chunked upload |
 | `POST /api/v1/projects/:projectId/eval-ingest/runs/iterations` | Append a batch of iterations |
 | `POST /api/v1/projects/:projectId/eval-ingest/runs/finalize` | Close the run and compute the verdict |
-| `POST /api/v1/projects/:projectId/eval-ingest/artifacts/upload-url` | Mint an upload URL for large blobs (widget HTML snapshots) |
+| `POST /api/v1/projects/:projectId/eval-ingest/artifacts` | Store one large blob (widget HTML snapshot) sent as raw bytes; returns its `storageId` |
+| `POST /api/v1/projects/:projectId/eval-ingest/artifacts/upload-url` | Mint an upload URL for large blobs (older SDK releases) |
 
 Proxy behavior worth knowing when debugging:
 
 - The caller authenticates like any `/api/v1` route (typically an `sk_` API key); the proxy forwards to Convex with a **delegated org-scoped JWT**, not the caller's credential.
 - A literal `default` in the `:projectId` segment is stripped from the payload so the backend resolves the org's Default project; any other value overwrites `payload.projectId`.
-- The proxy caps request bodies at 6 MiB (the backend enforces its own 5 MiB limit) and times out after 60 s; status and body pass through verbatim.
+- The proxy caps JSON request bodies at 6 MiB (the backend enforces its own 5 MiB limit) and artifact bodies at 20 MiB, and times out after 60 s; status and body pass through verbatim. For `artifacts`, the project travels as a `?projectId=` query parameter because the body is the artifact itself.
 
 <Warning>
 The legacy `/sdk/v1/evals/*` endpoints and the project API keys (`mcpjam_…`) that protected them are **retired**. The backend answers those routes with `410 Gone`. Everything ingests through `eval-ingest` with `sk_…` keys — see [API keys](/reference/api-keys).
@@ -133,7 +134,7 @@ The legacy `/sdk/v1/evals/*` endpoints and the project API keys (`mcpjam_…`) t
 `sdk/src/report-eval-results.ts` implements the client side of ingestion (types in `sdk/src/eval-reporting-types.ts`; API reference in [Saving Eval Results](/sdk/reference/eval-reporting)):
 
 - **Auth** — `Authorization: Bearer <sk_ key>`, resolved from `input.apiKey ?? MCPJAM_API_KEY`. Base URL from `input.baseUrl ?? MCPJAM_BASE_URL` (default `https://app.mcpjam.com`); project from `input.project ?? MCPJAM_PROJECT_ID` (default `default`).
-- **Flow** — widget snapshots upload first (via `artifacts/upload-url`); then, if the run fits in one request (≤ 200 results and ≤ 1 MiB), a single `report` call; otherwise `runs/start` → chunked `runs/iterations` → `runs/finalize`.
+- **Flow** — a result whose widget HTML would push it past the 1 MiB request limit first uploads that HTML (via `artifacts`); then, if the run fits in one request (≤ 200 results and ≤ 1 MiB), a single `report` call; otherwise `runs/start` → chunked `runs/iterations` → `runs/finalize`.
 - **Retry** — 429/5xx, network errors, and timeouts retry with base delays of 250/750/1750 ms plus ±20% jitter. Billing-limit errors never retry. If `runs/start` reports the run already completed (idempotent reuse), the reporter short-circuits.
 
 ## Predicate gate

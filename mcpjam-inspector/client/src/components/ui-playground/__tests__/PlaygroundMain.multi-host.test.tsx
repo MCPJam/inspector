@@ -217,6 +217,16 @@ vi.mock("convex/react", () => ({
   useAction: () => () => Promise.resolve({ token: "test-token" }),
 }));
 
+// Client creation is project-admin only; default to an admin so the seed tests
+// exercise the seed itself. The member case opts out explicitly.
+const clientsRoleFixture = vi.hoisted(() => ({
+  value: { canManage: true, isLoading: false },
+}));
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
+  useCanManageProjectClients: () => clientsRoleFixture.value,
+}));
+
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
     serversByName: new Map(),
@@ -758,6 +768,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     environmentsFlag.value = false;
     environmentPreviewFixture.value = null;
     environmentPreviewLoading.value = false;
+    clientsRoleFixture.value = { canManage: true, isLoading: false };
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -771,6 +782,19 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("does not seed clients for a project member who can't create them", async () => {
+    clientsRoleFixture.value = { canManage: false, isLoading: false };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(mockCreateHost).not.toHaveBeenCalled();
   });

@@ -175,7 +175,17 @@ export const SIGNAL_DIMENSIONS = [
 
 export type SignalDimension = (typeof SIGNAL_DIMENSIONS)[number];
 
+export type QuestionSelection = {
+  questionId: string;
+  version: number;
+  value: boolean;
+  label?: string;
+};
+export type SelectionRef =
+  | Pick<ThemeRef, "dimension" | "clusterId">
+  | QuestionSelection;
 export type UsageFilterChip =
+  | ({ kind: "question" } & QuestionSelection)
   | {
       kind: "cluster";
       clusterId: string;
@@ -245,7 +255,7 @@ function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
   return false;
 }
 
-function threadFeedbackBucket(thread: SharedChatThread): string {
+export function threadFeedbackBucket(thread: SharedChatThread): string {
   const r = threadRating(thread);
   if (r == null) return "none";
   if (r >= 4) return "positive";
@@ -281,6 +291,8 @@ export function threadMatchesChip(
   thread: SharedChatThread,
   chip: UsageFilterChip,
 ): boolean {
+  // Question answers are resolved against current scope metadata on the server.
+  if (chip.kind === "question") return false;
   if (chip.kind === "cluster") {
     return threadThemeId(thread, chip.dimension ?? "goal") === chip.clusterId;
   }
@@ -354,6 +366,7 @@ export function threadMatchesChip(
 }
 
 function chipGroupKey(chip: UsageFilterChip): string {
+  if (chip.kind === "question") return `question:${chip.questionId}`;
   // Theme chips group PER AXIS. Chips OR within a group and AND across groups,
   // so lumping every theme into one group would turn a flow selection —
   // this goal AND this behavior — into "either", a strictly wider cohort than
@@ -410,6 +423,8 @@ export function toggleChip(
 }
 
 export function chipKey(chip: UsageFilterChip): string {
+  if (chip.kind === "question")
+    return `question:${chip.questionId}:${chip.version}:${chip.value}`;
   // The dimension is part of the identity: the same cluster id read against a
   // different axis is a different filter, and collapsing them would make
   // dedupe and identity-subtraction remove the wrong chip.
@@ -465,9 +480,11 @@ export type ThemeRef = {
  * independently before the whole value is handed to URLSearchParams.
  */
 export function serializeSelectionParam(
-  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[],
+  themes: readonly SelectionRef[],
 ): string {
-  return themes
+  if (themes.some((ref) => "questionId" in ref))
+    return `v2:${JSON.stringify(themes)}`;
+  return (themes as readonly Pick<ThemeRef, "dimension" | "clusterId">[])
     .map(
       ({ dimension, clusterId }) =>
         `${dimension}:${encodeURIComponent(clusterId)}`,
@@ -476,7 +493,32 @@ export function serializeSelectionParam(
 }
 
 /** Parse a serialized flow selection, rejecting malformed or unknown axes. */
-export function parseSelectionParam(value: string | null): ThemeRef[] | null {
+export function parseSelectionParam(
+  value: string | null,
+): SelectionRef[] | null {
+  if (value?.startsWith("v2:")) {
+    try {
+      const refs: unknown = JSON.parse(value.slice(3));
+      if (!Array.isArray(refs) || !refs.length) return null;
+      return refs.every(
+        (ref) =>
+          ref &&
+          typeof ref === "object" &&
+          ((typeof ref.questionId === "string" &&
+            ref.questionId.length > 0 &&
+            Number.isSafeInteger(ref.version) &&
+            ref.version > 0 &&
+            typeof ref.value === "boolean") ||
+            (SIGNAL_DIMENSIONS.includes(ref.dimension) &&
+              typeof ref.clusterId === "string" &&
+              ref.clusterId.length > 0)),
+      )
+        ? refs
+        : null;
+    } catch {
+      return null;
+    }
+  }
   if (!value) return null;
   const themes: ThemeRef[] = [];
   for (const part of value.split(",")) {
@@ -507,22 +549,29 @@ export function parseSelectionParam(value: string | null): ThemeRef[] | null {
  */
 export type InsightsSelection = {
   themes: ThemeRef[];
+  questions?: QuestionSelection[];
 };
 
 export function isEmptySelection(selection: InsightsSelection): boolean {
-  return selection.themes.length === 0;
+  return selection.themes.length === 0 && !selection.questions?.length;
 }
 
 /** The chips that express a selection. */
 export function selectionChips(
   selection: InsightsSelection,
 ): UsageFilterChip[] {
-  return selection.themes.map((theme) => ({
-    kind: "cluster" as const,
-    clusterId: theme.clusterId,
-    dimension: theme.dimension,
-    label: theme.label,
-  }));
+  return [
+    ...selection.themes.map((theme) => ({
+      kind: "cluster" as const,
+      clusterId: theme.clusterId,
+      dimension: theme.dimension,
+      label: theme.label,
+    })),
+    ...(selection.questions ?? []).map((question) => ({
+      ...question,
+      kind: "question" as const,
+    })),
+  ];
 }
 
 /**
