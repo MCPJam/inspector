@@ -50,6 +50,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { fetchJsonBlob } from "./blob-read.js";
+import { publicArtifactLink } from "./artifact-links.js";
 import { projectMessages } from "./chat-session-payloads.js";
 import { registerChatSessionTurnRoute } from "./chat-session-turn.js";
 
@@ -437,7 +438,11 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
       "chatSessions:getBrowserArtifacts" as never,
       { sessionId: session._id } as never,
     )) as { browserInteractionSteps?: Artifact[] };
-    artifacts = evidence?.browserInteractionSteps ?? [];
+    // Screenshot links only as signed `/web/artifact` links (MJ-005).
+    artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
+      ...step,
+      screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
+    }));
   }
   const turns = await Promise.all(
     selected.map(async (row) => {

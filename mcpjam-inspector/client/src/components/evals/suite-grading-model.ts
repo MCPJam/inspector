@@ -85,7 +85,7 @@ export type GraderRow = {
   /** Which match-options field a `match` row came from. */
   matchField?: "toolCallOrder" | "maxExtraToolCalls" | "argumentMatching";
   /** Which judge slot a `judge` row came from. */
-  judgeSlot?: "goalCompletion" | "groundedness";
+  judgeSlot?: "goalCompletion" | "groundedness" | "rubricChecks";
 };
 
 export type SuiteGradingModel = {
@@ -194,6 +194,11 @@ export function groupGradersByStage(input: {
   matchOptions?: EvalMatchOptions;
   predicates: Predicate[];
   judgeConfig?: EvalJudgeConfig;
+  /**
+   * True when this deployment grades rubric checks. Off by default, so a
+   * backend that predates the slot never shows a row it would not honor.
+   */
+  rubricChecks?: boolean;
 }): SuiteGradingModel {
   const byStage = emptyByStage();
 
@@ -249,18 +254,28 @@ export function groupGradersByStage(input: {
     severity: input.judgeConfig?.groundedness?.severity,
     judgeSlot: "groundedness",
   });
+  if (input.rubricChecks) {
+    // Always advisory: the slot has no other role to author.
+    byStage[GRADER_STAGE["judge:rubricChecks"]].push({
+      id: "judge:rubricChecks",
+      kind: "judge",
+      label: "Rubric checks",
+      role: "advisory",
+      judgeSlot: "rubricChecks",
+    });
+  }
 
   return { byStage };
 }
 
 /**
- * What an empty stage group says.
+ * What a stage with no authored evaluator says.
  *
- * THREE ANSWERS, and the distinction is the point. `connection`, `discovery`
- * and `call` have no authorable grader on this page at all — the runner
- * measures them on every trial whether or not anyone configured anything — so
- * "No evaluator" would read as a gap the reader should close. The other three
- * are genuinely unconfigured.
+ * TWO ANSWERS, and the distinction is the point. `connection`, `discovery`,
+ * `call` and `response` each carry a built-in runner check that reports the
+ * stage analysis on every iteration whether or not anyone configured anything,
+ * so "No evaluator" would read as a gap the reader should close. `selection`
+ * and `userValue` have no runner check and are genuinely unconfigured.
  *
  * Neither answer is `STAGE_STATE_LABELS.notMeasured`. That phrase describes a
  * RUN: a stage no trial reached, or one the analyzer could not decide. Settings
@@ -273,16 +288,17 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
   // and a reader debugging a failed connection was told to look nowhere. The
   // card now lists that configuration; this line says where it comes from.
   connection:
-    "Observed by the runner — decided by the client and server connection settings",
+    "Built-in runner check — decided by the client and server connection settings",
   discovery:
-    "Observed by the runner; add assertions to check the advertised catalog",
+    "Built-in runner check; add assertions to check the advertised catalog",
   selection: "No evaluator",
-  call: "Observed by the runner — nothing to configure",
-  response: "No evaluator",
+  call: "Built-in runner check; add assertions to check how the tools were called",
+  response:
+    "Built-in runner check; add assertions to check what the server returned",
   userValue: "No evaluator",
 };
 
-/** True when this stage's empty state is a gap rather than a runner concern. */
+/** True when this stage's empty state is a gap rather than a runner check. */
 export function stageEmptyIsGap(stage: UserValueStage): boolean {
   return STAGE_EMPTY_COPY[stage] === "No evaluator";
 }

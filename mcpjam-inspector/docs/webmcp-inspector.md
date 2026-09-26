@@ -207,7 +207,7 @@ Inspection and Playground now share the client frame path as well as the
 surface: the same `createFrameWireReader` decodes both, and the connection owns
 the bitmaps it hands out. The inspection adapter still owns its own socket
 lifecycle (open, retry, ping, latch); extracting that into a shared
-`useFrameStream` is tracked in [the unification plan](browser-viewer-unification-plan.md).
+`useFrameStream` is tracked in the browser viewer unification plan, which lives with MCPJam's other planning documents rather than in this repository.
 
 When the socket's four attempts are spent, the pane says so — "Live view is
 unavailable for this session. Use Screenshot to see the page." — rather than

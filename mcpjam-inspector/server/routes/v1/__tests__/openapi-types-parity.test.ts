@@ -133,10 +133,11 @@ const PAIRS: Readonly<Record<string, string>> = {
   SandboxImageBuildStarted: "PlatformImageBuildStarted",
   ComputerAttached: "PlatformComputerAttached",
   ComputerReset: "PlatformComputerReset",
-  ScenarioLink: "PlatformScenarioLink",
-  ScenarioServer: "PlatformScenarioServer",
-  Scenario: "PlatformScenario",
-  ScenarioDetail: "PlatformScenarioDetail",
+  StudyLink: "PlatformStudyLink",
+  StudyServer: "PlatformStudyServer",
+  StudySummary: "PlatformStudySummary",
+  Study: "PlatformStudy",
+  StudyDetail: "PlatformStudyDetail",
   TunnelGrant: "PlatformTunnelGrant",
   TunnelClosed: "PlatformTunnelClosed",
 
@@ -149,18 +150,18 @@ const PAIRS: Readonly<Record<string, string>> = {
   Persona: "PlatformPersona",
   PersonaDeleted: "PlatformPersonaDeleted",
   PersonaDraft: "PlatformPersonaDraft",
-  Journey: "PlatformJourney",
-  JourneyArchived: "PlatformJourneyArchived",
+  Goal: "PlatformGoal",
+  GoalArchived: "PlatformGoalArchived",
   Swarm: "PlatformSwarm",
   SwarmArchived: "PlatformSwarmArchived",
 
   // ── A2: Swarm runs ────────────────────────────────────────────────────
-  JourneyRun: "PlatformJourneyRun",
-  JourneyRunTarget: "PlatformJourneyRunTarget",
-  JourneyRunAttempt: "PlatformJourneyRunAttempt",
-  JourneyRunSession: "PlatformJourneyRunSession",
-  JourneyRunLaunched: "PlatformJourneyRunLaunched",
-  JourneyRunCanceled: "PlatformJourneyRunCanceled",
+  GoalRun: "PlatformGoalRun",
+  GoalRunTarget: "PlatformGoalRunTarget",
+  GoalRunAttempt: "PlatformGoalRunAttempt",
+  GoalRunSession: "PlatformGoalRunSession",
+  GoalRunLaunched: "PlatformGoalRunLaunched",
+  GoalRunCanceled: "PlatformGoalRunCanceled",
 
   // ── A3: Swarm insights ────────────────────────────────────────────────
   ScorecardCriterion: "PlatformScorecardCriterion",
@@ -170,21 +171,26 @@ const PAIRS: Readonly<Record<string, string>> = {
   SwarmOverviewFinding: "PlatformSwarmOverviewFinding",
   SwarmOverviewRun: "PlatformSwarmOverviewRun",
   SwarmOverview: "PlatformSwarmOverview",
-  WaveInsights: "PlatformWaveInsights",
-  WaveInsightsRequested: "PlatformWaveInsightsRequested",
-  WaveInsightsCanceled: "PlatformWaveInsightsCanceled",
+  SwarmRunInsights: "PlatformSwarmRunInsights",
+  SwarmRunInsightsRequested: "PlatformSwarmRunInsightsRequested",
+  SwarmRunInsightsCanceled: "PlatformSwarmRunInsightsCanceled",
 
   // ── A4: User testing ──────────────────────────────────────────────────
   //
-  // `ScenarioLinkRotated`, `ScenarioMemberRemoved` and the three request
-  // bodies have no SDK twin: the client returns those responses inline and
-  // takes the bodies as parameters, so there is no interface to compare.
-  Scenario: "PlatformScenario",
-  ScenarioDeleted: "PlatformScenarioDeleted",
-  UserTestingScenario: "PlatformUserTestingScenario",
-  UserTestingScenarioDetail: "PlatformUserTestingScenarioDetail",
-  UserTestingSession: "PlatformUserTestingSession",
-  UserTestingSessionDetail: "PlatformUserTestingSessionDetail",
+  // `StudyLinkRotated`, `StudyMemberRemoved`, `StudyMemberUpserted` and the
+  // three request bodies have no SDK twin: the client returns those responses
+  // inline and takes the bodies as parameters, so there is no interface to
+  // compare.
+  //
+  // The deprecated `PlatformScenario*` / `PlatformUserTesting*` interfaces are
+  // unpaired on purpose: their schemas are gone from the spec, because the
+  // routes that serve them are deliberately undocumented (see
+  // `openapi-drift.test.ts`). They are still exported, still executable, and
+  // pinned by the SDK's own tests.
+  StudyDeleted: "PlatformStudyDeleted",
+  StudyUpdated: "PlatformStudyUpdated",
+  StudySession: "PlatformStudySession",
+  StudySessionDetail: "PlatformStudySessionDetail",
   TranscriptMessage: "PlatformTranscriptMessage",
   GuestExecution: "PlatformGuestExecution",
 
@@ -204,7 +210,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   InsightsEnvelope: "PlatformInsightsEnvelope",
   ActionableFinding: "PlatformActionableFinding",
   ActionableFindingEvidence: "PlatformActionableFindingEvidence",
-  ScenarioInsightsRequested: "PlatformUserTestingInsightsRequested",
+  StudyInsightsRequested: "PlatformStudyInsightsRequested",
   EvalRunInsightsRequested: "PlatformEvalRunInsightsRequested",
   EvalRunJudgeRequested: "PlatformEvalRunJudgeRequested",
   EvalRunJudges: "PlatformEvalRunJudges",
