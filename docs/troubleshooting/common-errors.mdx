@@ -237,6 +237,20 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Proc
 
 The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
 
+### Desktop update button states
+
+The update button in the sidebar changes label to reflect what the app is doing:
+
+| Label | What it means |
+|---|---|
+| **Downloading…** | The update is being downloaded. No action needed. |
+| **Retrying download…** | A download error occurred; the app is waiting before trying again automatically. |
+| **Retry download** | Automatic retries were exhausted. Click to start a fresh download attempt. |
+| **Relaunch to retry** | The download timed out and cannot be cancelled in the current session. Click to relaunch and retry. |
+| **Relaunch to update** | The download finished successfully. Click to relaunch and install the update. |
+
+Failed downloads retry automatically twice (after 30 seconds and 2 minutes of active time) before surfacing a manual action. Sleep and offline time do not count toward the retry delays or the download deadline.
+
 ### Update button does nothing after a download completes
 
 If you click **Update** and nothing happens — or the app refuses to quit after a download finishes — this was a known bug fixed in 3.8.1. The app was continuing to check for updates even after a build was already staged, which caused the system to forget the staged build. After that, both the Update button and quitting were silently refused.
