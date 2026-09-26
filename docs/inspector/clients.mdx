@@ -10,7 +10,7 @@ icon: "user-cog"
   configuration object, not the sidebar label.
 </Note>
 
-A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Scenarios, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
+A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Studies, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
 
 Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly _before_ shipping to a specific host.
 
@@ -47,7 +47,7 @@ You can override the request timeout and headers **per server** from the project
 
 These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
 
-- **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Browser and WebMCP page tools follow the chat’s Tool Approval setting. With it off, agents can act in signed-in websites without a per-call prompt. Browser device permission is a separate prerequisite for local browsing and inspection. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits.
+- **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Browser and WebMCP page tools follow the chat’s Tool Approval setting. With it off, agents can act in signed-in websites without a per-call prompt. Browser device permission is a separate prerequisite for local browsing and inspection. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits. For [workspace tools](/inspector/playground#workspace-tools), the saved value is what counts: the reads that open a connection to one of your servers pause unless it is saved off, and the tools that change something in your project always pause.
 - **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
 - **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. Browser is not listed here — it is configured in the **Browser** tab. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
@@ -115,6 +115,11 @@ The Apps Extension tab contains two independent capability matrices that never c
 
 ## Creating a Client
 
+<Note>
+  Only project admins can create clients. Members and guests see the create
+  button disabled with the message "Only project admins can create clients."
+</Note>
+
 1. Open the **Clients** tab in the inspector.
 2. Click **New Client**.
 3. Give it a name (e.g. `Claude Desktop`, `ChatGPT`, `Strict CSP`).
@@ -136,17 +141,17 @@ The Connect section has a **client selector** in the top-left of each view's hea
 
 - **Servers view** — Shows a switcher pill only. The switcher displays the active client's logo, name, and its position in the list (e.g. `2 / 3`). Click to open a dropdown listing all clients; select one to switch the active client without navigating away. A delete button appears on hover for each client (disabled on the last remaining client).
 - **Client view** — Shows the full selector with two controls:
-  - **Add client** pill — opens the Create client dialog. Quick-add buttons for Claude, ChatGPT, and Copilot appear alongside it so you can spin up a template client without filling in the form.
-  - **Switcher pill** — same as the Servers view switcher, but switching also updates the canvas URL.
+  - **Add client** pill — opens the Create client dialog directly.
+  - **Switcher pill** — same as the Servers view switcher, but switching also updates the canvas URL. The switcher menu also includes an **Add clients** item that opens the same Create client dialog.
 
 ## Using a Client
 
 Once saved, a Client shows up in the picker at the top of every consumer:
 
 - **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
-- **Scenarios** — Same as Chat, but persisted as a saved scenario configuration.
+- **Studies** — Same as Chat, but persisted as a saved study configuration.
 - **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
-- **Swarms** — Journeys in the Swarms surface can target any project client, including standalone ones.
+- **Swarms** — Goals in the Swarms surface can target any project client, including standalone ones.
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
 
@@ -154,7 +159,7 @@ Switching the active Client in any of these views swaps the entire configuration
 
 Some clients are **standalone** — they are owned by the Swarms surface and have no Scenario or publish surface. If you select a standalone client in the Scenarios tab, the tab shows a **"Managed by Swarms"** notice instead of a scenario. The client picker stays visible so you can switch to a publishable client.
 
-Standalone clients do not appear as options in the Scenarios client picker dropdown. If you need a client for both Scenarios and Swarms journeys, create a regular client from the Connect tab instead of from Swarms → Clients.
+Standalone clients do not appear as options in the Studies client picker dropdown. If you need a client for both Studies and Swarms goals, create a regular client from the Connect tab instead of from Swarms → Clients.
 
 ## Server attachments
 
@@ -174,11 +179,11 @@ When you create an eval suite, you can pick a server attachment in the **Servers
 3. Enter a name (e.g. `Production servers`) and check the servers to include.
 4. Click **Create**. The new attachment is selected immediately.
 
-### Scenarios
+### Studies
 
-The **Servers** section on the scenario Publish tab shows which project servers the scenario connects to. Click **Edit servers** to open the attachment editor and update the selection.
+The **Servers** section on the study Publish tab shows which project servers the study connects to. Click **Edit servers** to open the attachment editor and update the selection.
 
-- If no servers are picked, the scenario displays an amber warning. Chat sessions started from that scenario will have no tools until at least one server is selected.
+- If no servers are picked, the study displays an amber warning. Chat sessions started from that study will have no tools until at least one server is selected.
 - The server pick is sticky — editing the client's model or system prompt does not change it.
 
 ## Managing Clients
@@ -186,7 +191,7 @@ The **Servers** section on the scenario Publish tab shows which project servers 
 From the Clients index page:
 
 - **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
-- **Delete** — Removes the Client. The inspector blocks deletion if any scenario or eval still depends on it; resolve those first, or use force delete if you're sure.
+- **Delete** — Removes the Client. The delete button is greyed out when a client is the last one in the project ("You need at least one client.") or when a test suite still references it ("In use by a test suite."). Detach the client from any eval suites that use it before deleting.
 
 ### Keeping clients up to date
 

@@ -296,6 +296,9 @@ export function checkEvalHarnessStaticAdmission(args: {
     // permissive than a valid one.
     xaaEnterprisePolicyOn:
       readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off",
+    // Evals refuse an unverified harness × model pair ("not verified for
+    // <harness> <version>") rather than run it.
+    purpose: "eval",
   });
   if (!availability.ok) {
     // With no host-pinned model, a model-eligibility refusal is about the
@@ -389,6 +392,7 @@ export function checkEvalHarnessAdmission(args: {
         // more answer that than a request body can.
         ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
+        purpose: "eval",
       });
       verdict = availability.ok
         ? undefined
@@ -614,7 +618,11 @@ export function executionEngineLabel(
  * which runs are admitted.
  */
 function isModelKind(kind: HarnessUnavailableKind): boolean {
-  return kind === "model-not-hosted" || kind === "model-unsupported";
+  return (
+    kind === "model-not-hosted" ||
+    kind === "model-unsupported" ||
+    kind === "model-unverified"
+  );
 }
 
 /**
