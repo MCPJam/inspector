@@ -60,6 +60,7 @@ import {
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 import {
+  ensureLocalEnvironmentServers,
   planEnvironmentSuiteCaseRun,
   resolveQuickRunEnvironments,
 } from "./environment-quick-run";
@@ -1340,6 +1341,27 @@ export function useEvalHandlers({
             projectId: projectId!,
             plans: environmentRun.plans,
           });
+          // The local run route executes on this inspector's connection pool
+          // and connects nothing itself, so connect the environments' servers
+          // first, as a legacy quick run does. Hosted routes connect them.
+          if (!isHostedMode() && ensureServersReady != null) {
+            const blocked = await ensureLocalEnvironmentServers({
+              convex,
+              projectId: projectId!,
+              environmentIds: environmentIds.values(),
+              ensureServersReady,
+            });
+            if (blocked) {
+              toast.error(
+                formatEnsureServersReadyError(
+                  blocked,
+                  "run this test case",
+                  projectServers,
+                ),
+              );
+              return null;
+            }
+          }
           preparedResults = await Promise.allSettled(
             environmentRun.targets.map((target) =>
               prepareEnvironmentTestCaseRun({

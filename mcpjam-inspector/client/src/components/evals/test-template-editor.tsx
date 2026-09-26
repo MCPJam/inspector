@@ -111,10 +111,12 @@ import {
 import {
   attachedSuiteEnvironments,
   defaultQuickRunServerGroup,
+  ensureLocalEnvironmentServers,
   planQuickRunTargets,
   quickRunClientIds,
   resolveQuickRunEnvironments,
 } from "./environment-quick-run";
+import { isHostedMode } from "@/lib/apis/mode-client";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import {
@@ -3134,6 +3136,27 @@ export function TestTemplateEditor({
             : "Couldn't prepare this suite's environments.",
         );
         return;
+      }
+      // The local run route executes on this inspector's connection pool and
+      // connects nothing itself, so connect the environments' servers first,
+      // as a legacy quick run does above. Hosted routes connect them.
+      if (!isHostedMode() && ensureServersReady != null) {
+        const blocked = await ensureLocalEnvironmentServers({
+          convex,
+          projectId,
+          environmentIds: environmentIds.values(),
+          ensureServersReady,
+        });
+        if (blocked) {
+          toast.error(
+            formatEnsureServersReadyError(
+              blocked,
+              "run this test case",
+              projectServers,
+            ),
+          );
+          return;
+        }
       }
     }
 

@@ -19,6 +19,7 @@
  * Every target is resolved before any of them runs; the quick-run request then
  * names the environment and nothing it owns.
  */
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   chooseTemplate,
@@ -289,6 +290,73 @@ export async function resolveQuickRunEnvironments(
     });
   }
   return resolved;
+}
+
+type ResolvedLaunchServers = {
+  servers?: Array<{ serverId: string; name?: string }>;
+  effectiveServerIds?: string[];
+  selectedServerIds?: string[];
+} | null;
+
+/**
+ * LOCAL (self-hosted) inspector only: connect every server the resolved
+ * environments run before a quick run of them.
+ *
+ * The hosted single-case routes build an authorized per-request manager from
+ * the environment itself. The local `/api/mcp` routes run on the shared
+ * connection pool, which they look servers up in by name and never connect
+ * into — so an environment server the user had not connected by hand made the
+ * run fail as "not connected". This is the same pre-run connect a legacy
+ * suite's quick run does, fed from the environment's eval resolution (the
+ * query the run route itself asserts against) instead of the suite's legacy
+ * server list.
+ *
+ * Returns the readiness that blocks the run, or null when it may go ahead.
+ * Deliberately NOT blockers, because the run route answers them precisely:
+ *  - an environment that fails to resolve here (the route resolves it again
+ *    and reports the exact ENV_* refusal);
+ *  - a server the local pool does not know. The resolution already dropped
+ *    deleted servers, so an unknown one is a plugin-contributed server the
+ *    local pool cannot hold, and "no longer in this project" would be false.
+ */
+export async function ensureLocalEnvironmentServers(args: {
+  convex: ConvexLike;
+  projectId: string;
+  environmentIds: Iterable<string>;
+  ensureServersReady: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
+}): Promise<EnsureServersReadyResult | null> {
+  const resolutions = await Promise.all(
+    [...new Set(args.environmentIds)].map(
+      (environmentId) =>
+        args.convex
+          .query("projectEnvironments:resolveEnvironmentForLaunch" as any, {
+            projectId: args.projectId,
+            environmentId,
+            // The rule the run route resolves with: the environment's server
+            // group and plugin pins, never its client's own servers.
+            serverSource: "environment_only",
+          })
+          .catch(() => null) as Promise<ResolvedLaunchServers>,
+    ),
+  );
+  const serverRefs = new Set<string>();
+  for (const resolved of resolutions) {
+    if (!resolved) continue;
+    // The pool keys servers by display name, which is the ref the run route
+    // falls back to; ids are for a backend that returns no names.
+    const refs = Array.isArray(resolved.servers)
+      ? resolved.servers.map((server) => server.name?.trim() || server.serverId)
+      : (resolved.effectiveServerIds ?? resolved.selectedServerIds ?? []);
+    for (const ref of refs) if (ref) serverRefs.add(ref);
+  }
+  if (serverRefs.size === 0) return null;
+  const readiness = await args.ensureServersReady([...serverRefs]);
+  return readiness.failedServerNames.length > 0 ||
+    readiness.reauthServerNames.length > 0
+    ? { ...readiness, missingServerNames: [] }
+    : null;
 }
 
 /**

@@ -1418,16 +1418,49 @@ describe("useEvalHandlers", () => {
       function mockEnvironmentBackend(
         caps = { environmentQuickRuns: true, environmentDerivation: true },
       ) {
-        mockConvexQuery.mockImplementation(async (name: string) => {
-          if (name === "projectEnvironments:listEnvironments") {
-            return environments;
-          }
-          if (name === "hosts:listHosts") {
-            return [{ hostId: "host-1", modelId: "openai/gpt-5-mini" }];
-          }
-          if (name === "projectEnvironments:getCapabilities") return caps;
-          return null;
-        });
+        mockConvexQuery.mockImplementation(
+          async (name: string, args: { environmentId?: string } = {}) => {
+            if (name === "projectEnvironments:listEnvironments") {
+              return environments;
+            }
+            if (name === "hosts:listHosts") {
+              return [{ hostId: "host-1", modelId: "openai/gpt-5-mini" }];
+            }
+            if (name === "projectEnvironments:getCapabilities") return caps;
+            if (name === "projectEnvironments:resolveEnvironmentForLaunch") {
+              return launchServers[args.environmentId ?? ""] ?? null;
+            }
+            return null;
+          },
+        );
+      }
+
+      // What each environment's eval resolution connects.
+      const launchServers: Record<string, unknown> = {
+        "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+        "env-b": {
+          servers: [
+            { serverId: "srv-1", name: "billing" },
+            { serverId: "srv-2", name: "crm" },
+          ],
+        },
+      };
+
+      function readiness(
+        overrides: Partial<{
+          readyServerNames: string[];
+          missingServerNames: string[];
+          failedServerNames: string[];
+          reauthServerNames: string[];
+        }> = {},
+      ) {
+        return {
+          readyServerNames: [],
+          missingServerNames: [],
+          failedServerNames: [],
+          reauthServerNames: [],
+          ...overrides,
+        };
       }
 
       function sentBodies() {
@@ -1441,7 +1474,11 @@ describe("useEvalHandlers", () => {
         mockAuthFetch.mockResolvedValue(
           createFetchResponse({ success: true, iteration: { _id: "iter" } }),
         );
-        const ensureServersReady = vi.fn();
+        const ensureServersReady = vi
+          .fn()
+          .mockResolvedValue(
+            readiness({ readyServerNames: ["billing", "crm"] }),
+          );
         const { result } = renderHook(() =>
           useEvalHandlers({
             ...defaultProps,
@@ -1452,7 +1489,21 @@ describe("useEvalHandlers", () => {
         await act(async () => {
           await result.current.handleRunTestCase(envSuite, envCase);
         });
-        expect(ensureServersReady).not.toHaveBeenCalled();
+        // Local mode: the environments' servers (never the suite's legacy
+        // list) are connected once, before anything runs.
+        expect(ensureServersReady).toHaveBeenCalledOnce();
+        expect(ensureServersReady).toHaveBeenCalledWith(["billing", "crm"]);
+        expect(mockConvexQuery).toHaveBeenCalledWith(
+          "projectEnvironments:resolveEnvironmentForLaunch",
+          {
+            projectId: "project-1",
+            environmentId: "env-a",
+            serverSource: "environment_only",
+          },
+        );
+        expect(ensureServersReady.mock.invocationCallOrder[0]!).toBeLessThan(
+          mockAuthFetch.mock.invocationCallOrder[0]!,
+        );
         const bodies = sentBodies();
         expect(bodies.map((body) => body.environmentId).sort()).toEqual([
           "env-a",
@@ -1538,6 +1589,76 @@ describe("useEvalHandlers", () => {
             /can't run a single case of an environment suite/,
           ),
         );
+      });
+
+      it("runs nothing locally when an environment server fails to connect", async () => {
+        mockEnvironmentBackend();
+        const ensureServersReady = vi.fn().mockResolvedValue(
+          readiness({
+            readyServerNames: ["billing"],
+            failedServerNames: ["crm"],
+          }),
+        );
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        let runResult: unknown;
+        await act(async () => {
+          runResult = await result.current.handleRunTestCase(envSuite, envCase);
+        });
+        expect(runResult).toBeNull();
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith(
+          "We couldn't connect to crm. Try again to run this test case.",
+        );
+      });
+
+      it("leaves a server the local pool does not know to the run route", async () => {
+        mockEnvironmentBackend();
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, iteration: { _id: "iter" } }),
+        );
+        // A plugin-contributed server is not in the browser's catalog; saying
+        // it is "no longer in this project" would be false.
+        const ensureServersReady = vi.fn().mockResolvedValue(
+          readiness({
+            readyServerNames: ["billing"],
+            missingServerNames: ["crm"],
+          }),
+        );
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRunTestCase(envSuite, envCase);
+        });
+        expect(ensureServersReady).toHaveBeenCalledOnce();
+        expect(sentBodies()).toHaveLength(2);
+      });
+
+      it("connects nothing in the browser in hosted mode", async () => {
+        mockIsHostedMode.mockReturnValue(true);
+        setApiContext({ projectId: "project-1", isAuthenticated: true });
+        mockEnvironmentBackend();
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, iteration: { _id: "iter" } }),
+        );
+        const ensureServersReady = vi.fn();
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRunTestCase(envSuite, envCase);
+        });
+        expect(ensureServersReady).not.toHaveBeenCalled();
+        expect(mockConvexQuery).not.toHaveBeenCalledWith(
+          "projectEnvironments:resolveEnvironmentForLaunch",
+          expect.anything(),
+        );
+        expect(mockAuthFetch.mock.calls.map((call) => call[0])).toEqual([
+          "/api/web/evals/run-test-case",
+          "/api/web/evals/run-test-case",
+        ]);
       });
     });
 

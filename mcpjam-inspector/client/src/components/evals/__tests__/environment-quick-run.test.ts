@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   attachedSuiteEnvironments,
   defaultQuickRunModelIds,
   defaultQuickRunServerGroup,
+  ensureLocalEnvironmentServers,
   planQuickRunTargets,
   quickRunClientIds,
   resolveQuickRunEnvironments,
@@ -237,5 +239,102 @@ describe("resolveQuickRunEnvironments", () => {
       resolveQuickRunEnvironments(convex, { projectId: "p", plans: [derive] }),
     ).rejects.toThrow(/can't copy an environment/);
     expect(convex.mutation).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureLocalEnvironmentServers", () => {
+  const ready: EnsureServersReadyResult = {
+    readyServerNames: [],
+    missingServerNames: [],
+    failedServerNames: [],
+    reauthServerNames: [],
+  };
+
+  function convexResolving(byEnvironment: Record<string, unknown>) {
+    return {
+      query: vi.fn(async (_name: string, args: { environmentId: string }) => {
+        const resolved = byEnvironment[args.environmentId];
+        if (resolved instanceof Error) throw resolved;
+        return resolved ?? null;
+      }),
+      mutation: vi.fn(),
+    };
+  }
+
+  it("connects each environment's servers once, by name, ids for a backend without names", async () => {
+    const convex = convexResolving({
+      "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+      "env-b": {
+        servers: [
+          { serverId: "srv-1", name: "billing" },
+          { serverId: "srv-2", name: "" },
+        ],
+      },
+      "env-c": { effectiveServerIds: ["srv-3"], selectedServerIds: [] },
+      // Refused here, reported precisely by the run route: not a blocker.
+      "env-d": new Error("ENV_NO_SERVERS"),
+    });
+    const ensureServersReady = vi.fn(async () => ready);
+    await expect(
+      ensureLocalEnvironmentServers({
+        convex,
+        projectId: "p",
+        environmentIds: ["env-a", "env-b", "env-a", "env-c", "env-d"],
+        ensureServersReady,
+      }),
+    ).resolves.toBeNull();
+    expect(convex.query).toHaveBeenCalledTimes(4);
+    expect(convex.query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      {
+        projectId: "p",
+        environmentId: "env-a",
+        serverSource: "environment_only",
+      },
+    );
+    expect(ensureServersReady).toHaveBeenCalledWith([
+      "billing",
+      "srv-2",
+      "srv-3",
+    ]);
+  });
+
+  it("blocks on a failed or unauthorized server, not on one the pool does not know", async () => {
+    const convex = convexResolving({
+      "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+    });
+    const run = (readiness: EnsureServersReadyResult) =>
+      ensureLocalEnvironmentServers({
+        convex,
+        projectId: "p",
+        environmentIds: ["env-a"],
+        ensureServersReady: async () => readiness,
+      });
+    await expect(
+      run({ ...ready, missingServerNames: ["billing"] }),
+    ).resolves.toBeNull();
+    await expect(
+      run({
+        ...ready,
+        missingServerNames: ["plugin"],
+        reauthServerNames: ["billing"],
+      }),
+    ).resolves.toMatchObject({
+      missingServerNames: [],
+      reauthServerNames: ["billing"],
+    });
+  });
+
+  it("connects nothing when no environment names a server", async () => {
+    const ensureServersReady = vi.fn(async () => ready);
+    await expect(
+      ensureLocalEnvironmentServers({
+        convex: convexResolving({}),
+        projectId: "p",
+        environmentIds: ["env-a"],
+        ensureServersReady,
+      }),
+    ).resolves.toBeNull();
+    expect(ensureServersReady).not.toHaveBeenCalled();
   });
 });
