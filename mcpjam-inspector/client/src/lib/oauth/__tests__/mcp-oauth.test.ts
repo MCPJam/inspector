@@ -3018,6 +3018,26 @@ describe("mcp-oauth", () => {
       expect(authFetch).toHaveBeenCalledTimes(2);
     });
 
+    it("rechecks identity immediately before token import", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import("@/lib/apis/hosted-oauth-import-tokens-api");
+      const importSpy = vi.spyOn(importApi, "importHostedOAuthTokens");
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client",
+        undefined,
+        { projectId: "proj_xyz", serverId: "srv_abc", kind: "generic" },
+        () => {
+          throw new Error("identity changed");
+        },
+      );
+      await expect(
+        provider.saveTokens({ access_token: "issued", token_type: "Bearer" }),
+      ).rejects.toThrow("identity changed");
+      expect(importSpy).not.toHaveBeenCalled();
+    });
     it("fails loudly instead of storing OAuth tokens in localStorage without a binding", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
       const importApi = await import(

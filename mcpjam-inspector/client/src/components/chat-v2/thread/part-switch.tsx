@@ -1,4 +1,5 @@
 import { WidgetPlaceholder } from "@mcpjam/chat-ui";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
@@ -63,7 +64,8 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
+import { readMcpToolOriginServerId,
+  readMcpToolConnectionId } from "@/shared/mcp-tool-origin-metadata";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
@@ -98,7 +100,7 @@ function FrozenWidgetScreenshot({
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
-      <img
+      <ArtifactImage
         src={url}
         alt={`${toolName} recorded render`}
         className="w-full rounded-md border border-border/60 bg-background"
@@ -343,6 +345,13 @@ export function PartSwitch({
       readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerOptions);
+    // Which credential produced this result, when the server had more than one
+    // live. Rerun resolves a server, not a connection, so a call made on a
+    // specific account cannot be replayed faithfully yet.
+    const attributedConnectionId =
+      readMcpToolConnectionId((toolPart as any).callProviderMetadata) ??
+      readMcpToolConnectionId((toolPart as any).providerMetadata) ??
+      readMcpToolConnectionId((toolPart as any).providerOptions);
     const serverId =
       renderOverride?.serverId ??
       providerMetadataServerId ??
@@ -430,9 +439,12 @@ export function PartSwitch({
       isServerConnected &&
       !isRunning &&
       !inputInvalid &&
-      !inputEditedToNonObject;
+      !inputEditedToNonObject &&
+      !attributedConnectionId;
     const runDisabledReason = !isServerConnected
       ? "Connect the server to run"
+      : attributedConnectionId
+      ? "This call ran on a specific account; rerun would use the server's default account"
       : inputInvalid
       ? "Fix the invalid input JSON to run"
       : inputEditedToNonObject

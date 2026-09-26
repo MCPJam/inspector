@@ -93,7 +93,7 @@ export function ScenarioShareSection({
             value: "invited_only",
             label: "Invited users only",
             description:
-              "Only people you invite by email can open this scenario.",
+              "Only people you invite by email can open this study.",
           },
           {
             value: "link_guests",
@@ -101,8 +101,8 @@ export function ScenarioShareSection({
               ? "Anyone with the link who is signed in"
               : "Anyone with the link (guests included)",
             description: settings.requiresSignIn
-              ? "Testers must sign in or create an account to preview and test this scenario."
-              : "Anyone with the link can open the scenario, including guests without an account.",
+              ? "Testers must sign in or create an account to preview and test this study."
+              : "Anyone with the link can open the study, including guests without an account.",
           },
           {
             value: "project",
@@ -113,7 +113,7 @@ export function ScenarioShareSection({
             // "Project"; the prop went with it.
             label: "Team members",
             description:
-              "Signed-in team members can open the scenario with the link. Guests cannot.",
+              "Signed-in team members can open the study with the link. Guests cannot.",
           },
         ],
         settings.maxShareMode,
@@ -146,15 +146,15 @@ export function ScenarioShareSection({
         accessPreset === "link_guests" ? (
           <p className="text-xs leading-relaxed text-muted-foreground">
             {settings.requiresSignIn
-              ? "Testers must sign in or create an account to preview and test this scenario."
+              ? "Testers must sign in or create an account to preview and test this study."
               : "Guest usage runs on your organization's credits. Guests are people who open the link without being invited."}
           </p>
         ) : null
       }
       copy={{
         linkLabel: "Tester link",
-        signedOutMessage: "Sign in to manage scenario access.",
-        withheldLabel: "Withheld — this scenario can't run.",
+        signedOutMessage: "Sign in to manage study access.",
+        withheldLabel: "Withheld: this study can't run.",
         rotateConfirmTitle: "Rotate this tester link?",
         rotateConfirmBody:
           "Anyone with the old URL will no longer be able to redeem it. Testers who already opened the link keep their access until you remove them.",

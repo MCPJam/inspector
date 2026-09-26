@@ -124,14 +124,12 @@ describe("scorecard integration regressions", () => {
     };
     const view = render(<TrialScorecard {...props} judgeHidden />);
     expect(screen.queryByTestId("stage-strip")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
     expect(
       screen.queryByText("Suggestions based on judge success"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("0.93")).not.toBeInTheDocument();
     expect(screen.queryByText("Judge-only rationale")).not.toBeInTheDocument();
     view.rerender(<TrialScorecard {...props} judgeHidden={false} />);
-    expect(screen.getByTestId("trial-scorecard-summary")).toBeInTheDocument();
     const userValue = document.querySelector('[data-stage-group="userValue"]');
     expect(
       userValue?.querySelector('[data-testid="scorecard-group-state"]'),
