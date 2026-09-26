@@ -12,6 +12,7 @@ describe("session-refresh-store", () => {
       status: "idle",
       kind: null,
       retryNonce: 0,
+      queriesPaused: false,
     });
   });
 
@@ -36,6 +37,19 @@ describe("session-refresh-store", () => {
 
     expect(useSessionRefreshStore.getState().status).toBe("idle");
     expect(useSessionRefreshStore.getState().kind).toBeNull();
+  });
+
+  it("keeps reads paused through retry and token retrieval until readiness confirms auth", () => {
+    const store = useSessionRefreshStore.getState();
+    store.pauseQueries();
+    store.notifyFailure("transient");
+    store.retry();
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+    store.clear();
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+    store.resumeQueries();
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
   });
 
   it("never downgrades a dead session into a retryable one", () => {

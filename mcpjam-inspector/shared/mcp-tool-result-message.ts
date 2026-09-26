@@ -22,7 +22,11 @@
  * message SHAPE around it.
  */
 import type { ToolResultPart } from "ai";
-import { mergeMcpToolOriginMetadata } from "./mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  type McpConnectionAttribution,
+} from "./mcp-tool-origin-metadata";
 
 /** The `role: "tool"` message shape both engines persist. */
 export type McpToolResultMessage = {
@@ -35,6 +39,7 @@ export type McpToolResultMessageInput = {
   toolName: string;
   /** Resolved target server, as the bridge routed it. Drives widget resolution. */
   serverId?: string;
+  connection?: McpConnectionAttribution;
   /** Model-visible output, already projected by the caller. */
   output: ToolResultPart;
   /**
@@ -80,9 +85,9 @@ export function buildMcpToolResultMessage(
         serverId: input.serverId,
         ...(input.serverId
           ? {
-              providerOptions: mergeMcpToolOriginMetadata(
-                undefined,
-                input.serverId,
+              providerOptions: mergeMcpToolConnectionMetadata(
+                mergeMcpToolOriginMetadata(undefined, input.serverId),
+                input.connection,
               ),
             }
           : {}),

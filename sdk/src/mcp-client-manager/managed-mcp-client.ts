@@ -53,6 +53,7 @@ import type {
  * the legacy adapter a pure pass-through.
  */
 export interface ManagedMcpClientConnectOptions {
+  signal?: AbortSignal;
   timeout?: number;
   resumptionToken?: string;
   onresumptiontoken?: (token: string) => void;

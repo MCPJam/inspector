@@ -16,7 +16,8 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type { RunMetricsByRun } from "../evals/run-metrics";
+import type { EvalSuiteRun } from "../evals/types";
 import { RunContextChip } from "../evals/run-context-chip";
 import {
   RunCommitCell,
@@ -261,7 +262,7 @@ function LaneSection({
 export function RunComparisonPage({
   currentRun,
   runs,
-  iterations,
+  metricsByRun,
   suiteName,
   hostNamesById,
   passThreshold,
@@ -270,7 +271,8 @@ export function RunComparisonPage({
 }: {
   currentRun: EvalSuiteRun;
   runs: readonly EvalSuiteRun[];
-  iterations: readonly EvalIteration[];
+  /** One metrics object per run — see `evals/run-metrics.ts`. */
+  metricsByRun: RunMetricsByRun;
   suiteName: string;
   hostNamesById: Map<string, string | null>;
   /** The suite's pass bar as a FRACTION — see `resolveSuitePassThreshold`. */
@@ -283,11 +285,11 @@ export function RunComparisonPage({
       buildRunCompareLanes({
         currentRun,
         runs,
-        iterations,
+        metricsByRun,
         hostNamesById,
         passThreshold,
       }),
-    [currentRun, runs, iterations, hostNamesById, passThreshold],
+    [currentRun, runs, metricsByRun, hostNamesById, passThreshold],
   );
 
   return (

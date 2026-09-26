@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   startHarnessModelBroker,
+  startLoopbackModelBroker,
   revokeHarnessModelBroker,
   reserveHarnessBox,
   renewHarnessBoxReservation,
 } from "../harness-model-broker";
 import { buildBrokerDummyAuth } from "../registry";
+import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 
 // Inspector → Convex client for the E2B header-broker (start/revoke) + the dummy
 // auth pointed at the proxy. The REAL lease is never handled by the inspector.
@@ -97,6 +99,7 @@ describe("startHarnessModelBroker", () => {
       projectId: "p1",
       computerId: "c1",
       harnessId: "claude-code",
+      harnessRuntimeVersion: HARNESS_PINNED_VERSIONS["claude-code"],
       modelId: "anthropic/claude-haiku-4.5",
     });
     expect(result.ok).toBe(true);
@@ -172,6 +175,7 @@ describe("startHarnessModelBroker", () => {
     expect(seenBody).toEqual({
       sandboxRowId: "sbxrow_1",
       harnessId: "claude-code",
+      harnessRuntimeVersion: HARNESS_PINNED_VERSIONS["claude-code"],
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_e",
     });
@@ -179,6 +183,31 @@ describe("startHarnessModelBroker", () => {
     expect(result.ok).toBe(true);
     // Still no credential in the response, same as the computer path.
     expect(JSON.stringify(result)).not.toMatch(/lease|jti|apiKey/i);
+  });
+
+  it("names the pinned harness runtime version the lease is for", async () => {
+    // The backend's lease rule reads the same version-keyed evidence table as
+    // the inspector's pre-flight, so it has to know which CLI version runs.
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        runId: "run_c",
+        expiresAt: 1,
+        protocol: "openai",
+        proxyBaseUrl: "https://proxy/openai",
+        delivery: "e2b-network-transform",
+      });
+    });
+    await startHarnessModelBroker({
+      box: { kind: "sandbox", sandboxRowId: "sbxrow_1" },
+      harnessId: "codex",
+      modelId: "openai/gpt-5.5",
+      bearer: "t",
+    });
+    expect(seenBody.harnessRuntimeVersion).toBe("0.149.1");
+    expect(seenBody.harnessRuntimeVersion).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 
   it("fails closed on a non-2xx response", async () => {
@@ -203,6 +232,28 @@ describe("startHarnessModelBroker", () => {
       bearer: "t",
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("startLoopbackModelBroker", () => {
+  it("names the pinned harness runtime version on a loopback start", async () => {
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({ ok: false }, { status: 503 });
+    });
+    await startLoopbackModelBroker({
+      projectId: "p1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-sonnet-4.5",
+      machineId: "m1",
+      keyId: "k1",
+      bearer: "t",
+    });
+    expect(seenBody.delivery).toBe("inspector-loopback-gateway");
+    expect(seenBody.harnessRuntimeVersion).toBe(
+      HARNESS_PINNED_VERSIONS["claude-code"]
+    );
   });
 });
 
@@ -252,6 +303,30 @@ describe("harness box reservation", () => {
       status: 404,
       error: "Couldn't reserve the computer (404)",
     });
+  });
+
+  it("reserve names the pinned runtime version; an unpinned harness sends none", async () => {
+    const bodies: any[] = [];
+    mockFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true, expiresAt: 5 });
+    });
+    await reserveHarnessBox({
+      box,
+      harnessId: "codex",
+      modelId: "openai/gpt-5.5",
+      runId: "run_1",
+      bearer: "t",
+    });
+    await reserveHarnessBox({
+      box,
+      harnessId: "cursor",
+      modelId: "cursor/auto",
+      runId: "run_2",
+      bearer: "t",
+    });
+    expect(bodies[0].harnessRuntimeVersion).toBe(HARNESS_PINNED_VERSIONS.codex);
+    expect("harnessRuntimeVersion" in bodies[1]).toBe(false);
   });
 
   it("renews the same box claim and returns the new expiry", async () => {
