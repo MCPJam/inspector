@@ -137,7 +137,7 @@ describe("applyFreeTierLocks", () => {
     expect(applyFreeTierLocks(models, false)).toBe(models);
   });
 
-  it("locks only hosted rows the catalog marks ineligible, with the upgrade/credits/BYOK copy", () => {
+  it("locks only hosted rows the catalog marks ineligible, with the sign-in copy", () => {
     const [pricey, cheap, legacy, byok] = applyFreeTierLocks(
       [PRICEY, CHEAP, LEGACY, { ...BYOK, freeTierEligible: false }],
       true,
@@ -146,9 +146,7 @@ describe("applyFreeTierLocks", () => {
       disabled: true,
       disabledReason: FREE_TIER_MODEL_REASON,
     });
-    expect(FREE_TIER_MODEL_REASON).toMatch(/upgrade/i);
-    expect(FREE_TIER_MODEL_REASON).toMatch(/credits/i);
-    expect(FREE_TIER_MODEL_REASON).toMatch(/own API key/i);
+    expect(FREE_TIER_MODEL_REASON).toMatch(/sign in/i);
     expect(cheap.disabled).toBeUndefined();
     // No field from an older backend: unchanged.
     expect(legacy.disabled).toBeUndefined();

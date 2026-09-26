@@ -49,20 +49,28 @@ it("preserves debt and carried credits without treating missing values as balanc
   });
 });
 
-it("reads free-tier-only as the daily allowance with no purchased credits", () => {
-  expect(isFreeTierOnly(undefined)).toBe(false);
-  expect(isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 0 }))).toBe(
-    true,
-  );
-  expect(isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 50 }))).toBe(
-    false,
-  );
+it("reads free-tier-only as a guest on the daily allowance with no purchased credits", () => {
+  const signedIn = false;
+  expect(isFreeTierOnly(undefined, signedIn)).toBe(false);
+  expect(
+    isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 0 }), signedIn),
+  ).toBe(true);
+  expect(
+    isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 50 }), signedIn),
+  ).toBe(false);
   expect(
     isFreeTierOnly(
       normalizeBalance({
         billingModel: "monthly_per_seat",
         paidCreditsRemaining: 0,
       }),
+      signedIn,
     ),
+  ).toBe(false);
+});
+
+it("never marks a signed-in user free-tier-only, even with no purchased credits", () => {
+  expect(
+    isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 0 }), true),
   ).toBe(false);
 });
