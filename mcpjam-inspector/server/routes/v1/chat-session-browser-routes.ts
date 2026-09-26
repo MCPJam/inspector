@@ -20,6 +20,7 @@ import {
   browserPolicyAllowsOrigin,
 } from "../../../shared/browser-session-policy";
 import { commandSchema } from "./chat-session-browser-command-schema";
+import { publicArtifactLink } from "./artifact-links";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config";
 import { resolveHostTools } from "../../utils/built-in-tools/registry";
 import {
@@ -245,8 +246,8 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
           signal: c.req.raw.signal,
         });
         const ids = { sessionId: stored?.browserSessionId };
-        const evidence = async () =>
-          (await client.query(
+        const evidence = async () => {
+          const artifacts = (await client.query(
             "chatSessions:getBrowserArtifacts" as never,
             { sessionId: session._id } as never,
           )) as {
@@ -256,6 +257,17 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
               screenshotUrl?: string;
             }>;
           };
+          // Screenshot links only as signed `/web/artifact` links (MJ-005).
+          return {
+            browserInteractionSteps: artifacts?.browserInteractionSteps?.map(
+              (step) => ({
+                ...step,
+                screenshotUrl:
+                  publicArtifactLink(step.screenshotUrl) ?? undefined,
+              }),
+            ),
+          };
+        };
         if (op !== "open" && !stored)
           return v1Error(c, "NOT_FOUND", "Session has no browser");
         if (op === "close")

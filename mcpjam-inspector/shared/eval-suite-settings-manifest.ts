@@ -128,17 +128,22 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.judge.rubric",
   },
   {
-    key: "assertionBacktest",
-    label: "Assertion preview",
-    op: "backtest_eval_run",
-  },
-  {
     key: "judgeGroundedness",
     label: "Groundedness",
     // Read-only run evidence until R2-C1 wires execution. A writable sample
     // would claim a PATCH path the schema explicitly refuses.
     excluded:
       "Displays on-demand groundedness run evidence and cannot yet author settings while execution is unwired.",
+  },
+  {
+    key: "judgeRubricChecks",
+    label: "Rubric checks",
+    // Day one is app-only on purpose: the slot, its questions and its pass
+    // lines are new vocabulary, and a public field is a contract that outlives
+    // every wording change. The criteria it grades ARE on the API already
+    // (`settings.judge.rubric`), so an agent still decides what gets checked.
+    excluded:
+      "Advisory rubric checks are authored in the app only while the question vocabulary settles; the criteria they grade are reachable through settings.judge.rubric.",
   },
   {
     key: "policy",
