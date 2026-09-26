@@ -1,3 +1,4 @@
+import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { apiSessionWriteAllowed } from "./api-session-write-guard";
 import { BrowserSessionService } from "../../services/browserd/session-service";
 import { toResumeExecutionTarget } from "@/shared/execution-target";
@@ -68,6 +69,7 @@ import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
+  authorizeProject,
   createAuthorizedManager,
   buildServerNamesById,
   callerContextFromHono,
@@ -143,6 +145,10 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import {
+  resolveTurnBuiltInToolIds,
+  type ProjectDefaultToolConfig,
+} from "../../utils/built-in-tools/built-in-tool-policy.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -366,6 +372,21 @@ chatV2.post("/", async (c) => {
         400,
         ErrorCode.VALIDATION_ERROR,
         "model is not supported",
+      );
+    }
+
+    // The caller's `projectId` is checked here, before anything is resolved or
+    // billed against it (MJ-013). The server batch below applies the same
+    // membership check, but only to the servers a turn selected, and a turn
+    // with none skipped it: a guest or signed-in bearer could run a hosted
+    // completion against any project id. Scenario turns are exempt, since
+    // their access is the `scenarioId` grant, re-checked by the runtime-config
+    // fetch, not membership.
+    if (!isScenarioSession) {
+      await authorizeProject(
+        callerContextFromHono(c),
+        bearerToken,
+        hostedBody.projectId,
       );
     }
 
@@ -817,6 +838,52 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // WHICH BUILT-IN TOOLS THIS TURN MAY HAVE (MJ-008). The body's list is
+    // bounded by the host/project configuration, unknown ids are dropped, and
+    // workspace tools follow the caller's project role — see
+    // `built-in-tool-policy.ts`. Every consumer below reads this, never the
+    // resolved body value. It also resolves, from the same saved
+    // configuration, when this turn's workspace tools pause for approval; the
+    // turn's own setting can raise that, never lower it.
+    const builtInToolPolicy = await resolveTurnBuiltInToolIds({
+      requested: resolvedExecution.builtInToolIds,
+      targetKind: executionTarget.kind,
+      hostRuntimeConfig,
+      isGuest: Boolean(c.get("guestId")),
+      requestedToolApproval: resolvedExecution.requireToolApproval,
+      loadProjectDefaultConfig: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
+          "hostConfigsV2:getProjectDefault" as never,
+          {
+            projectId: hostedBody.projectId,
+          } as never,
+        )) as ProjectDefaultToolConfig | null,
+      loadProjectAccess: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
+          "projects:getProjectCapabilities" as never,
+          { projectId: hostedBody.projectId } as never,
+        )) as { projectRole?: string | null } | null,
+    });
+    if (builtInToolPolicy.dropped.length > 0) {
+      getRequestLogger(c, "routes.web.chat-v2").event(
+        "chat.builtin_tools.withheld",
+        {
+          // Catalog ids only. An unknown id is whatever the body said, so it
+          // is counted and never echoed.
+          toolIds: builtInToolPolicy.dropped
+            .filter((entry) => entry.reason !== "unknown")
+            .map((entry) => entry.id),
+          unknownCount: builtInToolPolicy.dropped.filter(
+            (entry) => entry.reason === "unknown",
+          ).length,
+          reasons: [
+            ...new Set(builtInToolPolicy.dropped.map((entry) => entry.reason)),
+          ],
+          targetKind: executionTarget.kind,
+        },
+      );
+    }
+    const turnBuiltInToolIds = builtInToolPolicy.ids;
     // `modelId` stays a special case — the resolver yields the resolved
     // string, and `resolveHostModelDefinition` lifts it (catalog hit →
     // full def; miss → org provider config lookup, then id-shape
@@ -981,7 +1048,21 @@ chatV2.post("/", async (c) => {
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
         xaaEnterprisePolicyOn: xaaPolicy != null,
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session is an eval
+        // surface and may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.web.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         throw new WebRouteError(
           503,
@@ -1273,6 +1354,7 @@ chatV2.post("/", async (c) => {
       // wire matches what we're prepared to honor.
       effectiveClientCapabilities,
       {
+        multiConnection: true,
         ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
         scenarioId,
         accessVersion,
@@ -1307,6 +1389,13 @@ chatV2.post("/", async (c) => {
         ...(executionScope ? { executionScope } : {}),
       },
     );
+    if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
+      void refreshConnectionProfiles(
+        manager,
+        bearerToken,
+        hostedBody.projectId,
+      );
+
     oauthServerUrls = urls;
     // Inject the live manager so the collector's fingerprint/era thunks can
     // read the negotiated identity at suspend time (post-connect).
@@ -1554,9 +1643,7 @@ chatV2.post("/", async (c) => {
     //     personal shell to a share-link-reachable scenario turn.
     const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
-      bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
-        BASH_TOOL_NAME,
-      ),
+      bashRequested: (turnBuiltInToolIds ?? []).includes(BASH_TOOL_NAME),
       ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
       hasChatSessionId: Boolean(body.chatSessionId),
       secretsUnavailable,
@@ -1731,7 +1818,7 @@ chatV2.post("/", async (c) => {
       ...(browserSessionScope
         ? { conversationId: browserSessionScope.sessionId }
         : {}),
-      builtInToolIds: resolvedExecution.builtInToolIds,
+      builtInToolIds: turnBuiltInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
       isHarnessTurn: Boolean(resolvedExecution.harness),
@@ -1769,7 +1856,7 @@ chatV2.post("/", async (c) => {
       | undefined;
     const builtInTools = resolveHostTools(
       {
-        builtInToolIds: resolvedExecution.builtInToolIds,
+        builtInToolIds: turnBuiltInToolIds,
         // Computer comes exclusively from the server-resolved runtime config —
         // scenario OR host-by-id — never the request body.
         computer:
@@ -1798,6 +1885,8 @@ chatV2.post("/", async (c) => {
         // it today; the model turn and voice already send their own.
         ...(isScenarioSession && scenarioId ? { scenarioId } : {}),
         requireToolApproval,
+        // Workspace tools take the server-resolved setting instead (MJ-008).
+        workspaceToolApproval: builtInToolPolicy.workspaceToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and
         // rejects anything that isn't `personal`, so a union on the config

@@ -4,6 +4,7 @@ import { useMutation } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { toast } from "sonner";
+import { useConvexBlobUpload } from "@/hooks/use-convex-blob-upload";
 
 /**
  * COMP-17 — per-case file attachments for evals. Files are uploaded directly to
@@ -12,14 +13,18 @@ import { toast } from "sonner";
  * iteration's fresh sandbox at `/home/user/attachments/…` (see
  * `server/utils/computers/eval-attachments-seed.ts`).
  *
- * Clone of the skills supporting-file uploader: `generateUploadUrl` → POST blob
- * → register `{ name, storageId, contentHash }`. `size` is verified server-side
- * from `_storage`, never trusted from here.
+ * Same shape as the skills supporting-file uploader: the bytes go to the
+ * backend's upload route (`@/shared/blob-upload`, MJ-006) → register
+ * `{ name, storageId, contentHash }`. `size` is verified server-side from
+ * `_storage`, never trusted from here.
  */
 
 // Kept in sync with the backend caps (mcpjam-backend testSuites.ts).
 const MAX_COUNT = 20;
 const MAX_TOTAL_BYTES = 30 * 1024 * 1024;
+// The upload route's cap for one attachment; checked here so an oversized
+// file gets a clear message instead of a refused upload.
+const MAX_FILE_BYTES = 19 * 1024 * 1024;
 
 export type EvalAttachment = {
   name: string;
@@ -54,9 +59,7 @@ export function EvalAttachmentsEditor({
   value,
   disabled = false,
 }: EvalAttachmentsEditorProps) {
-  const generateUploadUrl = useMutation(
-    "testSuites:generateEvalAttachmentUploadUrl" as any
-  ) as unknown as (args: { suiteId: string }) => Promise<string>;
+  const uploadBlob = useConvexBlobUpload();
   const setTestCaseAttachments = useMutation(
     "testSuites:setTestCaseAttachments" as any
   ) as unknown as (args: {
@@ -90,6 +93,15 @@ export function EvalAttachmentsEditor({
       toast.error(`A case can have at most ${MAX_COUNT} attachments.`);
       return;
     }
+    const tooLarge = picked.find((f) => f.size > MAX_FILE_BYTES);
+    if (tooLarge) {
+      toast.error(
+        `"${tooLarge.name}" is larger than the ${Math.round(
+          MAX_FILE_BYTES / (1024 * 1024),
+        )} MB limit for one attachment.`,
+      );
+      return;
+    }
     const addedBytes = picked.reduce((sum, f) => sum + f.size, 0);
     if (totalBytes + addedBytes > MAX_TOTAL_BYTES) {
       toast.error(
@@ -109,16 +121,11 @@ export function EvalAttachmentsEditor({
           continue;
         }
         const buf = await file.arrayBuffer();
-        const uploadUrl = await generateUploadUrl({ suiteId });
-        const res = await fetch(uploadUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": file.type || "application/octet-stream",
-          },
-          body: buf,
-        });
-        if (!res.ok) throw new Error(`upload failed (${res.status})`);
-        const { storageId } = (await res.json()) as { storageId: string };
+        const storageId = await uploadBlob(
+          { purpose: "eval-attachment", suiteId },
+          buf,
+          file.type || "application/octet-stream",
+        );
         uploaded.push({
           name: file.name,
           storageId,

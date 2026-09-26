@@ -104,7 +104,7 @@ describe("useWidgetHost", () => {
 
       await expect(
         result.current.services.listResourceTemplates("server-1"),
-      ).rejects.toThrow(/hosted mode/i);
+      ).rejects.toThrow(/Browsing resource templates isn’t available in MCPJam’s hosted web app/);
       expect(listResourceTemplatesMock).not.toHaveBeenCalled();
     });
   });

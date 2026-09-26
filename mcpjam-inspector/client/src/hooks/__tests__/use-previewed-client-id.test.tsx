@@ -118,9 +118,29 @@ describe("usePreviewedHostId — project scoping", () => {
     rerender({ projectId: PROJECT_B });
 
     expect(result.current[0]).toBe("host_b");
+    expect(result.current[2]).toBe(true);
     expect(
       seen.filter((r) => r.projectId === PROJECT_B).map((r) => r.hostId),
     ).not.toContain("host_a");
+  });
+
+  it("reports selection hydration separately while switching projects", () => {
+    savePreviewedHostId(PROJECT, "host_a");
+    savePreviewedHostId(PROJECT_B, "host_b");
+    const seen: Array<{ projectId: string; hydrated: boolean }> = [];
+
+    const { rerender } = renderHook(
+      ({ projectId }: { projectId: string }) => {
+        const [, , hydrated] = usePreviewedHostId(projectId);
+        seen.push({ projectId, hydrated });
+      },
+      { initialProps: { projectId: PROJECT } },
+    );
+
+    rerender({ projectId: PROJECT_B });
+
+    expect(seen).toContainEqual({ projectId: PROJECT_B, hydrated: false });
+    expect(seen.at(-1)).toEqual({ projectId: PROJECT_B, hydrated: true });
   });
 
   it("switching to no project at all drops the host in the same render", () => {
