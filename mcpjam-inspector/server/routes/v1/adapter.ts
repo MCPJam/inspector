@@ -105,11 +105,16 @@ export async function runV1ServerOp<S extends z.ZodTypeAny, T>(
   schema: S,
   coreFn: (manager: any, body: z.infer<S>) => Promise<T>,
   format: (c: Context, result: T) => Response | Promise<Response>,
-  options?: { timeoutMs?: number }
+  options?: Pick<
+    NonNullable<Parameters<typeof runEphemeralConnection>[4]>,
+    "timeoutMs" | "rpcLogger" | "httpLogger"
+  >,
 ): Promise<Response> {
   const rawBody = await synthesizeServerBody(c);
   const result = await runEphemeralConnection(c, rawBody, schema, coreFn, {
     timeoutMs: options?.timeoutMs,
+    rpcLogger: options?.rpcLogger,
+    httpLogger: options?.httpLogger,
   });
   return await format(c, result);
 }

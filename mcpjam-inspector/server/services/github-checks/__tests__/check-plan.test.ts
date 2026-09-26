@@ -50,6 +50,46 @@ describe("beginCheckPlan", () => {
     });
   });
 
+  it("carries a multi-environment run set, and binds each target's run", async () => {
+    const target = {
+      environmentId: "env-a",
+      environmentRevision: 2,
+      runKey: "t1:env-a",
+    };
+    const r = recorder([
+      {
+        status: 200,
+        body: {
+          ok: true,
+          planId: "plan-9",
+          targets: [target, { environmentId: 7 }],
+        },
+      },
+      { status: 200, body: { ok: true, replayed: false } },
+      { status: 409, body: { ok: false, error: "target_already_bound" } },
+    ]);
+    const session = await beginCheckPlan(
+      { triggerId: "t1", repoFullName: "acme/x", headSha: "abc" },
+      r.post
+    );
+    // A malformed target is dropped rather than half-read.
+    expect(session.targets).toEqual([target]);
+    await session.bindTargetRun!({ runKey: "t1:env-a", runId: "run-1" });
+    expect(r.calls[1]).toEqual({
+      path: "/internal/v1/github-checks/plan/target-run",
+      body: {
+        triggerId: "t1",
+        planId: "plan-9",
+        runKey: "t1:env-a",
+        runId: "run-1",
+      },
+    });
+    // A refusal is a hard stop.
+    await expect(
+      session.bindTargetRun!({ runKey: "t1:env-a", runId: "run-2" })
+    ).rejects.toBeInstanceOf(PlanProtocolError);
+  });
+
   it("raises a PROTOCOL error on a 409 and does not retry", async () => {
     const r = recorder([
       { status: 409, body: { ok: false, error: "trigger_completed" } },

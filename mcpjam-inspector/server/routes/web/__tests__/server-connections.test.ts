@@ -80,6 +80,8 @@ const { AuthorizationPrepareError } = await import(
   "../../../services/server-connection-authorize.js"
 );
 const { mapRuntimeError, webError } = await import("../errors.js");
+const { RevokedSessionCache, setRevokedSessionCacheForTests } =
+  await import("../../../services/revoked-session-cache.js");
 
 const ORIGIN = "https://app.mcpjam.test";
 const COOKIE = "__Host-mcpjam_server_connection";
@@ -228,6 +230,68 @@ describe("claim", () => {
       expect.objectContaining({ actorUserId: undefined })
     );
     expect(identity.resolveUserByExternalId).not.toHaveBeenCalled();
+  });
+
+  it("forwards no actor for a revoked session", async () => {
+    const list = new RevokedSessionCache({
+      fetchPage: async () => ({
+        sessions: [],
+        cursor: null,
+        isDone: true,
+        watermark: 0,
+      }),
+    });
+    await list.scan();
+    list.markRevokedLocally("session_revoked");
+    setRevokedSessionCacheForTests(list);
+    authkit.verifyAuthKitToken.mockResolvedValue({
+      sub: "workos_user_1",
+      sid: "session_revoked",
+    });
+    identity.resolveUserByExternalId.mockResolvedValue({ _id: "users_1" });
+
+    try {
+      const res = await post(
+        "/claim",
+        { handoffToken: "handoff-1" },
+        { authorization: "Bearer real-authkit-jwt" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+        expect.objectContaining({ actorUserId: undefined }),
+      );
+      expect(identity.resolveUserByExternalId).not.toHaveBeenCalled();
+    } finally {
+      setRevokedSessionCacheForTests(undefined);
+    }
+  });
+
+  it("forwards no actor while the revoked-session list cannot vouch for the session", async () => {
+    // Never loads: the session cannot be checked, so it is not asserted.
+    setRevokedSessionCacheForTests(
+      new RevokedSessionCache({ fetchPage: () => new Promise(() => {}) }),
+    );
+    authkit.verifyAuthKitToken.mockResolvedValue({
+      sub: "workos_user_1",
+      sid: "session_live",
+    });
+    identity.resolveUserByExternalId.mockResolvedValue({ _id: "users_1" });
+
+    try {
+      const res = await post(
+        "/claim",
+        { handoffToken: "handoff-1" },
+        { authorization: "Bearer real-authkit-jwt" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+        expect.objectContaining({ actorUserId: undefined }),
+      );
+    } finally {
+      setRevokedSessionCacheForTests(undefined);
+    }
   });
 
   it("forwards no actor when the identity service is down", async () => {
