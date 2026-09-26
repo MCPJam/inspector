@@ -275,8 +275,13 @@ export function humanizeSwarmAttemptError(
 
   const headline =
     str(parsed.error) ?? str(parsed.message) ?? "The session could not run.";
-  const details = str(parsed.details);
   const code = str(parsed.code);
+  // `provider_not_allowlisted` carries the gateway's own instruction to its
+  // account owner ("Update your Provider Allowlist settings…") in `details`.
+  // That is MCPJam's setting, not the reader's; the headline already names
+  // the provider and the fix, so the upstream sentence stays out of it.
+  const details =
+    code === "provider_not_allowlisted" ? undefined : str(parsed.details);
   const retryAfterMs = num(parsed.retryAfter);
   const canTopUp = parsed.canTopUp === true;
 

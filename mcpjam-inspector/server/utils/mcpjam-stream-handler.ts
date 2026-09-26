@@ -596,6 +596,15 @@ export interface MCPJamEngineErrorEvent {
 const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
 
 /**
+ * Backend code (convex `stream/routes.ts` `categorizeError`) for a 401/403
+ * whose upstream detail is the hosted gateway's provider-allowlist refusal:
+ * the model's provider is not enabled on MCPJam's gateway. Read by status it
+ * would become `provider/auth_error` and tell the user to fix their API key,
+ * which was never involved; retrying cannot help either.
+ */
+export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
+
+/**
  * Backend refusal code (convex `stream/routes.ts` `categorizeError`): the
  * provider failed and the request's model selection forbids the OpenRouter
  * fallback (`fallback.provider === "none"`, the eval/swarm/judge default). It
@@ -622,6 +631,10 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
@@ -674,6 +687,10 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
@@ -1836,6 +1853,8 @@ const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
   "mcpjam_rate_limit",
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's gateway allowlist — our setting.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ]);
 
 /** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
@@ -1901,6 +1920,37 @@ function attachedNormalized(error: unknown): NormalizedError | undefined {
   if (!error || typeof error !== "object") return undefined;
   const candidate = (error as { normalized?: unknown }).normalized;
   return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/**
+ * The client-facing error chunk text for a mid-stream `provider_not_allowlisted`
+ * failure. Every other mid-stream chunk reaches the client as its bare
+ * sentence, but the client can only choose the allowlist banner (no retry, no
+ * API-key advice) from the code, so this one keeps the structured shape the
+ * non-OK path already delivers.
+ */
+function providerNotAllowlistedErrorText(
+  parsed: ReturnType<typeof parseStreamErrorChunkText>,
+): string {
+  return JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message: parsed.message,
+    ...(parsed.statusCode !== undefined
+      ? { statusCode: parsed.statusCode }
+      : {}),
+    isRetryable: false,
+    ...(parsed.details ? { details: parsed.details } : {}),
+  });
+}
+
+/**
+ * Error chunk text a thrower prepared for the client, when the bare message
+ * would lose what the client needs to render the failure.
+ */
+function attachedClientErrorText(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const text = (error as { clientErrorText?: unknown }).clientErrorText;
+  return typeof text === "string" ? text : undefined;
 }
 
 /** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
@@ -2378,6 +2428,9 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
+              ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
+              : {}),
           });
         }
 
@@ -5024,7 +5077,7 @@ export async function runChatEngineLoop(
           promptIndex: traceTurn.promptIndex,
           usage: traceTurn.turnUsage,
         });
-        emitError(safeWriter, errorText);
+        emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.
