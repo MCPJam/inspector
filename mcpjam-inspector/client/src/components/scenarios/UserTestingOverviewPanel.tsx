@@ -101,7 +101,7 @@ function OverviewBody({
           "border-b border-border/40 pb-2 text-xs font-medium text-muted-foreground",
         )}
       >
-        <span>Scenario</span>
+        <span>Study</span>
         <span>Client</span>
         <span>Server</span>
         <span className="text-right">Testers</span>
@@ -199,11 +199,11 @@ function LoadFailureState({
     >
       <AlertTriangle className="size-8 text-amber-500" />
       <h2 className="mt-4 text-base font-semibold">
-        Couldn&apos;t show your scenarios
+        Couldn&apos;t show your studies
       </h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        The list failed to render. Reload the page — this doesn&apos;t mean
-        anything happened to your scenarios.
+        The list failed to render. Reload the page. A render failure isn&apos;t
+        a sign that your studies changed.
       </p>
       <Button variant="outline" className="mt-5" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />

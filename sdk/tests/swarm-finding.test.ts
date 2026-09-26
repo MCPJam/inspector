@@ -159,8 +159,10 @@ describe("recorded signals and verification counts", () => {
 
   it("rejects a signal outside the vocabulary", () => {
     expect(
-      swarmJourneyFindingSchema.safeParse({ ...finding, signal: "ranOutOfWork" })
-        .success
+      swarmJourneyFindingSchema.safeParse({
+        ...finding,
+        signal: "ranOutOfWork",
+      }).success
     ).toBe(false);
   });
 
@@ -174,7 +176,8 @@ describe("recorded signals and verification counts", () => {
       ...finding,
       reportExcerpt: {
         actual: "The change was rejected.",
-        account: "She tried to save her changes and the app would not take them.",
+        account:
+          "She tried to save her changes and the app would not take them.",
         citations: ["s/m:0"],
       },
     };
@@ -237,6 +240,16 @@ describe("recorded signals and verification counts", () => {
     // before any model verifies it.
     expect(SWARM_FINDING_COVERAGE_NOTE_LABELS.mechanismsRejected).toBe(
       "A possible cause was rejected"
+    );
+    // The opposite fact, and the reason both notes exist: nothing was weighed.
+    // A wave whose grouping never returned publishes the same empty counts as
+    // one where the model looked and had nothing to say, so the counts alone
+    // cannot tell a reader which happened.
+    expect(SWARM_FINDING_COVERAGE_NOTE_LABELS.analysisUnavailable).toBe(
+      "Causes could not be analysed"
+    );
+    expect(SWARM_FINDING_COVERAGE_NOTE_LABELS.analysisUnavailable).not.toBe(
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.mechanismsRejected
     );
   });
 });
