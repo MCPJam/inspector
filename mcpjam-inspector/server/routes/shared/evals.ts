@@ -1652,6 +1652,65 @@ function flushCaseOutcomes(
 }
 
 /**
+ * The environment a new suite should be created with, or `null` to keep the
+ * legacy create: only on a backend that advertises
+ * `createSuiteWithEnvironments`, and only when the request pins exactly one
+ * environment (server ids known through bindings, at most one client, at
+ * most one model), so the run that follows needs no environment choice.
+ */
+async function composableEnvironmentTargets(args: {
+  convexClient: ReturnType<typeof createConvexClients>["convexClient"];
+  projectId: string | undefined;
+  environmentLaunch: boolean;
+  persistedEnvironment: {
+    servers: string[];
+    serverBindings?: Array<{ serverName: string; projectServerId: string }>;
+  };
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
+  models: string[];
+}): Promise<Array<{
+  hostId?: string;
+  serverIds: string[];
+  modelId?: string;
+}> | null> {
+  if (!args.projectId || args.environmentLaunch) return null;
+  const serverIds = (args.persistedEnvironment.serverBindings ?? []).map(
+    (binding) => binding.projectServerId,
+  );
+  if (serverIds.length === 0) return null;
+  const models = [...new Set(args.models.map((model) => model.trim()))].filter(
+    Boolean,
+  );
+  if (models.length > 1) return null;
+  const hosts = args.hostAttachments ?? [];
+  if (hosts.length > 1) return null;
+  // Any failure to probe (older backend, a client without the query) keeps
+  // the legacy create.
+  const capabilities = (await Promise.resolve()
+    .then(() =>
+      args.convexClient.query("projectEnvironments:getCapabilities" as any, {
+        projectId: args.projectId,
+      }),
+    )
+    .catch(() => null)) as { createSuiteWithEnvironments?: boolean } | null;
+  if (capabilities?.createSuiteWithEnvironments !== true) return null;
+  const host = hosts[0];
+  return [
+    {
+      ...(host ? { hostId: host.namedHostId } : {}),
+      serverIds:
+        host?.selectedServerIds && host.selectedServerIds.length > 0
+          ? host.selectedServerIds
+          : serverIds,
+      ...(models[0] ? { modelId: models[0] } : {}),
+    },
+  ];
+}
+
+/**
  * Author phase of a suite run: persist the suite + its test cases (create or
  * upsert), WITHOUT creating a run record or executing anything. Extracted from
  * `prepareEvalRun` so the author-only public surface
@@ -1662,6 +1721,15 @@ function flushCaseOutcomes(
  */
 export async function authorEvalSuite(args: {
   hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
+  /**
+   * Clients a NEW environment suite would run on, when the caller attaches
+   * its legacy clients separately after authoring (so they are not passed to
+   * a legacy create as `hostAttachments`).
+   */
+  environmentHostAttachments?: Array<{
     namedHostId: string;
     selectedServerIds?: string[];
   }>;
@@ -2023,19 +2091,43 @@ export async function authorEvalSuite(args: {
       flushCaseOutcomes(outcomes, committedCases, failedCases);
     }
   } else {
+    // A NEW suite is born an environment suite when the backend can make one
+    // in the same call and the request says exactly what one environment
+    // runs: its servers by id, at most one client, at most one model. The run
+    // that follows then executes that environment. Anything else keeps the
+    // legacy shape (counted by the legacy telemetry).
+    const environmentTargets = await composableEnvironmentTargets({
+      convexClient,
+      projectId,
+      environmentLaunch: Boolean(args.environmentLaunch),
+      persistedEnvironment,
+      hostAttachments: args.hostAttachments ?? args.environmentHostAttachments,
+      models: [...testCaseMap.values()].flatMap((entry) =>
+        entry.models.map((model) => model.model),
+      ),
+    });
     const createdSuite = await convexClient.mutation(
       "testSuites:createTestSuite" as any,
-      {
-        projectId,
-        name: suiteName!,
-        description: suiteDescription,
-        environment: persistedEnvironment,
-        defaultPassCriteria: passCriteria,
-        ...(args.hostAttachments
-          ? { hostAttachments: args.hostAttachments }
-          : {}),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-      },
+      environmentTargets
+        ? {
+            projectId,
+            name: suiteName!,
+            description: suiteDescription,
+            defaultPassCriteria: passCriteria,
+            environmentTargets,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          }
+        : {
+            projectId,
+            name: suiteName!,
+            description: suiteDescription,
+            environment: persistedEnvironment,
+            defaultPassCriteria: passCriteria,
+            ...(args.hostAttachments
+              ? { hostAttachments: args.hostAttachments }
+              : {}),
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
     );
 
     if (!createdSuite?._id) {

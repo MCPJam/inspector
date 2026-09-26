@@ -1796,6 +1796,62 @@ describe("v1 write routes", () => {
       );
     });
 
+    it("a suite born an environment suite on the client attaches nothing after", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { listServers: () => ["s1"], disconnectAllServers },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+      mockConvexQueries({
+        "hosts:listHosts": () => [
+          { hostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx", name: "Claude" },
+        ],
+        "testSuites:getTestSuite": () => ({
+          _id: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          name: "Fresh suite",
+          environmentIds: ["envxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          environment: { servers: ["Echo"] },
+        }),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hosts: [{ host: "Claude", servers: ["Echo"] }],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      expect((await res.json()) as { hosts?: unknown }).toMatchObject({
+        hosts: [{ id: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+      });
+      // The picks resolve against this request's servers before authoring.
+      expect(
+        authorEvalSuiteMock.mock.calls[0][0].environmentHostAttachments
+      ).toEqual([
+        {
+          namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
+          selectedServerIds: ["s1"],
+        },
+      ]);
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "testSuites:updateTestSuite",
+        expect.anything()
+      );
+    });
+
     it("rejects an unknown client BEFORE authoring anything", async () => {
       // Resolving after the write would leave a half-created suite behind for
       // a request that was never satisfiable.

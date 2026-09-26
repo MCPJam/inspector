@@ -1101,6 +1101,59 @@ describe("authorEvalSuite — the suite write a rerun does not need", () => {
     ).toMatchObject({ hostAttachments });
   });
 
+  it("creates an environment suite when the backend can and one environment is pinned", async () => {
+    const { client, mutations } = fakeConvex({
+      query: async (fn: string) =>
+        fn === "projectEnvironments:getCapabilities"
+          ? { createSuiteWithEnvironments: true }
+          : null,
+    });
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments: [{ namedHostId: "host-1", selectedServerIds: ["s1"] }],
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    const created = mutations.find(
+      (mutation) => mutation.fn === "testSuites:createTestSuite",
+    )?.args;
+    expect(created.environmentTargets).toEqual([
+      { hostId: "host-1", serverIds: ["s1"] },
+    ]);
+    expect(created).not.toHaveProperty("hostAttachments");
+    expect(created).not.toHaveProperty("environment");
+  });
+
+  it("keeps the legacy create when two clients would need an environment choice", async () => {
+    const { client, mutations } = fakeConvex({
+      query: async (fn: string) =>
+        fn === "projectEnvironments:getCapabilities"
+          ? { createSuiteWithEnvironments: true }
+          : null,
+    });
+    const hostAttachments = [
+      { namedHostId: "host-1", selectedServerIds: ["s1"] },
+      { namedHostId: "host-2", selectedServerIds: ["s1"] },
+    ];
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    const created = mutations.find(
+      (mutation) => mutation.fn === "testSuites:createTestSuite",
+    )?.args;
+    expect(created).toMatchObject({ hostAttachments });
+    expect(created).not.toHaveProperty("environmentTargets");
+  });
+
   it("still writes the suite when the caller asked to refresh the snapshot", async () => {
     const { client, mutations } = fakeConvex();
     await authorEvalSuite({

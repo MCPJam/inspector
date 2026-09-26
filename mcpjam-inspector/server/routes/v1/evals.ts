@@ -5225,6 +5225,8 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // behind. The per-host `servers` picks are deliberately dropped for this
     // pass: they resolve against the suite's environment bindings, which do
     // not exist until the suite is written. The real resolution runs below.
+    let preResolvedHosts:
+      Array<{ namedHostId: string; selectedServerIds?: string[] }> | undefined;
     if (body.hosts?.length) {
       await resolveHostAttachments(
         convexClient,
@@ -5232,9 +5234,30 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
         { environment: {} },
         body.hosts.map(({ host }) => ({ host })),
       );
+      // The same picks, resolved against this request's own servers: what a
+      // suite born with its environment needs, since it gets no legacy
+      // bindings to resolve them against later.
+      if (serverNames && serverNames.length === resolvedServerIds.length) {
+        preResolvedHosts = await resolveHostAttachments(
+          convexClient,
+          projectId,
+          {
+            environment: {
+              serverBindings: serverNames.map((serverName, index) => ({
+                serverName,
+                projectServerId: resolvedServerIds[index],
+              })),
+            },
+          } as SuiteDoc,
+          body.hosts,
+        );
+      }
     }
 
     const { suiteId, caseUpsert } = await authorEvalSuite({
+      ...(preResolvedHosts
+        ? { environmentHostAttachments: preResolvedHosts }
+        : {}),
       convexClient,
       tests: normalizedTests,
       resolvedServerIds,
@@ -5256,12 +5279,16 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // against the suite's environment bindings, which the write above is what
     // creates. Re-read for the same reason the PATCH route does.
     let attachedHostIds: string[] = [];
-    if (body.hosts?.length) {
-      const suite = await readSuiteInProject(
-        convexAuthToken,
-        projectId,
-        suiteId,
+    const authoredSuite = body.hosts?.length
+      ? await readSuiteInProject(convexAuthToken, projectId, suiteId)
+      : null;
+    if ((authoredSuite?.environmentIds?.length ?? 0) > 0) {
+      // Born an environment suite on the requested client: nothing to attach.
+      attachedHostIds = (preResolvedHosts ?? []).map((attachment) =>
+        String(attachment.namedHostId),
       );
+    } else if (body.hosts?.length) {
+      const suite = authoredSuite!;
       const hostAttachments = await resolveHostAttachments(
         convexClient,
         projectId,
