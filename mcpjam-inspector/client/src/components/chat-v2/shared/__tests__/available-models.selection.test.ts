@@ -460,27 +460,39 @@ describe("org Azure deployments", () => {
 });
 
 describe("org OpenAI-compatible providers with listed models", () => {
+  // The org lists the provider's own ids. A listed id whose `<vendor>/<id>`
+  // the model catalog knows is saved with the org connection; one the
+  // catalog does not know gets no selection and runs as a legacy id (no
+  // canonical id is invented by adding a prefix).
+  const config: OrgVisibleConfig = {
+    providers: [
+      {
+        id: "orgprov_moonshot",
+        providerKey: "moonshotai",
+        enabled: true,
+        hasSecret: true,
+        modelIds: ["kimi-k2-0905", "kimi-k2-0905", "kimi-k2-0905-preview"],
+      },
+      {
+        id: "orgprov_zai_nokey",
+        providerKey: "z-ai",
+        enabled: true,
+        hasSecret: false,
+        modelIds: ["glm-4.6"],
+      },
+    ],
+  };
+
   it("offer the org's model ids, saved with the connection", () => {
-    const config: OrgVisibleConfig = {
-      providers: [
-        {
-          id: "orgprov_moonshot",
-          providerKey: "moonshotai",
-          enabled: true,
-          hasSecret: true,
-          modelIds: ["kimi-k2-0905-preview", "kimi-k2-0905-preview"],
-        },
-        {
-          id: "orgprov_zai_nokey",
-          providerKey: "z-ai",
-          enabled: true,
-          hasSecret: false,
-          modelIds: ["glm-4.6"],
-        },
-      ],
-    };
     const rows = buildAvailableModelsFromOrgConfig(config, []);
     expect(rows).toEqual([
+      {
+        id: "kimi-k2-0905",
+        name: "kimi-k2-0905",
+        provider: "moonshotai",
+        orgProvider: { providerKey: "moonshotai", id: "orgprov_moonshot" },
+        hosted: false,
+      },
       {
         id: "kimi-k2-0905-preview",
         name: "kimi-k2-0905-preview",
@@ -490,12 +502,17 @@ describe("org OpenAI-compatible providers with listed models", () => {
       },
     ]);
     expect(modelSelectionFromDefinition(rows[0], undefined, "chat")).toEqual({
-      modelId: "moonshotai/kimi-k2-0905-preview",
+      modelId: "moonshotai/kimi-k2-0905",
       source: "org",
       connectionRef: { kind: "orgProvider", id: "orgprov_moonshot" },
-      nativeModelId: "kimi-k2-0905-preview",
+      nativeModelId: "kimi-k2-0905",
       fallback: { provider: "openrouter", model: "none" },
     });
+  });
+
+  it("an id the catalog does not list stays legacy", () => {
+    const rows = buildAvailableModelsFromOrgConfig(config, []);
+    expect(modelSelectionFromDefinition(rows[1], undefined, "chat")).toBeNull();
   });
 });
 
