@@ -551,7 +551,7 @@ jobs:
 
       - name: Download local harness runtime packs
         if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: local-harness-pack-*
           path: .release-assets/runtime
@@ -590,7 +590,7 @@ jobs:
       # Without the patch this builds the PRE-bump versions, and the tarballs
       # would disagree with what changeset publish then tries to publish.
       - name: Download release patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-plan
           path: .release-plan
@@ -715,7 +715,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download release patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-plan
           path: .release-plan
@@ -734,7 +734,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Download built package dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: npm-dists
           path: .
@@ -975,7 +975,7 @@ jobs:
           token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
       - name: Download release patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-plan
           path: .release-plan
@@ -1043,14 +1043,14 @@ jobs:
 
       - name: Download macOS artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: inspector-macos-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/macos
 
       - name: Download Windows artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
@@ -1059,7 +1059,7 @@ jobs:
       # sha256 — this is where the installer downloads from.
       - name: Download local harness runtime packs
         if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: local-harness-pack-*
           path: .release-assets/runtime

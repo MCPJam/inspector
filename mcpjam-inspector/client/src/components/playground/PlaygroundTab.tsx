@@ -77,6 +77,7 @@ interface PlaygroundTabProps {
   isClientConfigSyncPending?: boolean;
   areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -98,6 +99,11 @@ interface PlaygroundTabProps {
   activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /** One-shot prompt handed off by first-run server connection. */
+  firstRunPrompt?: string | null;
+  onFirstRunPromptConsumed?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 /**
@@ -190,6 +196,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
     serverNames: projectServerNames,
+    catalogLoaded: projectServersList !== undefined,
+    suspendAutoConnect: props.suspendAutoConnect,
   });
 
   const playgroundState = usePlaygroundState({
@@ -208,6 +216,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     isClientConfigSyncPending: props.isClientConfigSyncPending,
     areServersHydrated: props.areServersHydrated,
     hasSeenFirstRunOnboarding: props.hasSeenFirstRunOnboarding,
+    autoConnectFirstRun: props.autoConnectFirstRun,
     isServerSyncing: props.isServerSyncing,
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
@@ -398,14 +407,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           }
         />
         <PlaygroundPreviewedClientSync
-          projectId={
-            props.sharedProjectId ?? props.activeProjectId ?? null
-          }
+          projectId={props.sharedProjectId ?? props.activeProjectId ?? null}
         />
-        <ResizablePanelGroup
-          direction="horizontal"
-          className="min-h-0 flex-1"
-        >
+        <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
           {isLeftRailVisible ? (
             <>
               <ResizablePanel
@@ -427,9 +431,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   // the composer agree on which environment (if
                   // any) is active.
                   projectId={
-                    props.sharedProjectId ??
-                    props.activeProjectId ??
-                    null
+                    props.sharedProjectId ?? props.activeProjectId ?? null
                   }
                 />
               </ResizablePanel>
@@ -442,9 +444,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 setIsLeftRailVisible(true);
                 // The panel only remounts on the next paint; expand
                 // imperatively once it has a ref to honor the click.
-                requestAnimationFrame(() =>
-                  leftPanelRef.current?.expand(),
-                );
+                requestAnimationFrame(() => leftPanelRef.current?.expand());
               }}
               tooltipText="Show sessions"
             />
@@ -484,9 +484,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 props.playgroundServerSelectorProps
               }
               evalChatHandoff={props.evalChatHandoff}
-              onEvalChatHandoffConsumed={
-                props.onEvalChatHandoffConsumed
-              }
+              onEvalChatHandoffConsumed={props.onEvalChatHandoffConsumed}
+              firstRunPrompt={props.firstRunPrompt}
+              onFirstRunPromptConsumed={props.onFirstRunPromptConsumed}
             />
           </ResizablePanel>
           {showBrowser ? (
@@ -495,19 +495,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   other side of it to resize against, and a divider
                   that moves a hidden panel is a control that does
                   nothing visible. */}
-              {browserExpanded ? null : (
-                <ResizableHandle withHandle />
-              )}
+              {browserExpanded ? null : <ResizableHandle withHandle />}
               <ResizablePanel
                 id="playground-browser"
                 order={3}
                 defaultSize={browserExpanded ? 100 : browserSize}
-                minSize={
-                  browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE
-                }
-                maxSize={
-                  browserExpanded ? 100 : MAX_BROWSER_PANEL_SIZE
-                }
+                minSize={browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE}
+                maxSize={browserExpanded ? 100 : MAX_BROWSER_PANEL_SIZE}
                 // The store, not the panel group, is the record of
                 // what somebody chose — the group forgets on
                 // unmount, and the browser panel unmounts every
@@ -552,9 +546,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     hostConfig={effectiveHostConfig}
                     hostId={previewedHostId ?? null}
                     projectId={
-                      props.sharedProjectId ??
-                      props.activeProjectId ??
-                      null
+                      props.sharedProjectId ?? props.activeProjectId ?? null
                     }
                     isAuthenticated={isConvexAuthenticated}
                   />
@@ -566,9 +558,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
               side="right"
               onOpen={() => {
                 setIsRightRailVisible(true);
-                requestAnimationFrame(() =>
-                  rightPanelRef.current?.expand(),
-                );
+                requestAnimationFrame(() => rightPanelRef.current?.expand());
               }}
               tooltipText="Show logs"
             />

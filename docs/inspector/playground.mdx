@@ -116,7 +116,7 @@ If the out-of-credits dialog appears, the actions available depend on your plan 
 
 ### Frontier models and sign-in
 
-Some frontier models require a signed-in account. If you select a frontier model as a guest, a sign-in prompt appears showing the supported providers. You can sign in to get access, or choose **Not now** to continue with a standard model. This prompt does not affect your credit balance.
+Higher-priced models are greyed out in the picker for guests, with a "Sign in to use this model" tooltip. Signing in removes this restriction — signed-in users on any plan can use these models. If you select a greyed-out model as a guest, a sign-in prompt appears showing the supported providers. You can sign in to get access, or choose **Not now** to continue with a standard model. This prompt does not affect your credit balance.
 
 ## Multi-Model Compare
 
@@ -353,14 +353,15 @@ Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other comm
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
 
 **Tool Approval**
-When on, pauses the model before tool calls so you can approve or deny each one.
+When on, pauses the model before tool calls so you can approve or deny each one. Each approval answers one call and is valid for 15 minutes; answered later, the call does not run, the tool card says the approval expired, and the model can ask again.
 
 The switch **raises** the bar and never lowers it, so it is not the whole story in either direction.
 
 Some actions pause whether it is on or off:
 
 - local shell commands (`bash`);
-- destructive UI actions.
+- destructive UI actions;
+- [workspace tools](#workspace-tools) that change something in your project.
 
 Local Browser (`browser_*`) and WebMCP page tools follow the chat’s Tool Approval setting. With it off, calls run without per-call approval. Browser device permission remains a separate prerequisite.
 
@@ -430,7 +431,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers. (The readiness starts consume no credits; the approval is about dialling somebody else's server, not about money.) Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+Workspace tools that change something — `call_server_tool`, `start_claude_readiness_run`, `start_openai_readiness_run`, `cancel_readiness_run`, and every tool that creates, updates, deletes, starts, cancels or dismisses — always pause so you can approve or deny each call, whatever the **Tool Approval** toggle says. The reads that open a connection to one of your servers (`diagnose_server`, `list_server_tools`, `read_server_resource`, and the other prompt, resource and skill reads) follow the **Require tool approval** setting saved on the client or project — on when nothing is saved. The composer toggle can add these pauses for a conversation but cannot remove them. Read-only listing and polling tools never require approval, on any model.
 
 <Note>
   These tools are only available when you are signed in as a project member.

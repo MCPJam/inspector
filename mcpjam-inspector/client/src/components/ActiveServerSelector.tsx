@@ -17,7 +17,7 @@ import {
 } from "@/lib/debugger-header-servers";
 
 const HOSTED_HTTPS_REQUIRED_HINT =
-  "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
+  "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
