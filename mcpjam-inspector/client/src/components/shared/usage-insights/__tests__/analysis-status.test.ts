@@ -246,6 +246,22 @@ describe("sessions that never ran", () => {
       ),
     ).toMatchObject({ kind: "noTranscripts", title: "Nothing to analyze" });
   });
+
+  it("names why when the same sessions are also skipped as empty", () => {
+    // A current backend reports both for a refused wave once analysis has
+    // read the empty transcripts; "didn't run" is the reason, so it wins.
+    expect(
+      analysisStatus(
+        summary({
+          total: 2,
+          notRun: 2,
+          skipped: 2,
+          skips: { empty_transcript: 2 },
+        }),
+        NOW,
+      )?.kind,
+    ).toBe("notRun");
+  });
 });
 
 describe("notRunNote", () => {

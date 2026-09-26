@@ -78,7 +78,7 @@ export function analysisStatus(
     return {
       kind: "notRun",
       title: "These sessions didn't run",
-      body: "None of them recorded a message, so there is nothing to analyze. Findings says why they didn't start.",
+      body: "None of them recorded a message, so there is nothing to analyze.",
     };
 
   // Every session was read and had nothing in it. A backend without `notRun`

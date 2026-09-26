@@ -233,6 +233,14 @@ export function FindingsGoalSessions({
         <ul className="divide-y divide-white/10">
           {rows.map((session, index) => {
             const preview = session.firstMessagePreview?.trim();
+            // Drilldown rows arrive with no `sourceType`: the backend
+            // normalizes `swarm` away on every list row. This list is swarm
+            // scoped by construction, so it says so for them.
+            const neverRan = threadNeverRan(
+              scope.kind === "swarm"
+                ? { ...session, sourceType: "swarm" }
+                : session,
+            );
             return (
               <li key={session._id}>
                 <button
@@ -246,7 +254,7 @@ export function FindingsGoalSessions({
                   </span>
                   {/* A refused session has no preview, and "(no preview)"
                       read as a session that ran and said nothing (#5188). */}
-                  {threadNeverRan(session) ? (
+                  {neverRan ? (
                     <span
                       className="min-w-0 flex-1 truncate text-xs text-zinc-400"
                       data-testid="findings-goal-session-never-ran"

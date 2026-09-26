@@ -133,40 +133,44 @@ describe("FindingsGoalSessions", () => {
  * #5188: a session refused before it recorded a message listed as
  * "Session 1 (no preview)", which read as a session that ran and said
  * nothing.
+ *
+ * Rows here have the drilldown's REAL shape: no `sourceType`, because the
+ * backend normalizes `swarm` away on every list row. A fixture that set it
+ * hid exactly that, and the tag never showed against the real backend.
  */
 describe("FindingsGoalSessions for sessions that never ran", () => {
-  it("says the session didn't run instead of showing an empty preview", () => {
-    mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: {
-        sessions: [
-          {
-            ...session("sess-refused", ""),
-            sourceType: "swarm",
-            messageCount: 0,
-            runAttemptStatus: "failed",
-          },
-          {
-            ...session("sess-ran", "Pull the proposal-stage prospects"),
-            sourceType: "swarm",
-            messageCount: 6,
-            runAttemptStatus: "failed",
-          },
-        ],
-        nextBefore: null,
-        total: 2,
-        totalTruncated: false,
-      },
-      isLoading: false,
-    });
+  const swarmProps = {
+    scope: { kind: "swarm" as const, projectId: "proj-1" },
+    goalId: "run-1",
+    onOpenSession: vi.fn(),
+  };
+  const page = (sessions: unknown[]) => ({
+    drilldown: {
+      sessions,
+      nextBefore: null,
+      total: sessions.length,
+      totalTruncated: false,
+    },
+    isLoading: false,
+  });
 
-    render(
-      <FindingsGoalSessions
-        scope={{ kind: "swarm", projectId: "proj-1" }}
-        goalId="run-1"
-        expectedCount={2}
-        onOpenSession={vi.fn()}
-      />
+  it("says the session didn't run instead of showing an empty preview", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue(
+      page([
+        {
+          ...session("sess-refused", ""),
+          messageCount: 0,
+          runAttemptStatus: "failed",
+        },
+        {
+          ...session("sess-ran", "Pull the proposal-stage prospects"),
+          messageCount: 6,
+          runAttemptStatus: "failed",
+        },
+      ])
     );
+
+    render(<FindingsGoalSessions {...swarmProps} expectedCount={2} />);
 
     expect(
       screen.getAllByTestId("findings-goal-session-never-ran")
@@ -180,26 +184,11 @@ describe("FindingsGoalSessions for sessions that never ran", () => {
   });
 
   it("keeps the old row when a backend sends no attempt status", () => {
-    mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: {
-        sessions: [
-          { ...session("sess-a", ""), sourceType: "swarm", messageCount: 0 },
-        ],
-        nextBefore: null,
-        total: 1,
-        totalTruncated: false,
-      },
-      isLoading: false,
-    });
-
-    render(
-      <FindingsGoalSessions
-        scope={{ kind: "swarm", projectId: "proj-1" }}
-        goalId="run-1"
-        expectedCount={1}
-        onOpenSession={vi.fn()}
-      />
+    mockUseGoalOutcomeDrilldown.mockReturnValue(
+      page([{ ...session("sess-a", ""), messageCount: 0 }])
     );
+
+    render(<FindingsGoalSessions {...swarmProps} expectedCount={1} />);
 
     expect(screen.getByText("(no preview)")).toBeInTheDocument();
     expect(
@@ -207,39 +196,46 @@ describe("FindingsGoalSessions for sessions that never ran", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("refreshes a row when only a field threadNeverRan reads changes", () => {
-    // The drilldown is live, and the page cache bails out on an equal page.
-    // Equal has to mean equal by everything the row's state is read from, or
-    // a session that settles while the goal is open keeps its stale row.
-    const row = (neverRan: boolean) => ({
-      ...session("sess-a", ""),
-      sourceType: "swarm",
-      messageCount: 0,
-      runAttemptStatus: "failed",
-      neverRan,
-    });
-    const page = (neverRan: boolean) => ({
-      drilldown: {
-        sessions: [row(neverRan)],
-        nextBefore: null,
-        total: 1,
-        totalTruncated: false,
-      },
-      isLoading: false,
-    });
-    const props = {
-      scope: { kind: "swarm" as const, projectId: "proj-1" },
-      goalId: "run-1",
-      expectedCount: 1,
-      onOpenSession: vi.fn(),
-    };
+  it("never marks a User Testing session, whatever its row carries", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue(
+      page([
+        {
+          ...session("sess-a", ""),
+          messageCount: 0,
+          runAttemptStatus: "failed",
+        },
+      ])
+    );
 
-    mockUseGoalOutcomeDrilldown.mockReturnValue(page(false));
-    const { rerender } = render(<FindingsGoalSessions {...props} />);
+    render(
+      <FindingsGoalSessions
+        scope={{ kind: "scenario", scenarioId: "scn-1" }}
+        goalId="cluster-1"
+        expectedCount={1}
+        onOpenSession={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.queryByTestId("findings-goal-session-never-ran")
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks a session whose attempt settles while the goal is open", () => {
+    // The live transition: the attempt is still running with nothing
+    // recorded, then it fails before the conversation starts. The page cache
+    // bails out on an equal page, so equal has to include the attempt.
+    const refused = (runAttemptStatus: "running" | "failed") =>
+      page([{ ...session("sess-a", ""), messageCount: 0, runAttemptStatus }]);
+
+    mockUseGoalOutcomeDrilldown.mockReturnValue(refused("running"));
+    const { rerender } = render(
+      <FindingsGoalSessions {...swarmProps} expectedCount={1} />
+    );
     expect(screen.getByText("(no preview)")).toBeInTheDocument();
 
-    mockUseGoalOutcomeDrilldown.mockReturnValue(page(true));
-    rerender(<FindingsGoalSessions {...props} />);
+    mockUseGoalOutcomeDrilldown.mockReturnValue(refused("failed"));
+    rerender(<FindingsGoalSessions {...swarmProps} expectedCount={1} />);
     expect(
       screen.getByTestId("findings-goal-session-never-ran")
     ).toHaveTextContent("Didn't run");

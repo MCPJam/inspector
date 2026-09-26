@@ -39,6 +39,7 @@ import {
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { describeLaunchFailures } from "@/components/swarms/swarm-session-not-run";
+import { isConvexQueryUnavailable } from "@/lib/convex-error";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
@@ -156,7 +157,16 @@ export function SwarmFindingsTab({
     value: RunLaunchFailures[];
   } | null>(null);
   const receiveLaunchFailures = useCallback(
-    (value: RunLaunchFailures[]) => setLaunchFailures({ runKey, value }),
+    (value: RunLaunchFailures[]) =>
+      // Bails out on an equal answer. The effect that calls this keys on the
+      // query result, so a source that re-allocates an unchanged answer would
+      // otherwise loop: set state, render, new object, set state.
+      setLaunchFailures((prev) =>
+        prev?.runKey === runKey &&
+        JSON.stringify(prev.value) === JSON.stringify(value)
+          ? prev
+          : { runKey, value },
+      ),
     [runKey],
   );
   const launchReason =
@@ -164,9 +174,15 @@ export function SwarmFindingsTab({
       ? describeLaunchFailures(launchFailures.value)
       : null;
   // A backend that predates the query throws on subscribe; the boundary turns
-  // that into no reason line rather than a broken tab.
+  // that into no reason line rather than a broken tab, without filing the
+  // expected dark ship as an error. Keyed to the wave, so one failed read does
+  // not leave the line off every later wave this tab shows.
   const launchFailuresRead = someSessionsDidNotStart ? (
-    <ErrorBoundary fallback={null}>
+    <ErrorBoundary
+      key={runKey}
+      fallback={null}
+      isExpectedError={isLaunchFailuresUnavailable}
+    >
       <LaunchFailuresRead runIds={runIds} onRead={receiveLaunchFailures} />
     </ErrorBoundary>
   ) : null;
@@ -303,6 +319,24 @@ export function SwarmFindingsTab({
       />
     </div>
   );
+}
+
+/**
+ * The failure the launch-failures read EXPECTS: a deployment that does not
+ * serve the query yet (it ships with the backend half of #5188), or a browser
+ * outliving a rollback.
+ *
+ * `isConvexQueryUnavailable` names only the DEV shapes; production redacts
+ * every non-`ConvexError` to `[CONVEX Q(<name>)] [Request ID: …] Server Error`,
+ * so a redacted failure of THIS query is read as the dark-ship state, as
+ * `ServerUrlChangeHistory` does for its own. A `ConvexError` from it (the
+ * run-count refusal) carries its own message and still reports.
+ */
+export function isLaunchFailuresUnavailable(error: Error): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (!message.includes(`Q(${SWARM_QUERIES.listRunLaunchFailures})`))
+    return false;
+  return isConvexQueryUnavailable(error) || message.includes("Server Error");
 }
 
 function LaunchFailuresRead({

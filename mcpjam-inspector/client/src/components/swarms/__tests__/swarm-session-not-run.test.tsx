@@ -91,10 +91,12 @@ describe("SwarmSessionNotRun", () => {
 
     // An unknown code alone humanizes to "failed for an unknown reason",
     // which says less than the status does.
+    // Exact, not a substring: the generic default also ends in "No reason was
+    // recorded.", so a looser match would pass with the failed sentence gone.
     rerender(<SwarmSessionNotRun status="failed" errorCode="mystery_code" />);
-    expect(
-      screen.getByTestId("swarm-session-not-run-reason"),
-    ).toHaveTextContent("No reason was recorded.");
+    expect(screen.getByTestId("swarm-session-not-run-reason").textContent).toBe(
+      "Its attempt failed before the conversation started. No reason was recorded.",
+    );
   });
 });
 
