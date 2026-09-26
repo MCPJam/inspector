@@ -59,6 +59,7 @@ import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
+import { WebmcpInstallPage } from "./components/webmcp-inspector/WebmcpInstallPage";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
@@ -2385,6 +2386,10 @@ export function TracingRoute() {
 
 export function WebmcpInspectorRoute() {
   const webmcpEnabled = useWebmcpInspectorEnabledState();
+
+  if (HOSTED_MODE) {
+    return <WebmcpInstallPage />;
+  }
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`, and bouncing then would strand a flagged-in user who
