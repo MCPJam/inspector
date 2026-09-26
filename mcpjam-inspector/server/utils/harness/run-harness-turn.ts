@@ -93,6 +93,11 @@ import {
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  toolCallLookupFor,
+} from "../history-provenance.js";
+import {
   createSystemStreamFailureReporter,
   oncePerTurn,
 } from "../stream-failure-reporter.js";
@@ -195,7 +200,10 @@ import {
   emitInsufficientScopeChunk,
   emitScopeStepUpRequiredChunk,
 } from "../../routes/web/hosted-elicitation.js";
-import { harnessToolApprovalRefusalReason } from "./harness-availability.js";
+import {
+  harnessModelPurposeForSourceType,
+  harnessToolApprovalRefusalReason,
+} from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -720,6 +728,17 @@ export async function runHarnessTurn(
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
   const messageHistory: ModelMessage[] = [...messages];
+  // What this turn streams is signed as the server's own, as the emulated
+  // engine's turns are (MJ-009), so its replies stay in model context when
+  // the conversation continues on another engine. A no-op where nothing can
+  // be signed (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
   // Per-turn prompt index (user-message count − 1), computed from the inbound
@@ -1110,12 +1129,20 @@ export async function runHarnessTurn(
       //       account, so there is no substitution to catch here — asking
       //       `supportsModel` would only be asking the adapter to rubber-stamp
       //       a value nothing consumes.
+      //       Read from the version-keyed evidence table at the adapter's
+      //       pinned CLI version. An UNVERIFIED pair runs only in Playground
+      //       chat (`sourceType: "direct"`), matching the pre-flight's purpose
+      //       rule; evals, scenarios and swarms refuse it here too.
       if (
         harnessAdapter.modelAccess !== "external-account" &&
-        !harnessAdapter.supportsModel(modelId)
+        !harnessAdapter.supportsModel(modelId, {
+          allowUnknown:
+            harnessModelPurposeForSourceType(sourceType) === "chat",
+        })
       ) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}": ` +
+            `${harnessAdapter.modelSupport(modelId).reason}.`,
         );
       }
       //   (a2) capability/hook invariant for plugin BUNDLE install: advertising
@@ -3779,8 +3806,11 @@ export async function runHarnessTurn(
       // `onFinishEngine` never consumed the reducer's argument, so this is a
       // strict reduction in exposure.
       execute: async (context) => {
+        const writer: ChunkWriter = signChunk
+          ? { write: (chunk) => context.writer.write(signChunk(chunk)) }
+          : context.writer;
         try {
-          await executeEngine(context);
+          await executeEngine({ writer });
         } finally {
           await onFinishEngine(context.writer);
         }

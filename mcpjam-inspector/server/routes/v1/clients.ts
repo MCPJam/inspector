@@ -474,7 +474,7 @@ const READ_ONLY_CONFIG_KEYS = ["id", "schemaVersion"] as const;
  *
  * The rest of the config is passed through opaquely, but the model cannot be:
  * it is stored verbatim and compared verbatim downstream, so a padded
- * `" anthropic/claude-sonnet-4-5 "` would be persisted as a distinct — and
+ * `" anthropic/claude-sonnet-4.5 "` would be persisted as a distinct — and
  * unrecognized — model id. Trimming matches the environment contract's
  * `normalizeModelId`, which is the other write boundary this value reaches.
  * Only ever a trim; the id itself is never rewritten.
@@ -515,7 +515,7 @@ const createClientSchema = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });

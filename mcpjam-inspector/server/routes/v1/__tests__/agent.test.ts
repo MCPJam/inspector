@@ -145,6 +145,7 @@ import {
 } from "../agent.js";
 import { isMcpjamToolId } from "../../../utils/built-in-tools/mcpjam.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
+import { setRevokedSessionCacheForTests } from "../../../services/revoked-session-cache.js";
 import {
   callServerToolOperation,
   cancelEvalRunOperation,
@@ -1843,10 +1844,14 @@ describe("GET /api/v1/agent-ops", () => {
     resetSlackRateLimitForTests();
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     verifyAuthKitTokenMock.mockResolvedValue({ sub: "workos|alice" });
+    // The catalog itself, in a process without the revoked-session list; how
+    // the list gates this route is covered in session-revocation.test.ts.
+    setRevokedSessionCacheForTests(null);
   });
 
   afterEach(() => {
     delete process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
+    setRevokedSessionCacheForTests(undefined);
     vi.clearAllMocks();
   });
 

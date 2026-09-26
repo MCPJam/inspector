@@ -110,6 +110,7 @@ import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
 import {
   createUiChunkProvenanceSigner,
   historyProvenanceContextFor,
+  isMarkedUnverifiedCall,
   presentHistoryForModel,
   toolCallLookupFor,
   type HistoryPresentation,
@@ -594,6 +595,25 @@ export interface MCPJamEngineErrorEvent {
  */
 const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
 
+/**
+ * Backend code (convex `stream/routes.ts` `categorizeError`) for a 401/403
+ * whose upstream detail is the hosted gateway's provider-allowlist refusal:
+ * the model's provider is not enabled on MCPJam's gateway. Read by status it
+ * would become `provider/auth_error` and tell the user to fix their API key,
+ * which was never involved; retrying cannot help either.
+ */
+export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
+
+/**
+ * Backend refusal code (convex `stream/routes.ts` `categorizeError`): the
+ * provider failed and the request's model selection forbids the OpenRouter
+ * fallback (`fallback.provider === "none"`, the eval/swarm/judge default). It
+ * keeps the provider's status and retryability, so read by status alone a 401
+ * would become "the provider rejected your key" and a 502 an MCPJam outage —
+ * neither is the fix. Its own slug says what happened and never pages.
+ */
+const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -611,6 +631,12 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
+  if (code === FALLBACK_PROHIBITED_CODE)
+    return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -661,6 +687,12 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
+  if (code === FALLBACK_PROHIBITED_CODE)
+    return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -1072,9 +1104,9 @@ export interface MCPJamHandlerOptions {
   approvalBinding?: ToolApprovalBinding;
   /**
    * Present the history to the model as `history-provenance.ts` describes
-   * (MJ-009): tool results fenced, content the server could not verify
-   * labelled. Applied to what each step SENDS; the history itself, and so
-   * the persisted transcript, is unchanged. Browser-facing chat sets it.
+   * (MJ-009): tool results fenced, content the server could not verify left
+   * out. Applied to what each step SENDS; the history itself, and so the
+   * persisted transcript, is unchanged. Browser-facing chat sets it.
    */
   historyPresentation?: HistoryPresentation;
   /**
@@ -1821,6 +1853,8 @@ const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
   "mcpjam_rate_limit",
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's gateway allowlist — our setting.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ]);
 
 /** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
@@ -1886,6 +1920,37 @@ function attachedNormalized(error: unknown): NormalizedError | undefined {
   if (!error || typeof error !== "object") return undefined;
   const candidate = (error as { normalized?: unknown }).normalized;
   return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/**
+ * The client-facing error chunk text for a mid-stream `provider_not_allowlisted`
+ * failure. Every other mid-stream chunk reaches the client as its bare
+ * sentence, but the client can only choose the allowlist banner (no retry, no
+ * API-key advice) from the code, so this one keeps the structured shape the
+ * non-OK path already delivers.
+ */
+function providerNotAllowlistedErrorText(
+  parsed: ReturnType<typeof parseStreamErrorChunkText>,
+): string {
+  return JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message: parsed.message,
+    ...(parsed.statusCode !== undefined
+      ? { statusCode: parsed.statusCode }
+      : {}),
+    isRetryable: false,
+    ...(parsed.details ? { details: parsed.details } : {}),
+  });
+}
+
+/**
+ * Error chunk text a thrower prepared for the client, when the bare message
+ * would lose what the client needs to render the failure.
+ */
+function attachedClientErrorText(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const text = (error as { clientErrorText?: unknown }).clientErrorText;
+  return typeof text === "string" ? text : undefined;
 }
 
 /** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
@@ -2363,6 +2428,9 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
+              ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
+              : {}),
           });
         }
 
@@ -2567,7 +2635,10 @@ function emitInheritedToolCalls(
       for (const part of assistantMsg.content) {
         if (
           part.type === "tool-call" &&
-          !existingResultIds.has(part.toolCallId)
+          !existingResultIds.has(part.toolCallId) &&
+          // Not issued by this server (MJ-009): the browser is never asked to
+          // run it, whichever path re-introduces calls.
+          !isMarkedUnverifiedCall(part.providerOptions)
         ) {
           emitToolInput(writer, {
             toolCallId: part.toolCallId,
@@ -2656,6 +2727,8 @@ async function handlePendingApprovals(
   const approvalIdToToolCallId = new Map<string, string>();
   const toolCallById = new Map<string, { toolName: string; input: unknown }>();
   const toolCallIdToAssistantIdx = new Map<string, number>();
+  // Calls the history marks as not issued by this server (MJ-009).
+  const unissuedToolCallIds = new Set<string>();
   for (let i = 0; i < messageHistory.length; i++) {
     const msg = messageHistory[i];
     if (msg?.role === "assistant") {
@@ -2671,6 +2744,9 @@ async function handlePendingApprovals(
             input: part.input,
           });
           toolCallIdToAssistantIdx.set(part.toolCallId, i);
+          if (isMarkedUnverifiedCall(part.providerOptions)) {
+            unissuedToolCallIds.add(part.toolCallId);
+          }
         }
       }
     }
@@ -2710,6 +2786,10 @@ async function handlePendingApprovals(
         if (part.type === "tool-approval-response" && part.approvalId) {
           const toolCallId = approvalIdToToolCallId.get(part.approvalId);
           if (!toolCallId) continue;
+          // A call this server did not issue is neither approved nor denied
+          // here: nothing about it goes to the browser, and
+          // `settleUnapprovedHistoryToolCalls` answers it silently.
+          if (unissuedToolCallIds.has(toolCallId)) continue;
           // One answer per approval: a repeated response is not a second use.
           if (answeredApprovalIds.has(part.approvalId)) continue;
           answeredApprovalIds.add(part.approvalId);
@@ -2818,7 +2898,8 @@ async function handlePendingApprovals(
   // the client throws `No tool invocation found for tool call ID "…"` and ends
   // the turn with a red banner, after the tools have already run.
   //
-  // EVERY unresolved call, not only the approved ones: a DENIED call's
+  // EVERY unresolved call this server issued, not only the approved ones —
+  // a call the history marks as not issued is never re-introduced: a DENIED call's
   // `tool-output-denied` is written below, and nothing had introduced it. A
   // SIBLING that never needed approval is re-introduced too — though since
   // MJ-008 it is no longer RUN here. The pause now drains the step's
@@ -3033,6 +3114,11 @@ function collectToolCallIds(messages: ModelMessage[]): Set<string> {
  * history for the next model request and would be re-introduced on every
  * step. Client-fulfilled tools (`ui_*`, `page_*`, app tools) are left alone —
  * the browser, not this server, runs those, and it answers them itself.
+ *
+ * Except a call the history marks as not issued by this server (MJ-009): the
+ * browser has nothing to answer for it, so it is answered here too, whatever
+ * its tool, and SILENTLY — re-sending it would ask the browser to run it. The
+ * model is never shown it or its answer (`presentHistoryForModel`).
  */
 async function settleUnapprovedHistoryToolCalls(args: {
   writer: StepContext["writer"];
@@ -3055,6 +3141,8 @@ async function settleUnapprovedHistoryToolCalls(args: {
   }
 
   const byAssistantIdx = new Map<number, ToolCallPart[]>();
+  // Answered without a word to the browser; see the doc comment.
+  const unissued = new Set<string>();
   for (let i = 0; i < messageHistory.length; i++) {
     const msg = messageHistory[i];
     if (msg?.role !== "assistant") continue;
@@ -3070,11 +3158,15 @@ async function settleUnapprovedHistoryToolCalls(args: {
       ) {
         continue;
       }
-      // A registered tool without `execute` is fulfilled by the browser.
-      const registered = (tools as Record<string, { execute?: unknown }>)[
-        part.toolName
-      ];
-      if (registered && typeof registered.execute !== "function") continue;
+      if (isMarkedUnverifiedCall(part.providerOptions)) {
+        unissued.add(part.toolCallId);
+      } else {
+        // A registered tool without `execute` is fulfilled by the browser.
+        const registered = (tools as Record<string, { execute?: unknown }>)[
+          part.toolName
+        ];
+        if (registered && typeof registered.execute !== "function") continue;
+      }
       const bucket = byAssistantIdx.get(i) ?? [];
       bucket.push(part as ToolCallPart);
       byAssistantIdx.set(i, bucket);
@@ -3087,6 +3179,7 @@ async function settleUnapprovedHistoryToolCalls(args: {
     "[mcpjam-stream-handler] client-sent history carried unresolved tool calls with no verified approval; answering without running them",
     {
       count: settled.length,
+      notIssued: unissued.size,
       toolNames: [...new Set(settled.map((part) => part.toolName))],
     },
   );
@@ -3094,6 +3187,7 @@ async function settleUnapprovedHistoryToolCalls(args: {
   // Re-introduce each call on THIS response before answering it — the
   // client's reducer needs a part to attach the answer to.
   for (const part of settled) {
+    if (unissued.has(part.toolCallId)) continue;
     emitToolInput(args.writer, {
       toolCallId: part.toolCallId,
       toolName: part.toolName,
@@ -3124,19 +3218,20 @@ async function settleUnapprovedHistoryToolCalls(args: {
   const answers: ModelMessage[] = [];
   const sortedKeys = [...byAssistantIdx.keys()].sort((a, b) => b - a);
   for (const idx of sortedKeys) {
-    const message = {
+    const content = byAssistantIdx.get(idx)!.map((part): ToolResultPart => ({
+      type: "tool-result",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
+    }));
+    messageHistory.splice(idx + 1, 0, {
       role: "tool",
-      content: byAssistantIdx.get(idx)!.map(
-        (part): ToolResultPart => ({
-          type: "tool-result",
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
-        }),
-      ),
-    } as ModelMessage;
-    messageHistory.splice(idx + 1, 0, message);
-    answers.unshift(message);
+      content,
+    } as ModelMessage);
+    const emitted = content.filter((part) => !unissued.has(part.toolCallId));
+    if (emitted.length > 0) {
+      answers.unshift({ role: "tool", content: emitted } as ModelMessage);
+    }
   }
   await emitToolResults(
     args.writer,
@@ -4449,8 +4544,9 @@ export async function runChatEngineLoop(
     options.approvalBinding ??
     toolApprovalBindingFor({ authHeader, projectId, chatSessionId });
   // Sign what this turn streams as the server's own (MJ-009): assistant text
-  // and reasoning at their end chunks, tool results as they are emitted. A
-  // no-op where provenance is off (local mode, or no signing key).
+  // as it streams, reasoning at its end, the calls the model issues and the
+  // results they get — never for a call the history marks as not issued. A
+  // no-op where nothing can be signed (local mode, or no signing key).
   const provenanceContext = historyProvenanceContextFor(projectId);
   const signChunk = provenanceContext
     ? createUiChunkProvenanceSigner(
@@ -4981,7 +5077,7 @@ export async function runChatEngineLoop(
           promptIndex: traceTurn.promptIndex,
           usage: traceTurn.turnUsage,
         });
-        emitError(safeWriter, errorText);
+        emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.

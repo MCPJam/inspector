@@ -217,7 +217,7 @@ export function ClientConfigEditor({
                 id={`${reactId}-modelId`}
                 value={value.modelId}
                 onChange={(e) => update({ modelId: e.target.value })}
-                placeholder="claude-sonnet-4-5"
+                placeholder="anthropic/claude-sonnet-4.5"
               />
             </div>
 

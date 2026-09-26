@@ -177,6 +177,22 @@ export type HostedOAuthRefreshOptions = {
 };
 
 /**
+ * A refresh the backend REFUSED for policy or origin reasons (not one that
+ * merely failed). Callers that swallow refresh failures to try the server
+ * bare must let these through: connecting bare would lead to an OAuth flow
+ * the same refusal answers again, and the details are what the client shows.
+ */
+export function isCredentialRefusalError(error: unknown): boolean {
+  if (!(error instanceof WebRouteError)) return false;
+  const details = error.details as
+    | { exportDenied?: unknown; secretOriginMismatch?: unknown }
+    | undefined;
+  return (
+    details?.exportDenied === true || details?.secretOriginMismatch === true
+  );
+}
+
+/**
  * POST `/web/oauth/force-refresh` against Convex with the user's WorkOS
  * bearer to mint a fresh hosted-OAuth access token. Used by both the hosted
  * `/web` routes and the local `/mcp` resolver — they call the same backend
@@ -258,6 +274,35 @@ export async function forceRefreshHostedOAuthAccessToken(
         parseRefreshMaterial(body?.refresh),
         { serverId, serverName: options?.serverName ?? null }
       );
+    }
+    // The backend's 403 for a credential it will not release to this caller:
+    // the organization's export policy, or a server that moved away from the
+    // origin its tokens were minted for. Carried with the same details the
+    // reveal routes use, so the client names the policy (or opens the moved
+    // server) instead of offering a reconnect that cannot help.
+    if (body?.exportDenied === true || body?.secretOriginMismatch === true) {
+      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, message, {
+        ...(body.exportDenied === true
+          ? {
+              exportDenied: true,
+              policy:
+                typeof body.policy === "string"
+                  ? body.policy
+                  : "credentialExportPolicy",
+            }
+          : {
+              secretOriginMismatch: true,
+              boundOrigin:
+                typeof body.boundOrigin === "string" ? body.boundOrigin : null,
+              targetOrigin:
+                typeof body.targetOrigin === "string"
+                  ? body.targetOrigin
+                  : null,
+            }),
+        credentialRefusal: code,
+        serverId,
+        serverName: options?.serverName ?? null,
+      });
     }
     const isReconnectRequired = code === "refresh_token_invalid";
     // The backend's 503: the credential is fine, the authorization server

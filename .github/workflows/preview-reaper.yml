@@ -1,0 +1,56 @@
+name: Preview reaper
+
+# Deletes Railway PR preview environments (`pr-<n>`, `pr-be-<n>`) whose PR is
+# no longer open. The close-time destroy jobs in pr-preview.yml stay the fast
+# path; this is the backstop for every close they miss — GitHub never runs a
+# `pull_request` workflow for a PR with a merge conflict, bulk closes drop
+# runs, and a close run can fail, be cancelled, or be followed by an upsert
+# that recreates the environment. Each missed close left a full inspector
+# running indefinitely. See .github/scripts/reap-preview-envs.sh for the
+# safety rules.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be reaped without deleting anything"
+        type: boolean
+        default: true
+      max_deletions:
+        description: "Most environments to reap in this run"
+        type: number
+        default: 50
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: preview-reaper
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    if: github.repository == 'MCPJam/inspector'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Checkout is required so the `.github/scripts/` helpers are on disk.
+      - uses: actions/checkout@v4
+
+      - name: Reap preview environments for closed PRs
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INSPECTOR_REPO: ${{ github.repository }}
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+          BACKEND_GITHUB_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+          # Scheduled runs have no inputs, so they delete; manual runs
+          # default to a dry run.
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          MAX_DELETIONS: ${{ inputs.max_deletions || 50 }}
+        run: .github/scripts/reap-preview-envs.sh

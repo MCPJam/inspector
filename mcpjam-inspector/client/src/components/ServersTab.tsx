@@ -163,6 +163,7 @@ import {
 } from "./hosts/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "@/lib/toast";
+import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
 
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
@@ -1230,6 +1231,20 @@ export function ServersTab({
       });
     },
     [activeProjectId]
+  );
+
+  // A connect the backend refused because the server moved away from where
+  // its saved credentials were entered: open its configuration, where they
+  // are re-entered. Read through a ref so the subscription is made once.
+  const projectServersRef = useRef(projectServers);
+  projectServersRef.current = projectServers;
+  useEffect(
+    () =>
+      onCredentialReentryRequest((serverName) => {
+        const server = projectServersRef.current[serverName];
+        if (server) handleOpenDetailModal(server, "configuration");
+      }),
+    [handleOpenDetailModal]
   );
 
   const handleCloseDetailModal = useCallback(() => {

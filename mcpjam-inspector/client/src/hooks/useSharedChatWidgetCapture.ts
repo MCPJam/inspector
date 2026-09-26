@@ -17,6 +17,8 @@ import {
   type SharedChatWidgetSnapshotPayload,
 } from "@/shared/widget-snapshot";
 import { isStaleHostedAccessError } from "@/lib/hosted-access-errors";
+import { BlobUploadError } from "@/shared/blob-upload";
+import { useConvexBlobUpload } from "./use-convex-blob-upload";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
@@ -174,6 +176,18 @@ function toWidgetCsp(widget: WidgetDebugInfo): WidgetCsp | undefined {
   };
 }
 
+/**
+ * An upload refusal a retry cannot change: a malformed request, no access to
+ * this chat, or bytes the route will never accept. Rate limits, an expired
+ * bearer and transport failures stay on the ordinary bounded retry.
+ */
+function isFinalUploadRefusal(error: unknown): boolean {
+  return (
+    error instanceof BlobUploadError &&
+    [400, 403, 413, 415].includes(error.status)
+  );
+}
+
 function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
   if (result == null) {
     return true;
@@ -194,9 +208,7 @@ export function useSharedChatWidgetCapture({
   onStaleHostedAccess,
 }: UseSharedChatWidgetCaptureOptions): void {
   const widgets = useWidgetDebugStore((state) => state.widgets);
-  const generateSnapshotUploadUrl = useMutation(
-    "chatSessions:generateSnapshotUploadUrl" as any,
-  );
+  const uploadSnapshotBytes = useConvexBlobUpload();
   const createWidgetSnapshot = useMutation(
     "chatSessions:createWidgetSnapshot" as any,
   );
@@ -412,36 +424,21 @@ export function useSharedChatWidgetCapture({
 
     inFlightRef.current.add(toolCallId);
 
-    const uploadBlob = async (
-      content: BlobPart,
-      contentType: string,
-    ): Promise<string> => {
-      const isScenarioSession = Boolean(scenarioId);
-      const uploadUrl = await generateSnapshotUploadUrl({
-        ...(scenarioId ? { scenarioId } : {}),
-        ...(scenarioId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        ...(!isScenarioSession
-          ? { chatSessionId: sessionIdRef.current }
-          : {}),
-      });
-      const response = await fetch(uploadUrl, {
-        method: "POST",
-        body: new Blob([content], { type: contentType }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to upload snapshot blob (${response.status})`);
-      }
-
-      const result = (await response.json()) as { storageId?: string };
-      if (!result.storageId) {
-        throw new Error("Snapshot upload did not return a storageId");
-      }
-
-      return result.storageId;
-    };
+    // The bytes go through the backend's upload route (MJ-006), scoped to
+    // this chat and, for a hosted scenario, to the redeemed access.
+    const uploadBlob = (content: BlobPart, contentType: string) =>
+      uploadSnapshotBytes(
+        {
+          purpose: "widget-snapshot",
+          chatSessionId: sessionIdRef.current,
+          ...(scenarioId ? { scenarioId } : {}),
+          ...(scenarioId && Number.isFinite(accessVersion)
+            ? { accessVersion }
+            : {}),
+        },
+        new Blob([content], { type: contentType }),
+        contentType,
+      );
 
     try {
       // Reuse cached blobs if the HTML hash matches (avoids orphaned blobs on retry)
@@ -554,6 +551,8 @@ export function useSharedChatWidgetCapture({
         // belong to a different scope now.
         return;
       }
+      // A stale grant reads the same from the upload route (403 with
+      // `reason: scenario_access_stale`) as from the snapshot mutation.
       if (isStaleHostedAccessError(error)) {
         // Drop cached blobs uploaded under the stale accessVersion, queue
         // this toolCallId for replay once the fresh accessVersion arrives,
@@ -582,6 +581,13 @@ export function useSharedChatWidgetCapture({
         // the timer re-fires `onStaleHostedAccess` on a growing backoff
         // so the queued snapshot isn't stranded.
         schedulePendingStaleRefresh();
+      } else if (isFinalUploadRefusal(error)) {
+        console.warn(
+          "[useSharedChatWidgetCapture] Snapshot upload refused:",
+          error,
+        );
+        cachedBlobsRef.current.delete(toolCallId);
+        retryCountRef.current.delete(toolCallId);
       } else if (shouldRetryPendingSnapshot(undefined, error)) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
         if (retries >= MAX_PENDING_SESSION_RETRIES) {

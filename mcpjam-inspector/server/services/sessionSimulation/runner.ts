@@ -22,7 +22,12 @@ import {
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
-import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  Harness,
+  ModelReasoningEffort,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -292,8 +297,21 @@ interface SessionResult {
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
+  /**
+   * The saved selection behind `modelDefinition`, already checked with
+   * `backendModelSelection()` (never `local`). Forwarded to the backend as the
+   * request body's `modelSelection` on the rail it names. Absent ⇒ legacy.
+   */
+  modelSelection?: ModelSelection;
   systemPrompt: string;
+  /**
+   * The effective temperature: the saved selection's setting over the host's
+   * (`resolveEffectiveModelSettings`), so the top-level field the backend
+   * prefers can never contradict the forwarded selection.
+   */
   temperature?: number;
+  /** The saved selection's reasoning effort, applied on the resolved rail. */
+  reasoningEffort?: ModelReasoningEffort;
   /**
    * Tool-step cap for ONE assistant turn. Absent ⇒ the engine's own default
    * (the Playground's 30). A synthetic persona turn resends every tool result
@@ -519,6 +537,8 @@ export async function runSyntheticHostSession(
     accessVersion,
     scenarioId,
     environmentId,
+    modelSelection,
+    reasoningEffort,
   } = runtime;
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
@@ -1265,6 +1285,8 @@ export async function runSyntheticHostSession(
             ...(persist.journeyRunId
               ? { journeyRunId: persist.journeyRunId }
               : {}),
+            ...(modelSelection ? { modelSelection } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
           }),
         admissionOptions,
       ).catch((error: unknown) => {
@@ -1732,7 +1754,12 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
     snapshots = await captureMcpAppWidgetSnapshots({
       messages,
       mcpClientManager,
-      convexClient,
+      uploadTarget: {
+        convexAuthToken,
+        chatSessionId,
+        ...(scenarioId !== undefined ? { scenarioId } : {}),
+        ...(accessVersion !== undefined ? { accessVersion } : {}),
+      },
       ...(capturedToolCallIds ? { skipToolCallIds: capturedToolCallIds } : {}),
     });
   } catch (err) {
@@ -1870,6 +1897,17 @@ export async function drainAssistantTurn(
      * up in one query.
      */
     journeyRunId?: string;
+    /**
+     * The saved selection behind `modelDefinition` (see
+     * `SyntheticHostRuntime.modelSelection`), forwarded by `resolveTurnRuntime`
+     * on the rail it names.
+     */
+    modelSelection?: ModelSelection;
+    /**
+     * The effective reasoning effort (see `SyntheticHostRuntime`), applied by
+     * `resolveTurnRuntime` on the rail it resolves.
+     */
+    reasoningEffort?: ModelReasoningEffort;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   },
@@ -1896,6 +1934,8 @@ export async function drainAssistantTurn(
     builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
+    modelSelection,
+    reasoningEffort,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1955,6 +1995,19 @@ export async function drainAssistantTurn(
       ? { extraBodyFields: mergedExtraBodyFields }
       : {}),
     ...(attribution ? { attribution } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
+    // What the engine is handed below, so the rail applies the effort and
+    // the local execution record states the settings actually sent.
+    ...(args.temperature !== undefined || reasoningEffort !== undefined
+      ? {
+          settings: {
+            ...(args.temperature !== undefined
+              ? { temperature: args.temperature }
+              : {}),
+            ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+          },
+        }
+      : {}),
   });
 
   // Engine-error signal. Structural type covers both the hosted
@@ -2018,7 +2071,12 @@ export async function drainAssistantTurn(
     // `traceTurn.turnUsage` even on error, so `result.usage` carries the
     // consumed tokens. Finalize BEFORE throwing so a failed local-BYOK turn's
     // real spend is still recorded (cubic P1: post-consumption undercount).
-    await rt.finalizeUsage(result);
+    await rt.finalizeUsage(
+      result,
+      lastEngineError
+        ? { engineError: { message: lastEngineError.message } }
+        : undefined,
+    );
 
     // The direct engine always produces a trace, so a turn-terminating failure
     // is signalled by `onEngineError` (its `onError` fires only for fatal

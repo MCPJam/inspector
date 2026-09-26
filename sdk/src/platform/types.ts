@@ -23,6 +23,7 @@ import type {
   BrowserAgentResult,
 } from "./browser-agent-contract.js";
 import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+import type { ExecutionRecord } from "../host-config/execution-record.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -1293,6 +1294,33 @@ export interface PlatformDisclosedModel {
   tenantEgress: PlatformDisclosureTenantEgress;
   byok?: PlatformByokDisclosure;
   rail: PlatformRailDisclosure;
+  /**
+   * Where this model's BYOK / provider facts came from: the run's own
+   * execution records, or the organization's provider configuration AS IT IS
+   * NOW (a pre-run disclosure, or a run recorded before records existed —
+   * which may not be what ran). Absent on older backends.
+   */
+  provenance?: PlatformDisclosureProvenance;
+  /** Present exactly when `provenance === "execution-record"`. */
+  recorded?: PlatformRecordedExecutionDisclosure;
+}
+
+export type PlatformDisclosureProvenance =
+  | "execution-record"
+  | "inferred-from-current-config";
+
+/** What one model's execution records say, aggregated. */
+export interface PlatformRecordedExecutionDisclosure {
+  /** How many records (iterations / sessions / calls) were read. */
+  records: number;
+  /** Each record's resolved rail, first-seen order, deduplicated. */
+  resolvedRails: readonly string[];
+  /** Every rail any recorded attempt used (fallbacks included). */
+  attemptedRails: readonly string[];
+  /** Offering provider keys (`gateway`, `openrouter`, `azure`, `custom:x`). */
+  providerKeys: readonly string[];
+  /** Deviation kinds any record carries (`provider_fallback`, …). */
+  deviations: readonly string[];
 }
 
 /**
@@ -3405,6 +3433,16 @@ export interface PlatformEvalIteration {
   suspectedConditionVerdict?: SuspectedConditionVerdict;
   /** The server returned a verdict that failed validation. */
   suspectedConditionUnverified?: true;
+  /**
+   * What this iteration actually ran on: the resolved model, rail and
+   * connection, harness runtime, effective settings, every routing attempt and
+   * any deviation from what was requested. Names a connection, never a key.
+   *
+   * ABSENT on iterations recorded before the record existed. Render that as
+   * "not recorded", never reconstruct it from `model`/`provider`. Read it with
+   * `readExecutionRecord` and print it with `formatExecutionProvenanceLine`.
+   */
+  execution?: ExecutionRecord;
 }
 
 /**

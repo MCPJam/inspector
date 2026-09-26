@@ -19,6 +19,10 @@ import {
   isSpendBudgetReachedCode,
   SPEND_BUDGET_REACHED_MESSAGE,
 } from "@/lib/mcpjam-limit";
+import {
+  describeProviderNotAllowlisted,
+  isProviderNotAllowlistedCode,
+} from "@/lib/provider-not-allowlisted";
 import { cn } from "@/lib/utils";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -87,6 +91,12 @@ export function ErrorBox({
   onChangeProtocolVersion,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
+  // Only a mounted `ModelSelector` acts on the providers-tab nonce. Hosted
+  // study chats run in minimal mode without one, so there the button would
+  // do nothing.
+  const canOpenProvidersTab = useModelPickerIntentStore(
+    (state) => state.providersTabResponderCount > 0,
+  );
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
   const refusalCode = code ?? errorDetailsJson?.code;
@@ -105,6 +115,51 @@ export function ErrorBox({
         {canTopUp && onTopUp && <Button variant="outline" onClick={onTopUp}>{creditActionLabel}</Button>}
       </div>
     </div>;
+  }
+
+  if (isProviderNotAllowlistedCode(refusalCode)) {
+    // The hosted gateway does not serve this model's provider. Neither a
+    // retry nor a new API key changes that, so this banner offers neither:
+    // only a different model, or the user's own key for that provider.
+    const described = describeProviderNotAllowlisted(message);
+    return (
+      <div
+        role="alert"
+        data-testid="chat-error-provider-not-allowlisted"
+        className="flex flex-col gap-3 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        <div className="flex items-start gap-3">
+          <CircleAlert className="h-6 w-6 flex-shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium leading-6">{described.title}</p>
+            <p className="text-sm leading-6 opacity-90">{described.oneLine}</p>
+            <ul className="mt-1 list-disc pl-5 text-xs leading-5 opacity-90">
+              {described.nextSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+            {canOpenProvidersTab ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  useModelPickerIntentStore.getState().requestOpenProvidersTab()
+                }
+              >
+                Use your own provider key
+              </Button>
+            ) : null}
+            {onResetChat ? (
+              <Button type="button" variant="outline" onClick={onResetChat}>
+                Reset chat
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Three priority states for the rate-limit-adjacent variants. Order

@@ -6,6 +6,12 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 
+import {
+  executionDeviationTitle,
+  executionRailLabel,
+} from "@mcpjam/sdk/browser";
+import type { PlatformDisclosedModel } from "@mcpjam/sdk/platform";
+
 import { cn } from "@/lib/utils";
 import {
   useRunDisclosure,
@@ -170,6 +176,11 @@ export function describeRunDisclosureDetail(
           ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${model.rail.outcomeIfRunNow.destination})`
           : model.tenantEgress);
       lines.push(`Model: ${model.modelId} — ${destination}`);
+      // What the run's own execution records say, when the disclosure was
+      // read off them. Absent (a pre-run disclosure, an older backend, a run
+      // recorded before records existed) ⇒ no line, never a guess.
+      const recorded = describeRecordedExecution(model);
+      if (recorded) lines.push(recorded);
     }
     if (disclosure.execution.modelsUnresolved) {
       lines.push(
@@ -262,6 +273,33 @@ export function describeRunDisclosureDetail(
     );
   }
   return lines;
+}
+
+/**
+ * One line for a model whose facts came from its execution records: how many
+ * records, the rails they resolved to and attempted, and any deviation. The
+ * CLI prints the same facts (`writeRunDisclosure`).
+ */
+export function describeRecordedExecution(
+  model: Pick<PlatformDisclosedModel, "provenance" | "recorded">,
+): string | null {
+  if (model.provenance !== "execution-record" || !model.recorded) return null;
+  const { records, resolvedRails, attemptedRails, deviations } =
+    model.recorded;
+  const extraRails = attemptedRails.filter(
+    (rail) => !resolvedRails.includes(rail),
+  );
+  return (
+    `Recorded (${records} record${records === 1 ? "" : "s"}): ran via ${
+      resolvedRails.map(executionRailLabel).join(", ") || "no rail recorded"
+    }` +
+    (extraRails.length > 0
+      ? `; also attempted ${extraRails.map(executionRailLabel).join(", ")}`
+      : "") +
+    (deviations.length > 0
+      ? `; deviations: ${deviations.map(executionDeviationTitle).join(", ")}`
+      : "")
+  );
 }
 
 /**

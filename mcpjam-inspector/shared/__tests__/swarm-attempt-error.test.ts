@@ -389,3 +389,24 @@ it.each([
   expect(result.message).toContain("HTTP 502");
   expect(result.message).not.toMatch(/<|Cloudflare/);
 });
+
+describe("humanizeSwarmAttemptError provider_not_allowlisted", () => {
+  it("keeps the backend headline and leaves the gateway's upstream details out", () => {
+    const headline =
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
+    const info = humanizeSwarmAttemptError(
+      `Backend stream error: 403 ${JSON.stringify({
+        ok: false,
+        code: "provider_not_allowlisted",
+        error: headline,
+        isRetryable: false,
+        details:
+          "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.",
+      })}`,
+    );
+
+    expect(info.message).toBe(headline);
+    expect(info.code).toBe("provider_not_allowlisted");
+    expect(info.httpStatus).toBe(403);
+  });
+});
