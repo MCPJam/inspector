@@ -50,7 +50,18 @@ export type ConformanceRunProgress = {
 };
 
 export type RunConformanceConfig = {
-  server: MCPServerConfig;
+  /**
+   * The target, and the transport every suite dials it through.
+   *
+   * `baseFetch` is the HTTP config's own seam (see `HttpServerConfig`), and
+   * `fetchFn` may ride alongside it. Whichever is set reaches EVERY suite: the
+   * apps and tasks suites connect with this config as-is, and the protocol
+   * suite adopts it as its own `fetchFn` — the one fetch its raw probes and
+   * its MCP client both dial through — unless `protocol.fetchFn` names one
+   * explicitly. A caller that guards the server config has guarded the run;
+   * there is no second place it has to remember.
+   */
+  server: MCPServerConfig & { fetchFn?: typeof fetch };
   suites?: ConformanceSuiteKind[];
   protocolVersion?: MCPConformanceConfig["protocolVersion"];
   protocol?: Partial<Omit<MCPConformanceConfig, "url" | "command" | "args">>;
@@ -68,6 +79,26 @@ function isHeaderRecord(value: unknown): value is Record<string, string> {
     !Array.isArray(value) &&
     Object.values(value).every((entry) => typeof entry === "string")
   );
+}
+
+/**
+ * The fetch the caller attached to the server config, if any: `fetchFn` first,
+ * then the HTTP transport's `baseFetch`.
+ *
+ * Read structurally because `server` is a union, and a stdio config simply has
+ * neither — its suites never reach a fetch.
+ */
+function serverConfigFetch(
+  server: RunConformanceConfig["server"]
+): typeof fetch | undefined {
+  const candidate = server as { fetchFn?: unknown; baseFetch?: unknown };
+  if (typeof candidate.fetchFn === "function") {
+    return candidate.fetchFn as typeof fetch;
+  }
+  if (typeof candidate.baseFetch === "function") {
+    return candidate.baseFetch as typeof fetch;
+  }
+  return undefined;
 }
 
 async function runSuite(
@@ -89,6 +120,15 @@ async function runSuite(
         requestInit?: { headers?: unknown };
       };
       const headers = http.requestInit?.headers;
+      // THE SERVER CONFIG'S TRANSPORT IS THE SUITE'S TRANSPORT. Mapping the
+      // HTTP fields one by one (above) used to drop the caller's fetch on the
+      // floor, and `MCPConformanceTest` falls back to the global one: a hosted
+      // caller that handed over a DNS-pinned, redirect-revalidating fetch had
+      // the apps and tasks suites dial through it while this suite — raw
+      // probes and MCP client alike — followed redirects wherever they led.
+      // Applied AFTER the `protocol` spread so an explicit `fetchFn: undefined`
+      // there cannot quietly unset it; a real `protocol.fetchFn` still wins.
+      const fetchFn = config.protocol?.fetchFn ?? serverConfigFetch(server);
       const result = await new MCPConformanceTest({
         ...(http.url !== undefined ? { serverUrl: String(http.url) } : {}),
         ...(http.accessToken !== undefined
@@ -96,6 +136,7 @@ async function runSuite(
           : {}),
         ...(isHeaderRecord(headers) ? { customHeaders: headers } : {}),
         ...config.protocol,
+        ...(fetchFn ? { fetchFn } : {}),
         ...(config.protocolVersion
           ? { protocolVersion: config.protocolVersion }
           : {}),
