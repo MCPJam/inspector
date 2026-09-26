@@ -81,6 +81,7 @@ export const toolInputChunk = (a: {
   });
 
 export const toolOutputChunk = (a: {
+  providerMetadata?: unknown;
   toolCallId: string;
   output: unknown;
   providerExecuted?: boolean;
@@ -89,6 +90,7 @@ export const toolOutputChunk = (a: {
     type: "tool-output-available",
     toolCallId: a.toolCallId,
     output: a.output,
+    ...(a.providerMetadata ? { providerMetadata: a.providerMetadata } : {}),
     ...(a.providerExecuted ? { providerExecuted: true } : {}),
   });
 
@@ -106,6 +108,16 @@ export const toolOutputDeniedChunk = (a: {
   toolCallId: string;
 }): UIMessageChunk =>
   asChunk({ type: "tool-output-denied", toolCallId: a.toolCallId });
+
+export const toolOutputErrorChunk = (a: {
+  toolCallId: string;
+  errorText: string;
+}): UIMessageChunk =>
+  asChunk({
+    type: "tool-output-error",
+    toolCallId: a.toolCallId,
+    errorText: a.errorText,
+  });
 
 // ── finish / error ───────────────────────────────────────────────────────────
 // Takes a READY messageMetadata (no aggregation here). The emulated engine's
@@ -194,6 +206,14 @@ export const emitToolOutputDenied = (
   a: Parameters<typeof toolOutputDeniedChunk>[0],
 ): UIMessageChunk => {
   const c = toolOutputDeniedChunk(a);
+  w.write(c);
+  return c;
+};
+export const emitToolOutputError = (
+  w: ChunkWriter,
+  a: Parameters<typeof toolOutputErrorChunk>[0],
+): UIMessageChunk => {
+  const c = toolOutputErrorChunk(a);
   w.write(c);
   return c;
 };

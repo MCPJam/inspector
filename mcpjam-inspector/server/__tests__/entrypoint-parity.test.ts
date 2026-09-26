@@ -1,7 +1,10 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { CORS_OPTIONS } from "../config.js";
 
 /**
  * `server/index.ts` and `server/app.ts` must mount the same things.
@@ -79,6 +82,8 @@ const APP_ONLY: Readonly<Record<string, string>> = {
 const INDEX_ONLY_REGISTRATIONS: Readonly<Record<string, string>> = {
   registerBrowserController:
     "Records the control plane's own origin so the local browser's egress guard can refuse a self-dial. It needs the BOUND port, which app.ts never learns — the embedder picks it. Electron registers it in src/main.ts right after serve(), and any other embedder must do the same.",
+  registerPreviewIdentityRoute:
+    "Answers the *.mcpjam.dev preview router's identity check, and mounts only when PREVIEW_EDGE_SECRET and RAILWAY_PUBLIC_DOMAIN are both set, which CI does for PR previews alone. Electron is never a PR preview, so app.ts has nothing to mount.",
 };
 
 describe("server/index.ts <-> server/app.ts parity", () => {
@@ -186,5 +191,36 @@ describe("server/index.ts <-> server/app.ts parity", () => {
         `${name} must decide session-token delivery through mayServeSessionToken, which vetoes tunnel hosts BEFORE consulting the allowlist. Calling isAllowedHost directly reintroduces the leak.`
       ).toBe(true);
     }
+  });
+
+  /**
+   * The same class of bug as the session-token one above, and the reason
+   * `CORS_OPTIONS` exists: `exposeHeaders` was added to app.ts alone, so
+   * `x-request-id` stayed invisible to JS everywhere the standalone server runs
+   * — `npm run dev` and the packaged binary both — which is every place the
+   * feature it was added for is used.
+   */
+  it("both entry points share one CORS config, exposing the diagnostic headers", async () => {
+    for (const [name, source] of [
+      ["server/index.ts", indexSource],
+      ["server/app.ts", appSource],
+    ] as const) {
+      expect(
+        source,
+        `${name} must pass the shared CORS_OPTIONS rather than inlining its own cors({...}), or the two entry points drift on what they expose.`
+      ).toMatch(/app\.use\(\s*"\*",\s*cors\(CORS_OPTIONS\)/);
+    }
+
+    // index.ts serves a port as a side effect of import, so the shared options
+    // are exercised on a bare app rather than by importing that module.
+    const app = new Hono();
+    app.use("*", cors(CORS_OPTIONS));
+    app.get("/api/probe", (c) => c.json({ ok: true }));
+    const response = await app.request("/api/probe", {
+      headers: { Origin: "http://localhost:5173" },
+    });
+    const exposed = response.headers.get("Access-Control-Expose-Headers") ?? "";
+    expect(exposed).toContain("x-request-id");
+    expect(exposed).toContain("x-mcpjam-error-origin");
   });
 });
