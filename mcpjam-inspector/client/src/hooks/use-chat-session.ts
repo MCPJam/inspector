@@ -84,7 +84,7 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
-import { useOutOfCredits } from "@/hooks/useCreditBalance";
+import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -2584,6 +2584,7 @@ export function useChatSession(
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
   const outOfCredits = useOutOfCredits();
+  const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const availableModels = useMemo(
     () =>
@@ -2597,6 +2598,7 @@ export function useChatSession(
         getAzureBaseUrl,
         customProviders,
         outOfCredits,
+        freeTierOnly,
         hostedCatalog,
       }),
     [
@@ -2609,6 +2611,7 @@ export function useChatSession(
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,
+      freeTierOnly,
       hostedCatalog,
     ],
   );

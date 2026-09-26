@@ -61,6 +61,7 @@ import type {
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
+import { selectionKey, type ModelSelection } from "@mcpjam/sdk/browser";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -151,6 +152,13 @@ export type HostConfigInputV2 = {
   localBrowserEnabled?: boolean;
   hostStyle: HostStyleId;
   modelId: string;
+  /**
+   * The saved selection behind `modelId` (whose credentials run it). Optional;
+   * when present its `modelId` equals `modelId` — the SDK canonicalizer and
+   * the backend both refuse a disagreeing pair, so writers set or clear the
+   * two together.
+   */
+  modelSelection?: ModelSelection;
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
@@ -269,6 +277,8 @@ export type HostConfigDtoV2 = {
   schemaVersion: number;
   hostStyle: HostStyleId;
   modelId: string;
+  /** Saved selection behind `modelId`; absent on rows saved without one. */
+  modelSelection?: ModelSelection;
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
@@ -397,6 +407,11 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   return {
     hostStyle: dto.hostStyle,
     modelId: dto.modelId,
+    // Kept only while it still names `modelId` (a disagreeing pair would be
+    // refused on save).
+    ...(dto.modelSelection?.modelId === dto.modelId
+      ? { modelSelection: dto.modelSelection }
+      : {}),
     systemPrompt: dto.systemPrompt,
     temperature: dto.temperature,
     requireToolApproval: dto.requireToolApproval,
@@ -1159,6 +1174,11 @@ export function hostConfigInputsEqual(
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
+  if (
+    (a.modelSelection ? selectionKey(a.modelSelection) : "") !==
+    (b.modelSelection ? selectionKey(b.modelSelection) : "")
+  )
+    return false;
   if (a.systemPrompt !== b.systemPrompt) return false;
   if (a.temperature !== b.temperature) return false;
   if (a.requireToolApproval !== b.requireToolApproval) return false;

@@ -124,6 +124,11 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   "provider/mcpjam_limit_insufficient": "user_config",
+  // The provider failed and the saved selection forbids a fallback. Whose
+  // failure it was is not settled by the refusal itself — MCPJam's Gateway,
+  // the upstream model provider, or a transient network fault — so it never
+  // pages and never blames the user's key.
+  "provider/fallback_prohibited": "ambiguous",
   // The MCP server under test throttled US. That is the server's own
   // behaviour, so it belongs to the server being inspected — not to the
   // user's provider settings, which is what `provider/quota` claims.
@@ -844,6 +849,20 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
     "out-of-mcpjam-credits",
+    "warning",
+  ),
+  "provider/fallback_prohibited": entry(
+    "provider/fallback_prohibited",
+    "Provider failed, fallback not permitted",
+    "The model's provider failed and this model selection does not allow a fallback provider, so the request stopped rather than running somewhere other than where it was asked to.",
+    [
+      "The provider serving this model returned an error or was unreachable, and the selection's fallback policy is \"none\" — the default for evals, swarms and judges, so a result never silently comes from a different provider.",
+    ],
+    [
+      "Retry — the provider's failure may be temporary.",
+      "Pick a different model, or a model on a connection you control.",
+    ],
+    "provider-failed-fallback-not-permitted",
     "warning",
   ),
   "provider/mcpjam_platform_budget": entry(

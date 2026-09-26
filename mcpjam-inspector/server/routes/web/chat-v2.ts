@@ -145,7 +145,10 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
-import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
+import {
+  resolveTurnBuiltInToolIds,
+  type ProjectDefaultToolConfig,
+} from "../../utils/built-in-tools/built-in-tool-policy.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -839,28 +842,22 @@ chatV2.post("/", async (c) => {
     // bounded by the host/project configuration, unknown ids are dropped, and
     // workspace tools follow the caller's project role — see
     // `built-in-tool-policy.ts`. Every consumer below reads this, never the
-    // resolved body value.
+    // resolved body value. It also resolves, from the same saved
+    // configuration, when this turn's workspace tools pause for approval; the
+    // turn's own setting can raise that, never lower it.
     const builtInToolPolicy = await resolveTurnBuiltInToolIds({
       requested: resolvedExecution.builtInToolIds,
       targetKind: executionTarget.kind,
       hostRuntimeConfig,
       isGuest: Boolean(c.get("guestId")),
-      loadProjectDefaultBuiltInToolIds: async () => {
-        const projectDefault = (await createConvexClient(
-          await getConvexBearerForRequest(c),
-        ).query(
+      requestedToolApproval: resolvedExecution.requireToolApproval,
+      loadProjectDefaultConfig: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
           "hostConfigsV2:getProjectDefault" as never,
           {
             projectId: hostedBody.projectId,
           } as never,
-        )) as { builtInToolIds?: unknown } | null;
-        if (!projectDefault) return null;
-        return Array.isArray(projectDefault.builtInToolIds)
-          ? projectDefault.builtInToolIds.filter(
-              (id): id is string => typeof id === "string",
-            )
-          : [];
-      },
+        )) as ProjectDefaultToolConfig | null,
       loadProjectAccess: async () =>
         (await createConvexClient(await getConvexBearerForRequest(c)).query(
           "projects:getProjectCapabilities" as never,
@@ -1888,6 +1885,8 @@ chatV2.post("/", async (c) => {
         // it today; the model turn and voice already send their own.
         ...(isScenarioSession && scenarioId ? { scenarioId } : {}),
         requireToolApproval,
+        // Workspace tools take the server-resolved setting instead (MJ-008).
+        workspaceToolApproval: builtInToolPolicy.workspaceToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and
         // rejects anything that isn't `personal`, so a union on the config

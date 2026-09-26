@@ -10,6 +10,7 @@ import {
 import type { EnvironmentComposerState } from "@/components/environment-composer/environment-stack";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
+import { useModelSelectionsCapability } from "@/hooks/use-project-environment-capability";
 import { useEnsureAdhocEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -31,6 +32,7 @@ export function useComposerResolver(rawProjectId: string): (args: {
   // Read at resolve time, per client with explicit model picks, so a pair the
   // client's harness cannot run is skipped (and reported) instead of minted.
   const loadHostHarness = useHostHarnessLoader();
+  const modelSelectionsEnabled = useModelSelectionsCapability(projectId);
 
   return useCallback(
     ({ state, liveEnvironments, max }) =>
@@ -44,12 +46,14 @@ export function useComposerResolver(rawProjectId: string): (args: {
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
         loadHostHarness,
+        modelSelectionsEnabled: modelSelectionsEnabled === true,
       }),
     [
       computersEnabled,
       ensureAdhocEnvironments,
       loadHostHarness,
       modelMatrixEnabled,
+      modelSelectionsEnabled,
       projectId,
       skillsEnabled,
     ]

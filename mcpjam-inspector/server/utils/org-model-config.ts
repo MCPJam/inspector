@@ -13,12 +13,14 @@ import {
 } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
+import { selectionKey, type ModelSelection } from "@mcpjam/sdk";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
   isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
 } from "@/shared/local-only-mcp";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
+import { backendFailureText } from "./backend-failure-text.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,7 +206,12 @@ export async function resolveOrgModelConfig(
       let message = `Org model config resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore parse failure
       }
@@ -217,7 +224,14 @@ export async function resolveOrgModelConfig(
       providers?: ResolvedProviderConfig[];
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org model config");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org model config",
+        }),
+      );
     }
 
     let providers = data.providers ?? [];
@@ -500,6 +514,7 @@ function buildRuntimeCacheKey(
   providerKey: string,
   model: string,
   auth: ResolveOrgModelConfigAuth | undefined,
+  modelSelection?: ModelSelection,
 ): string {
   const authHash = createHash("sha256")
     .update(
@@ -515,7 +530,13 @@ function buildRuntimeCacheKey(
       }),
     )
     .digest("hex");
-  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}`;
+  // A selection-carrying resolve is re-authorized by the backend against its
+  // connection; it must never be answered from a legacy (or another
+  // connection's) cached entry.
+  const selectionPart = modelSelection
+    ? `:selection:${createHash("sha256").update(selectionKey(modelSelection)).digest("hex")}`
+    : "";
+  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}${selectionPart}`;
 }
 
 /**
@@ -534,26 +555,46 @@ export async function resolveOrgProviderRuntime(
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection },
 ): Promise<OrgProviderRuntime> {
   return resolveOrgProviderRuntimeForTarget(
     { projectId },
     providerKey,
     model,
     auth,
+    options,
   );
 }
 
+/**
+ * `options.modelSelection`: the saved org selection behind this request, sent
+ * as the body's `modelSelection` so the backend re-resolves its connection
+ * (a deleted, disabled or moved connection is refused `credential_missing`)
+ * before it decrypts any key. Only an `org` selection is sent; a backend
+ * that predates selections ignores the field and resolves the legacy way.
+ */
 export async function resolveOrgProviderRuntimeForTarget(
   target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection },
 ): Promise<OrgProviderRuntime> {
+  const modelSelection =
+    options?.modelSelection?.source === "org"
+      ? options.modelSelection
+      : undefined;
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
   await verifyGithubCredentialAccess();
-  const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
+  const cacheKey = buildRuntimeCacheKey(
+    target,
+    providerKey,
+    model,
+    auth,
+    modelSelection,
+  );
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
@@ -587,6 +628,7 @@ export async function resolveOrgProviderRuntimeForTarget(
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
       }),
       signal: controller.signal,
     });
@@ -596,7 +638,12 @@ export async function resolveOrgProviderRuntimeForTarget(
       let message = `Org runtime resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore
       }
@@ -611,7 +658,14 @@ export async function resolveOrgProviderRuntimeForTarget(
       providerKey?: unknown;
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org provider runtime");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org provider runtime",
+        }),
+      );
     }
 
     if (data.runtimeLocation === "local") {
@@ -731,6 +785,12 @@ export async function resolveSyntheticModelSource(args: {
   scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
+  /**
+   * The saved `org` selection behind this model, forwarded to
+   * `/stream/org/resolve` so the backend re-checks its connection. Any other
+   * source is not sent.
+   */
+  modelSelection?: ModelSelection;
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
   if (isHostedModelDefinition(args.modelDefinition)) {
@@ -761,6 +821,9 @@ export async function resolveSyntheticModelSource(args: {
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
+        args.modelSelection?.source === "org"
+          ? { modelSelection: args.modelSelection }
+          : undefined,
       )
     : { runtimeLocation: "cloud", providerKey: keyResult.key };
   return {

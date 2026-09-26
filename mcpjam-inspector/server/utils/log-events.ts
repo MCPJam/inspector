@@ -393,6 +393,15 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // Saved browser profile download (routes/web/browser-profile-download.ts,
+  // MJ-005): the archive could not be served. `stage` is the hop that failed,
+  // `lookup` (the backend's owner check) or `archive` (reading the archive).
+  // `statusCode` is the upstream answer, when there was one.
+  "browser_profile.download.failed": {
+    stage: "lookup" | "archive";
+    statusCode?: number;
+    errorMessage?: string;
+  };
   // Swarm AI generation (routes/web/swarm-generate.ts): the backend
   // /swarms/* endpoint answered with a server error. The upstream message is
   // deliberately NOT forwarded to the caller (it carries the deployment URL),
@@ -406,11 +415,13 @@ export type RequestEventMap = {
     errorCode: string;
   };
   // Sign-out session revocation (routes/web/auth-session.ts, MJ-011): the
-  // backend could not be asked to revoke the session a user just signed out
-  // of, so tokens already issued for it stay valid until they expire. The
-  // sign-out itself still completed.
+  // backend did not acknowledge a durable record of the revocation in time.
+  // This replica already refuses the session; `status` says whether retries
+  // were scheduled ("pending") or could not be ("failed"). The sign-out itself
+  // still completed.
   "auth.session.revoke_incomplete": {
     reason: "failed" | "timeout";
+    status: "pending" | "failed";
   };
   "route.operation.failed": RouteOperationFailedFields;
   /**
@@ -429,15 +440,23 @@ export type RequestEventMap = {
    */
   "apikey.inventory.truncated": { listed: number };
   /**
-   * An owner or admin revoked a key from the organization inventory.
+   * An owner or admin revoked a key bound to their organization, from the
+   * organization inventory or by key id (`DELETE /api/web/api-keys/:id`).
    * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
-   * the key is gone at WorkOS but its org binding was not removed — inert,
-   * and revoking it again from the inventory clears it.
+   * the key is gone at WorkOS but its org binding was not removed, so the
+   * backend has not written the revoke's audit row either. The binding is
+   * inert, and revoking the same key id again removes it and writes the row.
    */
   "apikey.admin_revoke.completed": {
     workosKeyId: string;
     alreadyRevoked: boolean;
     bindingCleanupFailed: boolean;
+    /**
+     * Tries at removing the binding, at most 3: a transport failure or a
+     * backend 5xx is retried. When `bindingCleanupFailed`, the event also
+     * carries the last cause and is reported to Sentry.
+     */
+    bindingCleanupAttempts: number;
     bindingStatus?: number;
   };
   /**
@@ -534,6 +553,8 @@ export type SystemEventMap = {
     upstreamErrors: number;
     bodyLimitRejects: number;
     rateLimitRejects: number;
+    projectRejects: number;
+    busyRejects: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

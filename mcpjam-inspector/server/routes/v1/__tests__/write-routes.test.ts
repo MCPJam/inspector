@@ -85,6 +85,10 @@ vi.mock("convex/browser", () => ({
 
 import v1Routes from "../index.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
+import {
+  __resetHostedModelCatalogForTests,
+  __setHostedCatalogForTests,
+} from "../../../services/hosted-model-catalog.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -1102,8 +1106,8 @@ describe("v1 write routes", () => {
         // is not hosted and has no BYOK key, so the run would 202 and then
         // die with zero tokens and an opaque stream error.
         //
-        // Use a RETIRED id here. The gate admits anything in MODEL_LOOKUP
-        // (BYOK statics ∪ hosted snapshot), so any id we might later add to
+        // Use a RETIRED id here. The gate admits anything in `modelLookup()`
+        // (BYOK statics ∪ hosted catalog), so any id we might later add to
         // SUPPORTED_MODELS stops exercising this path — which is how the
         // previous fixture, claude-sonnet-4-6, quietly stopped testing the
         // rejection once that model shipped in the picker (MMA-2).
@@ -1127,6 +1131,37 @@ describe("v1 write routes", () => {
           "anthropic/claude-haiku-4.5"
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("suggests hosted ids the live catalog added after the snapshot", async () => {
+        // The model lookup falls through to the live catalog service, so a
+        // model the backend added since `hosted-model-ids.generated.ts` was
+        // last regenerated is offered without a regeneration.
+        __setHostedCatalogForTests(["anthropic/claude-live-only-9"]);
+        try {
+          const res = await request(
+            makeApp(),
+            "POST",
+            "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+            {
+              suiteName: "smoke",
+              serverIds: ["s1"],
+              tests: [inlineTest("claude-3-7-sonnet-latest")],
+            }
+          );
+          expect(res.status).toBe(400);
+          const body = (await res.json()) as {
+            details?: { hostedModels?: string[] };
+          };
+          expect(body.details?.hostedModels).toContain(
+            "anthropic/claude-live-only-9"
+          );
+          expect(body.details?.hostedModels).toContain(
+            "anthropic/claude-haiku-4.5"
+          );
+        } finally {
+          __resetHostedModelCatalogForTests();
+        }
       });
 
       it("admits a hosted catalog id", async () => {

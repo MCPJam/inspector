@@ -78,6 +78,7 @@ import {
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
+import { requiresServerVerifiedApproval } from "../tool-approval-token.js";
 import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
@@ -91,6 +92,11 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  toolCallLookupFor,
+} from "../history-provenance.js";
 import {
   createSystemStreamFailureReporter,
   oncePerTurn,
@@ -722,6 +728,17 @@ export async function runHarnessTurn(
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
   const messageHistory: ModelMessage[] = [...messages];
+  // What this turn streams is signed as the server's own, as the emulated
+  // engine's turns are (MJ-009), so its replies stay in model context when
+  // the conversation continues on another engine. A no-op where nothing can
+  // be signed (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
   // Per-turn prompt index (user-message count − 1), computed from the inbound
@@ -2128,9 +2145,30 @@ export async function runHarnessTurn(
       // are `mcp__…`-prefixed, so the two sets cannot collide — but if a future
       // built-in ever took an `mcp__` name, the host's own built-in wins rather
       // than being shadowed by a server.
+      //
+      // A workspace tool that pauses for approval (MJ-008) is handed over only
+      // to a runtime that can pause on a host-executed tool. Anywhere else it
+      // is left out rather than offered without its pause.
+      const offeredBuiltInTools = Object.fromEntries(
+        Object.entries((builtInTools ?? {}) as Record<string, unknown>).filter(
+          ([name, definition]) => {
+            if (
+              harnessAdapter.supportsHostExecutedToolApproval ||
+              !requiresServerVerifiedApproval(definition)
+            ) {
+              return true;
+            }
+            logger.warn(
+              "[harness] workspace tool withheld: this runtime cannot pause on a host-executed tool for approval",
+              { harness: harnessAdapter.id, toolName: name },
+            );
+            return false;
+          },
+        ),
+      );
       const hostExecutedTools = {
         ...hostExecutedMcp.tools,
-        ...((builtInTools ?? {}) as Record<string, unknown>),
+        ...offeredBuiltInTools,
       } as Record<string, unknown>;
       // The tools that actually ask, read off the same `needsApproval` the
       // other two engines read.
@@ -3768,8 +3806,11 @@ export async function runHarnessTurn(
       // `onFinishEngine` never consumed the reducer's argument, so this is a
       // strict reduction in exposure.
       execute: async (context) => {
+        const writer: ChunkWriter = signChunk
+          ? { write: (chunk) => context.writer.write(signChunk(chunk)) }
+          : context.writer;
         try {
-          await executeEngine(context);
+          await executeEngine({ writer });
         } finally {
           await onFinishEngine(context.writer);
         }

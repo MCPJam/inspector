@@ -2,6 +2,12 @@ import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
 
 export interface OrgModelProvider {
+  /**
+   * The `organizationModelProviders` row id, when the visible config exposes
+   * it. A saved `source: "org"` model selection references the connection by
+   * this id; without it the picker keeps the legacy model id.
+   */
+  id?: string;
   providerKey: string;
   enabled: boolean;
   baseUrl?: string;

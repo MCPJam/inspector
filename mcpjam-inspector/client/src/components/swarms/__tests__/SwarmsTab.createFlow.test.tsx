@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
 import { SwarmGenerateError } from "@/lib/swarm-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
 // The harness × model picker locks read each host's config; these tests mock
 // convex/react without that query, so the reads answer "not known yet".
@@ -1362,6 +1363,69 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /out of credits/i,
     );
+    expect(
+      screen.queryByTestId("new-swarm-proposed-personas"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in when the refusal arrives as the OTHER error type", async () => {
+    // The proxy does not always raise `SwarmGenerateError`. `handleRoute`
+    // backfills `normalized` on every route error, and that path throws
+    // `WebApiError`. A consumer keyed on the class showed a guest the generic
+    // card; `signInRemedyMessage` asks the error instead, reading the envelope
+    // both classes carry, so both shapes land on the same remedy.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new WebApiError(
+        401,
+        "UNAUTHORIZED",
+        "Sign in to generate personas and journeys.",
+        undefined,
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in for a guest refusal instead of carding it", async () => {
+    // The backend refuses an anonymous caller at the door, and the proxy
+    // forwards that envelope as `details` under an HTTP-shaped `FORBIDDEN` —
+    // which is why the code is read from the envelope and not from the top
+    // level. An `ErrorCard` would state the problem and offer
+    // nothing; the remedy here is a control, so the surface renders
+    // `GuestSignInMessage` and no card.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new SwarmGenerateError(
+        403,
+        "Sign in to generate personas and journeys.",
+        false,
+        "FORBIDDEN",
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    // The refusal gets ONE surface, not two saying the same thing.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();

@@ -234,12 +234,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // capability probe above. Document them when durable turns ship on.
   "get /projects/{projectId}/agent/jobs/{jobId}",
   "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
-  // Shared eval authoring jobs, reachable only through surfaces gated by the
-  // `eval-authoring-import-v1` flag (and, for generation,
-  // EVAL_AUTHORING_GENERATION_V1_ENABLED). Same rule and the same follow-up:
-  // document the pair when the flag comes off.
-  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}",
-  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit",
 ]);
 
 /**
@@ -458,7 +452,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     // asks the caller for an id the route will never read.
     const shared = spec.components?.parameters ?? {};
     const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
-      p.$ref ? (shared[p.$ref.split("/").pop() ?? ""] ?? {}) : p;
+      p.$ref ? shared[p.$ref.split("/").pop() ?? ""] ?? {} : p;
 
     const problems: string[] = [];
     for (const [path, item] of Object.entries(spec.paths)) {

@@ -5,7 +5,7 @@ import {
   renderHook,
   screen,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactImage } from "@/components/ui/artifact-image";
 import {
   registerArtifactUrls,
@@ -24,6 +24,10 @@ function signedImageUrl(storageId: string, expiresAtSeconds: number) {
 
 beforeEach(() => {
   resetArtifactUrlsForTests();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("ArtifactImage", () => {
@@ -54,6 +58,46 @@ describe("ArtifactImage", () => {
     });
     expect(result.current).toEqual(expect.any(Number));
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets an image that loaded ask for a fresh link again, and still calls onLoad (MJ-005)", () => {
+    // Two hours before the link expires, so each failure spends the image's
+    // one renewal; the clock steps past the refresh throttle between them.
+    let now = (1_800_000_000 - 7_200) * 1000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const onLoad = vi.fn();
+    const { result } = renderHook(() => useArtifactUrlEpoch());
+    render(
+      <ArtifactImage
+        src={signedImageUrl("kg-shot", 1_800_000_000)}
+        alt="render"
+        onLoad={onLoad}
+      />,
+    );
+    const img = screen.getByAltText("render");
+
+    act(() => {
+      fireEvent.error(img);
+    });
+    const first = result.current;
+    expect(first).toEqual(expect.any(Number));
+
+    now += 60_000;
+    act(() => {
+      fireEvent.error(img);
+    });
+    expect(result.current).toBe(first);
+
+    act(() => {
+      fireEvent.load(img);
+    });
+    expect(onLoad).toHaveBeenCalledTimes(1);
+
+    now += 60_000;
+    act(() => {
+      fireEvent.error(img);
+    });
+    expect(result.current).toBeGreaterThan(first!);
   });
 
   it("behaves like a plain image for any other source", () => {

@@ -22,8 +22,9 @@ vi.mock("@/hooks/useOrgApiKeyPolicy", () => ({
 
 beforeEach(() => {
   mockSetMintMinimumRole.mockReset().mockResolvedValue(undefined);
+  // An organization with no setting of its own (MJ-010).
   hookState = {
-    policy: { mintMinimumRole: "member", updatedAt: null },
+    policy: { mintMinimumRole: "admin", updatedAt: null },
     isLoading: false,
     error: null,
     isSaving: false,
@@ -31,16 +32,20 @@ beforeEach(() => {
 });
 
 describe("OrganizationApiKeyPolicyCard", () => {
-  it("shows members may create keys by default", () => {
+  it("shows key creation kept to owners and admins by default", () => {
+    render(<OrganizationApiKeyPolicyCard organizationId="org-1" isAdmin />);
+
+    expect(screen.getByTestId("org-api-key-policy-admins-only")).toBeChecked();
+    expect(screen.getByText(/^On by default\./)).toBeInTheDocument();
+  });
+
+  it("lets an admin restrict key creation to owners and admins", async () => {
+    hookState.policy = { mintMinimumRole: "member", updatedAt: 1 };
     render(<OrganizationApiKeyPolicyCard organizationId="org-1" isAdmin />);
 
     expect(
       screen.getByTestId("org-api-key-policy-admins-only"),
     ).not.toBeChecked();
-  });
-
-  it("lets an admin restrict key creation to owners and admins", async () => {
-    render(<OrganizationApiKeyPolicyCard organizationId="org-1" isAdmin />);
 
     fireEvent.click(screen.getByTestId("org-api-key-policy-admins-only"));
 
