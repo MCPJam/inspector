@@ -2632,20 +2632,22 @@ export class MCPClientManager {
         // initialize RPC. Detach it after startup so later caller cancellation
         // cannot close a successfully established connection.
         let startupSignal = signal;
-        const baseFetch =
-          config.baseFetch ?? this.defaultBaseFetch ?? globalThis.fetch;
+        const configuredFetch = config.baseFetch ?? this.defaultBaseFetch;
         const startupConfig = {
           ...config,
           baseFetch: async (
             input: Parameters<typeof fetch>[0],
             init?: RequestInit
           ) => {
+            // Resolve the default at request time so fetch instrumentation
+            // added after startup still observes established connections.
+            const baseFetch = configuredFetch ?? globalThis.fetch;
             const caller = startupSignal;
             if (!caller) return baseFetch(input, init);
             caller.throwIfAborted();
             const requestSignal =
               init?.signal ??
-              (input instanceof Request ? input.signal : undefined);
+              (input instanceof globalThis.Request ? input.signal : undefined);
             return baseFetch(input, {
               ...init,
               signal: requestSignal
