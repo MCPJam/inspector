@@ -186,6 +186,7 @@ const PLAIN_TOOLS = [
   "update_eval_case",
   "delete_eval_case",
   "generate_eval_cases",
+  "import_eval_cases",
   // Stage analytics: a measured description with slice arrays and exclusion
   // tallies. The app renders it as a funnel; a tool result is the numbers.
   "get_eval_run_stage_analytics",
@@ -474,6 +475,7 @@ describe("platform tool registration", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
+      "import_eval_cases",
       "get_eval_run",
       "get_eval_run_stage_analytics",
       "get_eval_run_gate",
@@ -652,6 +654,7 @@ describe("platform tool registration", () => {
       "create_eval_cases",
       "update_eval_case",
       "generate_eval_cases",
+      "import_eval_cases",
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
       "backtest_eval_run",

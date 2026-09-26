@@ -3,13 +3,12 @@
  *
  * SHARED because two surfaces must produce it BYTE-IDENTICALLY:
  *   - `server/utils/server-skill-tools.ts`, when the model calls `loadSkill`;
- *   - the playground SKILLS popover, which fabricates a synthetic `loadSkill`
- *     tool-call message when a user clicks a skill.
+ *   - the playground SKILLS popover, whose pick is sent as a user message
+ *     carrying the same text (`shared/user-context-message.ts`).
  *
- * The popover's injected message is supposed to be indistinguishable from what
- * the tool would have returned — that is a load-bearing invariant of the chat
- * pipeline (see `chat-helpers.ts`), and two copies of this text would drift
- * the moment one is edited.
+ * The model should read a skill the same way whether it loaded the skill
+ * itself or the user picked it, and two copies of this text would drift the
+ * moment one is edited.
  *
  * ## Why the wording is what it is
  *

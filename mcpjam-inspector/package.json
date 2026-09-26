@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.11.0",
+  "version": "3.12.1",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -147,7 +147,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.15.0",
+    "@mcpjam/sdk": "^8.16.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -243,6 +243,7 @@
     "@mcpjam/design-system": "*",
     "@mcpjam/widget-react": "*",
     "@playwright/test": "1.62.1",
+    "@posthog/rollup-plugin": "^1.6.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.2",

@@ -141,6 +141,11 @@ export interface VerifiedSession {
   sub: string;
   /** Active WorkOS organization id, if present on the token. */
   orgId?: string;
+  /**
+   * The AuthKit session (`sid` claim), if present on the token — what a
+   * revocation is keyed on (see `services/revoked-session-cache.ts`).
+   */
+  sid?: string;
 }
 
 type KeyResolver = ReturnType<typeof createRemoteJWKSet> | KeyLike;
@@ -171,7 +176,7 @@ function defaultDeps(): AuthKitVerifyDeps {
 
 /**
  * Verify a WorkOS AuthKit access token and return only the claims we trust
- * (`sub`, `org_id`). Throws `AuthKitVerificationError` on any failure
+ * (`sub`, `org_id`, `sid`). Throws `AuthKitVerificationError` on any failure
  * (malformed, untrusted issuer, bad signature, wrong audience, expired/nbf).
  *
  * `deps` is injectable for tests; production uses the env-derived issuer set.
@@ -223,7 +228,8 @@ export async function verifyAuthKitToken(
   }
   const orgIdClaim = (payload as { org_id?: unknown }).org_id;
   const orgId = typeof orgIdClaim === "string" ? orgIdClaim : undefined;
-  return { sub, orgId };
+  const sid = stringClaim(payload, "sid");
+  return sid ? { sub, orgId, sid } : { sub, orgId };
 }
 
 // ---------------------------------------------------------------------------

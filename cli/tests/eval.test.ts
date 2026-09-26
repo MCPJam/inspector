@@ -288,6 +288,8 @@ interface EvalFixtureOptions {
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
   runCaseResult?: "passed" | "failed" | "inconclusive" | null;
+  /** The execution record `run-case`'s iteration carries (absent: none). */
+  runCaseExecution?: Record<string, unknown>;
   /** Non-terminal keeps `--wait` polling until its deadline. */
   runCaseStatus?:
     | "running"
@@ -886,6 +888,17 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               isDlp: false,
               limitation: "not DLP",
               appliesTo: [],
+              providerRetention: {
+                openrouter: { data_collection: "deny", zdr: true },
+                gateway: {
+                  disallowPromptTraining: true,
+                  zeroDataRetention: true,
+                },
+                zeroDataRetention: true,
+                appliesTo: ["every analysis call"],
+                notAppliedTo: ["customer Playground chat"],
+                note: "provider, not MCPJam",
+              },
             },
             exportDefaults: {
               includeContent: false,
@@ -1122,6 +1135,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               expectedToolCalls: [],
               error:
                 result === "failed" ? "Authorization: Bearer top-secret" : null,
+              ...(options.runCaseExecution
+                ? { execution: options.runCaseExecution }
+                : {}),
             },
           ],
         })
@@ -3439,6 +3455,12 @@ test("eval run prints the disclosure block in human mode, before the run link", 
       run.stdout,
       /Export defaults: excludes content \(redacted by default\)/
     );
+    // Printed when the backend sends it, read off the flags, with what the
+    // policy does not cover NAMED rather than left out.
+    assert.match(
+      run.stdout,
+      /Analysis providers: zero data retention and no training required on platform-key analysis calls — NOT applied to: customer Playground chat/
+    );
     // "fires automatically" vs "fires only if asked" are different consent
     // stories — the fixture's goalCompletion touchpoint is
     // explicit-request-only, runInsights is auto-on-completion, and this
@@ -3685,6 +3707,88 @@ test("eval run --format human --reporter redirects the disclosure block to stder
   } finally {
     // A nonzero exit code otherwise leaks into `process.exitCode` for
     // whichever `main()` call in this file runs last.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait prints what each iteration ran on, after the receipt", async () => {
+  const fixture = await startEvalFixture({
+    runCaseExecution: {
+      requested: { source: "legacy", modelId: "anthropic/claude-sonnet-4.5" },
+      resolved: {
+        rail: "openrouter",
+        wireModelId: "anthropic/claude-sonnet-4.5",
+        offering: { rail: "openrouter", providerKey: "openrouter" },
+      },
+      effectiveSettings: { maxOutputTokens: 0 },
+      attempts: [],
+      deviation: {
+        kind: "provider_fallback",
+        reason: "The openrouter fallback served the request.",
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(
+      run.stdout,
+      /echo works #1: Ran on anthropic\/claude-sonnet-4\.5 via OpenRouter \(MCPJam key\), max output provider default/
+    );
+    assert.match(
+      run.stdout,
+      /Deviation: Provider fallback — The openrouter fallback served the request\./
+    );
+    assert.ok(
+      run.stdout.indexOf("View:") < run.stdout.indexOf("Iteration provenance")
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait says an iteration without a record is not recorded", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /echo works #1: not recorded/);
+    assert.doesNotMatch(run.stdout, /Ran on/);
+  } finally {
     process.exitCode = 0;
     await fixture.close();
   }

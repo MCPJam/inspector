@@ -19,18 +19,21 @@
  * (the agent may roam; authority is the caller's bearer either way), which
  * is why this is a default rather than a clamp.
  *
- * Approval policy has three floors, and the first is not the host's to lower:
+ * Approval policy has three floors, all decided on the server (MJ-008):
  *
- *   - ALWAYS asks: every operation the agent-op catalog marks `tier: "gated"`
- *     (`routes/v1/agent-op-registry.ts`), plus every WRITE that catalog
- *     refuses to offer an agent at all. The headless agent turns those into
- *     proposals a human clicks; in chat the equivalent is the approval pill,
- *     and a request body saying `requireToolApproval: false` does not remove
- *     it (MJ-008). Derived from the catalog, not listed here, so the two
- *     surfaces cannot drift apart.
- *   - Follows the switch: operations that open a connection to a saved MCP
- *     server, and the other spends in `APPROVAL_REQUIRED_IDS`.
+ *   - ALWAYS asks: every operation that changes state — any operation whose
+ *     own `readOnly` flag is not `true`. Read off the operation rather than
+ *     listed here, so an operation added to the catalog arrives asking.
+ *   - Follows the workspace approval setting: the reads that open a
+ *     connection to a saved MCP server (`CONNECTION_OPENING_IDS`). The setting
+ *     is resolved on the server from the saved client or project
+ *     configuration, is on when nothing is saved, and can be raised but never
+ *     lowered by the request (see `built-in-tool-policy.ts`).
  *   - Never asks: pure platform reads like `list_project_servers`.
+ *
+ * A tool that would ask is offered only where the server can verify the
+ * answer (`tool-approval-token.ts`). Anywhere else it is left out of the
+ * toolset, never offered as something that cannot run.
  *
  * `execute` returns `{ error: string }` instead of throwing so the model can
  * relay problems conversationally instead of breaking the turn. Results are
@@ -38,10 +41,6 @@
  */
 import { tool, type ToolSet } from "ai";
 import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
-import {
-  AGENT_OP_REGISTRY,
-  EXCLUDED_FROM_AGENT,
-} from "../../routes/v1/agent-op-registry.js";
 import {
   isToolApprovalSigningAvailable,
   markServerVerifiedApproval,
@@ -489,6 +488,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
   generate_eval_cases:
     "Spends model quota; the Evaluate tab offers it explicitly.",
+  import_eval_cases:
+    "Spends model quota, like generation; Import is the in-app way in.",
 
   // Host and environment administration: re-wires the execution surface.
   // Clients stay OUT of the in-app toolset, and this is the one surface where
@@ -583,9 +584,11 @@ export function isReadOnlyMcpjamToolId(id: string): boolean {
   return OPERATIONS_BY_ID.get(id)?.readOnly === true;
 }
 
-// Operations that open an ephemeral connection to a user's saved MCP server
-// inherit the host's requireToolApproval. Pure platform API reads (project,
-// eval, scenario) never need approval.
+// Reads that open an ephemeral connection to a user's saved MCP server. They
+// change nothing, but they dial a server, so they follow the workspace approval
+// setting instead of running unasked like the pure platform reads (project,
+// eval, scenario). `call_server_tool` is listed for what it does, and changes
+// state as well, so it always asks.
 const CONNECTION_OPENING_IDS = new Set([
   diagnoseServerOperation.name,
   listServerToolsOperation.name,
@@ -595,97 +598,66 @@ const CONNECTION_OPENING_IDS = new Set([
   listServerResourcesOperation.name,
   readServerResourceOperation.name,
   // Skills over MCP opens the same ephemeral connection as the primitives
-  // above, so it inherits the host's approval policy for the same reason.
+  // above, so it follows the same setting for the same reason.
   listServerSkillsOperation.name,
   getServerSkillOperation.name,
   readServerSkillFileOperation.name,
 ]);
 
-// Operations that mutate state and therefore require user approval when the
-// host enables it — connection-opening tools plus state-changing writes like
-// cancelling an in-flight eval run.
-const APPROVAL_REQUIRED_IDS = new Set([
-  ...CONNECTION_OPENING_IDS,
-  cancelEvalRunOperation.name,
-  // SPENDS the organization's model budget, on a run the chat can name from
-  // a list. Advertised rather than excluded because reading grades is only
-  // useful if you can ask for them — but the spend is the user's to approve,
-  // so it sits here with `cancel_eval_run` rather than executing on request.
-  requestEvalRunJudgeOperation.name,
-  backtestEvalRunJudgeOperation.name,
-  // The description-rewrite experiment: proposing SPENDS one model call and
-  // starting SPENDS eval-iteration credits across two replayed runs. Same
-  // rule as the judge request — advertised so the agent can drive the loop,
-  // approved by the user because the spend is theirs.
-  proposeEvalDescriptionRewriteOperation.name,
-  startEvalDescriptionExperimentOperation.name,
-  // Dials a third party's server for minutes and, with the opt-in, spends the
-  // organization's credits. Reading grades is only useful if you can ask for
-  // one, so these are advertised rather than excluded — but the asking is the
-  // user's to approve. Cancelling is NOT here: it stops that traffic.
-  startClaudeReadinessRunOperation.name,
-  startOpenAIReadinessRunOperation.name,
-  createProjectServerOperation.name,
-  updateProjectServerOperation.name,
-  deleteProjectServerOperation.name,
-  // Belongs with its create/update/delete siblings and then some: the URL is
-  // supplied by whoever is talking to the model, this server dials it, and a
-  // completed flow adds a server row to the user's project.
-  connectProjectServerOperation.name,
-  // create_project_server with different spelling: the caller supplies
-  // `endpointUrl`, and a completed install adds a server row to the user's
-  // project — so it takes the same approval its sibling does.
-  installRegistryDirectoryServerOperation.name,
-  // Installs a registry card whose config was written by another org member;
-  // the completed flow still adds a server row to the user's project.
-  installRegistryServerOperation.name,
-  // Destructive, same as delete_project_server: removes the installed server
-  // row and its connection.
-  uninstallRegistryServerOperation.name,
-]);
-
 /**
- * Operations that pause for the user's approval WHATEVER the host's switch
- * says (MJ-008), derived from the agent-op catalog:
- *
- *   - `tier: "gated"` there means "a human must click before this runs" — the
- *     headless agent can only PROPOSE it. The chat equivalent of that click is
- *     the approval pill, so the switch may add pills but can never remove one.
- *   - A WRITE the catalog excludes from the agent altogether
- *     (`EXCLUDED_FROM_AGENT`, e.g. `create_project_server`) is held to at
- *     least the same bar: the registry judged it too consequential to even
- *     propose unattended, and a chat turn is unattended with the switch off.
- *
- * Reads never land here, whichever list they are on.
+ * Operations that pause for the user's approval whatever the approval setting
+ * says (MJ-008): every advertised operation that changes state, read off the
+ * operation's own `readOnly` flag — the same flag the agent-op catalog reads
+ * to decide which of its operations are writes. Creating, updating, cancelling
+ * and dismissing all land here, as do the operations that spend or start a
+ * run. A missing flag counts as a write.
  */
-const CATALOG_GATED_OPERATION_NAMES: ReadonlySet<string> = new Set(
-  AGENT_OP_REGISTRY.filter((entry) => entry.tier === "gated").map(
-    (entry) => entry.operation.name,
-  ),
-);
-
 export const ALWAYS_APPROVAL_TOOL_IDS: ReadonlySet<string> = new Set(
-  WORKSPACE_OPERATIONS.filter(
-    (operation) =>
-      operation.readOnly !== true &&
-      (CATALOG_GATED_OPERATION_NAMES.has(operation.name) ||
-        Object.prototype.hasOwnProperty.call(
-          EXCLUDED_FROM_AGENT,
-          operation.name,
-        )),
-  ).map((operation) => operation.name),
+  WORKSPACE_OPERATIONS.filter((operation) => operation.readOnly !== true).map(
+    (operation) => operation.name,
+  ),
 );
 
 /** The approval floor a workspace operation is built with. */
 export function workspaceApprovalFloor(id: string): ApprovalFloor {
   if (ALWAYS_APPROVAL_TOOL_IDS.has(id)) return "always";
-  return APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never";
+  return CONNECTION_OPENING_IDS.has(id) ? "setting" : "never";
 }
 
 /**
- * Drop the always-ask workspace tools from a toolset, for an engine that
- * cannot resume a server-executed approval (the local-runtime org path
- * refuses a whole turn that advertises one). Everything else survives.
+ * Whether a workspace operation pauses for approval, given the turn's
+ * server-resolved workspace approval setting.
+ */
+export function workspaceToolNeedsApproval(
+  id: string,
+  workspaceToolApproval: boolean,
+): boolean {
+  return needsApprovalFor(
+    workspaceApprovalFloor(id),
+    workspaceToolApproval === true,
+  );
+}
+
+/**
+ * Whether a workspace operation can be offered at all. One that pauses is
+ * offered only where the server can verify the answer; without an approval
+ * signing key it is left out of the toolset rather than advertised as
+ * something that cannot run.
+ */
+export function isWorkspaceToolOfferable(
+  id: string,
+  workspaceToolApproval: boolean,
+): boolean {
+  return (
+    !workspaceToolNeedsApproval(id, workspaceToolApproval) ||
+    isToolApprovalSigningAvailable()
+  );
+}
+
+/**
+ * Drop the workspace tools that pause for approval from a toolset, for an
+ * engine that cannot resume a server-executed approval (the local-runtime org
+ * path refuses a whole turn that advertises one). Everything else survives.
  */
 export function withoutServerVerifiedApprovalTools(tools: ToolSet): {
   tools: ToolSet;
@@ -704,11 +676,12 @@ export function withoutServerVerifiedApprovalTools(tools: ToolSet): {
 }
 
 /**
- * Why an always-ask operation is refused on a deployment that cannot sign
- * approvals. Said to the MODEL, so it can tell the user instead of retrying.
+ * Why a workspace tool that would pause is not offered on a deployment that
+ * cannot sign approvals. Operator-facing: logged and reported as a suppressed
+ * tool, never shown to the model as a tool it could call.
  */
-export const SERVER_APPROVAL_UNAVAILABLE_ERROR =
-  "This operation needs an approval the server can verify, and this deployment has no signing key for tool approvals (INSPECTOR_SERVICE_TOKEN is not set). It was not run.";
+export const WORKSPACE_APPROVAL_UNAVAILABLE_REASON =
+  "not offered: it pauses for approval, and this deployment has no signing key for tool approvals (INSPECTOR_SERVICE_TOKEN is not set), so the approval could not be verified.";
 
 // Surface note appended to each operation's description: in-app, an omitted
 // `project` means the chat's project, not the catalog's "most recently
@@ -803,7 +776,11 @@ export interface McpjamToolOptions {
   client: PlatformApiClient;
   /** The chat's ambient project — the default when `project` is omitted. */
   projectId: string;
-  /** Host's approval policy — connection-opening ops must honor it. */
+  /**
+   * The turn's workspace approval setting, resolved on the server (MJ-008) —
+   * see `resolveTurnBuiltInToolIds`. The connection-opening reads follow it;
+   * writes always ask and pure reads never do.
+   */
   requireToolApproval?: boolean;
 }
 
@@ -854,7 +831,9 @@ export function toToolError(
 
 /**
  * Build one workspace tool from its catalog operation. Returns `null` for an
- * id outside the workspace set (the registry warns and skips).
+ * id outside the workspace set, and for a tool that would pause for approval
+ * on a deployment that cannot verify the answer (see
+ * {@link isWorkspaceToolOfferable}) — the registry skips both.
  */
 export function buildMcpjamTool(
   id: string,
@@ -863,27 +842,18 @@ export function buildMcpjamTool(
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;
 
-  // Floors (see `workspaceApprovalFloor`): catalog-gated operations and
-  // agent-excluded writes always ask; connection-opening ops and the other
-  // spends follow the switch; reads of the user's own workspace never ask.
-  const floor = workspaceApprovalFloor(id);
-
-  // An always-ask operation on a deployment that cannot sign approvals FAILS
-  // CLOSED: advertised so the model can say why, but it never runs and never
-  // pauses on a pill whose answer could not be verified.
-  if (floor === "always" && !isToolApprovalSigningAvailable()) {
-    return tool({
-      description: `${operation.description}${AMBIENT_PROJECT_NOTE}`,
-      inputSchema: operation.inputSchema,
-      needsApproval: false,
-      execute: async () => ({ error: SERVER_APPROVAL_UNAVAILABLE_ERROR }),
-    });
-  }
-
-  const needsApproval = needsApprovalFor(
-    floor,
+  // Floors (see `workspaceApprovalFloor`): writes always ask;
+  // connection-opening reads follow the workspace approval setting; reads of
+  // the user's own workspace never ask.
+  const needsApproval = workspaceToolNeedsApproval(
+    id,
     opts.requireToolApproval === true,
   );
+  // FAILS CLOSED by not existing: a tool that pauses, on a deployment that
+  // cannot sign approvals, is neither advertised nor run.
+  if (!isWorkspaceToolOfferable(id, opts.requireToolApproval === true)) {
+    return null;
+  }
 
   const clamp = WORKSPACE_INPUT_CLAMPS[id];
 
@@ -933,5 +903,7 @@ export function buildMcpjamTool(
       }
     },
   });
-  return floor === "always" ? markServerVerifiedApproval(built) : built;
+  // Every workspace tool that pauses needs an approval the server issued for
+  // exactly this call; an engine that cannot resume one withholds the tool.
+  return needsApproval ? markServerVerifiedApproval(built) : built;
 }

@@ -485,3 +485,78 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
     ).sort(),
   ).toEqual(["toolCalls:arguments", "toolCalls:match"]);
 });
+
+it("declares no hosted tool scorer when half the evidence already rules them out", () => {
+  // Either half alone is enough: a case that lists no expected call, or a
+  // negative test, is graded with neither scorer whatever the other field
+  // says. Only when NEITHER half settles it is the case an unknown.
+  const hosted = resolveScoreDefinition(
+    hostedPredicateScoreDefinition({ predicate: oldRule }),
+  );
+  const stored = scoreResultFromPredicateResult(
+    hosted,
+    evaluatePredicates({ toolCalls: [], finalAssistantMessage: "hello" }, [
+      oldRule,
+    ])[0],
+  );
+  const source = {
+    ...row,
+    evaluationConfig: { definitions: [hosted] },
+    results: [stored],
+  };
+  const draftWithMatch = {
+    assertions: { mode: "replace" as const, list: [oldRule] },
+    matchOptions: { argumentMatching: "exact" as const },
+  };
+  const toolIds = (differences: ReturnType<typeof backtestIteration>) =>
+    differences
+      .map((item) => item.evaluatorId)
+      .filter((id) => id.startsWith("toolCalls:"));
+  type Evidence = Parameters<typeof backtestIteration>[0];
+  const base: Evidence = source;
+  const { isNegativeTest: _polarity, ...withoutPolarity } = base;
+  const { expectedToolCalls: _expected, ...withoutExpectations } = base;
+
+  // No expected call, polarity unknown.
+  expect(
+    toolIds(
+      backtestIteration(
+        { ...withoutPolarity, expectedToolCalls: [] },
+        draftWithMatch,
+      ),
+    ),
+  ).toEqual([]);
+  // A negative test, expectations unknown.
+  expect(
+    toolIds(
+      backtestIteration(
+        { ...withoutExpectations, isNegativeTest: true },
+        draftWithMatch,
+      ),
+    ),
+  ).toEqual([]);
+  // Expected calls with polarity unknown is still an unknown: both scorers
+  // are reported, as not comparable, never as a flip.
+  const unknown = backtestIteration(
+    {
+      ...withoutPolarity,
+      expectedToolCalls: [{ toolName: "search", arguments: {} }],
+    },
+    draftWithMatch,
+  ).filter((item) => item.evaluatorId.startsWith("toolCalls:"));
+  expect(unknown.map((item) => item.evaluatorId).sort()).toEqual([
+    "toolCalls:arguments",
+    "toolCalls:match",
+  ]);
+  expect(unknown.every((item) => item.comparable === false)).toBe(true);
+  // So is a case missing both halves.
+  expect(
+    backtestIteration(base, draftWithMatch)
+      .filter((item) => item.evaluatorId.startsWith("toolCalls:"))
+      .map((item) => [item.evaluatorId, item.comparable])
+      .sort(),
+  ).toEqual([
+    ["toolCalls:arguments", false],
+    ["toolCalls:match", false],
+  ]);
+});

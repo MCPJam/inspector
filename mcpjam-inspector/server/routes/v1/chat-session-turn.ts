@@ -138,6 +138,7 @@ import {
   type SessionRow,
 } from "./chat-sessions.js";
 import { joinToolCalls } from "./chat-session-payloads.js";
+import { publicArtifactLink } from "./artifact-links.js";
 
 // ── Caps ────────────────────────────────────────────────────────────────────
 
@@ -1428,6 +1429,13 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const engine: ChatSessionEngine = engineDecision.engine;
+    if (engineDecision.warning) {
+      logger.warn("[v1 chat-session] harness model not verified", {
+        harness: engine.kind === "harness" ? engine.harness : undefined,
+        modelId: String(modelDefinition.id),
+        reason: engineDecision.warning,
+      });
+    }
 
     if (body.browser) {
       const stored = await getConversationBrowser({
@@ -2009,8 +2017,10 @@ async function handleTurn(c: Context): Promise<Response> {
               step.toolCallId === item.toolCallId &&
               step.stepIndex === item.stepIndex,
           );
-          if (step?.screenshotUrl) {
-            item.url = step.screenshotUrl;
+          // Screenshot links only as signed `/web/artifact` links (MJ-005).
+          const url = publicArtifactLink(step?.screenshotUrl);
+          if (url) {
+            item.url = url;
             item.status = "ready";
           }
         }

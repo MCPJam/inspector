@@ -11,7 +11,13 @@
  *  - backend rejections (schedule pins especially) reach the user verbatim;
  *  - an archived attachment blocks edits instead of being silently dropped.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvalSuite } from "../types";
 
@@ -24,6 +30,9 @@ const {
   setSuiteEnvironmentsMock,
   onUpdateMock,
   toastError,
+  toastWarning,
+  harnessLoader,
+  convexClient,
 } = vi.hoisted(() => ({
   flags: { environments: true },
   capability: { matrix: true as boolean | undefined },
@@ -33,14 +42,34 @@ const {
   setSuiteEnvironmentsMock: vi.fn(async () => ({})),
   onUpdateMock: vi.fn(async () => {}),
   toastError: vi.fn(),
+  toastWarning: vi.fn(),
+  convexClient: {
+    query: async () => ({ modelMatrix: modelsProbe.value === true }),
+  },
+  harnessLoader: {
+    current: (async () => null) as (
+      hostId: string,
+    ) => Promise<{ harnessId: string } | null>,
+  },
 }));
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => harnessLoader.current,
+}));
+// The models slot lists the catalog; this suite asserts resolution, not rows.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
 vi.mock("convex/react", () => ({
   useMutation: () => setSuiteEnvironmentsMock,
   useConvexAuth: () => ({ isAuthenticated: true }),
-  useConvex: () => ({
-    query: vi.fn(async () => ({ modelMatrix: false })),
-  }),
+  // The resolver's own capability probe; follows `modelsProbe` so a case that
+  // turns the model axis on can also commit through it. One stable client, as
+  // the real hook returns — a fresh object per render re-arms the probe.
+  useConvex: () => convexClient,
 }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -89,7 +118,7 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
   ),
 }));
 vi.mock("@/lib/toast", () => ({
-  toast: { success: vi.fn(), error: toastError },
+  toast: { success: vi.fn(), error: toastError, warning: toastWarning },
 }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
@@ -127,6 +156,7 @@ beforeEach(() => {
   capability.matrix = true;
   modelsProbe.value = false;
   environmentsRef.current = [];
+  harnessLoader.current = async () => null;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
       args.stacks.map((stack) => ({
@@ -373,6 +403,49 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
       screen.queryByTestId("suite-env-environments-picker"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
+  });
+
+  it("names the CLIENT, not its id, when a harness can't run a chosen model", async () => {
+    // host-1 runs Codex, which the pinned CLI can't run gpt-5.6-luna on;
+    // host-2 is emulated and can. The edit must still resolve (host-2's cell
+    // is minted) and the warning must say "Claude", not "host-1".
+    modelsProbe.value = true;
+    harnessLoader.current = async (hostId) =>
+      hostId === "host-1" ? { harnessId: "codex" } : null;
+    environmentsRef.current = [
+      {
+        environmentId: "adhoc-luna",
+        projectId: "proj-1",
+        origin: "adhoc",
+        hostId: "host-1",
+        modelId: "openai/gpt-5.6-luna",
+        revision: 1,
+      },
+    ];
+    renderBar({ environmentIds: ["adhoc-luna"] } as any);
+    // Let the resolver's model-matrix capability probe settle first.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+
+    await waitFor(() =>
+      expect(
+        setSuiteEnvironmentsMock.mock.calls.length + toastError.mock.calls.length,
+      ).toBeGreaterThan(0),
+    );
+    expect(toastError.mock.calls).toEqual([]);
+    expect(ensureAdhocMock).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "host-2", modelId: "openai/gpt-5.6-luna" }],
+    });
+    expect(toastWarning).toHaveBeenCalledTimes(1);
+    const summary = toastWarning.mock.calls[0][0] as string;
+    expect(summary).toContain("Claude × openai/gpt-5.6-luna");
+    expect(summary).not.toContain("host-1");
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("says what the first edit will convert", () => {

@@ -31,10 +31,24 @@ import {
 } from "./xaa-connect-failure.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
-const AGENT_ERROR_ENVELOPE = /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Backend stream error:\s*(\d{3}))\s*/i;
+const AGENT_ERROR_ENVELOPE =
+  /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Backend stream error:\s*(\d{3}))\s*/i;
 
 /** Belt-and-braces: never let a URL reach a stored/rendered message. */
 const URL_PATTERN = /https?:\/\/\S+/g;
+
+/**
+ * The detail `drainAssistantTurn` appends to an engine error:
+ * "<message> (provider_error)", "<message> (user_rate_limit, HTTP 429)" or
+ * "<message> (HTTP 502)". The code must contain an underscore so an ordinary
+ * trailing parenthetical like "(timeout)" stays part of the sentence.
+ *
+ * Anchored at the "(" with no leading `\s*`: that prefix is retried from every
+ * position in a whitespace run, which is quadratic on a long raw error. The
+ * space left before the match is trimmed by `scrub`.
+ */
+const ENGINE_DETAIL_SUFFIX =
+  /\((?:([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:, HTTP (\d{3}))?|HTTP (\d{3}))\)$/;
 
 export const SPEND_REFUSAL_REASONS = [
   "holds_committed",
@@ -172,7 +186,7 @@ const XAA_REASON_FALLBACK_MESSAGES: Record<XaaConnectFailureReason, string> = {
  */
 export function humanizeSwarmAttemptError(
   raw: string | undefined | null,
-  errorCode?: string | null
+  errorCode?: string | null,
 ): SwarmAttemptErrorInfo {
   if (errorCode === "stale_runner") {
     return {
@@ -205,7 +219,7 @@ export function humanizeSwarmAttemptError(
     return {
       message: (scrub(input) || XAA_REASON_FALLBACK_MESSAGES[errorCode]).slice(
         0,
-        MAX_ATTEMPT_ERROR_CHARS
+        MAX_ATTEMPT_ERROR_CHARS,
       ),
       code: errorCode,
       ...(isRerunnableXaaFailure(errorCode) ? { rerunnable: true } : {}),
@@ -233,27 +247,48 @@ export function humanizeSwarmAttemptError(
   }
   const parsed = parseJsonObject(body);
   if (!parsed) {
-    const cleaned = scrub(body) || scrub(input);
+    const detail = ENGINE_DETAIL_SUFFIX.exec(body);
+    const engineCode = detail?.[1];
+    if (detail) {
+      body = body.slice(0, detail.index);
+      const status = detail[2] ?? detail[3];
+      if (status && httpStatus === undefined) httpStatus = Number(status);
+    }
+    const stripped = scrub(body);
+    // `scrub(input)` rescues an envelope that consumed the whole string. Past a
+    // stripped suffix the raw input only holds that suffix again, and a
+    // remainder with no letters or digits (a lone ".") says nothing either.
+    const cleaned = detail
+      ? /[\p{L}\p{N}]/u.test(stripped)
+        ? stripped
+        : ""
+      : stripped || scrub(input);
     return {
       message: (cleaned || "The session failed for an unknown reason.").slice(
         0,
-        MAX_ATTEMPT_ERROR_CHARS
+        MAX_ATTEMPT_ERROR_CHARS,
       ),
+      ...(engineCode ? { code: engineCode } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
     };
   }
 
   const headline =
     str(parsed.error) ?? str(parsed.message) ?? "The session could not run.";
-  const details = str(parsed.details);
   const code = str(parsed.code);
+  // `provider_not_allowlisted` carries the gateway's own instruction to its
+  // account owner ("Update your Provider Allowlist settings…") in `details`.
+  // That is MCPJam's setting, not the reader's; the headline already names
+  // the provider and the fix, so the upstream sentence stays out of it.
+  const details =
+    code === "provider_not_allowlisted" ? undefined : str(parsed.details);
   const retryAfterMs = num(parsed.retryAfter);
   const canTopUp = parsed.canTopUp === true;
 
   return {
     message: scrub(compose(headline, details)).slice(
       0,
-      MAX_ATTEMPT_ERROR_CHARS
+      MAX_ATTEMPT_ERROR_CHARS,
     ),
     ...(code ? { code } : {}),
     ...(str(parsed.refusalReason)
@@ -273,7 +308,7 @@ export function humanizeSwarmAttemptError(
 
 /** Convenience for the producer, which stores a string and nothing else. */
 export function humanizeSwarmAttemptErrorMessage(
-  raw: string | undefined | null
+  raw: string | undefined | null,
 ): string {
   return humanizeSwarmAttemptError(raw).message;
 }

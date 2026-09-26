@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Command } from "commander";
 import {
@@ -17,6 +17,7 @@ import {
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalCaseOperation,
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
@@ -185,6 +186,11 @@ import {
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
+import {
+  formatRecordedExecutionDisclosure,
+  writeIterationProvenance,
+  type IterationProvenanceInput,
+} from "../lib/eval-provenance.js";
 import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
@@ -644,6 +650,11 @@ function writeRunDisclosure(
             })`
           : model.tenantEgress;
         lines.push(`  Model: ${model.modelId} — ${destination}`);
+        // What the run's own execution records say, when the disclosure was
+        // read off them (same facts as the inspector tooltip). Absent on a
+        // pre-run disclosure and on older backends: nothing is printed.
+        const recorded = formatRecordedExecutionDisclosure(model);
+        if (recorded) lines.push(`    ${recorded}`);
       }
     } else if (execution.modelsUnresolved) {
       lines.push(
@@ -676,6 +687,29 @@ function writeRunDisclosure(
         ? ""
         : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
   );
+  // A separate question from at-rest redaction. Older backends omit it, and
+  // then nothing is printed rather than a guess.
+  const providerRetention = disclosure.capture.redaction.providerRetention;
+  if (providerRetention) {
+    // Read off the flags themselves, never inferred from the field existing:
+    // a backend that relaxed either one must not still print "required".
+    const noTraining =
+      providerRetention.openrouter.data_collection === "deny" &&
+      providerRetention.gateway.disallowPromptTraining;
+    const policy = providerRetention.zeroDataRetention
+      ? noTraining
+        ? "zero data retention and no training required"
+        : "zero data retention required, training NOT restricted"
+      : noTraining
+      ? "no training required, zero data retention NOT required"
+      : "zero data retention and training NOT restricted";
+    lines.push(
+      `  Analysis providers: ${policy} on platform-key analysis calls` +
+        (providerRetention.notAppliedTo.length > 0
+          ? ` — NOT applied to: ${providerRetention.notAppliedTo.join("; ")}`
+          : "")
+    );
+  }
   lines.push(
     `  Export defaults: ${
       disclosure.capture.exportDefaults.includeContent
@@ -3964,11 +3998,45 @@ export function registerEvalCommands(program: Command): void {
               // stderr message. The caller cannot find, resume, or cancel the
               // runs it just paid for. The shared exit path below raises the
               // same failure after the receipt is on stdout.
+              // What each iteration actually ran on, printed after the
+              // receipt. Human mode only — the JSON document stays one
+              // document — so it costs one iteration walk per run only where
+              // a person is reading. A failed walk is reported in the block,
+              // never thrown: it must not cost the caller the receipt.
+              const provenance: IterationProvenanceInput[] =
+                globalOptions.format === "human"
+                  ? await Promise.all(
+                      runs.map(async (run) => {
+                        try {
+                          const iterations = await fetchAllIterations(
+                            client,
+                            signal,
+                            result.project.id,
+                            run.id
+                          );
+                          return {
+                            runId: run.id,
+                            iterations: iterations.items,
+                          };
+                        } catch (error) {
+                          return {
+                            runId: run.id,
+                            iterations: [],
+                            error:
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                          };
+                        }
+                      })
+                    )
+                  : [];
               return {
                 runs,
                 waitErrors,
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
+                provenance,
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
               };
             }
@@ -4032,6 +4100,16 @@ export function registerEvalCommands(program: Command): void {
               waitErrors,
               reportInputs,
               iterationErrorCodes,
+              // Free: the walk the report already paid for.
+              provenance: reportInputs.map(
+                (input): IterationProvenanceInput => ({
+                  runId: input.run.id,
+                  iterations: input.iterations,
+                  ...(input.iterationError !== undefined
+                    ? { error: input.iterationError }
+                    : {}),
+                })
+              ),
               ...(decisionSummary ? { decisionSummary } : {}),
             };
           },
@@ -4113,6 +4191,13 @@ export function registerEvalCommands(program: Command): void {
         }
         if (reporter && report) {
           writeReporterResult(reporter, report);
+          // Stdout is the reporter's single document; the provenance block
+          // goes to stderr, the same rule the pre-run disclosure follows.
+          writeIterationProvenance(
+            globalOptions.format,
+            completion.provenance,
+            process.stderr
+          );
         } else {
           writeResult(
             {
@@ -4139,6 +4224,11 @@ export function registerEvalCommands(program: Command): void {
           writeEvalDecisionSummary(
             globalOptions.format,
             completion.decisionSummary,
+            process.stdout
+          );
+          writeIterationProvenance(
+            globalOptions.format,
+            completion.provenance,
             process.stdout
           );
         }
@@ -6239,6 +6329,96 @@ export function registerEvalCommands(program: Command): void {
             : {}),
         });
         await executeOp(generateEvalCasesOperation, input, options, command);
+      }
+    );
+
+  cases
+    .command("import")
+    .description(
+      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite"
+    )
+    .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+    .option("--project <id-or-name>", PROJECT_OPT)
+    .option("--file <path>", 'Document to import ("-" reads stdin)')
+    .option("--content <text>", "Document text, instead of --file")
+    .option(
+      "--file-name <name>",
+      "Name recorded on each case's source (default: --file's basename)"
+    )
+    .option(
+      "--server <id-or-name...>",
+      "Servers to discover tools from (default: suite's)"
+    )
+    .option(
+      "--environment <id-or-name>",
+      "Discover tools from this attached environment's server set"
+    )
+    .option("--case-model <id...>", "Execution model(s) for the imported cases")
+    .option(
+      "--duplicate-policy <block|warn|create_anyway>",
+      "What to do with a case that already exists (default block)"
+    )
+    .option(
+      "--override-reason <text>",
+      "Why importing a duplicate is intended (required by warn / create_anyway)"
+    )
+    .option(
+      "--idempotency-key <key>",
+      "Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again"
+    )
+    .action(
+      async (
+        options: PlatformOptions & {
+          project?: string;
+          suite: string;
+          file?: string;
+          content?: string;
+          fileName?: string;
+          server?: string[];
+          environment?: string;
+          caseModel?: string[];
+          duplicatePolicy?: string;
+          overrideReason?: string;
+          idempotencyKey?: string;
+        },
+        command
+      ) => {
+        if (!options.file === !options.content)
+          throw usageError(
+            "Pass exactly one of --file or --content.",
+            options.file
+              ? { source: "Both were given." }
+              : { source: "Neither was given." }
+          );
+        const content = options.file
+          ? readFileOrStdin(options.file, "document")
+          : options.content!;
+        const fileName =
+          options.fileName ??
+          (options.file && options.file !== "-"
+            ? basename(options.file)
+            : undefined);
+        const input = validateOpInput(importEvalCasesOperation, {
+          project: options.project,
+          suite: options.suite,
+          content,
+          ...(fileName ? { fileName } : {}),
+          ...(options.server ? { servers: options.server } : {}),
+          ...(options.environment ? { environment: options.environment } : {}),
+          ...(options.caseModel
+            ? { caseModels: options.caseModel.map((model) => ({ model })) }
+            : {}),
+          ...(options.duplicatePolicy
+            ? { duplicatePolicy: options.duplicatePolicy }
+            : {}),
+          ...(options.overrideReason
+            ? { overrideReason: options.overrideReason }
+            : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+        });
+        await executeOp(importEvalCasesOperation, input, options, command);
       }
     );
 }

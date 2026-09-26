@@ -34,6 +34,7 @@ export {
 export type {
   CreateEvalCasesResult,
   GenerateEvalCasesResult,
+  ImportEvalCasesResult,
   PlatformEvalCaseWithSuite,
 } from "./operations.js";
 
@@ -125,6 +126,7 @@ export type {
   PlatformEvalCaseDeleted,
   PlatformEvalCaseModel,
   PlatformEvalCasesGenerated,
+  PlatformEvalCasesImported,
   PlatformEvalStep,
   PlatformEvalStepEvidence,
   PlatformEvalStepResult,
@@ -200,6 +202,8 @@ export type {
   PlatformManagedRailDisclosure,
   PlatformNotApplicableRailDisclosure,
   PlatformRailDisclosure,
+  PlatformDisclosureProvenance,
+  PlatformRecordedExecutionDisclosure,
   PlatformDisclosureTenantEgress,
   PlatformByokDisclosure,
   PlatformDisclosedModel,
@@ -210,6 +214,7 @@ export type {
   PlatformDisclosureFires,
   PlatformAnalysisTouchpointDisclosure,
   PlatformCaptureDisclosure,
+  PlatformProviderRetentionDisclosure,
   PlatformRetentionDisclosure,
   PlatformRegionDisclosure,
   PlatformSubprocessorDisclosure,
@@ -422,6 +427,7 @@ export {
   useImageOperation,
   validateImageBlueprintOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getScenarioOperation,
   listStudiesOperation,
   getStudyOperation,
@@ -666,6 +672,7 @@ export {
   type DuplicateHostInput,
   type EvalRunScopedInput,
   type GenerateEvalCasesInput,
+  type ImportEvalCasesInput,
   type GetEvalCaseInput,
   type GetEvalSuiteInput,
   type GetEvalRunDisclosureInput,

@@ -325,6 +325,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       headers?: Record<string, string>;
       hasHeaders?: boolean;
+      secretsBoundOrigin?: string;
     };
     oauthAccessToken: string | null;
   }) {
