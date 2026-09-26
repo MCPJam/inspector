@@ -996,16 +996,14 @@ describe("executeLocalServerConnect — live 401 handling", () => {
       ...managerOverrides,
     };
     const c = {
+      req: { raw: new Request("http://localhost/api/mcp/connect"), header: () => undefined },
       set: () => {},
       get: () => undefined,
       mcpClientManager: manager,
       header: (key: string, value: string) => {
         headers[key] = value;
       },
-      json: (body: unknown, status?: number) => ({
-        body,
-        status: status ?? 200,
-      }),
+      json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
     } as any;
     return { c, headers, manager };
   }
@@ -1065,7 +1063,7 @@ describe("executeLocalServerConnect — live 401 handling", () => {
     });
 
     expect(response.status).toBe(401);
-    expect(response.body).toMatchObject({
+    expect(await response.json()).toMatchObject({
       success: false,
       oauthRequired: true,
       serverId: "srv-live",
@@ -1085,9 +1083,10 @@ describe("executeLocalServerConnect — live 401 handling", () => {
     // Status parity with the hosted mapping (mapRuntimeError → 401), but no
     // oauthRequired: the user chose No Authentication, nothing auto-escalates.
     expect(response.status).toBe(401);
-    expect(response.body.oauthRequired).toBeUndefined();
-    expect(response.body.upstreamAuthRequired).toBe(true);
-    expect(response.body.error).toContain(
+    const body = await response.json();
+    expect(body.oauthRequired).toBeUndefined();
+    expect(body.upstreamAuthRequired).toBe(true);
+    expect(body.error).toContain(
       "Switch Authentication to Auto or OAuth"
     );
     // The header still suppresses authFetch's session/guest retries.
@@ -1107,7 +1106,7 @@ describe("executeLocalServerConnect — live 401 handling", () => {
     });
 
     expect(response.status).toBe(500);
-    expect(response.body.oauthRequired).toBeUndefined();
+    expect((await response.json()).oauthRequired).toBeUndefined();
     expect(headers["X-MCP-Auth-Required"]).toBeUndefined();
   });
 });
