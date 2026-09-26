@@ -73,7 +73,12 @@ import {
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
 } from "../evals/eval-surface-chrome";
-import { cancellableRunIds, getEffectiveSuiteServers } from "../evals/helpers";
+import {
+  cancellableRunIds,
+  generationEnvironmentChoices,
+  generationEnvironmentId,
+  suiteHasRunnableServers,
+} from "../evals/helpers";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../evals/constants";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
@@ -380,7 +385,9 @@ export function SuiteDetailOverview({
   const testCaseRows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
 
   const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
-  const hasServersConfigured = getEffectiveSuiteServers(suite).length > 0;
+  // An environment suite's servers are its environments' (a group, or pinned
+  // plugins); its legacy server fields are not what its runs connect.
+  const hasServersConfigured = suiteHasRunnableServers(suite);
   const isRerunning = rerunningSuiteId === suite._id;
   const generation = useEvalGeneration((state) =>
     projectId && !readOnlyConfig
@@ -391,7 +398,10 @@ export function SuiteDetailOverview({
     caseCount: cases.length,
     draftCount: generation?.drafts.length ?? 0,
     hasServersConfigured,
-    isEnvironmentSuite,
+    // An SDK suite launches in an environment picked in the run dialog, which
+    // is where a missing server set is caught.
+    isEnvironmentSuite:
+      isEnvironmentSuite || (suite.source === "sdk" && Boolean(projectId)),
     isRerunning,
     isReplaying: replayingRunId != null,
     runningTestCase: runningTestCaseId != null,
@@ -592,6 +602,10 @@ export function SuiteDetailOverview({
       <EvalGenerationWorkspace
         key={`${projectId}:${suite._id}`}
         config={generationConfig}
+        environmentId={generationEnvironmentId(
+          suite,
+          generationConfig.environmentId,
+        )}
         projectId={projectId}
         suiteId={suite._id}
         suiteName={suite.name}
@@ -632,6 +646,7 @@ export function SuiteDetailOverview({
         <GenerateCasesDialog
           key={suite._id}
           suiteId={suite._id}
+          environmentChoices={generationEnvironmentChoices(suite)}
           onClose={() => setGenerationOpen(false)}
           onGenerate={(config) => {
             setGenerationOpen(false);
