@@ -132,7 +132,7 @@ describe("defaultRunEvalSuite provenance", () => {
         onRunStarted: async () => {
           throw new Error("plan refused the eval attempt (409)");
         },
-      })
+      }),
     ).rejects.toThrow("plan refused the eval attempt (409)");
 
     // Nothing was evaluated…
@@ -140,10 +140,10 @@ describe("defaultRunEvalSuite provenance", () => {
     // …and both halves of the run reached a terminal state.
     expect(mutation).toHaveBeenCalledWith(
       "testSuites:markSetupPendingIterationsFailed",
-      expect.objectContaining({ runId: "run-9" })
+      expect.objectContaining({ runId: "run-9" }),
     );
     expect(recorder.finalize).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "failed" })
+      expect.objectContaining({ status: "failed" }),
     );
   });
 });
@@ -165,8 +165,16 @@ describe("defaultRunEvalSuite — a multi-environment run set", () => {
     allowedBuiltInToolIds: [],
   };
   const targets = [
-    { environmentId: "env-a", environmentRevision: 1, runKey: "trig-set:env-a" },
-    { environmentId: "env-b", environmentRevision: 1, runKey: "trig-set:env-b" },
+    {
+      environmentId: "env-a",
+      environmentRevision: 1,
+      runKey: "trig-set:env-a",
+    },
+    {
+      environmentId: "env-b",
+      environmentRevision: 1,
+      runKey: "trig-set:env-b",
+    },
   ];
 
   beforeEach(() => {
@@ -185,8 +193,16 @@ describe("defaultRunEvalSuite — a multi-environment run set", () => {
       order.push("execute run-b");
     });
     prepareEvalRun
-      .mockResolvedValueOnce({ runId: "run-a", recorder: null, execute: executeA })
-      .mockResolvedValueOnce({ runId: "run-b", recorder: null, execute: executeB });
+      .mockResolvedValueOnce({
+        runId: "run-a",
+        recorder: null,
+        execute: executeA,
+      })
+      .mockResolvedValueOnce({
+        runId: "run-b",
+        recorder: null,
+        execute: executeB,
+      });
     createConvexClient.mockReturnValue({
       query: vi
         .fn()
@@ -222,10 +238,13 @@ describe("defaultRunEvalSuite — a multi-environment run set", () => {
     });
 
     const requests = prepareEvalRun.mock.calls.map(
-      (call) => call[1] as Record<string, unknown>
+      (call) => call[1] as Record<string, unknown>,
     );
     expect(
-      requests.map((request) => [request.environmentId, request.idempotencyKey])
+      requests.map((request) => [
+        request.environmentId,
+        request.idempotencyKey,
+      ]),
     ).toEqual([
       ["env-a", "trig-set:env-a"],
       ["env-b", "trig-set:env-b"],
@@ -271,13 +290,15 @@ describe("defaultRunEvalSuite — a multi-environment run set", () => {
         targets,
         bindTargetRun,
         onRunStarted: vi.fn(),
-      })
+      }),
     ).rejects.toThrow("target_already_bound");
 
     expect(executeA).not.toHaveBeenCalled();
     expect(executeB).not.toHaveBeenCalled();
     const settled = mutation.mock.calls
-      .filter(([name]) => name === "testSuites:markSetupPendingIterationsFailed")
+      .filter(
+        ([name]) => name === "testSuites:markSetupPendingIterationsFailed",
+      )
       .map(([, args]) => (args as { runId: string }).runId);
     expect(settled).toEqual(["run-a", "run-b"]);
   });
