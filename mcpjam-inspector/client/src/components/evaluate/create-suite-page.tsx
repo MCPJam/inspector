@@ -39,6 +39,10 @@ import {
   type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import {
+  clientNameResolver,
+  describeSkippedModelCells,
+} from "@/components/environment-composer/resolve-stacks";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -132,7 +136,9 @@ export function CreateSuitePage({
   const { capable: composeCapable, pending: composePending } =
     useEvalComposeCapable(projectId);
   const composeMode = composeCapable || composePending;
-  const resolveTargets = useComposerResolver(projectId ?? "");
+  const resolveTargets = useComposerResolver(projectId ?? "", {
+    requireServerAttachment: true,
+  });
   const composerEnvironments = useProjectEnvironments(
     composeMode ? projectId : null,
   );
@@ -329,6 +335,11 @@ export function CreateSuitePage({
           liveEnvironments: composerEnvironments ?? [],
           max: MAX_SUITE_ENVIRONMENTS,
         });
+        const skippedSummary = describeSkippedModelCells(
+          resolved.skipped,
+          clientNameResolver(hosts),
+        );
+        if (skippedSummary) toast.warning(skippedSummary);
         const fallbackHostIds = [
           ...new Set(resolved.environments.map((env) => env.hostId)),
         ];

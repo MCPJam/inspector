@@ -255,7 +255,7 @@ const fileUploadStub = async (c: any) =>
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "File upload is not supported in hosted mode",
+      "File upload isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     );
   });
 
@@ -265,7 +265,7 @@ const fileDownloadStub = async (c: any) =>
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "File download is not supported in hosted mode",
+      "File download isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     );
   });
 
