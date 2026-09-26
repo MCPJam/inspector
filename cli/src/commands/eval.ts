@@ -361,7 +361,6 @@ function composeField(options: {
     serverGroup?: string;
     server?: string;
     servers?: string[];
-    hostServers?: boolean;
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
@@ -418,20 +417,23 @@ function composeField(options: {
       "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID."
     );
   }
+  // `--compose-host-servers` used to run against the client's current server
+  // list. Eval runs take their servers from a server group alone now, so the
+  // flag could only compose an environment with no servers, which the backend
+  // refuses to launch. Refused here with the flags that replace it.
+  if (options.composeHostServers === true) {
+    throw usageError(
+      "--compose-host-servers is no longer supported: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Use --compose-server <name> or --compose-server-group <id> instead."
+    );
+  }
   const pinsServers =
     options.composeServerGroup !== undefined ||
     (options.composeServer?.length ?? 0) > 0;
-  if (options.composeHostServers === true && pinsServers) {
+  // The server is what the suite is testing, so a composed run has to name it
+  // as a server group.
+  if (!pinsServers) {
     throw usageError(
-      "--compose-host-servers runs against the client's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
-    );
-  }
-  // The server is what the suite is testing, so a composed run has to name it.
-  // Left implicit, the run reads the client's list at execution time and a
-  // later edit to that shared client silently repoints the eval.
-  if (!pinsServers && options.composeHostServers !== true) {
-    throw usageError(
-      `${clientFlag} needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the client points at right now — which changes when the client is edited — pass --compose-host-servers.`
+      `${clientFlag} needs to know which servers to test: add --compose-server <name> (or --compose-server-group <id>).`
     );
   }
   return {
@@ -440,7 +442,6 @@ function composeField(options: {
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
-      ...(options.composeHostServers === true ? { hostServers: true } : {}),
       ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
       ...(options.withClientDefault === true
@@ -3571,7 +3572,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--compose-host-servers",
-      "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group."
     )
     .option(
       "--compose-skill <id...>",
@@ -6104,7 +6105,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--compose-host-servers",
-      "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group."
     )
     .option(
       "--compose-skill <id...>",

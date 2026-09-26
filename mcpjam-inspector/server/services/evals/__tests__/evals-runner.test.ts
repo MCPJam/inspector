@@ -112,6 +112,7 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   })),
 }));
 
+import { withPluginExecutionServers } from "../plugin-execution-servers";
 import {
   createConcurrencyLimiter,
   defaultEvalExecutionBudgets,
@@ -258,6 +259,109 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       ]);
     },
   );
+
+  describe("environment quick runs (committed iterations)", () => {
+    it("runs every attempt on its committed row and creates none", async () => {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].runs = 2;
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        committedQuickRunIterationIds: ["committed-1", "committed-2"],
+      } as any);
+      expect(
+        convexClient.action.mock.calls.filter(
+          ([name]) => name === "testSuites:startQuickRunIteration",
+        ),
+      ).toHaveLength(0);
+      expect(
+        result?.quickRunIterationOutcomes?.map(
+          (outcome) => outcome.iterationId,
+        ),
+      ).toEqual(["committed-1", "committed-2"]);
+      const finalized = new Set(
+        convexClient.action.mock.calls
+          .filter(([name]) => name === "testSuites:updateTestIteration")
+          .map(([, args]) => args.iterationId),
+      );
+      expect(finalized).toEqual(new Set(["committed-1", "committed-2"]));
+    });
+
+    it("runs nothing, and finalizes the rows, when the commit does not match the attempts", async () => {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].runs = 3;
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        committedQuickRunIterationIds: ["committed-1", "committed-2"],
+      } as any);
+      expect(streamTextMock).not.toHaveBeenCalled();
+      expect(generateTextMock).not.toHaveBeenCalled();
+      expect(result?.quickRunIterationOutcomes ?? []).toEqual([]);
+      expect(
+        convexClient.action.mock.calls.filter(
+          ([name]) => name === "testSuites:startQuickRunIteration",
+        ),
+      ).toHaveLength(0);
+      const failed = convexClient.action.mock.calls
+        .filter(([name]) => name === "testSuites:updateTestIteration")
+        .map(([, args]) => [args.iterationId, args.status, args.metadata]);
+      // A setup failure, not a person stopping the run.
+      expect(failed.sort()).toEqual([
+        ["committed-1", "setup_failed", undefined],
+        ["committed-2", "setup_failed", undefined],
+      ]);
+    });
+
+    it("a stopped run finalizes the committed rows it never started", async () => {
+      const controller = new AbortController();
+      controller.abort(new Error("Eval stream aborted by the client"));
+      await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
+        tools: {},
+        selectedServers: ["srv-1"],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        suiteId: "suite-1",
+        runId: null,
+        abortSignal: controller.signal,
+        committedIterationIds: ["committed-1", "committed-2"],
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 2,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-1",
+        },
+        emit: () => {},
+      } as any);
+      expect(streamTextMock).not.toHaveBeenCalled();
+      const stopped = convexClient.action.mock.calls
+        .filter(([name]) => name === "testSuites:updateTestIteration")
+        .map(([, args]) => [args.iterationId, args.status]);
+      expect(stopped).toEqual([
+        ["committed-1", "cancelled"],
+        ["committed-2", "cancelled"],
+      ]);
+    });
+
+    it("only a single-case quick run may carry committed rows", async () => {
+      await expect(
+        runEvalSuiteWithAiSdk({
+          ...buildQuickRunConfig(),
+          runId: "suite-run",
+          committedQuickRunIterationIds: ["committed-1"],
+        } as any),
+      ).rejects.toThrow(/single-case quick run/);
+    });
+  });
 
   it("finishes a credit-blocked suite as failed while retaining its completed summary", async () => {
     const success = streamTextMock.getMockImplementation()!;
@@ -1448,6 +1552,160 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith([
       "server-1",
     ]);
+  });
+
+  describe("plugin servers reach the model's tool set", () => {
+    const plugin = {
+      serverId: "plugin-srv",
+      name: "acme",
+      pluginVersionId: "pv-1",
+      pluginId: "p-1",
+      pluginName: "Acme",
+      componentKey: "acme",
+    };
+    const toolFor = (name: string) => ({
+      [name]: {
+        description: name,
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({ ok: true }),
+      },
+    });
+
+    // The tools the model is actually handed on its turn, not which servers
+    // happen to be connected.
+    async function toolsOfModelTurn(environment: {
+      servers: string[];
+      serverBindings?: Array<{ serverName: string; projectServerId: string }>;
+    }): Promise<string[]> {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation(async (opts: any) => ({
+          messages: [
+            ...opts.messages,
+            { role: "assistant", content: [{ type: "text", text: "Done" }] },
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: { spans: [] } as any,
+        }));
+      try {
+        await runEvalSuiteWithAiSdk({
+          suiteId: "suite-1",
+          runId: null,
+          config: {
+            tests: [
+              {
+                title: "Case",
+                query: "Use the tools",
+                runs: 1,
+                model: "gpt-5-mini",
+                provider: "openai",
+                expectedToolCalls: [],
+                promptTurns: [
+                  {
+                    id: "turn-1",
+                    prompt: "Use the tools",
+                    expectedToolCalls: [],
+                  },
+                ],
+                testCaseId: "case-plugins",
+              },
+            ],
+            environment,
+          },
+          modelApiKeys: { openai: "sk-test" },
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          mcpClientManager: mcpClientManager as any,
+          testCaseId: "case-plugins",
+        });
+        const opts = spy.mock.calls[0]![0] as any;
+        return Object.keys(opts.tools ?? {}).sort();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    let restorePrepare: (() => void) | undefined;
+    beforeEach(async () => {
+      // Like the real `prepareChatV2`: the model's tools are the tools of the
+      // servers the runner SELECTS for the turn.
+      const orchestration =
+        await import("../../../utils/chat-v2-orchestration");
+      const prepare = vi.mocked(orchestration.prepareChatV2);
+      const original = prepare.getMockImplementation();
+      prepare.mockImplementation(async (options: any) => {
+        const toolSets = await Promise.all(
+          (options.selectedServers ?? []).map((serverId: string) =>
+            options.mcpClientManager.getToolsForAiSdk([serverId]),
+          ),
+        );
+        return {
+          allTools: Object.assign({}, ...toolSets),
+          enhancedSystemPrompt: options?.systemPrompt ?? "",
+          resolvedTemperature: options?.temperature,
+          scrubMessages: (msgs: unknown[]) => msgs,
+          progressivePlan: { enabled: false },
+          discoveryState: {
+            loadedToolIds: new Set<string>(),
+            catalogVersion: 0,
+          },
+        } as any;
+      });
+      restorePrepare = () => {
+        if (original) prepare.mockImplementation(original);
+      };
+      // Both servers are connected in every case below; only the selection
+      // decides what the model sees.
+      mcpClientManager.listServers.mockReturnValue(["group-srv", "plugin-srv"]);
+      mcpClientManager.getToolsForAiSdk.mockImplementation(
+        async (serverIds: string[]) =>
+          serverIds[0] === "plugin-srv"
+            ? toolFor("acme_lookup")
+            : serverIds[0] === "group-srv"
+              ? toolFor("billing_invoice")
+              : {},
+      );
+    });
+
+    afterEach(() => restorePrepare?.());
+
+    it("a plugin-only environment hands the model its plugin tools", async () => {
+      const frozen = { servers: [] as string[] };
+      // Negative control: connected but not selected gives the model nothing.
+      expect(await toolsOfModelTurn(frozen)).not.toContain("acme_lookup");
+
+      const { environment } = withPluginExecutionServers(
+        { environment: frozen },
+        [plugin],
+        { hasServer: (id) => id === "plugin-srv" },
+      );
+      expect(await toolsOfModelTurn(environment as any)).toContain(
+        "acme_lookup",
+      );
+    });
+
+    it("a mixed environment hands the model its group and plugin tools", async () => {
+      const frozen = {
+        servers: ["group-srv"],
+        serverBindings: [
+          { serverName: "billing", projectServerId: "group-srv" },
+        ],
+      };
+      expect(await toolsOfModelTurn(frozen)).not.toContain("acme_lookup");
+
+      const { environment } = withPluginExecutionServers(
+        { environment: frozen },
+        [plugin],
+        { hasServer: (id) => id === "plugin-srv" || id === "group-srv" },
+      );
+      const tools = await toolsOfModelTurn(environment as any);
+      expect(tools).toContain("billing_invoice");
+      expect(tools).toContain("acme_lookup");
+    });
   });
 
   it("maps current fullStream chunks into eval stream events", async () => {

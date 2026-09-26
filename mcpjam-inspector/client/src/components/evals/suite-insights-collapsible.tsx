@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
-import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
-import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
+import { useInsightSignIn } from "./use-insight-sign-in";
 import { useRunGroupQuality } from "./use-run-group-quality";
 import { GroupFindingList } from "./run-group-diagnosis-presentation";
 import { InsightBannerShell } from "./insight-banner-shell";
@@ -211,21 +209,16 @@ function RunInsightsBanner({
  * is a single thin row, and the refusal's own copy is already rendered as the
  * narrative beside it. What is missing is the one click that fixes it.
  *
- * Same wiring as every other sign-in control in the app — `useAuth().signIn`,
- * the tracked `login_button_clicked`, and the captured return path, so the
- * user lands back on the run they were reading.
+ * The click itself is {@link useInsightSignIn}, shared with the server-quality
+ * card so the two sign-in controls cannot drift.
  */
 function InsightSignInAction() {
-  const { signIn } = useAuth();
+  const signIn = useInsightSignIn("run_insights_banner");
   return (
     <button
       type="button"
       className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
-      onClick={() => {
-        track("login_button_clicked", { location: "run_insights_banner" });
-        captureAppSignInReturnPath();
-        signIn(permalinkSignInOptions());
-      }}
+      onClick={signIn}
     >
       Sign in
     </button>

@@ -51,6 +51,7 @@ import {
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import {
   clientNameResolver,
+  composerMissingServerGroup,
   describeSkippedModelCells,
 } from "@/components/environment-composer/resolve-stacks";
 import { useHostList } from "@/hooks/useClients";
@@ -189,7 +190,9 @@ function EnvironmentModeBar({
   const environments = useProjectEnvironments(projectId, {
     includeAdhoc: true,
   });
-  const resolveTargets = useComposerResolver(projectId);
+  const resolveTargets = useComposerResolver(projectId, {
+    requireServerAttachment: true,
+  });
   // Names for the skipped client × model pairs toast — a raw host id means
   // nothing to the person reading it.
   const { isAuthenticated } = useConvexAuth();
@@ -243,13 +246,17 @@ function EnvironmentModeBar({
         modelsEnabled,
       });
     }
-    // Not an environment suite yet: show what it runs today, so converting
-    // preserves it rather than starting from blank.
+    // Not an environment suite yet: show its clients, so converting keeps
+    // them rather than starting from blank. NOT its legacy server group: an
+    // environment suite does not read `serverAttachmentId`, and most older
+    // suites keep their servers somewhere else — seeding it is how a
+    // converted suite ended up with no servers. The first edit asks for a
+    // group instead.
     return {
       environmentIds: [],
       stack: {
         hostIds: (suite.hostAttachments ?? []).map((a) => a.namedHostId),
-        serverAttachmentId: suite.serverAttachmentId ?? null,
+        serverAttachmentId: null,
         skillSelection: null,
         computerEnvironmentId:
           suite.environment?.computerEnvironmentId ?? null,
@@ -265,7 +272,6 @@ function EnvironmentModeBar({
     skillsEnabled,
     suite.environment?.computerEnvironmentId,
     suite.hostAttachments,
-    suite.serverAttachmentId,
   ]);
   /**
    * The ATTACHMENTS cannot be represented as one stack — two on a single client,
@@ -331,6 +337,18 @@ function EnvironmentModeBar({
   const commitVersion = useRef(0);
   const commit = useCallback(
     async (next: EnvironmentComposerState) => {
+      // An eval run takes its servers from the group alone, so a setup with no
+      // group (and no plugin pin) would run with no tools. Refuse before the
+      // optimistic update rather than after a round trip.
+      if (
+        composerHasTarget(next) &&
+        composerMissingServerGroup(next, liveEnvironments)
+      ) {
+        toast.error(
+          "Pick a server or group first. An eval run takes its servers from the group alone.",
+        );
+        return;
+      }
       const previous = state;
       const mine = ++commitVersion.current;
       setState(next);
@@ -404,8 +422,9 @@ function EnvironmentModeBar({
         <EnvironmentComposer
           // "Servers · client default" is the resolver's rule for journeys and
           // scenarios, not for evals: an eval run takes its servers from the
-          // group alone, so an empty slot here means no tools.
-          emptyServerLabel="Servers · none"
+          // group alone, so the slot is required here.
+          emptyServerLabel="Pick a server or group"
+          serverOptional={false}
           projectId={projectId}
           environments={liveEnvironments}
           value={state}
