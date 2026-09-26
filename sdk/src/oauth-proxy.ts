@@ -973,7 +973,8 @@ async function requestPinnedOAuthMetadata(
 export async function fetchOAuthMetadata(
   url: string,
   options: boolean | ValidateUrlOptions = false,
-  timeoutMs?: number
+  timeoutMs?: number,
+  callerSignal?: AbortSignal
 ): Promise<
   | {
       metadata: Record<string, unknown>;
@@ -989,7 +990,8 @@ export async function fetchOAuthMetadata(
     allowPrivateNetwork,
     startUrl: metadataUrl.toString(),
   });
-  const signal = requestTimeoutSignal(timeoutMs);
+  const signal = requestTimeoutSignal(timeoutMs, callerSignal);
+  signal?.throwIfAborted();
   let currentUrl = metadataUrl;
   let response: RawOAuthMetadataResponse | undefined;
   // THE PRIVATE ALLOWANCE BELONGS TO THE CHAIN, and the chain's character is

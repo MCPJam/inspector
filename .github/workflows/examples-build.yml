@@ -1,0 +1,91 @@
+name: Build examples
+
+# Installs and builds every example app a PR touches.
+#
+# The example apps under examples/ each ship their own lockfile and are not
+# npm workspaces, so neither "Build and Test" nor "Run Tests" ever installs
+# them: an example dependency bump was green by construction, whether or not
+# the app still built. This is the check that says so.
+#
+# It runs on EVERY pull request, with no `paths:` filter, on purpose. A
+# path-filtered workflow cannot be a required check (a PR that does not match
+# never reports it and waits forever), and dependabot-auto-merge.yml queues an
+# example-app major or runtime update only while this check is REQUIRED on
+# main. A PR that touches no example finishes in seconds.
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Referenced BY NAME from dependabot-auto-merge.yml. Rename both together.
+    name: Build examples
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find the example apps this PR touches
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # examples/<area>/<app>/... -> examples/<area>/<app>, apps with a
+          # manifest only.
+          dirs="$(git diff --name-only "$BASE_SHA" HEAD -- examples/ \
+            | awk -F/ 'NF >= 4 { print $1 "/" $2 "/" $3 }' \
+            | sort -u \
+            | while read -r dir; do
+                if [ -f "$dir/package.json" ]; then echo "$dir"; fi
+              done)"
+          if [ -z "$dirs" ]; then
+            echo "No example app changed; nothing to build."
+          else
+            echo "Changed example apps:"
+            echo "$dirs"
+          fi
+          {
+            echo "dirs<<EOF"
+            echo "$dirs"
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        if: steps.changed.outputs.dirs != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install and build each changed example
+        if: steps.changed.outputs.dirs != ''
+        env:
+          DIRS: ${{ steps.changed.outputs.dirs }}
+        run: |
+          set -euo pipefail
+          while read -r dir; do
+            [ -n "$dir" ] || continue
+            echo "::group::$dir"
+            # `npm ci` where a lockfile is committed: it fails when the
+            # lockfile and the manifest disagree, which is the most common way
+            # a hand-edited or half-applied bump breaks an example.
+            if [ -f "$dir/package-lock.json" ]; then
+              (cd "$dir" && npm ci --no-audit --no-fund)
+            else
+              (cd "$dir" && npm install --no-audit --no-fund)
+            fi
+            (cd "$dir" && npm run build --if-present)
+            echo "::endgroup::"
+          done <<<"$DIRS"
