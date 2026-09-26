@@ -77,12 +77,11 @@ export function applyOutOfCreditsLocks(
   });
 }
 
-export const FREE_TIER_MODEL_REASON =
-  "Not included in the free daily allowance. Upgrade your plan, add credits, or use your own API key to use this model.";
+export const FREE_TIER_MODEL_REASON = "Sign in to use this model";
 
 /**
- * On the free daily allowance with no credits to fall back on, the backend
- * refuses models priced above the free bucket (`free_tier_model_restricted`).
+ * For a guest on the free daily allowance, the backend refuses models priced
+ * above the free bucket (`free_tier_model_restricted`).
  * Lock those rows up front instead of letting the pick fail on send. Only an
  * explicit `freeTierEligible: false` from the catalog locks: a row without the
  * field (older backend, cached catalog, BYOK) keeps today's behavior. BYOK and
@@ -425,8 +424,8 @@ export function composeAvailableModels(params: {
   /** Lock MCPJam-provided ("free") models when the org/guest has 0 credits. */
   outOfCredits?: boolean;
   /**
-   * The subject spends only the free daily allowance (no credits to fall back
-   * on): lock hosted rows the catalog marks `freeTierEligible: false`.
+   * A guest spending the free daily allowance: lock hosted rows the catalog
+   * marks `freeTierEligible: false`.
    */
   freeTierOnly?: boolean;
   /**
