@@ -182,16 +182,16 @@ describe("agent op registry", () => {
         updateEvalSuiteOperation.name,
         "create_persona",
         "update_persona",
-        "create_journey",
-        "update_journey",
+        "create_goal",
+        "update_goal",
         "create_swarm",
         "update_swarm",
         "dismiss_swarm_finding",
         "undismiss_swarm_finding",
-        "cancel_wave_insights",
-        "dismiss_user_testing_finding",
-        "undismiss_user_testing_finding",
-        "cancel_user_testing_insights",
+        "cancel_swarm_run_insights",
+        "dismiss_study_finding",
+        "undismiss_study_finding",
+        "cancel_study_insights",
       ].sort(),
     );
   });
@@ -1760,7 +1760,7 @@ describe("tier derives from operation.risk", () => {
   const TIER_EXCEPTIONS: Readonly<
     Record<string, { tier: Placement; reason: string }>
   > = {
-    cancel_journey_run: {
+    cancel_goal_run: {
       tier: "gated",
       reason:
         "Destructive would derive excluded, but this is the spend-STOPPER: " +
@@ -1769,7 +1769,7 @@ describe("tier derives from operation.risk", () => {
         "approvable, even though cancellation kills in-flight sessions " +
         "irreversibly.",
     },
-    publish_scenario: {
+    publish_study: {
       tier: "excluded",
       reason:
         "Exposure would derive gated, but publishing decides who outside " +
@@ -1956,6 +1956,15 @@ describe("tier derives from operation.risk", () => {
         "suite — the one generation op that writes — and because it draws on " +
         "the organization's shared daily generation quota.",
     },
+    import_eval_cases: {
+      tier: "gated",
+      reason:
+        "Same shape as generate_eval_cases: the authoring model is " +
+        "platform-paid (`markdown_case_import` sits in the backend's " +
+        "PLATFORM_PAID_INTERNAL_LLM set), so risk is none and would derive " +
+        "direct. Gated because it PERSISTS authored cases into the suite, " +
+        "off a document the approver should see named before it is read.",
+    },
     propose_eval_description_rewrite: {
       tier: "gated",
       reason:
@@ -1971,21 +1980,21 @@ describe("tier derives from operation.risk", () => {
         "consume is the organization's and does not come back until UTC " +
         "midnight.",
     },
-    generate_journeys: {
+    generate_goals: {
       tier: "gated",
       reason: "The same as generate_personas: platform-paid, shared quota.",
     },
-    request_wave_insights: {
+    request_swarm_run_insights: {
       tier: "gated",
       reason:
         "Platform-paid, so risk is none. Gated on the insightsPerDay " +
         "ledger, which is SHARED with user-testing and eval-run insights — " +
         "a request here takes one from there, across the whole organization.",
     },
-    request_user_testing_insights: {
+    request_study_insights: {
       tier: "gated",
       reason:
-        "The same shared insightsPerDay ledger as request_wave_insights, " +
+        "The same shared insightsPerDay ledger as request_swarm_run_insights, " +
         "plus a 409 until the window is mined, which a caller must not " +
         "retry in a loop.",
     },
@@ -2238,16 +2247,16 @@ const EXPECTED_PROMPT_NOTES = [
   "- Before planning anything that authors, launches or publishes, call `get_capabilities` for the project. Your tool list is identical for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the action needs an admin. The `can` block answers both. Finding out from a 403 means you have already told someone you were doing it.",
   "- `list_secrets` and `get_secret` return METADATA ONLY — a secret's value is not readable by you or by anyone, through any surface. If a task needs a credential's value, the answer is that you cannot have it; say so rather than looking for another route to it.",
   "- Delivery mode matters when you reason about a workflow: a `brokered` secret is injected by the sandbox's egress proxy and is NOT an environment variable in the box (so `echo $NAME` will be empty and a CLI that reads env vars will not see it), while a `materialized` one is.",
-  "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
-  "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
+  "- A goal run produces `targets x iterations` conversations, and that total is what spends. Read `get_goal` before proposing a launch so the number in your proposal is the real one.",
+  "- After a launch is approved, poll `get_goal_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
-  "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
-  "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
-  "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
+  "- Launching a goal fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
+  "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
   "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
-  "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
-  "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
-  "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+  "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+  "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",
+  "- `set_study_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
   "- `create_client` mints a NEW client and changes nothing that exists. To change an existing one, use `update_client` — never create a near-duplicate to work around a failed edit.",
   "- Editing a client is a three-step loop: call `get_client` first; echo its `configId` back as `expectedConfigId` (and its `name` as `expectedName` when you are renaming); on a conflict, re-read and retry with the fresh values. Never guess a token.",
   "- Prefer `set` over `config`. `set` changes named fields over the client's CURRENT config inside the write transaction; `config` replaces everything and will revert any edit made since you read it. In `set`, absent means keep and `null` means reset-or-clear.",

@@ -265,7 +265,7 @@ export async function respondToElicitationApi(
 ): Promise<ToolExecutionResponse> {
   if (isHostedMode()) {
     return {
-      error: "Elicitation responses are not supported in hosted mode",
+      error: "Responding to server input requests isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     };
   }
 
