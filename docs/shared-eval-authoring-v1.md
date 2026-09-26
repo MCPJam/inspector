@@ -23,15 +23,15 @@ Slack stores a reply handle before dispatch. Both normal completion and restart 
 ## Rollout and rollback
 
 1. Deploy backend schemas, job functions, billing receipts, review guards, and recovery crons.
-2. Set backend `EVAL_AUTHORING_V1_ENABLED=true`; configure matching `INSPECTOR_SERVICE_TOKEN` values.
-3. Enable client flag `eval-authoring-import-v1`, then `eval-authoring-generation-v1` for the development cohort.
-4. Set inspector `EVAL_AUTHORING_GENERATION_V1_ENABLED=true` for public API and agent generation. The generation compatibility endpoint waits up to 15 seconds, then returns a resumable job ID. The SDK follows the ID and commits eligible generated drafts.
-5. Configure backend `INSPECTOR_INTERNAL_ORIGIN`, then enable `DURABLE_AGENT_TURNS_ENABLED=true` on backend, inspector, and Slack together. Keep the existing conversation model.
-6. Verify Markdown import → review → save → run; equivalent generated full steps; interrupted worker recovery; and Slack reply recovery before expanding the cohort.
+2. Configure matching `INSPECTOR_SERVICE_TOKEN` values.
+3. Configure backend `INSPECTOR_INTERNAL_ORIGIN`, then enable `DURABLE_AGENT_TURNS_ENABLED=true` on backend, inspector, and Slack together. Keep the existing conversation model.
+4. Verify document import → review → save → run; equivalent generated full steps; interrupted worker recovery; and Slack reply recovery.
 
-Legacy prompt-only import save payloads remain supported by their existing adapter. Legacy extraction/generation paths remain available while their rollout flags are off. Full-step draft responses stay on the versioned authoring API and are never flattened into legacy import responses.
+The rollout flags this plan once described — backend `EVAL_AUTHORING_V1_ENABLED`, inspector `EVAL_AUTHORING_GENERATION_V1_ENABLED`, and the PostHog flags `eval-authoring-import-v1` and `eval-authoring-generation-v1` — are **gone**. The import flag was never created in PostHog, so the app silently kept using the legacy extractor and every in-app import produced prompt-only cases. Rather than create four flags to turn on, the gates and the legacy paths behind them were deleted: there is one authoring path, and nothing to set in any deployment. Rollback is a revert.
 
-Rollback disables new entry through flags. Keep version-1 backend and worker handlers deployed until existing jobs drain; claim/recovery and Slack delivery continue for existing jobs even when entry flags are disabled. Do not remove tables during rollback. The daily retention sweep applies the organization evidence-retention policy, caps cancelled payload retention at seven days, and leaves identity tombstones so an expired request key cannot silently cause new spend.
+Legacy prompt-only cases already in a suite keep working — nothing reads their `markdown-v1` provenance. The legacy extraction and generation code paths are deleted, not dormant. Full-step draft responses stay on the versioned authoring API and are never flattened into legacy import responses.
+
+Rollback is a revert, not a flag flip. Keep version-1 backend and worker handlers deployed until existing jobs drain; claim/recovery and Slack delivery continue for existing jobs even when entry flags are disabled. Do not remove tables during rollback. The daily retention sweep applies the organization evidence-retention policy, caps cancelled payload retention at seven days, and leaves identity tombstones so an expired request key cannot silently cause new spend.
 
 ## Validation record and remaining release gates
 

@@ -30,7 +30,6 @@ import {
   deleteCloudSkill,
   promoteCloudSkill,
   listCloudSkillFiles,
-  generateCloudSkillFileUploadUrl,
   attachCloudSkillFiles,
   removeCloudSkillFile,
   readCloudSkillFile,
@@ -342,21 +341,8 @@ skills.post("/files/list", async (c) =>
   }),
 );
 
-// Mint a browser→Convex direct upload URL (blob bypasses the inspector body
-// limit by design). The manage-gate runs in Convex before the URL is issued.
-skills.post("/files/upload-url", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
-    const { uploadUrl } = await run(async () =>
-      generateCloudSkillFileUploadUrl(
-        await ctxFrom(c, body.projectId),
-        body.skillId,
-      ),
-    );
-    return { uploadUrl };
-  }),
-);
-
+// Supporting-file bytes go from the browser to the backend's upload route
+// (MJ-006), which applies the same manage gate; `attach` then binds them.
 skills.post("/files/attach", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(

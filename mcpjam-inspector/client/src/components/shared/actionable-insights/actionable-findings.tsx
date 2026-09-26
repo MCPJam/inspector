@@ -26,10 +26,12 @@ function ActionableFindingsInner({
   surface,
   context,
   onOpenSession,
+  hideEmpty,
 }: {
   surface: InsightsEnvelopeSurface;
   context?: FindingPromptContext;
   onOpenSession?: (sessionId: string) => void;
+  hideEmpty?: boolean;
 }) {
   const envelope = useInsightsEnvelope(surface);
   return (
@@ -37,6 +39,7 @@ function ActionableFindingsInner({
       envelope={envelope}
       context={context}
       onOpenSession={onOpenSession}
+      hideEmpty={hideEmpty}
     />
   );
 }
@@ -45,6 +48,7 @@ export function ActionableFindings(props: {
   surface: InsightsEnvelopeSurface;
   context?: FindingPromptContext;
   onOpenSession?: (sessionId: string) => void;
+  hideEmpty?: boolean;
   /** Distinguishes this mount in error telemetry. */
   boundaryName?: string;
 }) {

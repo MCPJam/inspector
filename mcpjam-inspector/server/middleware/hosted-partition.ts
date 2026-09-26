@@ -19,8 +19,8 @@ import { buildHealthMeta } from "../utils/health-payload.js";
  * /api/mcp paths that remain reachable in hosted mode.
  *
  * EXACT matches only — a sub-path or trailing-slash variant is intentionally
- * 410'd (both catalog clients fetch the exact path, see
- * client/src/hooks/use-hosted-model-catalog.ts and use-model-metadata.ts).
+ * 410'd (the catalog client fetches the exact path, see
+ * client/src/hooks/use-hosted-model-catalog.ts).
  *
  *   /api/mcp/health  — liveness probe, no data.
  *   /api/mcp/models  — public keyless catalog proxy that powers the model

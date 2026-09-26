@@ -17,7 +17,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
 import { SwarmGenerateError } from "@/lib/swarm-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -93,6 +100,11 @@ vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
+
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
   useDbUserBootstrapStatus: () => ({
@@ -142,7 +154,19 @@ vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
     ...actual,
     useCreateProjectEnvironment: () => createEnvironmentMock,
     useEnsureAdhocEnvironments: () => ensureAdhocEnvironmentsMock,
-    useProjectEnvironments: () => environmentsRef.current,
+    // Honours `includeAdhoc` the way the real hook does: nameless rows are
+    // ad-hoc and hidden unless a caller opts in. Ignoring the option let a
+    // caller that NEEDS ad-hoc rows look correct in tests while getting none
+    // of them in the app.
+    useProjectEnvironments: (
+      _projectId: unknown,
+      options?: { includeAdhoc?: boolean },
+    ) =>
+      options?.includeAdhoc
+        ? environmentsRef.current
+        : environmentsRef.current.filter(
+            (row: { name?: string }) => (row.name ?? "").trim().length > 0,
+          ),
   };
 });
 
@@ -1339,6 +1363,69 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /out of credits/i,
     );
+    expect(
+      screen.queryByTestId("new-swarm-proposed-personas"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in when the refusal arrives as the OTHER error type", async () => {
+    // The proxy does not always raise `SwarmGenerateError`. `handleRoute`
+    // backfills `normalized` on every route error, and that path throws
+    // `WebApiError`. A consumer keyed on the class showed a guest the generic
+    // card; `signInRemedyMessage` asks the error instead, reading the envelope
+    // both classes carry, so both shapes land on the same remedy.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new WebApiError(
+        401,
+        "UNAUTHORIZED",
+        "Sign in to generate personas and journeys.",
+        undefined,
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in for a guest refusal instead of carding it", async () => {
+    // The backend refuses an anonymous caller at the door, and the proxy
+    // forwards that envelope as `details` under an HTTP-shaped `FORBIDDEN` —
+    // which is why the code is read from the envelope and not from the top
+    // level. An `ErrorCard` would state the problem and offer
+    // nothing; the remedy here is a control, so the surface renders
+    // `GuestSignInMessage` and no card.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new SwarmGenerateError(
+        403,
+        "Sign in to generate personas and journeys.",
+        false,
+        "FORBIDDEN",
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    // The refusal gets ONE surface, not two saying the same thing.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
@@ -2805,5 +2892,404 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     // A discard notice for a discard that didn't happen is just noise.
     expect(toast.info).not.toHaveBeenCalled();
     expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Where a REUSED goal will actually run, said out loud before launch.
+ *
+ * A persona carries no environment; its goals do. Adding an existing persona
+ * brings those goals, and the Describe step's pre-filled environment then wins
+ * over the one they were authored against. That override is deliberate and
+ * stays — what these tests pin is that Confirm now SAYS so, which is the part
+ * that let 15 goals written for one server run against a different one and
+ * still read as a clean wave.
+ */
+describe("SwarmsTab — Confirm discloses where reused goals run", () => {
+  function setEnvironments(rows: Array<Record<string, unknown>>) {
+    environmentsRef.current = rows as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+  }
+
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    return screen.findByTestId("new-swarm-reused-personas");
+  }
+
+  it("names the target for a swarm made only of reused personas", async () => {
+    // Confirm used to show the environment line ONLY when the swarm had newly
+    // authored goals, so a reuse-only swarm approved a target it never named.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-1"],
+      },
+    ]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on Prod-like",
+    );
+    // Nothing moves — the stored fan-out already IS the seeded selection.
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says which goals are being moved, and what they were written for", async () => {
+    // Stored on Amazon; the auto-seed picks Prod-like, so the launch re-stamps.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+      {
+        _id: "j-2",
+        name: "Chase refunds",
+        goal: "Chase",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("2 goals were authored against Amazon");
+    expect(moves).toHaveTextContent("will run here instead");
+  });
+
+  it("stays silent for a LEGACY goal that never had an environment", async () => {
+    // The launch still overrides this one — it has nothing else to run
+    // against — but there is no authored environment to move it off.
+    await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on Prod-like",
+    );
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cautions when the move crosses server groups", async () => {
+    // Same client on both rows, so the server-group caution is the only one
+    // that can fire and the assertion cannot pass by accident.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different server group.");
+    expect(moves).toHaveTextContent(
+      "These goals were written for another server",
+    );
+  });
+
+  it("cautions when the move crosses CLIENTS", async () => {
+    // The shape this takes on every project without the environments flag: the
+    // composer seeds the first client and the goals were set up on another.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different client.");
+    expect(moves).not.toHaveTextContent("server group");
+  });
+
+  it("names the client a LEGACY goal was set up against", async () => {
+    // No environmentIds at all, but `hostIds` says where it ran. Treating that
+    // as unknowable hid a real move on the most common kind of stored goal.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("does not caution when the move keeps the same server group", async () => {
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    // The move is still disclosed; only the caution is withheld.
+    expect(moves).toHaveTextContent("authored against Amazon");
+    expect(moves).not.toHaveTextContent("Different server group");
+  });
+
+  it("tells two same-named environments apart, and keeps the suffix on Confirm", async () => {
+    // The real project has two live environments both called MCPJam. Without a
+    // suffix the Describe picker is a coin flip AND the move notice reads
+    // "authored against MCPJam — moved to MCPJam", which explains nothing.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on MCPJam #1",
+    );
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-moves"),
+    ).toHaveTextContent("authored against MCPJam #2");
+  });
+
+  it("re-seeds the target once hosts and environments land", async () => {
+    // The latch was set BEFORE the seed was checked, so a mount where both
+    // queries were momentarily empty latched forever: the composer stayed
+    // blank for the rest of the flow and the launch had no target.
+    hostsRef.current = [];
+    setEnvironments([]);
+    const view = render(
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />,
+    );
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).toHaveTextContent("pick env");
+
+    hostsRef.current = [{ hostId: "host-1", name: "Claude" }];
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ]);
+    // Both queries land. In the app that re-renders the flow on its own; here
+    // the rerender is what delivers the same thing.
+    view.rerender(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-environments-picker"),
+      ).toHaveTextContent("1 env"),
+    );
+  });
+});
+
+/**
+ * Confirm with `project-environments-enabled` OFF.
+ *
+ * The live configuration for every project but one: the composer shows clients
+ * and models, the launch target is an ad-hoc row minted from them, and the
+ * environment ids do not exist until the flow resolves. Confirm used to reach
+ * the user with an empty selection and therefore say nothing at all: no target,
+ * no move, and a session quote that ignored the fan-out width.
+ */
+describe("SwarmsTab: Confirm with the environments flag off", () => {
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    environmentsFlagRef.current = false;
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+  }
+
+  it("names the client a reuse-only swarm will run on", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    // The auto-seed picks the first client; the ad-hoc row minted for it has
+    // no name of its own and labels by that client.
+    expect(
+      await screen.findByTestId("new-swarm-confirm-clients"),
+    ).toHaveTextContent("Runs on Claude");
+  });
+
+  it("says which reused goals are moving to a different client", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-2"],
+      },
+    ]);
+    // The row that goal points at: ad-hoc, so it carries no name and every
+    // named-only list in the app hides it. The move notice is the one place
+    // that has to see it.
+    environmentsRef.current = [
+      {
+        environmentId: "adhoc-host-2",
+        projectId: "proj-1",
+        hostId: "host-2",
+        origin: "adhoc",
+        revision: 1,
+      },
+    ] as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("quotes the fan-out it will actually launch", async () => {
+    // It used to quote one conversation and then launch two targets, because
+    // the estimate multiplies by the environment count and the selection was
+    // still empty on this screen.
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-launch-session-estimate"),
+      ).toHaveTextContent("2 conversations"),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
+    // The quote and the launch agree.
+    expect(launchJourneyRunMock.mock.calls[0][0].environmentIds).toEqual([
+      "adhoc-host-1",
+      "adhoc-host-2",
+    ]);
+  });
+
+  it("still reaches Confirm when the target cannot be resolved", async () => {
+    // Resolving early must never strand a returning user: their goals carry
+    // their own target, and the launch is what reports a broken one.
+    ensureAdhocEnvironmentsMock.mockRejectedValue(new Error("resolve failed"));
+    reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await screen.findByTestId("new-swarm-reused-personas");
+    expect(
+      screen.queryByTestId("new-swarm-confirm-clients"),
+    ).not.toBeInTheDocument();
   });
 });
