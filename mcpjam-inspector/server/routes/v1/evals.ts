@@ -1,3 +1,4 @@
+import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -5265,6 +5266,8 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // behind. The per-host `servers` picks are deliberately dropped for this
     // pass: they resolve against the suite's environment bindings, which do
     // not exist until the suite is written. The real resolution runs below.
+    let preResolvedHosts:
+      Array<{ namedHostId: string; selectedServerIds?: string[] }> | undefined;
     if (body.hosts?.length) {
       await resolveHostAttachments(
         convexClient,
@@ -5272,9 +5275,30 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
         { environment: {} },
         body.hosts.map(({ host }) => ({ host })),
       );
+      // The same picks, resolved against this request's own servers: what a
+      // suite born with its environment needs, since it gets no legacy
+      // bindings to resolve them against later.
+      if (serverNames && serverNames.length === resolvedServerIds.length) {
+        preResolvedHosts = await resolveHostAttachments(
+          convexClient,
+          projectId,
+          {
+            environment: {
+              serverBindings: serverNames.map((serverName, index) => ({
+                serverName,
+                projectServerId: resolvedServerIds[index],
+              })),
+            },
+          } as SuiteDoc,
+          body.hosts,
+        );
+      }
     }
 
     const { suiteId, caseUpsert } = await authorEvalSuite({
+      ...(preResolvedHosts
+        ? { environmentHostAttachments: preResolvedHosts }
+        : {}),
       convexClient,
       tests: normalizedTests,
       resolvedServerIds,
@@ -5296,12 +5320,16 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // against the suite's environment bindings, which the write above is what
     // creates. Re-read for the same reason the PATCH route does.
     let attachedHostIds: string[] = [];
-    if (body.hosts?.length) {
-      const suite = await readSuiteInProject(
-        convexAuthToken,
-        projectId,
-        suiteId,
+    const authoredSuite = body.hosts?.length
+      ? await readSuiteInProject(convexAuthToken, projectId, suiteId)
+      : null;
+    if ((authoredSuite?.environmentIds?.length ?? 0) > 0) {
+      // Born an environment suite on the requested client: nothing to attach.
+      attachedHostIds = (preResolvedHosts ?? []).map((attachment) =>
+        String(attachment.namedHostId),
       );
+    } else if (body.hosts?.length) {
+      const suite = authoredSuite!;
       const hostAttachments = await resolveHostAttachments(
         convexClient,
         projectId,
@@ -8288,10 +8316,68 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     assertScheduleSurvivesEnvironmentChange(suite!, body.environmentIds ?? []);
   }
 
+  // An environment suite's servers are its environments' group, never a
+  // per-client pick. Refuse before the first write, so a PATCH never saves
+  // half of itself and then fails on the host list.
+  if (
+    (suite!.environmentIds?.length ?? 0) > 0 &&
+    body.hosts?.some((entry) => entry.servers !== undefined)
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "An environment suite's servers come from its environments' server group, not per client. Send `environment.servers` instead of `hosts[].servers`.",
+    );
+  }
+
   const updateArgs: Record<string, unknown> = { suiteId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
-  if (body.environment !== undefined) {
+  // An ENVIRONMENT suite's servers and image are its environments'. On a
+  // backend that carries settings onto them, send what the caller asked for
+  // as `environmentSettings` (servers become the environments' group, the
+  // image every environment's pin, `null` clearing it) rather than the
+  // legacy envelope, which is compared with the suite row's own stale pin.
+  const environmentSuite =
+    body.environment !== undefined &&
+    (suite!.environmentIds?.length ?? 0) > 0 &&
+    (await readClient
+      .query("projectEnvironments:getCapabilities" as any, { projectId })
+      .then(
+        (caps: { environmentSuiteSettings?: boolean } | null) =>
+          caps?.environmentSuiteSettings === true,
+      )
+      .catch(() => false));
+  if (body.environment !== undefined && environmentSuite) {
+    const environmentSettings: Record<string, unknown> = {};
+    if (body.environment.servers !== undefined) {
+      environmentSettings.servers = body.environment.servers;
+    }
+    if (body.environment.computerEnvironment !== undefined) {
+      environmentSettings.computerEnvironmentId =
+        body.environment.computerEnvironment === null
+          ? null
+          : (
+              await resolveComputerEnvironment(
+                readClient,
+                projectId,
+                body.environment.computerEnvironment,
+              )
+            ).id;
+    }
+    if (Object.keys(environmentSettings).length > 0) {
+      updateArgs.environmentSettings = environmentSettings;
+    }
+  } else if (body.environment !== undefined) {
+    logLegacyEvalRequest({
+      surface: "suite_patch",
+      use:
+        (suite!.environmentIds?.length ?? 0) > 0
+          ? "environment_envelope_on_environment_suite"
+          : "environment_envelope",
+      suiteId,
+      projectId,
+    });
     // `updateTestSuite` REPLACES the environment envelope wholesale, so this
     // has to be a merge over the suite's current one. Sending `{ servers }`
     // alone — which is what this did — silently dropped the server bindings
@@ -8479,9 +8565,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   // re-read, letting one PATCH atomically add a server (environment.servers)
   // and scope a host to that newly-added server.
   if (body.hosts !== undefined) {
-    const refreshed: SuiteDoc | null = updateArgs.environment
-      ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
-      : suite;
+    const refreshed: SuiteDoc | null =
+      updateArgs.environment || updateArgs.environmentSettings
+        ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
+        : suite;
     try {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         suiteId,
