@@ -15,6 +15,7 @@ import { MCPJAM_COMMANDS, resolveCommandRegistration } from "./commands.js";
 import { config, describeConfigGaps } from "./config.js";
 import { buildInteractionRef, buildMessageRef } from "./context.js";
 import { createDiscordDelivery } from "./delivery.js";
+import { isGoalRunResourceType } from "./goal-run.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
 import { toDeliverableResult, toReplayContent } from "./turn-result.js";
@@ -462,11 +463,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
 			interaction.customId,
 			runCtx,
 		);
-		// A JOURNEY (Swarms) run, recognised by the server-sent resource type —
+		// A GOAL (Swarms) run, recognised by the server-sent resource type —
 		// never by operation name, and never routed into the eval watcher, whose
 		// status vocabulary would report a rate-limited fan-out as a pass.
+		//
+		// BOTH spellings, and this app has to tolerate both BEFORE the API
+		// starts sending the new one: Discord deploys from its own workflow, so
+		// there is a window where a proposal carrying `goal_run` reaches an app
+		// that has not shipped yet. An unrecognised type falls through to the
+		// plain acknowledgement — the run still starts, but nobody gets the live
+		// surface, which is the failure this dual read exists to prevent.
 		if (
-			result.resource?.type === "journey_run" &&
+			result.resource &&
+			isGoalRunResourceType(result.resource.type) &&
 			result.resource.id &&
 			interaction.channel?.isTextBased?.()
 		) {

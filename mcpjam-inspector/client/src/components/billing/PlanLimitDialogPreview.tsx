@@ -26,11 +26,7 @@ import {
  */
 
 type SharedHandlers =
-  | "interval"
-  | "onIntervalChange"
-  | "onUpgrade"
-  | "onDismiss"
-  | "modal";
+  "interval" | "onIntervalChange" | "onUpgrade" | "onDismiss" | "modal";
 
 type PreviewVariant = {
   id: string;
@@ -50,6 +46,7 @@ type CreditsVariant = {
 };
 
 const SHARED = {
+  organizationId: "org-preview",
   organizationName: "Acme Robotics",
   origin: "evals" as const,
   limitKind: "evalIterations",
@@ -147,8 +144,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     note: "Already on Team, so there is no plan to pitch. Credits are the actual answer here.",
     props: {
       ...CREDITS_SHARED,
-      description:
-        "Add shared credits to keep your team testing.",
+      description: "Add shared credits to keep your team testing.",
       isKnownNonManager: false,
       requestRecipients: [],
     },
@@ -194,8 +190,8 @@ export function PlanLimitDialogPreview() {
     wall === "guest" || wall === "frontier"
       ? []
       : wall === "evals"
-      ? VARIANTS
-      : CREDITS_VARIANTS;
+        ? VARIANTS
+        : CREDITS_VARIANTS;
   const activeVariantId = wall === "evals" ? variantId : creditsVariantId;
   const setActiveVariantId =
     wall === "evals" ? setVariantId : setCreditsVariantId;
@@ -203,10 +199,10 @@ export function PlanLimitDialogPreview() {
     wall === "frontier"
       ? "Preview: Sign in to use frontier models, or choose a standard model. Actions do not start authentication."
       : wall === "guest"
-      ? "Guest sign-up presentation; buttons report actions without starting authentication."
-      : wall === "evals"
-      ? variant.note
-      : creditsVariant.note;
+        ? "Guest sign-up presentation; buttons report actions without starting authentication."
+        : wall === "evals"
+          ? variant.note
+          : creditsVariant.note;
 
   return (
     <div className="min-h-screen bg-background p-6 text-foreground">
