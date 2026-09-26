@@ -49,6 +49,7 @@ export function useCreditTopupReturnFlow({
       const pending = peekPendingTopup();
       track("credit_topup_return_cancelled", {
         location: "credit_topup_return",
+        ...(pending ? { organization_id: pending.organizationId } : {}),
         had_pending_stash: pending !== null,
       });
       return;
@@ -81,6 +82,7 @@ export function useCreditTopupReturnFlow({
 
     track("credit_topup_return_success", {
       location: "credit_topup_return",
+      ...(pending ? { organization_id: pending.organizationId } : {}),
       had_pending_stash: hadPendingStash,
       chat_session_matched: chatSessionMatched,
       resend_executed: resendExecuted,
@@ -100,10 +102,12 @@ export function useCreditTopupReturnFlow({
  */
 interface UseCreditTopupReturnFlowBillingOptions {
   enabled?: boolean;
+  organizationId?: string | null;
 }
 
 export function useCreditTopupReturnFlowBilling({
   enabled = true,
+  organizationId,
 }: UseCreditTopupReturnFlowBillingOptions = {}): void {
   useEffect(() => {
     if (!enabled) return;
@@ -121,6 +125,7 @@ export function useCreditTopupReturnFlowBilling({
     if (topupParam === "cancelled") {
       track("credit_topup_return_cancelled", {
         location: "credit_topup_return_billing",
+        organization_id: organizationId,
       });
       return;
     }
@@ -130,7 +135,8 @@ export function useCreditTopupReturnFlowBilling({
     toast.success("Credits added.");
     track("credit_topup_return_success", {
       location: "credit_topup_return_billing",
+      organization_id: organizationId,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, organizationId]);
 }

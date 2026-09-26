@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { captureMock, standardEventPropsMock } = vi.hoisted(() => ({
-  captureMock: vi.fn(),
-  standardEventPropsMock: vi.fn((location: string) => ({
-    location,
-    platform: "web",
-    environment: "test",
-  })),
+const { captureMock, getPropertyMock, standardEventPropsMock } = vi.hoisted(
+  () => ({
+    captureMock: vi.fn(),
+    getPropertyMock: vi.fn(),
+    standardEventPropsMock: vi.fn((location: string) => ({
+      location,
+      platform: "web",
+      environment: "test",
+    })),
+  }),
+);
+vi.mock("posthog-js", () => ({
+  default: { capture: captureMock, get_property: getPropertyMock },
 }));
-vi.mock("posthog-js", () => ({ default: { capture: captureMock } }));
 vi.mock("../PosthogUtils", () => ({
   standardEventProps: standardEventPropsMock,
 }));
@@ -18,6 +23,7 @@ import { track } from "../analytics";
 describe("track()", () => {
   afterEach(() => {
     captureMock.mockClear();
+    getPropertyMock.mockReset();
     standardEventPropsMock.mockClear();
     vi.restoreAllMocks();
   });
@@ -44,6 +50,87 @@ describe("track()", () => {
     expect(props.location).toBe("skills_tab");
   });
 
+  it("keeps the event organization id only as the billing group", () => {
+    getPropertyMock.mockReturnValue("org_valid");
+    track("billing_flow_started", {
+      location: "billing_page",
+      organization_id: "org_raw",
+    });
+
+    expect(captureMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        organization_id: null,
+        $groups: {
+          organization: "org_raw",
+        },
+      }),
+    );
+  });
+
+  it("groups plan-confirmation events without copying the org into properties", () => {
+    getPropertyMock.mockReturnValue("org_registered");
+    track("plans_upgrade_confirm_shown", {
+      location: "org_plans",
+      organization_id: "org_current",
+      target_plan: "pro",
+    });
+
+    expect(captureMock).toHaveBeenCalledWith(
+      "plans_upgrade_confirm_shown",
+      expect.objectContaining({
+        organization_id: null,
+        target_plan: "pro",
+        $groups: { organization: "org_current" },
+      }),
+    );
+  });
+
+  it("does not fall back to a registered active org for group-only events", () => {
+    getPropertyMock.mockReturnValue("org_registered_but_not_authoritative");
+    track("billing_flow_started", {
+      location: "billing_page",
+      flow: "plan_change",
+    });
+
+    expect(captureMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.not.objectContaining({ $groups: expect.anything() }),
+    );
+  });
+
+  it("drops sensitive billing properties at the capture boundary", () => {
+    getPropertyMock.mockReturnValue("org_valid");
+    track("billing_flow_failed", {
+      location: "billing_page",
+      flow: "plan_change",
+      failure_kind: "request_failed",
+      organization_id: "org_raw",
+      price_cents: 2900,
+      package_id: "pkg_secret",
+      error_name: "CardError",
+      stripe_customer_id: "cus_secret",
+    });
+
+    const properties = captureMock.mock.calls[0][1];
+    expect(properties).toMatchObject({
+      organization_id: null,
+      flow: "plan_change",
+      failure_kind: "request_failed",
+      $groups: { organization: "org_raw" },
+    });
+    expect(properties).not.toHaveProperty("price_cents");
+    expect(properties).not.toHaveProperty("package_id");
+    expect(properties).not.toHaveProperty("error_name");
+    expect(properties).not.toHaveProperty("stripe_customer_id");
+  });
+
+  it("does not change organization context for unrelated events", () => {
+    track("skill_viewed", { location: "skills_tab", skill_name: "x" });
+
+    expect(captureMock.mock.calls[0][1]).not.toHaveProperty("organization_id");
+  });
+
   it("never lets a capture failure break the product action", () => {
     const error = new Error("analytics unavailable");
     const warnMock = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -52,11 +139,11 @@ describe("track()", () => {
     });
 
     expect(() =>
-      track("skill_viewed", { location: "skills_tab", skill_name: "x" })
+      track("skill_viewed", { location: "skills_tab", skill_name: "x" }),
     ).not.toThrow();
     expect(warnMock).toHaveBeenCalledWith(
       "[analytics] Failed to capture skill_viewed",
-      error
+      error,
     );
   });
 
@@ -68,12 +155,12 @@ describe("track()", () => {
     });
 
     expect(() =>
-      track("skill_viewed", { location: "skills_tab", skill_name: "x" })
+      track("skill_viewed", { location: "skills_tab", skill_name: "x" }),
     ).not.toThrow();
     expect(captureMock).not.toHaveBeenCalled();
     expect(warnMock).toHaveBeenCalledWith(
       "[analytics] Failed to capture skill_viewed",
-      error
+      error,
     );
   });
 

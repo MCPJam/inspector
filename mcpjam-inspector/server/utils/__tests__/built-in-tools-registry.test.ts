@@ -437,7 +437,7 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("requireToolApproval gates connection-opening ops but never list_project_servers", () => {
+  it("the workspace approval setting gates connection-opening ops but never list_project_servers", () => {
     const tools = resolveHostTools(
       {
         builtInToolIds: [
@@ -446,7 +446,7 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
           "diagnose_server",
         ],
       },
-      { ...ctx, mcpjamPlatformClient: stubClient, requireToolApproval: true }
+      { ...ctx, mcpjamPlatformClient: stubClient, workspaceToolApproval: true },
     );
     const approval = (id: string) =>
       (tools![id] as { needsApproval?: boolean }).needsApproval;
@@ -455,14 +455,94 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
     expect(approval("list_project_servers")).toBe(false);
   });
 
-  it("live ops do not require approval when the host policy is off", () => {
+  it("live reads do not require approval when the workspace setting is off", () => {
     const tools = resolveHostTools(
-      { builtInToolIds: ["call_server_tool"] },
-      { ...ctx, mcpjamPlatformClient: stubClient }
+      { builtInToolIds: ["diagnose_server", "read_server_resource"] },
+      {
+        ...ctx,
+        mcpjamPlatformClient: stubClient,
+        workspaceToolApproval: false,
+      },
     );
-    expect(
-      (tools!["call_server_tool"] as { needsApproval?: boolean }).needsApproval
-    ).toBe(false);
+    const approval = (id: string) =>
+      (tools![id] as { needsApproval?: boolean }).needsApproval;
+    expect(approval("diagnose_server")).toBe(false);
+    expect(approval("read_server_resource")).toBe(false);
+  });
+
+  it("live reads follow the server-resolved workspace setting, on when absent (MJ-008)", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: ["diagnose_server", WEB_SEARCH_TOOL_NAME] },
+      { ...ctx, mcpjamPlatformClient: stubClient, requireToolApproval: false },
+    );
+    const approval = (id: string) =>
+      (tools![id] as { needsApproval?: boolean }).needsApproval;
+    expect(approval("diagnose_server")).toBe(true);
+    // The turn's switch still decides the tools it has always decided.
+    expect(approval(WEB_SEARCH_TOOL_NAME)).toBe(false);
+  });
+
+  it("leaves out workspace tools that would pause where approvals cannot be verified (MJ-008)", () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    try {
+      const onToolSuppressed = vi.fn();
+      const tools = resolveHostTools(
+        {
+          builtInToolIds: [
+            "list_projects",
+            "list_project_servers",
+            "create_project_server",
+            "diagnose_server",
+          ],
+        },
+        {
+          ...ctx,
+          mcpjamPlatformClient: stubClient,
+          workspaceToolApproval: true,
+          onToolSuppressed,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toEqual([
+        "list_projects",
+        "list_project_servers",
+      ]);
+      expect(onToolSuppressed.mock.calls.map(([info]) => info.id)).toEqual([
+        "create_project_server",
+        "diagnose_server",
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("workspace writes require approval even when every setting is off", () => {
+    // A setting may ADD approval to an operation; it never removes it from
+    // one that changes state (MJ-008).
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [
+          "call_server_tool",
+          "run_eval_suite",
+          "create_project_server",
+          "create_persona",
+          "dismiss_swarm_finding",
+        ],
+      },
+      {
+        ...ctx,
+        mcpjamPlatformClient: stubClient,
+        requireToolApproval: false,
+        workspaceToolApproval: false,
+      },
+    );
+    const approval = (id: string) =>
+      (tools![id] as { needsApproval?: boolean }).needsApproval;
+    expect(approval("call_server_tool")).toBe(true);
+    expect(approval("run_eval_suite")).toBe(true);
+    expect(approval("create_project_server")).toBe(true);
+    expect(approval("create_persona")).toBe(true);
+    expect(approval("dismiss_swarm_finding")).toBe(true);
   });
 });
 
