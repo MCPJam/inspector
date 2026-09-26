@@ -1,4 +1,3 @@
-import { HOSTED_MODE } from "@/lib/config";
 import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
 import {
   useCallback,
@@ -850,7 +849,6 @@ export function ServersTab({
   });
 
   useEffect(() => {
-    if (!HOSTED_MODE) return;
     serverCheckQueue.setOrder(
       sharedProjectIdForHostScope ?? activeProjectId,
       orderedServerNames,

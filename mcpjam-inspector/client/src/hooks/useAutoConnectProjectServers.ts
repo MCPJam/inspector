@@ -1,5 +1,4 @@
 import { serverCheckQueue, loadServerOrder } from "@/lib/server-check-queue";
-import { HOSTED_MODE } from "@/lib/config";
 import { useEffect, useMemo, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
@@ -186,7 +185,7 @@ export function useAutoConnectProjectServers({
 
   const scopeKey = hostScopeKey ?? "-";
   useEffect(() => {
-    if (!HOSTED_MODE || !projectId) return;
+    if (!projectId) return;
     if (!suspendAutoConnect && hostScopeKey != null) serverCheckQueue.setScope(projectId, hostScopeKey);
     const order = loadServerOrder(sharedAppState.activeProjectId) ?? serverNames;
     serverCheckQueue.setOrder(projectId, [...order]);
@@ -294,7 +293,7 @@ export function useAutoConnectProjectServers({
       reconnectingToastMessage(connectedNow.length),
     );
 
-    if (HOSTED_MODE) serverCheckQueue.markAutomatic(projectId, connectedNow);
+    serverCheckQueue.markAutomatic(projectId, connectedNow);
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
@@ -362,7 +361,7 @@ export function useAutoConnectProjectServers({
       markAttempted(projectId, scopeKey, `srv:${name}`);
     }
 
-    if (HOSTED_MODE) serverCheckQueue.markAutomatic(projectId, fresh);
+    serverCheckQueue.markAutomatic(projectId, fresh);
     let cancelled = false;
     ensureServersReady(fresh).then(
       (result) => {

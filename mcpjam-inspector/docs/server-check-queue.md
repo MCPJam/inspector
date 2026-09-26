@@ -57,3 +57,36 @@ coordinator. Monitor `[server-check.queue]` admission counts, waiting time,
 refusals, lost leases, and release failures in existing request logs. A rollback
 of inspector code must not remove the additive Convex tables while workers still
 hold leases. No new global concurrency cap is introduced.
+
+## Local browser and desktop connections
+
+Local `/api/mcp/connect` and `/api/mcp/servers/reconnect` use the same browser
+scheduler and card actions. A single in-memory coordinator in each Inspector
+process shares **10 active attempts and 100 waiting requests** across every tab,
+window, and project using that process. Separate processes have independent
+allowances. Local admission does not use Convex; configuration and authorization
+still use the existing project resolver.
+
+The local endpoints accept the same optional `_serverCheck` metadata; older
+callers default to manual. `POST /api/mcp/servers/checks/promote` accepts
+`{ requestId }` behind the existing local session authentication. Promotion is
+bound to that session, project bearer, and request ID. A runtime connection key can have only one
+active attempt. Manual attempts go first and may interrupt the newest automatic
+attempt; cleanup keeps its slot and runtime key until finished. Duplicate manual
+waiters for one key do not cause extra interruptions. Successfully established
+connections leave admission and stay open.
+
+Server waiting is bounded at 30 seconds; the 20-second connection deadline starts
+only after admission. Local refusals use the hosted queue reasons and retry
+headers. Cancellation reaches resolver requests, HTTP/SSE discovery and startup,
+stdio processes, and SDK retries. An attempt closes only the resources it opened,
+including account connections and plugin leases. Shutdown aborts waiting and
+active attempts and awaits cleanup. Interactive OAuth releases the browser slot;
+the resumed connection enters admission again after sign-in.
+
+Ship the SDK cancellation interface and local server support before enabling the
+client scheduler. The SDK changeset is a minor release so Changesets updates the
+Inspector dependency range to a version containing cancellation support. No
+Convex schema change or data migration is required. Monitor
+`[local-server-check.queue]` admission, wait time, interruption, and cleanup logs.
+CLI doctor, established connections, and tool execution do not use this queue.

@@ -3066,9 +3066,9 @@ describe("useServerState OAuth callback failures", () => {
         });
       await flushAsyncWork();
 
-      // op2: a newer reconnect for the SAME server bumps the op token, which
+      // op2: an interactive manual reconnect bumps the op token, which
       // makes op1 stale. It completes on its own success path.
-      await result.current.reconnectServerForClientSwitch("demo-server");
+      await result.current.handleReconnect("demo-server");
 
       // Let op1 resume; it observes the stale token and returns "superseded".
       releaseFirst({ success: true, initInfo: { clientCapabilities: {} } });
@@ -3129,8 +3129,8 @@ describe("useServerState OAuth callback failures", () => {
         });
       await flushAsyncWork();
 
-      // op2: the background recycle bumps the op token, staling op1.
-      await result.current.reconnectServerForClientSwitch("demo-server");
+      // op2: an interactive manual reconnect bumps the op token, staling op1.
+      await result.current.handleReconnect("demo-server");
 
       // op2 drove the server to connected — publish that to the hook so the
       // superseded follow-up observes the newer op's real outcome.

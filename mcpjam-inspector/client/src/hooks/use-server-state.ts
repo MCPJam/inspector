@@ -4837,16 +4837,16 @@ export function useServerState({
   );
 
   useEffect(() => {
-    if (!HOSTED_MODE || !activeProject?.sharedProjectId) return;
-    const projectId = activeProject.sharedProjectId;
+    const projectId = activeProject?.sharedProjectId ?? effectiveActiveProjectId;
+    if (!projectId) return;
     serverCheckQueue.keepProject(projectId);
-  }, [activeProject?.sharedProjectId, previewedHostIdForToast]);
+  }, [activeProject?.sharedProjectId, effectiveActiveProjectId, previewedHostIdForToast]);
 
   const handleDisconnect = useCallback(
     async (serverName: string) => {
       checkWasConnectedRef.current.delete(serverName);
       const queuedScope = tryResolveProjectServer(serverName);
-      if (HOSTED_MODE && queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
+      if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       logger.info("Disconnecting from server", { serverName });
       dispatch({ type: "DISCONNECT", name: serverName });
@@ -4882,7 +4882,7 @@ export function useServerState({
       // this, a late completion can overwrite this disconnect with success or
       // failure and reopen a canceled onboarding attempt.
       const queuedScope = tryResolveProjectServer(serverName);
-      if (HOSTED_MODE && queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
+      if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       dispatch({ type: "DISCONNECT", name: serverName });
     },
@@ -5094,7 +5094,7 @@ export function useServerState({
       if (!options?.connectionIntent)
         dispatch({
           type: "RECONNECT_REQUEST",
-          preserveConnected: HOSTED_MODE,
+          preserveConnected: true,
           name: serverName,
           config: server.config,
           select,
@@ -5742,7 +5742,7 @@ export function useServerState({
       serverName: string,
       options?: ReconnectServerInternalOptions,
     ): Promise<EnsureServerConnectionResult> => {
-      const target = HOSTED_MODE ? tryResolveProjectServer(serverName) : null;
+      const target = tryResolveProjectServer(serverName);
       if (!target || options?.allowInteractiveOAuthFlow !== false)
         return executeReconnectServerInternal(serverName, options);
       checkWasConnectedRef.current.set(

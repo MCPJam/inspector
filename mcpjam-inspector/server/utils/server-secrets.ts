@@ -1,3 +1,4 @@
+import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -130,7 +131,7 @@ export async function postToConvexAuthorized(args: {
           : {}),
       },
       body: JSON.stringify(args.body),
-      signal: controller.signal,
+      signal: withLocalCheckSignal(controller.signal),
     });
     // Read the body while the abort signal is still armed: a Convex action
     // that flushes headers and then stalls the body would otherwise hang here
@@ -260,7 +261,7 @@ export async function fetchRuntimeServerSecrets(args: {
           ? { accessVersion: args.accessVersion }
           : {}),
       }),
-      signal: controller.signal,
+      signal: withLocalCheckSignal(controller.signal),
     });
   } catch (error) {
     const isAbort =

@@ -1,3 +1,4 @@
+import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -1069,6 +1070,7 @@ async function shutdown() {
   try {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
+    await localServerCheckQueue.shutdown();
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
     await benchWorker?.stop();

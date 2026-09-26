@@ -1,4 +1,4 @@
-import { isServerCheckQueueError } from "@/lib/server-check-queue";
+import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
 import { observeDesktopOperation } from "@/lib/desktop-diagnostics";
 import type {
   HttpServerConfig,
@@ -177,25 +177,26 @@ async function authFetchWithTimeout(
   timeoutMs: number = 10000,
 ) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
+  const timeoutId = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException(
+          `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+          "TimeoutError",
+        ),
+      ),
+    timeoutMs,
+  );
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
   try {
-    const response = await authFetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return response;
+    return await authFetch(url, { ...options, signal });
   } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(
-        `Connection attempt timed out after ${
-          timeoutMs / 1000
-        } seconds. The server may not exist or is not responding.`,
-      );
-    }
+    if (signal.aborted) throw signal.reason;
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -216,6 +217,82 @@ function buildResolverBody(
       ? { connectionDefaults: options.connectionDefaults }
       : {}),
   };
+}
+
+// Only the network attempt owns a browser slot; OAuth interaction happens in
+// the caller before entering this function or after it has settled.
+async function localConnectionRequest(
+  url: string,
+  body: Record<string, unknown>,
+  queueSignal: AbortSignal | undefined,
+  setStatus: (status: number) => void,
+) {
+  const execute = async (signal: AbortSignal) => {
+    const metadata = serverCheckQueue.attemptMetadata(signal) ?? {
+      requestId: crypto.randomUUID(),
+      intent: "manual" as const,
+    };
+    const done = new AbortController();
+    const promotionSignal = AbortSignal.any([signal, done.signal]);
+    const detach = serverCheckQueue.bindPromotion(signal, async () => {
+      try {
+        while (!promotionSignal.aborted) {
+          const response = await authFetch("/api/mcp/servers/checks/promote", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ requestId: metadata.requestId }),
+            signal: promotionSignal,
+          });
+          if (!response.ok)
+            throw new Error("Could not prioritize this connection");
+          const result = await response.json();
+          if (result.state !== "expired") return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      } catch (error) {
+        if (!done.signal.aborted) throw error;
+      }
+    });
+    try {
+      const response = await authFetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, _serverCheck: metadata }),
+          signal,
+        },
+        50_000,
+      );
+      setStatus(response.status);
+      const result = await response.json();
+      if (!response.ok) {
+        const error = new WebApiError(
+          response.status,
+          result.code ?? null,
+          result.error ?? "Connection failed",
+          result.normalized,
+          result.details,
+        );
+        error.retryAfterMs =
+          Number(response.headers?.get("Retry-After") ?? 2) * 1000;
+        if (isServerCheckQueueError(error)) throw error;
+      }
+      return result;
+    } finally {
+      done.abort();
+      detach();
+    }
+  };
+  if (queueSignal) return execute(queueSignal);
+  return serverCheckQueue.run(
+    {
+      projectId: String(body.projectId),
+      serverName: String(body.serverName ?? body.serverId),
+      identity: JSON.stringify(body.connectionDefaults ?? {}),
+    },
+    execute,
+  );
 }
 
 export async function testConnection(
@@ -249,17 +326,7 @@ export async function testConnection(
       connectionDefaults: options.connectionDefaults,
     });
 
-    const res = await authFetchWithTimeout(
-      "/api/mcp/connect",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-      20000, // 20 second timeout
-    );
-    setStatus(res.status);
-    return res.json();
+    return localConnectionRequest("/api/mcp/connect", body, options.queueSignal, setStatus);
   });
 }
 
@@ -363,17 +430,7 @@ export async function reconnectServer(
       connectionDefaults: options.connectionDefaults,
     });
 
-    const res = await authFetchWithTimeout(
-      "/api/mcp/servers/reconnect",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-      20000, // 20 second timeout
-    );
-    setStatus(res.status);
-    return res.json();
+    return localConnectionRequest("/api/mcp/servers/reconnect", body, options.queueSignal, setStatus);
   });
 }
 
