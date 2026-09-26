@@ -9,6 +9,18 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-26
+
+#### Changed
+
+- **Org Azure OpenAI now requires deployment names** — when configuring an Azure OpenAI provider in your organization's model settings, you must now supply the deployment names you created on that Azure resource (comma-separated in the new **Deployment Names** field). Requests run on the deployment you pick, so the model picker shows `<deployment> (Azure)` rows instead of generic `azure/…` entries. Existing Azure org configs with no deployments listed continue to show the static model rows until you add deployment names.
+
+- **Org Ollama now requires model names** — the Ollama provider form in organization model settings now includes a **Model Names** field (comma-separated). At least one model name is required to save the configuration. Previously, any model installed on the Ollama host was reachable; now only the names you list appear in the picker.
+
+#### Added
+
+- **Moonshot AI, Z.ai, Qwen, and MiniMax in org model settings** — organization admins can now configure these four providers under **Organization → Models**. Each takes an API key and a comma-separated list of model ids to offer (for example, `kimi-k2-0905-preview` for Moonshot AI, `glm-4.6` for Z.ai, `qwen-plus` for Qwen, `MiniMax-M2` for MiniMax). The listed models appear in the **Your providers** tab of the model picker for all org members.
+
 ### 2026-09-25
 
 #### Fixed
