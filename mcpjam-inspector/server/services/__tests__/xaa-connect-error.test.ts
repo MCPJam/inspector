@@ -53,6 +53,49 @@ describe("toXaaConnectFailure", () => {
     });
   });
 
+  it("keeps a saved-secret refusal actionable instead of asking for a re-auth", () => {
+    const refused = new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Stored credentials were saved for https://owner.example.com; re-enter them for the new address.",
+      {
+        secretOriginMismatch: true,
+        boundOrigin: "https://owner.example.com",
+        targetOrigin: "https://moved.example.com",
+      },
+    );
+
+    const framed = toXaaConnectFailure(refused, {
+      serverId: "srv-1",
+      serverName: "Docs",
+    });
+
+    expect(framed.status).toBe(403);
+    expect(framed.details).toMatchObject({
+      secretOriginMismatch: true,
+      boundOrigin: "https://owner.example.com",
+      targetOrigin: "https://moved.example.com",
+      reason: XaaConnectFailureReason.CONFIGURATION_INVALID,
+    });
+    expect(framed.details?.xaaReauthRequired).toBeUndefined();
+    expect(framed.message).toContain("re-enter them for the new address");
+  });
+
+  it("keeps an export-policy refusal distinct from a re-auth", () => {
+    const framed = toXaaConnectFailure(
+      new WebRouteError(403, ErrorCode.FORBIDDEN, "Export policy is deny.", {
+        exportDenied: true,
+        policy: "credentialExportPolicy",
+      }),
+      { serverId: "srv-1", serverName: "Docs" },
+    );
+    expect(framed.details).toMatchObject({
+      exportDenied: true,
+      policy: "credentialExportPolicy",
+    });
+    expect(framed.details?.xaaReauthRequired).toBeUndefined();
+  });
+
   it("replaces the debugger's 'Configure Server to Test' discovery wording", () => {
     const framed = toXaaConnectFailure(
       new WebRouteError(

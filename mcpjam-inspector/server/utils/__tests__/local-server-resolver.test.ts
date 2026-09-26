@@ -576,6 +576,50 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.requestInit.headers.Authorization).toBeUndefined();
   });
 
+  it("discover (tokenless auto): a refused refresh surfaces the refusal instead of connecting bare", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-auto-3",
+          serverConfig: {
+            transportType: "http",
+            url: "https://open.example.com/mcp",
+            authMethod: "auto",
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "export_denied",
+            exportDenied: true,
+            policy: "credentialExportPolicy",
+            message: "Your organization keeps this credential in MCPJam.",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-auto-3",
+        { serverDisplayName: "Open Server" }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ exportDenied: true }),
+    });
+  });
+
   it("discover (auto with a stored token): rides the oauth rails with the refresh hook", async () => {
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
@@ -619,10 +663,10 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://header.example.com/mcp",
-            secretsBoundOrigin: "https://header.example.com",
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
             hasHeaders: true,
+            secretsBoundOrigin: "https://header.example.com",
           },
           oauthAccessToken: null,
         });
@@ -643,6 +687,78 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       Authorization: "Bearer static-token",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Inline headers are held to their recorded origin on the wire too: a
+    // redirect elsewhere is followed without them.
+    expect(config.baseFetch).toEqual(expect.any(Function));
+    const hops: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any, init?: RequestInit) => {
+        const url = String(input);
+        hops.push({
+          url,
+          auth: new Headers(init?.headers).get("authorization"),
+        });
+        return url === "https://header.example.com/mcp"
+          ? new Response(null, {
+              status: 307,
+              headers: { Location: "https://elsewhere.example/mcp" },
+            })
+          : new Response("ok");
+      })
+    );
+    await config.baseFetch("https://header.example.com/mcp", {
+      headers: config.requestInit.headers,
+    });
+    expect(hops).toEqual([
+      { url: "https://header.example.com/mcp", auth: "Bearer static-token" },
+      { url: "https://elsewhere.example/mcp", auth: null },
+    ]);
+  });
+
+  it("attaches inline headers nowhere when authorize recorded no origin for them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) => {
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return authorizeBatchLocalResponse({
+            serverId: "srv-unbound-headers",
+            serverConfig: {
+              transportType: "http",
+              url: "https://repointed.example.com/mcp",
+              useOAuth: false,
+              headers: { "x-api-key": "k" },
+              hasHeaders: true,
+            },
+            oauthAccessToken: null,
+          });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      })
+    );
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-unbound-headers",
+      { serverDisplayName: "Unbound Server" }
+    );
+
+    const sent: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: any, init?: RequestInit) => {
+        sent.push(new Headers(init?.headers).get("x-api-key"));
+        return new Response("ok");
+      })
+    );
+    await config.baseFetch("https://repointed.example.com/mcp", {
+      headers: config.requestInit.headers,
+    });
+    expect(sent).toEqual([null]);
   });
 
   it("reveals runtime headers only when authorize-batch-local omits them", async () => {
@@ -654,7 +770,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hidden-header.example.com/mcp",
-            secretsBoundOrigin: "https://hidden-header.example.com",
             useOAuth: false,
             headers: {},
             hasHeaders: true,
@@ -671,13 +786,15 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           purpose: "runtime",
           projectId: "proj-1",
           serverId: "srv-hidden-headers",
+          // Where the headers are about to go; the backend decides.
+          targetUrl: "https://hidden-header.example.com/mcp",
         });
         return new Response(
           JSON.stringify({
             success: true,
             env: null,
             headers: { Authorization: "Bearer revealed-token" },
-            secretsBoundOrigin: "https://hidden-header.example.com",
+            boundOrigins: ["https://hidden-header.example.com"],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -697,6 +814,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.requestInit.headers).toMatchObject({
       Authorization: "Bearer revealed-token",
     });
+    // Revealed headers ride a transport that holds them to the bound origin.
+    expect(config.baseFetch).toEqual(expect.any(Function));
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -1026,7 +1145,6 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
                 serverConfig: {
                   transportType: "http",
                   url: "https://xaa.example.com/mcp",
-                  secretsBoundOrigin: "https://xaa.example.com",
                   headers: {},
                   useOAuth: false,
                   useXaa: true,
