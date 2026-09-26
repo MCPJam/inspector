@@ -22,7 +22,7 @@ export type StandardCheck =
       name: string;
       label: string;
       kind: "runner";
-      measuredBy: "connection" | "discovery";
+      measuredBy: "connection" | "discovery" | "call" | "response";
     }
   | {
       id: string;
@@ -129,6 +129,22 @@ export const STANDARD_CHECKS: readonly StandardCheck[] = [
     label: "Tool discovery",
     kind: "runner",
     measuredBy: "discovery",
+  },
+  {
+    id: "call.completed",
+    name: "Tool call completed",
+    stage: "call",
+    label: "Tool call",
+    kind: "runner",
+    measuredBy: "call",
+  },
+  {
+    id: "response.returned",
+    name: "Result returned to the model",
+    stage: "response",
+    label: "Response",
+    kind: "runner",
+    measuredBy: "response",
   },
   ...Object.entries(presets).map(
     ([key, { name, label, rule }]): StandardCheck => {

@@ -1,3 +1,4 @@
+import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
@@ -28,6 +29,13 @@ export function resolveClientSentryConfig() {
     // browser session, and any session that LOADS on `/results/<token>`, is
     // recorded by neither.
     replayEnabled: shouldRecordSession(),
+    // Lets `beforeSend` recognise a frame the browser stamped with the
+    // document instead of a script — see shared/injected-script-frames.ts.
+    // The origin, not the href: it is stable across SPA route changes, and
+    // the frames carry whichever route was showing when the injected code
+    // was evaluated.
+    documentOrigin:
+      typeof window === "undefined" ? undefined : window.location.origin,
   });
 }
 
@@ -37,8 +45,13 @@ export function resolveClientSentryConfig() {
  */
 export function initSentry() {
   const config = resolveClientSentryConfig();
+  const processQueryEvent = createConvexQueryEventProcessor();
   Sentry.init({
     ...config,
+    beforeSend: (event, hint) => {
+      const filtered = config.beforeSend(event);
+      return filtered === null ? null : processQueryEvent(filtered, hint);
+    },
     integrations: [
       // Don't even load the replay integration where replay is not permitted;
       // zero sample rates alone would still ship the recorder code and open
