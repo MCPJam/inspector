@@ -2,8 +2,8 @@
  * Clickable sessions for one expanded findings goal — the same list
  * interaction as Insights' GoalOutcomeDrilldown, scoped to that goal.
  *
- * Renders the list only (no card). The parent mounts this under
- * "What happened" so the sessions sit with the evidence they explain.
+ * Renders the list only (no card). The parent mounts this under the
+ * open stage so the sessions sit with the evidence they explain.
  *
  * The parent keys this on the goal, the narrowing and the scope, so the
  * CURSOR and the pages already fetched cannot outlive the selection that
@@ -18,6 +18,8 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
+import { threadNeverRan } from "@/components/swarms/swarm-session-not-run";
 
 const PAGE_SIZE = 25;
 
@@ -63,17 +65,38 @@ export type FindingsStageNarrowing = {
  * a caller that re-allocates must not be able to spin the effect below.
  */
 function samePage(
-  a: ReadonlyArray<{ _id: string; firstMessagePreview?: string }> | undefined,
-  b: ReadonlyArray<{ _id: string; firstMessagePreview?: string }>,
+  a: ReadonlyArray<SessionRow> | undefined,
+  b: ReadonlyArray<SessionRow>,
 ): boolean {
   if (a === b) return true;
   if (!a || a.length !== b.length) return false;
   return a.every(
     (row, i) =>
       row._id === b[i]!._id &&
-      row.firstMessagePreview === b[i]!.firstMessagePreview,
+      row.firstMessagePreview === b[i]!.firstMessagePreview &&
+      // Every field `threadNeverRan` reads decides whether the row reads
+      // "Didn't run", and an attempt that settles while the goal is open must
+      // be allowed to change it.
+      row.sourceType === b[i]!.sourceType &&
+      row.neverRan === b[i]!.neverRan &&
+      row.runAttemptStatus === b[i]!.runAttemptStatus &&
+      row.runAttemptErrorCode === b[i]!.runAttemptErrorCode &&
+      row.messageCount === b[i]!.messageCount,
   );
 }
+
+/** What one row renders, and what `threadNeverRan` reads. */
+type SessionRow = Pick<
+  SharedChatThread,
+  | "_id"
+  | "firstMessagePreview"
+  | "lastActivityAt"
+  | "sourceType"
+  | "messageCount"
+  | "neverRan"
+  | "runAttemptStatus"
+  | "runAttemptErrorCode"
+>;
 
 /** `undefined` (the first page) and a real cursor must not collide. */
 function cursorKey(cursor: number | null | undefined): string {
@@ -114,12 +137,6 @@ export function FindingsGoalSessions({
       ? { ...base, chips: [...base.chips, chip] }
       : { preset: "all" as const, chips: [chip] };
   }, [scope, stage]);
-
-  type SessionRow = {
-    _id: string;
-    firstMessagePreview?: string;
-    lastActivityAt: number;
-  };
 
   const [before, setBefore] = useState<number | undefined>(undefined);
   /**
@@ -216,6 +233,14 @@ export function FindingsGoalSessions({
         <ul className="divide-y divide-white/10">
           {rows.map((session, index) => {
             const preview = session.firstMessagePreview?.trim();
+            // Drilldown rows arrive with no `sourceType`: the backend
+            // normalizes `swarm` away on every list row. This list is swarm
+            // scoped by construction, so it says so for them.
+            const neverRan = threadNeverRan(
+              scope.kind === "swarm"
+                ? { ...session, sourceType: "swarm" }
+                : session,
+            );
             return (
               <li key={session._id}>
                 <button
@@ -227,9 +252,20 @@ export function FindingsGoalSessions({
                   <span className="shrink-0 text-xs font-medium text-orange-300">
                     Session {index + 1}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-50">
-                    {preview ? `"${preview}"` : "(no preview)"}
-                  </span>
+                  {/* A refused session has no preview, and "(no preview)"
+                      read as a session that ran and said nothing (#5188). */}
+                  {neverRan ? (
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs text-zinc-400"
+                      data-testid="findings-goal-session-never-ran"
+                    >
+                      Didn't run
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-50">
+                      {preview ? `"${preview}"` : "(no preview)"}
+                    </span>
+                  )}
                 </button>
               </li>
             );

@@ -39,6 +39,7 @@
 const STORAGE_KEY = "mcp-inspector-selected-model";
 const MULTI_STORAGE_KEY = "mcp-inspector-selected-models";
 const OWN_PROVIDER_STORAGE_KEY = "mcp-inspector-last-own-provider-model";
+const LEAD_PROVIDER_HINT_STORAGE_KEY = "mcp-inspector-selected-model-provider";
 const EVENT_NAME = "selected-model-changed";
 const ARRAY_EVENT_NAME = "selected-model-ids-changed";
 
@@ -284,4 +285,67 @@ export function subscribeSelectedModelIds(callback: () => void): () => void {
     window.removeEventListener(ARRAY_EVENT_NAME, onCustom);
     window.removeEventListener("storage", onStorage);
   };
+}
+
+/**
+ * Which provider the lead model was picked under, stored as the pair it was
+ * picked as.
+ *
+ * A model id does not name a model on its own. OpenRouter ids share MCPJam's
+ * hosted namespace exactly — `anthropic/claude-sonnet-5` is both the hosted
+ * row under "Free models" and the row under "Your providers → OpenRouter" —
+ * and the lead key stores the id alone. Re-resolving it by id then returned
+ * whichever row came first, which is the hosted one: an OpenRouter pick was
+ * charged to MCPJam credits and refused with the free-allowance error, on
+ * every new chat, reset or restart (#5472).
+ *
+ * A PAIR, validated against the lead id at read time, rather than a bare
+ * provider that has to be cleared whenever the id changes. The lead id has
+ * writers that know nothing about providers — the multi-model setter ends in
+ * `saveSelectedModelId` too — and a clear-on-write rule would let one of them
+ * wipe the hint right after the picker set it. A hint whose id no longer
+ * matches is simply ignored, so it cannot go stale.
+ *
+ * Event-free for the same reason as `loadLastOwnProviderModelId`: the caller
+ * keeps it in state alongside the id it qualifies.
+ */
+export type LeadModelProviderHint = { modelId: string; provider: string };
+
+export function loadLeadModelProviderHint(): LeadModelProviderHint | null {
+  try {
+    const raw = localStorage.getItem(LEAD_PROVIDER_HINT_STORAGE_KEY);
+    if (typeof raw !== "string") return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as LeadModelProviderHint).modelId === "string" &&
+      typeof (parsed as LeadModelProviderHint).provider === "string" &&
+      (parsed as LeadModelProviderHint).modelId.trim() !== "" &&
+      (parsed as LeadModelProviderHint).provider.trim() !== ""
+    ) {
+      const { modelId, provider } = parsed as LeadModelProviderHint;
+      return { modelId, provider };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLeadModelProviderHint(
+  hint: LeadModelProviderHint | null,
+): void {
+  try {
+    if (hint && hint.modelId.trim() !== "" && hint.provider.trim() !== "") {
+      localStorage.setItem(
+        LEAD_PROVIDER_HINT_STORAGE_KEY,
+        JSON.stringify({ modelId: hint.modelId, provider: hint.provider }),
+      );
+    } else {
+      localStorage.removeItem(LEAD_PROVIDER_HINT_STORAGE_KEY);
+    }
+  } catch {
+    // ignore
+  }
 }

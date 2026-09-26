@@ -26,6 +26,7 @@ export type {
   LiveClientState,
   UnauthorizedRefreshHandler,
   UnauthorizedRefreshResult,
+  RefreshTokensRotatedHandler,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -924,7 +925,7 @@ export type {
 } from "./EvalTest.js";
 
 // EvalSuite - Groups multiple EvalTests
-export { EvalSuite } from "./EvalSuite.js";
+export { EvalSuite, UnsupportedModelSelectionError } from "./EvalSuite.js";
 export type {
   EvalSuiteClientOptions,
   EvalSuiteConfig,
@@ -1616,6 +1617,73 @@ export type {
   MrtrSupport,
 } from "./host-config/index.js";
 
+// Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
+// browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./host-config/index.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./host-config/index.js";
+
+// Execution record: what a run or turn actually ran on (also at
+// `@mcpjam/sdk/host-config`). Pure and browser-safe.
+export {
+  EXECUTION_RAILS,
+  EXECUTION_DEVIATION_KINDS,
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_EXECUTION_ATTEMPTS,
+  readExecutionRecord,
+  executionRailLabel,
+  executionDeviationTitle,
+  describeExecutionRoute,
+  describeMaxOutputTokens,
+  describeExecutionSettings,
+  describeExecutionModel,
+  formatExecutionProvenanceLine,
+  describeExecutionRequest,
+  describeExecutionAttempts,
+  summarizeExecutionRecord,
+  formatExecutionDeviationLine,
+} from "./host-config/index.js";
+export type {
+  ExecutionRecord,
+  ExecutionRail,
+  KnownExecutionRail,
+  ExecutionOffering,
+  ExecutionAttempt,
+  ExecutionAttemptOutcome,
+  ExecutionDeviation,
+  ExecutionDeviationKind,
+  KnownExecutionDeviationKind,
+  ExecutionProvenanceSummary,
+} from "./host-config/index.js";
+
 // MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
 // capability. Exported so the surfaces that resolve a mode can do so without
 // reaching into a subpath, and so `taskModeForSurface` stays the single place
@@ -1796,3 +1864,24 @@ export type {
   PairwiseJudge,
   PairwisePreferenceResult,
 } from "./eval-execution-variants.js";
+
+export {
+  captureOpenAIProfile,
+  findOpenAIProfileTool,
+  isOpenAIProfile,
+} from "./openai-profile/capture.js";
+export type {
+  OpenAIProfile,
+  OpenAIProfileCapture,
+} from "./openai-profile/capture.js";
+export {
+  connectionKey,
+  parseConnectionKey,
+} from "./mcp-client-manager/connection-key.js";
+export { mergeConnectionToolsets } from "./mcp-client-manager/multi-connection-tools.js";
+export type {
+  McpToolConnection,
+  ConnectionsByServerId,
+  ConnectionRoutingSnapshot,
+  ConnectionToolMetadata,
+} from "./mcp-client-manager/multi-connection-tools.js";

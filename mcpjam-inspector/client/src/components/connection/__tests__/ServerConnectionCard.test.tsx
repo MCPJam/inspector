@@ -1,3 +1,4 @@
+import { serverCheckQueue } from "@/lib/server-check-queue";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import {
   render,
@@ -126,6 +127,22 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("rendering", () => {
+    it.each(["queued", "connecting"] as const)("reuses Finishing setup for a %s check without adding priority buttons", async (state) => {
+      const promises: Promise<unknown>[] = [];
+      await act(async () => {
+        const busyCount = state === "queued" ? 10 : 0;
+        for (let i = 0; i <= busyCount; i++) promises.push(serverCheckQueue.run({ projectId: "queue-project", serverName: i === busyCount ? "test-server" : `busy-${i}`, identity: "host" }, signal => new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)))).catch(() => undefined));
+      });
+      render(<ServerConnectionCard server={createServer()} projectId="queue-project" {...defaultProps} />);
+      expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
+      expect(screen.queryByText(/^(Queued|Connecting|Connect next|Keep connecting)$/)).not.toBeInTheDocument();
+      const toggle = screen.getByRole("switch");
+      expect(toggle).toHaveAttribute("aria-checked", "true");
+      fireEvent.click(toggle);
+      expect(defaultProps.onDisconnect).toHaveBeenCalledWith("test-server");
+      await act(async () => { serverCheckQueue.cancelAll(); await Promise.all(promises); });
+    });
+
     it("calls explore prefetch hook with projectId and server", () => {
       const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
       const server = createServer();
@@ -417,34 +434,6 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Failed (3)")).toBeInTheDocument();
     });
-
-    it("shows a connection settings indicator without reconnect badge copy", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(
-        <ServerConnectionCard
-          server={server}
-          {...defaultProps}
-          needsReconnect
-        />
-      );
-
-      expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-      expect(
-        screen.queryByLabelText("Reconnect needed")
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByLabelText("Connection settings changed")
-      ).toBeInTheDocument();
-    });
-
-    it("does not show the connection settings indicator when settings match", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(<ServerConnectionCard server={server} {...defaultProps} />);
-
-      expect(
-        screen.queryByLabelText("Connection settings changed")
-      ).not.toBeInTheDocument();
-    });
   });
 
   describe("toggle switch", () => {
@@ -641,13 +630,13 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+      fireEvent.click(screen.getByTestId("error-card-details"));
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
     });
 
     it("renders long error messages via the ErrorCard", () => {
       // The ErrorCard owns details disclosure. On the server card that
-      // disclosure is an info glyph; Learn more lives in the panel so the
+      // disclosure is the error title; Learn more lives in the panel so the
       // failed card stays one row.
       const longError = "A".repeat(150);
       const server = createServer({
@@ -657,7 +646,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.queryByText("Learn more")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+      fireEvent.click(screen.getByTestId("error-card-details"));
       expect(screen.getByText("Learn more")).toBeInTheDocument();
     });
 

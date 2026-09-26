@@ -1,3 +1,9 @@
+import {
+  mergeConnectionToolsets,
+  type ConnectionsByServerId,
+  type McpToolConnection,
+} from "@mcpjam/sdk";
+import { getManagerConnections } from "./mcp-connections.js";
 /**
  * Shared chat-v2 tool preparation and message scrubbing.
  *
@@ -643,7 +649,8 @@ export function buildWidgetInteractionContextSystemPrompt(
 
   const sections = calls.map((call) => {
     const result = call.result as
-      { content?: Array<Record<string, unknown>> } | undefined;
+      | { content?: Array<Record<string, unknown>> }
+      | undefined;
     const content = result?.content ?? [];
     const lines = [
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
@@ -665,6 +672,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 }
 
 export interface PrepareChatV2Options {
+  connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
   /**
@@ -1237,6 +1245,13 @@ export function applySkillToolApproval(
 }
 
 export interface PrepareChatV2Result {
+  connectionsAtTurn?: Array<{
+    serverId: string;
+    connectionId: string;
+    label: string;
+    profileId?: string;
+  }>;
+  toolConnections?: Map<string, McpToolConnection>;
   allTools: ToolSet;
   enhancedSystemPrompt: string;
   resolvedTemperature: number | undefined;
@@ -1304,9 +1319,24 @@ export async function prepareChatV2(
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
   // a stale id baked into a scenario config). Passing them through reaches
   // ensureConnected and throws "Unknown MCP server", 500-ing the whole chat.
-  const knownSelectedServers = selectedServers?.filter((id) =>
-    mcpClientManager.hasServer(id),
+  const groups =
+    options.connectionsByServerId ?? getManagerConnections(mcpClientManager);
+  const selectedGroups = groups
+    ? Object.fromEntries(
+        Object.entries(groups).filter(
+          ([id]) => !selectedServers || selectedServers.includes(id),
+        ),
+      )
+    : undefined;
+  const snapshot = new Map(
+    Object.values(selectedGroups ?? {})
+      .flat()
+      .map((c) => [c.connectionId, c.key]),
   );
+  const toolConnections = new Map<string, McpToolConnection>();
+  const knownSelectedServers = selectedServers
+    ?.flatMap((id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id])
+    .filter((id) => mcpClientManager.hasServer(id));
 
   // `undefined` for every default turn, which is what keeps those turns on the
   // pre-existing no-options overload. See `mcpToolOptionsFor`.
@@ -1324,10 +1354,25 @@ export async function prepareChatV2(
   // 1. Get MCP + skill tools
   let mcpTools;
   try {
-    mcpTools = await mcpClientManager.getToolsForAiSdk(
-      knownSelectedServers,
-      toolOptions,
-    );
+    mcpTools =
+      selectedGroups && Object.keys(selectedGroups).length
+        ? mergeConnectionToolsets(
+            await mcpClientManager.getToolsForAiSdkByServer(
+              knownSelectedServers,
+              toolOptions,
+            ),
+            selectedGroups,
+            {
+              snapshot,
+              onRoute: (id, connection) => {
+                toolConnections.set(id, connection);
+              },
+            },
+          )
+        : await mcpClientManager.getToolsForAiSdk(
+            knownSelectedServers,
+            toolOptions,
+          );
   } catch (error) {
     // The ONE hop in this function that leaves MCPJam: listing tools reaches
     // into the user's own MCP servers, so a dead or slow server lands here.
@@ -1380,7 +1425,13 @@ export async function prepareChatV2(
   // removed for both rather than leaving whichever one won the flatten.
   if (excludeMcpToolNames?.length) {
     for (const name of excludeMcpToolNames) {
-      delete (mcpTools as Record<string, unknown>)[name];
+      for (const [key, tool] of Object.entries(mcpTools)) {
+        if (
+          key === name ||
+          (tool as { _mcpToolName?: string })._mcpToolName === name
+        )
+          delete mcpTools[key];
+      }
     }
   }
   // ONE skill source per turn, stated by the caller. Where a skill comes FROM —
@@ -1811,6 +1862,9 @@ export async function prepareChatV2(
   // "there is anything to name".
   const enhancedSystemPrompt = [
     systemPrompt,
+    snapshot.size > 1
+      ? "When the account is ambiguous, ask which connected account to use before creating or modifying data."
+      : "",
     `${skillsPromptSection ?? ""}${serverSkillsPromptSection}`,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
     buildDeclaredToolsSystemPrompt(
@@ -1859,6 +1913,19 @@ export async function prepareChatV2(
     );
 
   return {
+    ...(selectedGroups
+      ? {
+          toolConnections,
+          connectionsAtTurn: Object.values(selectedGroups)
+            .flat()
+            .map((c) => ({
+              serverId: c.serverId,
+              connectionId: c.connectionId,
+              label: c.label,
+              ...(c.profile ? { profileId: c.profile.id } : {}),
+            })),
+        }
+      : {}),
     allTools,
     enhancedSystemPrompt,
     resolvedTemperature,

@@ -108,7 +108,10 @@ vi.mock("@/lib/eval-route-url", () => ({
   useEvalsRouteFromUrl: () => mocks.route.current,
 }));
 
-vi.mock("../evals/helpers", () => ({
+vi.mock("../evals/helpers", async (importOriginal) => ({
+  // The generation-target helpers are pure and read the suite passed in;
+  // the real ones keep a legacy suite (no environmentIds) on its old path.
+  ...(await importOriginal<typeof import("../evals/helpers")>()),
   aggregateSuite: () => null,
   // EvalsTab's `generateState` memo and the agent bridge's generate handler
   // call this to compute the effective server set. Configurable so the

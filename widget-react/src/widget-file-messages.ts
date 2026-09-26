@@ -72,7 +72,7 @@ export async function handleUploadFileMessage(
     sendResponse({
       type: "openai:uploadFile:response",
       callId: uploadCallId,
-      error: "File upload is not supported in hosted mode",
+      error: "File upload isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     });
     return;
   }
@@ -126,7 +126,7 @@ export function handleGetFileDownloadUrlMessage(
     sendResponse({
       type: "openai:getFileDownloadUrl:response",
       callId: dlCallId,
-      error: "File download is not supported in hosted mode",
+      error: "File download isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     });
     return;
   }

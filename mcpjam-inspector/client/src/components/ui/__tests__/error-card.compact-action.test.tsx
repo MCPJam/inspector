@@ -5,7 +5,7 @@ import { ErrorCard } from "../error-card";
 
 /**
  * A primary action is the fix. The collapsed face then keeps that click and
- * an info glyph; the diagnostic rows wait behind it. These pin that density
+ * a clickable title; the diagnostic rows wait behind it. These pin that density
  * so a later revert cannot quietly restore the full status report next to
  * Reconnect.
  */
@@ -13,7 +13,7 @@ describe("ErrorCard compact action face", () => {
   const consent = () =>
     describeAsSlug("auth/consent_required", new Error("x"));
 
-  it("keeps the action and an info glyph, and hides the diagnostic rows", () => {
+  it("keeps the action and a clickable title, and hides the diagnostic rows", () => {
     const onClick = vi.fn();
     render(
       <ErrorCard
@@ -25,9 +25,10 @@ describe("ErrorCard compact action face", () => {
     expect(
       screen.getByRole("button", { name: "Reconnect" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Show details" }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(screen.queryByText("Show details")).not.toBeInTheDocument();
     expect(
       screen.queryByText("This server needs your permission before it can connect."),
@@ -44,7 +45,7 @@ describe("ErrorCard compact action face", () => {
     expect(row.querySelector(".h-6\\.5")).not.toBeNull();
   });
 
-  it("opens the diagnostic rows from the info glyph", () => {
+  it("opens the diagnostic rows from the title", () => {
     render(
       <ErrorCard
         error={consent()}
@@ -52,21 +53,40 @@ describe("ErrorCard compact action face", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    fireEvent.click(screen.getByTestId("error-card-details"));
 
     expect(
       screen.getByText(
         "This server needs your permission before it can connect.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("error-card-origin-badge")).toHaveTextContent(
-      "Not an MCPJam outage",
-    );
+    expect(
+      screen.queryByTestId("error-card-origin-badge"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Why this happened")).toBeInTheDocument();
     expect(screen.getByTestId("error-card-copy")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Hide details" }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("carries the MCPJam badge into the panel it opens", () => {
+    render(
+      <ErrorCard
+        error={describeAsSlug(
+          "sdk/not_yet_supported_in_stateless",
+          new Error("x"),
+        )}
+        action={{ label: "Reconnect", onClick: vi.fn() }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("error-card-details"));
+
+    expect(screen.getByTestId("error-card-origin-badge")).toHaveTextContent(
+      "MCPJam issue",
+    );
   });
 
   it("does not compact a card that has no action to keep", () => {
@@ -91,7 +111,7 @@ describe("ErrorCard compact action face", () => {
 
     expect(screen.getByRole("alert")).toHaveAttribute("data-compact");
     expect(screen.queryByText("STDIO blocked")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    fireEvent.click(screen.getByTestId("error-card-details"));
     expect(screen.getByText("STDIO blocked")).toBeInTheDocument();
   });
 });

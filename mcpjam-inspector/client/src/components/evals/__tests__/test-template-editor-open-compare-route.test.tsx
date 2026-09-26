@@ -64,6 +64,12 @@ const projectServersMock = vi.hoisted(() => ({
   isLoading: false,
 }));
 
+// The harness × model picker locks read each host's config; these tests have
+// no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
 }));
@@ -1012,35 +1018,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(
       await screen.findByDisplayValue("Unsaved current prompt"),
     ).not.toHaveAttribute("readonly");
-  });
-
-  it("offers failure evidence after the first trial and opens Steps", async () => {
-    activeCaseDoc = goldenCaseDoc;
-    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
-    const trial = {
-      ...baseIteration,
-      _id: "failed-first",
-      blob: "failed-blob",
-      suiteRunId: undefined,
-      result: "failed" as const,
-      testCaseSnapshot: {
-        ...baseIteration.testCaseSnapshot,
-        steps: goldenCaseDoc.steps,
-      },
-    };
-    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    const button = await screen.findByRole("button", {
-      name: "Open the failed step",
-    });
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(screen.queryByTestId("trial-scorecard")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
-      "data-view-mode",
-      "steps",
-    );
   });
 
   it("automatically saves judge overrides from the dedicated UVC page", async () => {

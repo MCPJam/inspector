@@ -2,13 +2,6 @@ import { useMemo, useState } from "react";
 import { Loader2, RotateCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
@@ -21,6 +14,7 @@ import {
   judgeDisagreesWithVerdict,
 } from "./goal-completion-presentation";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
+import { JudgeModelPicker } from "./judge-model-picker";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
   DEFAULT_JUDGE_THRESHOLD as DEFAULT_THRESHOLD,
@@ -75,25 +69,6 @@ export function GoalCompletionCard({
       ? goalCompletion.modelUsed
       : DEFAULT_JUDGE_MODEL);
   const [selectedModelId, setSelectedModelId] = useState<string>(initialModel);
-
-  // Always keep the managed default + the current selection selectable, even
-  // before the async model catalog loads (or when BYOK has none configured).
-  const modelOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const model of availableModels) {
-      const id = String(model.id);
-      if (id && !map.has(id)) {
-        map.set(id, model.name ?? id);
-      }
-    }
-    if (!map.has(DEFAULT_JUDGE_MODEL)) {
-      map.set(DEFAULT_JUDGE_MODEL, DEFAULT_JUDGE_MODEL);
-    }
-    if (selectedModelId && !map.has(selectedModelId)) {
-      map.set(selectedModelId, selectedModelId);
-    }
-    return Array.from(map, ([value, label]) => ({ value, label }));
-  }, [availableModels, selectedModelId]);
 
   const titleByCaseKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -261,25 +236,18 @@ export function GoalCompletionCard({
               <Label htmlFor="goal-judge-model" className="text-xs">
                 Judge model
               </Label>
-              <Select
+              {/* Judge-eligible hosted models, plus the managed default and
+                  the current value (shown, but not offered again when it is
+                  not eligible). */}
+              <JudgeModelPicker
+                id="goal-judge-model"
+                className="w-full"
                 value={selectedModelId}
-                onValueChange={setSelectedModelId}
+                availableModels={availableModels}
+                managedDefaultModelId={DEFAULT_JUDGE_MODEL}
+                onChange={(row) => setSelectedModelId(String(row.id))}
                 disabled={inFlight}
-              >
-                <SelectTrigger
-                  id="goal-judge-model"
-                  className="h-8 w-full text-sm"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
             </div>
             <Button
               type="button"
