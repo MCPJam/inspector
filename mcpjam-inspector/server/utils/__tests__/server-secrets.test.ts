@@ -29,20 +29,22 @@ describe("fetchRuntimeServerSecrets", () => {
   it("preserves Convex error codes on failed reveals", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({ code: "FORBIDDEN", message: "No access" }),
-          { status: 403, headers: { "Content-Type": "application/json" } }
-        )
-      )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ code: "FORBIDDEN", message: "No access" }),
+            { status: 403, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
     );
 
     await expect(
       fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
         bearerToken: "bearer-token",
         projectId: "project-1",
         serverId: "server-1",
-      })
+      }),
     ).rejects.toMatchObject({
       status: 403,
       code: "FORBIDDEN",
@@ -52,10 +54,17 @@ describe("fetchRuntimeServerSecrets", () => {
 
   it("requires service authentication for scenario secrets and preserves the viewer bearer", async () => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      Response.json({ success: true, headers: { Authorization: "synthetic" } }),
+      Response.json({
+        success: true,
+        headers: { Authorization: "synthetic" },
+        // A backend without `boundOrigins` still sends the legacy field; it
+        // reduces to the same one-origin binding.
+        secretsBoundOrigin: "https://example.com",
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const args = {
+      expectedTargetUrl: "https://example.com/mcp",
       bearerToken: "tester-token",
       projectId: "project-1",
       serverId: "server-1",
@@ -77,14 +86,93 @@ describe("fetchRuntimeServerSecrets", () => {
       Authorization: "Bearer tester-token",
       "x-inspector-service-token": "service-token",
     });
+
+    // The reveal declares where the headers are about to go, and hands the
+    // transport the origins the backend bound them to.
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1].body))).toMatchObject(
+      { targetUrl: "https://example.com/mcp" },
+    );
+    await expect(fetchRuntimeServerSecrets(args)).resolves.toMatchObject({
+      boundOrigins: ["https://example.com"],
+    });
+  });
+
+  it("forwards the backend's refusal for a repointed server", async () => {
+    // The origin decision is the backend's; the inspector forwards it with
+    // the details the client needs to say why and open the edit form.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            success: false,
+            code: "credential_origin_mismatch",
+            secretOriginMismatch: true,
+            boundOrigin: "https://example.com",
+            targetOrigin: "https://other.example",
+            error: "Re-enter the credentials for the new address.",
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+
+    await expect(
+      fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://other.example/mcp",
+        bearerToken: "bearer-token",
+        projectId: "project-1",
+        serverId: "server-1",
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: {
+        secretOriginMismatch: true,
+        boundOrigin: "https://example.com",
+        targetOrigin: "https://other.example",
+        credentialRefusal: "credential_origin_mismatch",
+      },
+    });
+  });
+
+  it("forwards an export-policy refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            success: false,
+            code: "export_denied",
+            exportDenied: true,
+            policy: "credentialExportPolicy",
+            error: "Your organization does not allow exporting credentials.",
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+
+    await expect(
+      fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
+        bearerToken: "bearer-token",
+        projectId: "project-1",
+        serverId: "server-1",
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      details: { exportDenied: true, policy: "credentialExportPolicy" },
+    });
   });
 
   it("requires and unconditionally forwards the service token for DCR", async () => {
-    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -96,7 +184,7 @@ describe("fetchRuntimeServerSecrets", () => {
         body: { action: "get" },
         serviceName: "DCR",
         requireInspectorServiceToken: true,
-      })
+      }),
     ).rejects.toThrow(/INSPECTOR_SERVICE_TOKEN/);
     expect(fetchMock).not.toHaveBeenCalled();
 

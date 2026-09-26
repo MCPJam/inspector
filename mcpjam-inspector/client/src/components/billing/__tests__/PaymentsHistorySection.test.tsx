@@ -228,6 +228,31 @@ describe("PaymentsHistorySection", () => {
       expect(props.has_pending).toBe(true);
     });
 
+    it("fires a new history impression when the organization changes without a remount", () => {
+      const { rerender } = render(
+        <PaymentsHistorySection organizationId="org-1" canViewHistory />
+      );
+
+      rerender(
+        <PaymentsHistorySection organizationId="org-1" canViewHistory />
+      );
+      let calls = trackMock.mock.calls.filter(
+        (c) => c[0] === "credit_topup_history_viewed"
+      );
+      expect(calls).toHaveLength(1);
+
+      rerender(
+        <PaymentsHistorySection organizationId="org-2" canViewHistory />
+      );
+      calls = trackMock.mock.calls.filter(
+        (c) => c[0] === "credit_topup_history_viewed"
+      );
+      expect(calls).toHaveLength(2);
+      expect(calls[1][1]).toEqual(
+        expect.objectContaining({ organization_id: "org-2" })
+      );
+    });
+
     it("does not fire credit_topup_history_viewed when there are zero entries", () => {
       hookState = {
         entries: [],

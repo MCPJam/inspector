@@ -27,6 +27,8 @@ import {
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 
+import type { ModelSelection } from "./model-selection.js";
+
 export type { McpProtocolVersion };
 
 /**
@@ -939,6 +941,12 @@ export type CanonicalHostConfigBrowserToolPolicy = {
 export type HostConfigInputV2 = {
   hostStyle: HostConfigStyle;
   modelId: string;
+  // Saved model selection (credential source, connection, settings, fallback)
+  // beside the canonical `modelId`, which stays required. When present its
+  // `modelId` must equal `modelId` — disagreement is a validation error, not a
+  // precedence rule. Optional + omitted when absent so pre-feature rows hash
+  // byte-identically. Never carries a secret (unknown keys are rejected).
+  modelSelection?: ModelSelection;
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
@@ -1043,6 +1051,10 @@ export type CanonicalHostConfigV2 = {
   schemaVersion: typeof HOST_CONFIG_SCHEMA_VERSION_V2;
   hostStyle: HostConfigStyle;
   modelId: string;
+  // Mirrors HostConfigInputV2.modelSelection, validated and rebuilt with a
+  // fixed key order. Omitted when absent so pre-feature rows hash
+  // byte-identically.
+  modelSelection?: ModelSelection;
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
