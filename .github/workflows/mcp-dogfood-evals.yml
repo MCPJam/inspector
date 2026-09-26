@@ -1,0 +1,280 @@
+name: MCP dogfood evals
+
+# Evaluate our own MCP server with our own product.
+#
+# The suite is `.mcpjam/evals/mcpjam-mcp.yaml`, which owns a CI-owned hosted
+# suite (see docs/contributing/dogfood-evals.md). Every case is read-only, so a
+# run is safe against a live server.
+#
+# The server is reached over OAuth, through the project's consented connection —
+# the same way a customer's server is reached. The only secret here is an MCPJam
+# platform key, which authenticates the RUN, not the server.
+#
+# Two callers, two different jobs:
+#
+#   workflow_call — `deploy-mcp-prod.yml` calls this BEFORE promoting, against
+#                   the staging worker, and refuses to promote if it fails.
+#                   That is the gate.
+#   schedule      — a nightly monitor against production. A monitor is not a
+#                   gate: it says prod drifted, which is worth knowing and is
+#                   not the same as stopping a bad promotion.
+#
+# The nightly lane deliberately uses the PUBLISHED action rather than the CLI,
+# so the thing customers copy gets exercised on a schedule. Its release smoke
+# has never run: release.yml skips it whenever EVALS_SMOKE_PROJECT /
+# EVALS_SMOKE_SUITE are unset, and moves `evals-v1` anyway.
+
+on:
+  workflow_call:
+    inputs:
+      server:
+        description: Saved server to target, overriding the suite file's own
+        required: true
+        type: string
+      iterations:
+        description: Iterations per case (1-10; blank uses the file's default)
+        required: false
+        type: string
+      case:
+        description: Case id or title to run alone (blank runs the suite)
+        required: false
+        type: string
+    outputs:
+      run-id:
+        description: The eval run that was started, if one was
+        value: ${{ jobs.run-suite.outputs.run-id }}
+      verdict:
+        description: pass | fail | no-verdict | not-run
+        value: ${{ jobs.run-suite.outputs.verdict }}
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      server:
+        description: Saved server to target (blank uses the suite file's own)
+        required: false
+        type: string
+      iterations:
+        description: Iterations per case (1-10; blank uses the file's default)
+        required: false
+        type: string
+      case:
+        description: Case id or title to run alone (blank runs the suite)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  MCPJAM_PROJECT: MCPJam MCP dogfood
+  SUITE_FILE: .mcpjam/evals/mcpjam-mcp.yaml
+  CLI_VERSION: 5.10.3
+
+jobs:
+  # The CLI lane. Syncs the suite file, runs it, gates the result, and reports a
+  # verdict its caller can branch on. This is what the promotion gate calls.
+  run-suite:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Not cancel-in-progress: abandoning a `--wait` orphans a run that is
+    # already being paid for. Keyed per target so a promotion gate never queues
+    # behind an unrelated dispatch.
+    concurrency:
+      group: mcp-dogfood-evals-${{ inputs.server || 'suite-default' }}
+      cancel-in-progress: false
+    outputs:
+      run-id: ${{ steps.run.outputs.run_id }}
+      verdict: ${{ steps.verdict.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Require the API key
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+        run: |
+          if [ -z "$MCPJAM_API_KEY" ]; then
+            echo "::error::MCPJAM_API_KEY is not set. It must be a key from the organization that owns the '$MCPJAM_PROJECT' project."
+            exit 1
+          fi
+
+      # `set +e` and an explicit output: `eval run --wait` owns a six-code
+      # contract, and reading it through a pipe would report the pipe's status
+      # instead. Only `1` is a measured eval failure.
+      - name: Sync the suite file and run it
+        id: run
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+          TARGET_SERVER: ${{ inputs.server }}
+          CASE: ${{ inputs.case }}
+          ITERATIONS: ${{ inputs.iterations }}
+        run: |
+          set +e
+          args=(cloud eval run
+            --file "$SUITE_FILE"
+            --project "$MCPJAM_PROJECT"
+            --wait
+            --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}${TARGET_SERVER:+ -> $TARGET_SERVER})"
+            --out "$RUNNER_TEMP/eval-report.json"
+            --format json)
+          # Overriding the saved selection is what lets one suite file gate the
+          # staging candidate and monitor production, without a second copy of
+          # the cases drifting away from the first.
+          [ -n "$TARGET_SERVER" ] && args+=(--server "$TARGET_SERVER")
+          [ -n "$CASE" ] && args+=(--case "$CASE")
+          [ -n "$ITERATIONS" ] && args+=(--iterations "$ITERATIONS")
+
+          npx -y "@mcpjam/cli@$CLI_VERSION" "${args[@]}" > "$RUNNER_TEMP/eval-result.json"
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Run exited $code"
+
+          # `launch.targets[].runId` is present even when a wait times out and
+          # `runs` comes back empty, so it is the reliable handle.
+          run_id="$(jq -r '.launch.targets[0].runId // empty' "$RUNNER_TEMP/eval-result.json" 2>/dev/null)"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/eval-result.json" || true
+
+      # Always: the gate carries the policy and writes the JUnit report, and it
+      # is most worth having when the run above already failed.
+      - name: Gate the run and write JUnit
+        id: gate
+        if: ${{ always() && steps.run.outputs.run_id != '' }}
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+        run: |
+          set +e
+          npx -y "@mcpjam/cli@$CLI_VERSION" cloud eval gate \
+            --run "${{ steps.run.outputs.run_id }}" \
+            --project "$MCPJAM_PROJECT" \
+            --wait \
+            --min-pass-rate-percent 80 \
+            --reporter junit-xml \
+            --out "$RUNNER_TEMP/gate.xml"
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Gate exited $code"
+
+      - name: Save the reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-dogfood-evals-${{ inputs.server || 'suite-default' }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/eval-report.json
+            ${{ runner.temp }}/eval-result.json
+            ${{ runner.temp }}/gate.xml
+          if-no-files-found: warn
+
+      # Collapse two exit codes into one word a caller can branch on, and keep
+      # the three outcomes apart. "fail" means the server's behaviour was
+      # measured and found wanting. "no-verdict" means nothing was decided —
+      # our own auth, our own infrastructure, or a wait that ran out — and it
+      # must never be reported as the server failing.
+      - name: Decide the verdict
+        id: verdict
+        if: ${{ always() }}
+        env:
+          RUN_CODE: ${{ steps.run.outputs.code }}
+          GATE_CODE: ${{ steps.gate.outputs.code }}
+        run: |
+          case "$RUN_CODE" in
+            0) verdict=pass ;;
+            1) verdict=fail ;;
+            "") verdict=not-run ;;
+            *) verdict=no-verdict ;;
+          esac
+          # A measured failure the gate's policy forgives is still a pass; the
+          # gate is where the threshold and any waiver live.
+          if [ "$verdict" = "fail" ] && [ "$GATE_CODE" = "0" ]; then
+            verdict=pass
+          fi
+          # A gate that itself failed its policy overrides a green run.
+          if [ "$verdict" = "pass" ] && [ "$GATE_CODE" = "1" ]; then
+            verdict=fail
+          fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "Verdict: $verdict"
+
+      # The run id is printed, NOT linked. `eval run --format json` returns no
+      # permalink for the run, and a hand-built app URL opens whichever project
+      # the reader last selected rather than this one — so a fabricated link is
+      # worse than an id. Open it from Evaluate -> Runs.
+      - name: Summarize
+        if: ${{ always() }}
+        env:
+          RUN_CODE: ${{ steps.run.outputs.code }}
+          GATE_CODE: ${{ steps.gate.outputs.code }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
+          TARGET_SERVER: ${{ inputs.server }}
+        run: |
+          {
+            echo "## MCP dogfood evals — $VERDICT"
+            echo
+            target="${TARGET_SERVER:-the saved server in the suite file}"
+            echo "Target: \`$target\`"
+            echo
+            if [ -n "$RUN_ID" ]; then
+              echo "Run \`$RUN_ID\`, in the **$MCPJAM_PROJECT** project — open it from Evaluate → Runs."
+            else
+              echo "No run was started."
+            fi
+            echo
+            case "$RUN_CODE" in
+              0) echo "- Run: passed." ;;
+              1) echo "- Run: **a measured eval failure**. The server's behaviour changed." ;;
+              2) echo "- Run: usage error or an invalid suite file. Not a server problem." ;;
+              3) echo "- Run: authentication failed. Check \`MCPJAM_API_KEY\` and its organization." ;;
+              4) echo "- Run: connection or setup failure, or a local write failure. Infrastructure, not a verdict." ;;
+              5) echo "- Run: no valid verdict — inconclusive, non-terminal, or the wait timed out. Nothing was decided." ;;
+              *) echo "- Run: exit $RUN_CODE." ;;
+            esac
+            case "$GATE_CODE" in
+              "") echo "- Gate: not evaluated." ;;
+              0) echo "- Gate: passed or waived." ;;
+              1) echo "- Gate: failed its policy." ;;
+              2) echo "- Gate: usage error." ;;
+              3) echo "- Gate: incomplete, so not gateable." ;;
+              *) echo "- Gate: exit $GATE_CODE." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The job's own status. A caller that wants to branch rather than fail
+      # reads the `verdict` output instead.
+      - name: Fail unless the verdict is a pass
+        if: ${{ always() }}
+        env:
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
+        run: |
+          if [ "$VERDICT" = "pass" ]; then
+            echo "Green."
+            exit 0
+          fi
+          echo "::error::Eval verdict: $VERDICT. See the job summary."
+          exit 1
+
+  # The customer's own YAML, nightly, against production. A monitor, not a gate.
+  nightly-action:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: mcp-dogfood-evals-nightly
+      cancel-in-progress: false
+    steps:
+      - uses: MCPJam/inspector/actions/evals@evals-v1
+        with:
+          api-key: ${{ secrets.MCPJAM_API_KEY }}
+          project: MCPJam MCP dogfood
+          suite: mcpjam-mcp dogfood
+          gate: true
+          min-pass-rate-percent: 80
+          # The action's own default is 5.7.1. Pin the version the CLI lane
+          # uses, so one vocabulary and one exit contract cover both jobs.
+          cli-version: "5.10.3"
