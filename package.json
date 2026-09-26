@@ -53,7 +53,7 @@
     "check:mirrors": "node scripts/check-authoring-mirror.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.7",
+    "@changesets/cli": "^3.0.3",
     "@google/design.md": "0.4.0",
     "@types/dagre": "^0.7.54",
     "concurrently": "^10.0.5",
