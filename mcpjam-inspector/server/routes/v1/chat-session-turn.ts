@@ -1714,6 +1714,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
+      messages: [...priorMessages, { role: "user", content: body.message }],
       projectId,
       authHeader,
       sourceType: "direct",

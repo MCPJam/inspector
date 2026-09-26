@@ -1,4 +1,8 @@
-import { verifyGithubCredentialAccess, githubExecutionPolicy } from "../services/github-checks/credential-policy.js";
+import {
+  verifyGithubCredentialAccess,
+  githubExecutionPolicy,
+} from "../services/github-checks/credential-policy.js";
+import type { ModelWorkload } from "./model-workload.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
@@ -515,6 +519,7 @@ function buildRuntimeCacheKey(
   model: string,
   auth: ResolveOrgModelConfigAuth | undefined,
   modelSelection?: ModelSelection,
+  modelWorkload?: ModelWorkload,
 ): string {
   const authHash = createHash("sha256")
     .update(
@@ -532,11 +537,16 @@ function buildRuntimeCacheKey(
     .digest("hex");
   // A selection-carrying resolve is re-authorized by the backend against its
   // connection; it must never be answered from a legacy (or another
-  // connection's) cached entry.
+  // connection's) cached entry. Admission facts also scope reuse: a text
+  // chat must never authorize a tool/image call or an unattended run.
   const selectionPart = modelSelection
     ? `:selection:${createHash("sha256").update(selectionKey(modelSelection)).digest("hex")}`
     : "";
-  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}${selectionPart}`;
+  return `runtime:${formatTargetForCache(
+    target,
+  )}:${providerKey}:${model}:auth:${authHash}${selectionPart}:workload:${JSON.stringify(
+    modelWorkload ?? null,
+  )}`;
 }
 
 /**
@@ -555,7 +565,7 @@ export async function resolveOrgProviderRuntime(
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
-  options?: { modelSelection?: ModelSelection },
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
   return resolveOrgProviderRuntimeForTarget(
     { projectId },
@@ -572,13 +582,15 @@ export async function resolveOrgProviderRuntime(
  * (a deleted, disabled or moved connection is refused `credential_missing`)
  * before it decrypts any key. Only an `org` selection is sent; a backend
  * that predates selections ignores the field and resolves the legacy way.
+ * `options.modelWorkload` carries only admission facts, never prompt content.
+ * Callers must derive it after preparing the effective tools and messages.
  */
 export async function resolveOrgProviderRuntimeForTarget(
   target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
-  options?: { modelSelection?: ModelSelection },
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
   const modelSelection =
     options?.modelSelection?.source === "org"
@@ -594,6 +606,7 @@ export async function resolveOrgProviderRuntimeForTarget(
     model,
     auth,
     modelSelection,
+    options?.modelWorkload,
   );
   const now = Date.now();
   pruneRuntimeResolveCache(now);
@@ -629,6 +642,9 @@ export async function resolveOrgProviderRuntimeForTarget(
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
         ...(modelSelection ? { modelSelection } : {}),
+        ...(options?.modelWorkload
+          ? { modelWorkload: options.modelWorkload }
+          : {}),
       }),
       signal: controller.signal,
     });
@@ -791,6 +807,7 @@ export async function resolveSyntheticModelSource(args: {
    * source is not sent.
    */
   modelSelection?: ModelSelection;
+  modelWorkload?: ModelWorkload;
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
   if (isHostedModelDefinition(args.modelDefinition)) {
@@ -821,9 +838,12 @@ export async function resolveSyntheticModelSource(args: {
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
-        args.modelSelection?.source === "org"
-          ? { modelSelection: args.modelSelection }
-          : undefined,
+        {
+          ...(args.modelSelection?.source === "org"
+            ? { modelSelection: args.modelSelection }
+            : {}),
+          ...(args.modelWorkload ? { modelWorkload: args.modelWorkload } : {}),
+        },
       )
     : { runtimeLocation: "cloud", providerKey: keyResult.key };
   return {
