@@ -671,17 +671,10 @@ A frontier model was selected but the request requires a signed-in account.
 
 `provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
 
-MCPJam refused the call before it reached a provider. For the daily, monthly,
-and general codes, the account's own allowance is spent.
-`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
-what the request could cost. Which allowance depends on the plan: free accounts
-share a daily bucket per organization, paid plans spend a monthly allowance that
-renews with the billing period.
+MCPJam refused the call before it reached a provider.
 
-`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
-what the request could cost. MCPJam reserves a request's worst-case cost before
-it runs, so a cheaper model or a shorter conversation can fit where this one did
-not.
+- **`provider/mcpjam_limit_daily` / `provider/mcpjam_limit_monthly` / `provider/mcpjam_limit`** — The account's own allowance is spent. Which allowance depends on the plan: free accounts share a daily bucket per organization, paid plans spend a monthly allowance that renews with the billing period.
+- **`provider/mcpjam_limit_insufficient`** — The balance is not empty but is below what this request could cost. MCPJam reserves a request's worst-case cost before it runs, so a cheaper model or a shorter conversation can fit where this one did not. The dialog shows how many credits are left and how many this request needs.
 
 **Next steps**
 - **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
