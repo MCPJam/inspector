@@ -11,7 +11,13 @@ export function isCreditExhaustion(value: unknown): boolean {
       if (strings.has(item)) return;
       strings.add(item);
       if (
-        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked)\b/i.test(
+        // `platform_capacity`, `agent_turn_limit` and `agent_billing_rejected`
+        // are Ask MCPJam's refusals: MCPJam's own budget, a per-user COUNT,
+        // and a billing claim that did not hold. Like the others here, none is
+        // a wallet anyone can top up — and they arrive on a surface the
+        // product calls free, so selling credits against one would be wrong
+        // twice over.
+        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked|platform_capacity|agent_turn_limit|agent_billing_rejected)\b/i.test(
           item,
         )
       ) {

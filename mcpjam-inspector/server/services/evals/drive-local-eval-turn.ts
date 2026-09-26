@@ -198,6 +198,11 @@ export type DriveLocalEvalTurnParams = {
    * local-runtime usage writeback and its execution record.
    */
   onModelCallSettled?: (event: LocalModelCallSettled) => void;
+  /** Re-admit the effective toolset and transcript before a local org call. */
+  beforeModelCall?: (workload: {
+    tools: ToolSet;
+    messages: ModelMessage[];
+  }) => Promise<void>;
   toolPolicyGate?: ToolPolicyGate | null;
   extractToolCalls: (params: {
     steps?: ReadonlyArray<any>;
@@ -366,6 +371,10 @@ export async function driveLocalEvalTurn(
   const toolsForTurn = toolPolicyGate
     ? toolPolicyGate.wrap(mergedTools)
     : mergedTools;
+  await params.beforeModelCall?.({
+    tools: toolsForTurn,
+    messages: acc.activePromptInputMessages,
+  });
   // This turn's own clock, nested under the iteration's. `withDeadline`
   // COMPOSES rather than replaces: the engine still sees a single signal, and
   // it fires on whichever bound trips first. Without it, one wedged provider
