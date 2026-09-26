@@ -136,6 +136,21 @@ describe("createBrowserArtifactOutbox", () => {
     expect(args.browserInteractionSteps[0].promptIndex).toBeUndefined();
   });
 
+  it("uploads screenshots and the replay as the session's identity, scoped to its chat", async () => {
+    const outbox = makeOutbox();
+    outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
+
+    await outbox.flush();
+
+    const uploadTarget = {
+      convexAuthToken: "token",
+      chatSessionId: "swarm_run-1_target-1_0",
+    };
+    expect(uploadScreenshotBlobMock.mock.calls[0]![0]).toEqual(uploadTarget);
+    expect(uploadVideoBlobMock.mock.calls[0]![0]).toEqual(uploadTarget);
+  });
+
   it("keeps a batch whose write threw, and retries it without re-uploading", async () => {
     const outbox = makeOutbox();
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
@@ -442,10 +457,20 @@ describe("createBrowserArtifactOutbox", () => {
       logScope: "test",
     });
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
     await outbox.flush();
     expect(mutationMock.mock.calls[0]![1]).toMatchObject({
       scenarioId: "cb-1",
       accessVersion: 4,
     });
+    // The uploads carry the same pair.
+    const uploadTarget = {
+      convexAuthToken: "token",
+      chatSessionId: "synth_1",
+      scenarioId: "cb-1",
+      accessVersion: 4,
+    };
+    expect(uploadScreenshotBlobMock.mock.calls[0]![0]).toEqual(uploadTarget);
+    expect(uploadVideoBlobMock.mock.calls[0]![0]).toEqual(uploadTarget);
   });
 });

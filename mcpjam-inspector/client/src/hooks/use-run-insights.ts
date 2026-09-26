@@ -41,6 +41,7 @@ import {
   type ScenarioWindowInsights,
   type ScenarioWindowInsightsDto,
 } from "@/lib/scenario-insights-api";
+import { signInRequiredMessage } from "@/lib/sign-in-required";
 
 /**
  * Which cohort's narration to read. The group id is REQUIRED on both arms: it
@@ -65,6 +66,13 @@ export type UseRunInsightsResult = {
   busy: boolean;
   /** The backend does not expose the feature — render nothing. */
   unavailable: boolean;
+  /**
+   * The backend refused because the viewer is anonymous. `error` carries the
+   * refusal's own copy; the surface should offer sign-in rather than an error,
+   * because that is the remedy. NOT `unavailable`: hiding the band would take
+   * the explanation away from the person who has never seen one.
+   */
+  signInRequired: boolean;
   /** A rejection worth showing (spend cap, daily limit, generation failure). */
   error: string | null;
   request: (force?: boolean) => void;
@@ -76,9 +84,33 @@ function classifyRunInsightError(err: unknown): {
   permanent: boolean;
   /** The caller may not generate. Suppresses AUTO-requests, nothing else. */
   authRefused?: boolean;
+  /** …and specifically because they are anonymous, which sign-in fixes. */
+  signInRequired?: boolean;
   message: string;
 } {
   const raw = err instanceof Error ? err.message : String(err);
+
+  // An anonymous viewer on a platform-paid door — the backend's own
+  // `sign_in_required`. Matched FIRST, ahead of the generic "Server Error"
+  // test at the bottom, which would otherwise latch `unavailable` and hide the
+  // band from the one reader for whom the fix is a single click.
+  //
+  // `authRefused`, for the same reason the workspace-permission branch below
+  // sets it: `canRequest` alone does not stop the auto-request for an
+  // anonymous hosted visitor, so a guest browsing cohorts would fire one
+  // doomed mutation per cohort. Not `permanent` — who is asking can change
+  // within a session, and an explicit press clears the latch so somebody who
+  // signs in mid-session gets a working button.
+  const signInMessage = signInRequiredMessage(err);
+  if (signInMessage) {
+    return {
+      unavailable: false,
+      permanent: false,
+      authRefused: true,
+      signInRequired: true,
+      message: signInMessage,
+    };
+  }
 
   // Entitlement rejection — the feature works, the org is capped. Must be
   // matched BEFORE the generic "Server Error" test, which Convex prefixes onto
@@ -170,6 +202,7 @@ export function useRunInsights(
   const terminal = options?.terminal === true;
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [signInRequired, setSignInRequired] = useState(false);
   const [requested, setRequested] = useState(false);
   const featureMissingRef = useRef(false);
   /** Sticky across cohorts: who is asking does not change by navigating. */
@@ -234,6 +267,7 @@ export function useRunInsights(
       const attempt = ++attemptRef.current;
       const assertedAt = identityAssertionsRef.current;
       setError(null);
+      setSignInRequired(false);
       setRequested(true);
       // The window request takes no group id: the backend anchors it to the
       // latest snapshot itself, so a client cannot ask for narration of a
@@ -277,6 +311,7 @@ export function useRunInsights(
         if (classified.unavailable) {
           setUnavailable(true);
         } else {
+          setSignInRequired(classified.signInRequired === true);
           setError(classified.message);
         }
       });
@@ -310,6 +345,11 @@ export function useRunInsights(
     if (runKeyRef.current === runKey) return;
     runKeyRef.current = runKey;
     setError(null);
+    // Cleared alongside `error`, which carries this refusal's copy: leaving
+    // the flag set without its message would draw a sign-in call to action
+    // under a blank explanation. `authRefusedRef` is the part that must stay
+    // sticky across cohorts, and it does — so no doomed request re-fires.
+    setSignInRequired(false);
     setRequested(false);
     hasAutoAttemptedRef.current = false;
     if (!featureMissingRef.current) setUnavailable(false);
@@ -367,6 +407,7 @@ export function useRunInsights(
     status,
     busy,
     unavailable,
+    signInRequired,
     error: error ?? serverError,
     request,
     cancel,

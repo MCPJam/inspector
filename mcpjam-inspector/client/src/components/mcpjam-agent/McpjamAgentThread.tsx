@@ -55,7 +55,10 @@ import {
   loadRecentMcpjamAgentSessions,
 } from "@/components/mcpjam-agent/recent-sessions";
 import { pendingAgentPromptKey } from "@/lib/mcpjam-agent/pending-prompt";
-import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
+import {
+  describeAgentRefusalMessage,
+  describeMCPJamLimitMessage,
+} from "@/lib/mcpjam-limit";
 
 export interface McpjamAgentThreadProps {
   sessionId: string;
@@ -323,7 +326,7 @@ export function McpjamAgentThread({
         ready={canAccept}
         loadingMessage={
           scopeMissing
-            ? "Case context is missing. Your message is kept here."
+            ? "This test case couldn’t be loaded. Your message is still here."
             : contextLoading
             ? "Connecting to your case… Your message is kept here."
             : "Loading project…"
@@ -521,7 +524,12 @@ export function McpjamAgentThread({
                   isSidebar && "w-full px-3",
                 )}
               >
-                {describeMCPJamLimitMessage(session.error.message) ??
+                {/* Ask MCPJam is MCPJam-paid, so its own refusals come
+                    first: they are about MCPJam's budget, not the reader's
+                    credits, and the credits copy would be wrong twice over.
+                    The raw body is the last resort — it reads as a crash. */}
+                {describeAgentRefusalMessage(session.error.message) ??
+                  describeMCPJamLimitMessage(session.error.message) ??
                   session.error.message ??
                   "Something went wrong."}
               </p>
