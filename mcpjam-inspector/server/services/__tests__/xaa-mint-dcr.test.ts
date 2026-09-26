@@ -103,6 +103,7 @@ describe("XAA Connect DCR mint integration", () => {
       xaaAllowPathScopedIssuer: false,
       clientId: "stored-client",
       clientSecret: "stored-secret",
+      targetEnforced: true,
     });
 
     await mintXaaAccessToken({

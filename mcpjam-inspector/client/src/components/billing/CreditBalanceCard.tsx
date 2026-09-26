@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Info, Settings } from "lucide-react";
+import { BarChart3, Info, Settings } from "lucide-react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
@@ -168,7 +168,8 @@ export function CreditBalanceCard({
                 )
               }
             >
-              See more
+              <BarChart3 className="mr-2 size-4" aria-hidden="true" />
+              See Usage
             </Button>
           ) : null}
         </div>

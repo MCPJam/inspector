@@ -11,8 +11,21 @@ vi.mock("../../config.js", async (importOriginal) => {
 });
 
 import relayRoutes, { relayBodyLimit } from "../relay.js";
+import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 
 const ORIGINAL_FETCH = global.fetch;
+
+// A capture body for this deployment's project, so each request is one the
+// relay forwards and only the limiter decides.
+const CAPTURE_BODY = JSON.stringify({
+  api_key: POSTHOG_PROJECT_KEY,
+  batch: [
+    {
+      event: "$pageview",
+      properties: { token: POSTHOG_PROJECT_KEY, distinct_id: "device-1" },
+    },
+  ],
+});
 
 function createTestApp() {
   const app = new Hono();
@@ -40,7 +53,7 @@ describe("posthog relay rate limit (hosted mode)", () => {
     for (let i = 0; i < 601; i++) {
       lastRes = await app.request("http://localhost:6274/relay/i/v0/e/", {
         method: "POST",
-        body: "{}",
+        body: CAPTURE_BODY,
         headers: {
           "X-Real-IP": "203.0.113.7",
           "X-Forwarded-For": `10.0.${Math.floor(i / 250)}.${i % 250}`,
@@ -55,7 +68,7 @@ describe("posthog relay rate limit (hosted mode)", () => {
     // A different edge IP is a different bucket and still passes.
     const other = await app.request("http://localhost:6274/relay/i/v0/e/", {
       method: "POST",
-      body: "{}",
+      body: CAPTURE_BODY,
       headers: { "X-Real-IP": "203.0.113.8" },
     });
     expect(other.status).toBe(200);

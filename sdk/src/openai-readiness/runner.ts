@@ -1,3 +1,4 @@
+import { runOpenAIProfileChecks } from "./checks/profile.js";
 /**
  * The composite readiness run, split into two halves that do not resemble each
  * other.
@@ -198,7 +199,7 @@ const STAGE_SUMMARIES: Record<OpenAIReadinessStage, string> = {
 /** Inputs a caller could supply to close a lane's gaps. */
 function missingInputsFor(
   lane: OpenAIReadinessLane,
-  findings: OpenAIReadinessFinding[],
+  findings: OpenAIReadinessFinding[]
 ): string[] {
   return findings
     .filter((finding) => finding.lane === lane)
@@ -212,19 +213,19 @@ function missingInputsFor(
 function summarizeLane(
   lane: OpenAIReadinessLane,
   status: OpenAILaneStatus,
-  findings: OpenAIReadinessFinding[],
+  findings: OpenAIReadinessFinding[]
 ): string {
   const violations = findings.filter(
     (finding) =>
       finding.status === "violated" &&
-      (finding.class === "required" || finding.class === "runtime-blocker"),
+      (finding.class === "required" || finding.class === "runtime-blocker")
   );
   if (status === "not-ready") {
     return `${violations.length} requirement(s) unmet — ${LANE_SUMMARIES[lane]}.`;
   }
   if (status === "incomplete") {
     const unevaluated = findings.filter(
-      (finding) => finding.status === "not-evaluated",
+      (finding) => finding.status === "not-evaluated"
     ).length;
     return unevaluated > 0
       ? `${unevaluated} requirement(s) not evaluated — ${LANE_SUMMARIES[lane]}.`
@@ -243,7 +244,7 @@ function summarizeLane(
 function laneResultFor(
   lane: OpenAIReadinessLane,
   mode: OpenAISubmissionMode,
-  findings: OpenAIReadinessFinding[],
+  findings: OpenAIReadinessFinding[]
 ): OpenAIReadinessLaneResult {
   const laneFindings = findings.filter((finding) => finding.lane === lane);
 
@@ -268,7 +269,7 @@ function laneResultFor(
     coverage: summarizeLaneCoverage(
       lane,
       laneFindings,
-      missingInputsFor(lane, findings),
+      missingInputsFor(lane, findings)
     ),
   };
 }
@@ -277,7 +278,7 @@ function buildStage(
   stage: OpenAIReadinessStage,
   mode: OpenAISubmissionMode,
   lanes: OpenAIReadinessLaneResult[],
-  hasPublishedVersion: boolean,
+  hasPublishedVersion: boolean
 ): OpenAIReadinessStageResult {
   const stageLanes = stageLanesFor(stage, mode, { hasPublishedVersion });
   const status = rollUpDirectoryLaneStatus(lanes, stageLanes);
@@ -293,7 +294,7 @@ function describeStage(
   stage: OpenAIReadinessStage,
   status: OpenAILaneStatus,
   lanes: OpenAIReadinessLaneResult[],
-  stageLanes: OpenAIReadinessLane[],
+  stageLanes: OpenAIReadinessLane[]
 ): string {
   const inStage = lanes.filter((lane) => stageLanes.includes(lane.lane));
   if (status === "not-ready") {
@@ -309,12 +310,12 @@ function describeStage(
       ...new Set(
         inStage
           .filter((lane) => lane.status === "incomplete")
-          .flatMap((lane) => lane.coverage.missingInputs),
+          .flatMap((lane) => lane.coverage.missingInputs)
       ),
     ];
     return gaps.length > 0
       ? `Undetermined — ${STAGE_SUMMARIES[stage]}. Supply ${gaps.join(
-          ", ",
+          ", "
         )} to close the gap.`
       : `Undetermined — ${STAGE_SUMMARIES[stage]}: some requirements could not be evaluated by this run.`;
   }
@@ -365,7 +366,7 @@ function readUiCspDomains(meta: Record<string, unknown> | undefined) {
     return undefined;
   }
   const domains = Object.values(csp as Record<string, unknown>).flatMap(
-    strings,
+    strings
   );
   return domains.length > 0 ? [...new Set(domains)].sort() : undefined;
 }
@@ -378,7 +379,7 @@ function readUiCspDomains(meta: Record<string, unknown> | undefined) {
  * package to find it.
  */
 function packageSelfDescription(
-  evidence: OpenAIPluginPackageEvidence | undefined,
+  evidence: OpenAIPluginPackageEvidence | undefined
 ): { field: string; text: string }[] {
   if (!evidence) return [];
   const out: { field: string; text: string }[] = [];
@@ -388,11 +389,11 @@ function packageSelfDescription(
   push("manifest.description", evidence.manifest?.description);
   push(
     "interface.display_name",
-    evidence.agentMetadata?.metadata?.interface.displayName,
+    evidence.agentMetadata?.metadata?.interface.displayName
   );
   push(
     "interface.short_description",
-    evidence.agentMetadata?.metadata?.interface.shortDescription,
+    evidence.agentMetadata?.metadata?.interface.shortDescription
   );
   for (const skill of evidence.skills) {
     push(`skills/${skill.directoryName}.description`, skill.description);
@@ -404,7 +405,7 @@ function packageSelfDescription(
  * Grade gathered evidence. Pure — no network, no clock, no randomness.
  */
 export function gradeOpenAIReadiness(
-  evidence: OpenAIReadinessEvidence,
+  evidence: OpenAIReadinessEvidence
 ): OpenAIReadinessResult {
   const stamp = { evaluatedAt: evidence.evaluatedAt };
 
@@ -436,6 +437,10 @@ export function gradeOpenAIReadiness(
   const serverFindings = shape.hasMcpServer
     ? [
         ...runOpenAIEndpointChecks(evidence.endpoint, stamp),
+        ...runOpenAIProfileChecks(evidence.tools, stamp, {
+          complete: evidence.toolListingComplete,
+          error: evidence.toolListingError,
+        }),
         ...runOpenAIAuthChecks(evidence.auth, stamp),
         ...runOpenAIAnnotationChecks(evidence.tools, stamp, {
           complete: evidence.toolListingComplete,
@@ -446,7 +451,7 @@ export function gradeOpenAIReadiness(
             evidence: evidence.domainVerification,
             declaredToken: parsedProfile.profile?.domainVerificationToken,
           },
-          stamp,
+          stamp
         ),
         ...runOpenAIAppsUiChecks(
           evidence.appsUi
@@ -457,7 +462,7 @@ export function gradeOpenAIReadiness(
                   parsedProfile.profile?.screenshots.length,
               }
             : undefined,
-          stamp,
+          stamp
         ),
       ]
     : [];
@@ -468,11 +473,16 @@ export function gradeOpenAIReadiness(
       uiResourceCount: evidence.appsUi?.resources?.length,
       clientIdMetadataDocuments: evidence.auth?.authorizationServers?.some(
         (server) =>
-          server.document?.client_id_metadata_document_supported === true,
+          server.document?.client_id_metadata_document_supported === true
       ),
       checkout: evidence.hasCommerce,
+      profileIdentification:
+        evidence.tools && evidence.toolListingComplete !== false
+          ? evidence.tools.filter((t) => t._meta?.["openai/profile"] === true)
+              .length === 1
+          : undefined,
     },
-    stamp,
+    stamp
   );
 
   // Observed annotations beat a caller's list: the submission check needs to
@@ -488,11 +498,11 @@ export function gradeOpenAIReadiness(
       ...serverFindings,
       ...runOpenAIMcpSkillChecks(
         { mode: evidence.mode, evidence: evidence.importedSkills },
-        stamp,
+        stamp
       ),
       ...runOpenAIPackageChecks(
         { mode: evidence.mode, package: evidence.package },
-        stamp,
+        stamp
       ),
       ...(shape.hasUploadedPackage
         ? runOpenAIMigrationChecks(evidence.package, stamp)
@@ -503,7 +513,7 @@ export function gradeOpenAIReadiness(
           packageMetadata: packageSelfDescription(evidence.package),
           hasCommerce: evidence.hasCommerce,
         },
-        stamp,
+        stamp
       ),
       ...runOpenAIReleaseContractChecks(
         {
@@ -511,7 +521,7 @@ export function gradeOpenAIReadiness(
           published: evidence.publishedSnapshot,
           hasPublishedVersion,
         },
-        stamp,
+        stamp
       ),
       ...optional.findings,
       ...runOpenAISubmissionChecks(
@@ -522,7 +532,7 @@ export function gradeOpenAIReadiness(
           frameDomains: evidence.frameDomains,
           hasPublishedVersion,
         },
-        stamp,
+        stamp
       ),
       // LAST, and inside the capability gate like everything else. The mapper
       // can only emit `heuristic`/`manual-review` findings in
@@ -532,20 +542,20 @@ export function gradeOpenAIReadiness(
       // the deterministic inventory first.
       ...mapOpenAIObservationsToFindings(
         evidence.llmObservations?.envelope,
-        stamp,
+        stamp
       ),
     ],
-    evidence.capabilities,
+    evidence.capabilities
   );
 
   const badges: OpenAICapabilityBadge[] = optional.badges;
 
   const lanes = OPENAI_READINESS_LANES.map((lane) =>
-    laneResultFor(lane, evidence.mode, findings),
+    laneResultFor(lane, evidence.mode, findings)
   );
 
   const stages = OPENAI_READINESS_STAGES.map((stage) =>
-    buildStage(stage, evidence.mode, lanes, hasPublishedVersion),
+    buildStage(stage, evidence.mode, lanes, hasPublishedVersion)
   );
 
   const headline =
@@ -583,7 +593,7 @@ export function gradeOpenAIReadiness(
  */
 function buildRunSummary(stages: OpenAIReadinessStageResult[]): string {
   const technical = stages.find(
-    (stage) => stage.stage === "technical-preflight",
+    (stage) => stage.stage === "technical-preflight"
   );
   const submission = stages.find((stage) => stage.stage === "submission-ready");
   if (!technical || !submission) {
@@ -699,7 +709,7 @@ export interface GatherOpenAIReadinessEvidenceOptions {
  * run — skip this entirely and call {@link gradeOpenAIReadiness}.
  */
 export async function gatherOpenAIReadinessEvidence(
-  options: GatherOpenAIReadinessEvidenceOptions,
+  options: GatherOpenAIReadinessEvidenceOptions
 ): Promise<OpenAIReadinessEvidence> {
   const now = options.now ?? (() => new Date());
   const startedAt = now().toISOString();
@@ -808,7 +818,7 @@ export async function gatherOpenAIReadinessEvidence(
     evaluatedAt: finishedAt.toISOString(),
     durationMs: Math.max(
       0,
-      finishedAt.getTime() - new Date(startedAt).getTime(),
+      finishedAt.getTime() - new Date(startedAt).getTime()
     ),
     endpoint,
     auth,

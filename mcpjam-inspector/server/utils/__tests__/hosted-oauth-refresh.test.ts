@@ -99,6 +99,44 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     });
   });
 
+  it("keeps an export-policy refusal as a policy, not a reconnect", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "export_denied",
+              exportDenied: true,
+              policy: "credentialExportPolicy",
+              message: "Export policy is deny.",
+            }),
+            { status: 403, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    const error = await forceRefreshHostedOAuthAccessToken(
+      "bearer-token",
+      "project-1",
+      "server-1",
+      { serverName: "Asana" }
+    ).catch((caught) => caught);
+
+    expect(error).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: {
+        exportDenied: true,
+        policy: "credentialExportPolicy",
+        serverId: "server-1",
+        serverName: "Asana",
+      },
+    });
+    expect(error.details.oauthRequired).toBeUndefined();
+  });
+
   it("forwards the recorded failure on authorization_server_unreachable", async () => {
     vi.stubGlobal(
       "fetch",

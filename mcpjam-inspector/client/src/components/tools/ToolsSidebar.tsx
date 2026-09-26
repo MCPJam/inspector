@@ -281,6 +281,8 @@ export function ToolsSidebar({
                 description={selectedTool?.description}
                 inputSchema={selectedTool?.inputSchema}
                 outputSchema={selectedTool?.outputSchema}
+                annotations={selectedTool?.annotations}
+                metadata={selectedTool?._meta}
                 openSections={openSections}
                 onOpenSectionsChange={setOpenSections}
                 parameters={

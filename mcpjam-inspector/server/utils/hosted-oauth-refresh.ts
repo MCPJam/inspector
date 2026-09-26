@@ -1,3 +1,4 @@
+import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import { createHash } from "node:crypto";
 import { describeError, type UnauthorizedRefreshHandler } from "@mcpjam/sdk";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
@@ -57,6 +58,12 @@ function parseRefreshMaterial(
     return null;
   }
   return {
+    ...(typeof raw.connectionId === "string"
+      ? { connectionId: raw.connectionId }
+      : {}),
+    ...(typeof raw.expectedVaultObjectId === "string"
+      ? { expectedVaultObjectId: raw.expectedVaultObjectId }
+      : {}),
     authorizationServerUrl,
     serverUrl,
     oauthResourceUrl:
@@ -146,6 +153,7 @@ export function __resetPrivateAuthorizationServerMaterialCacheForTests(): void {
 }
 
 export type HostedOAuthRefreshOptions = {
+  connectionId?: string;
   accessScope?: "project_member" | "chat_v2";
   shareToken?: string;
   /**
@@ -167,6 +175,22 @@ export type HostedOAuthRefreshOptions = {
    */
   declareLocalRuntime?: boolean;
 };
+
+/**
+ * A refresh the backend REFUSED for policy or origin reasons (not one that
+ * merely failed). Callers that swallow refresh failures to try the server
+ * bare must let these through: connecting bare would lead to an OAuth flow
+ * the same refusal answers again, and the details are what the client shows.
+ */
+export function isCredentialRefusalError(error: unknown): boolean {
+  if (!(error instanceof WebRouteError)) return false;
+  const details = error.details as
+    | { exportDenied?: unknown; secretOriginMismatch?: unknown }
+    | undefined;
+  return (
+    details?.exportDenied === true || details?.secretOriginMismatch === true
+  );
+}
 
 /**
  * POST `/web/oauth/force-refresh` against Convex with the user's WorkOS
@@ -196,6 +220,7 @@ export async function forceRefreshHostedOAuthAccessToken(
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/oauth/force-refresh`, {
+      signal: withLocalCheckSignal(),
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -204,6 +229,9 @@ export async function forceRefreshHostedOAuthAccessToken(
       body: JSON.stringify({
         projectId,
         serverId,
+        ...(options?.connectionId
+          ? { connectionId: options.connectionId }
+          : {}),
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -246,6 +274,35 @@ export async function forceRefreshHostedOAuthAccessToken(
         parseRefreshMaterial(body?.refresh),
         { serverId, serverName: options?.serverName ?? null }
       );
+    }
+    // The backend's 403 for a credential it will not release to this caller:
+    // the organization's export policy, or a server that moved away from the
+    // origin its tokens were minted for. Carried with the same details the
+    // reveal routes use, so the client names the policy (or opens the moved
+    // server) instead of offering a reconnect that cannot help.
+    if (body?.exportDenied === true || body?.secretOriginMismatch === true) {
+      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, message, {
+        ...(body.exportDenied === true
+          ? {
+              exportDenied: true,
+              policy:
+                typeof body.policy === "string"
+                  ? body.policy
+                  : "credentialExportPolicy",
+            }
+          : {
+              secretOriginMismatch: true,
+              boundOrigin:
+                typeof body.boundOrigin === "string" ? body.boundOrigin : null,
+              targetOrigin:
+                typeof body.targetOrigin === "string"
+                  ? body.targetOrigin
+                  : null,
+            }),
+        credentialRefusal: code,
+        serverId,
+        serverName: options?.serverName ?? null,
+      });
     }
     const isReconnectRequired = code === "refresh_token_invalid";
     // The backend's 503: the credential is fine, the authorization server
@@ -304,8 +361,10 @@ async function importRefreshedTokens(
   projectId: string,
   serverId: string,
   material: PrivateAuthorizationServerRefreshMaterial,
-  tokens: OAuthTokens
-): Promise<void> {
+  tokens: OAuthTokens,
+  connectionId?: string,
+): Promise<string | undefined> {
+  connectionId = material.connectionId ?? connectionId;
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) return;
 
@@ -314,7 +373,7 @@ async function importRefreshedTokens(
     // Bounded: a Convex that accepts the connection but never answers would
     // otherwise hang the connect that already holds a working token. A
     // timeout lands in the caller's warning path, which is the right outcome.
-    signal: AbortSignal.timeout(15_000),
+    signal: withLocalCheckSignal(AbortSignal.timeout(15_000)),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${bearerToken}`,
@@ -322,6 +381,12 @@ async function importRefreshedTokens(
     body: JSON.stringify({
       projectId,
       serverId,
+      ...(connectionId
+        ? { connectionIntent: { kind: "replace", credentialId: connectionId } }
+        : {}),
+      ...(material.expectedVaultObjectId
+        ? { expectedVaultObjectId: material.expectedVaultObjectId }
+        : {}),
       serverUrl: material.serverUrl,
       ...(material.oauthResourceUrl
         ? { oauthResourceUrl: material.oauthResourceUrl }
@@ -341,6 +406,10 @@ async function importRefreshedTokens(
   if (!response.ok) {
     throw new Error(`import-tokens responded ${response.status}`);
   }
+  const body = await response.json().catch(() => null);
+  return typeof body?.vaultObjectId === "string"
+    ? body.vaultObjectId
+    : undefined;
 }
 
 /**
@@ -359,7 +428,11 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   serverId: string,
   options?: HostedOAuthRefreshOptions
 ): Promise<string> {
-  const cacheKey = `${subjectFingerprint(bearerToken)}:${projectId}:${serverId}`;
+  const cacheKey = `${subjectFingerprint(
+    bearerToken,
+  )}:${projectId}:${serverId}${
+    options?.connectionId ? `#${options.connectionId}` : ""
+  }`;
   let material: PrivateAuthorizationServerRefreshMaterial | null = null;
   // Material read back from the cache is a GUESS about a credential this
   // process does not own — see the failure handling below.
@@ -485,14 +558,25 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   });
 
   try {
-    await importRefreshedTokens(
+    const generation = await importRefreshedTokens(
       bearerToken,
       projectId,
       serverId,
       material,
-      tokensToStore
+      tokensToStore,
+      options?.connectionId,
     );
+    if (generation)
+      privateAuthorizationServerMaterialCache.set(cacheKey, {
+        ...material,
+        expectedVaultObjectId: generation,
+        refreshToken: tokensToStore.refresh_token ?? material.refreshToken,
+      });
   } catch (importError) {
+    if (material.expectedVaultObjectId || options?.connectionId) {
+      privateAuthorizationServerMaterialCache.delete(cacheKey);
+      throw importError;
+    }
     // THIS connect succeeds — the token in hand is good. But if the
     // authorization server rotated the refresh token, the stored one is now
     // dead and the next connect will see invalid_grant, clear, and prompt a
@@ -591,6 +675,7 @@ function translateLocalRefreshFailure(
 }
 
 export type HostedOAuthUnauthorizedHandlerArgs = {
+  connectionId?: string;
   bearerToken: string;
   projectId: string;
   serverId: string;
@@ -631,6 +716,7 @@ export function buildHostedOAuthUnauthorizedHandler(
           args.projectId,
           args.serverId,
           {
+            connectionId: args.connectionId,
             accessScope: args.accessScope,
             shareToken: args.shareToken,
             scenarioId: args.scenarioId,
