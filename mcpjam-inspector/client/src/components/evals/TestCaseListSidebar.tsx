@@ -26,7 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
-import { getEffectiveSuiteServers } from "./helpers";
+import { getEffectiveSuiteServers, suiteHasRunnableServers } from "./helpers";
 import { ImportClaimBadge } from "./import-claim-badge";
 import { isModelFree } from "@/shared/steps";
 import {
@@ -125,14 +125,20 @@ export function TestCaseListSidebar({
   // Effective list = legacy `environment.servers` merged with any host
   // attachments' `resolvedServerNames`. Without the merge, sidebar Run
   // buttons stay disabled on attachment-only suites.
-  // Environment suites route single-case runs to "Run all", so this control
-  // never spends for them — and an estimate beside a non-running control lies.
+  // An environment suite's Run executes its environments, whose servers
+  // resolve server-side (the browser's connections do not gate it), and the
+  // per-model estimate does not describe that run, so none is shown.
   const isEnvironmentSuite = (suite?.environmentIds?.length ?? 0) > 0;
   const suiteServers = suite ? getEffectiveSuiteServers(suite) : [];
-  const hasConfiguredSuiteServers = suiteServers.length > 0;
-  const missingServers = suiteServers.filter(
-    (serverName) => !connectedServerNames?.has(serverName),
-  );
+  const hasConfiguredSuiteServers =
+    suite && isEnvironmentSuite
+      ? suiteHasRunnableServers(suite)
+      : suiteServers.length > 0;
+  const missingServers = isEnvironmentSuite
+    ? []
+    : suiteServers.filter(
+        (serverName) => !connectedServerNames?.has(serverName),
+      );
   const selectedCaseIsProbe = selectedTestCase
     ? isModelFree(selectedTestCase.steps)
     : false;
@@ -244,9 +250,9 @@ export function TestCaseListSidebar({
             </Tooltip>
           ) : null}
           {!hideRunAction ? (
-            // Suppressed wherever the Run control won't actually run: an
-            // environment suite (quick-run routes to Run all), a case with no
-            // models, a render check, or no selection at all.
+            // Suppressed wherever the estimate would not describe the run: an
+            // environment suite (it runs its environments, not these models),
+            // a case with no models, a render check, or no selection at all.
             <QuickCaseRunCostEstimateHint
               suiteId={suiteId}
               caseId={selectedTestCase?._id ?? null}

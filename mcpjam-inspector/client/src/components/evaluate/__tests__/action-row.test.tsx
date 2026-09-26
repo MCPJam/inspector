@@ -15,7 +15,7 @@ const mount = (readOnly = false, isActive = false) => {
   const onUpdate = vi.fn();
   render(<ActionRow action={{ step, ordinal: 1, checks: [] } as never} total={1} status={undefined}
     isActive={isActive} readOnly={readOnly} availableTools={[]} suiteServers={["srv"]}
-    promptAriaLabel="Prompt" onUpdate={onUpdate} onMove={vi.fn()} onRemove={vi.fn()} defaultOpen>{null}</ActionRow>);
+    promptAriaLabel="Prompt" onUpdate={onUpdate} onMove={vi.fn()} onRemove={vi.fn()} canRemove defaultOpen>{null}</ActionRow>);
   return onUpdate;
 };
 
