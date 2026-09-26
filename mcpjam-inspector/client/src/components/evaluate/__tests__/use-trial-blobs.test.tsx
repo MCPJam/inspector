@@ -1,10 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   clearTrialBlobCache,
   useTrialBlobs,
 } from "../case-scorecard/use-trial-blobs";
 import type { EvalIteration } from "@/components/evals/types";
+import {
+  freshestArtifactUrl,
+  requestArtifactUrlRefresh,
+  resetArtifactUrlsForTests,
+} from "@/lib/artifact-urls";
 
 const action = vi.fn();
 vi.mock("convex/react", () => ({
@@ -29,7 +34,19 @@ beforeEach(() => {
   action.mockReset();
   action.mockImplementation(async ({ iterationId }) => ({ id: iterationId }));
   clearTrialBlobCache();
+  resetArtifactUrlsForTests();
 });
+
+/** A link shaped like the backend's; the signature is opaque to the client. */
+function signedLink(storageId: string, expiresAt: number) {
+  const body = btoa(
+    JSON.stringify({ v: 1, s: storageId, k: "html", e: expiresAt }),
+  )
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+}
 
 describe("useTrialBlobs", () => {
   it("reads every eligible trial and reports each result", async () => {
@@ -127,6 +144,47 @@ describe("useTrialBlobs", () => {
     expect(action).not.toHaveBeenCalled();
     expect(result.current.reads.get("a")).toMatchObject({
       state: "ok",
+      blob: { seeded: true },
+    });
+  });
+
+  it("re-reads its trials for fresh links once a link has expired", async () => {
+    const stale = signedLink("kg-widget", 1_800_000_000);
+    const fresh = signedLink("kg-widget", 1_800_003_600);
+    action.mockImplementation(async ({ iterationId }) => ({
+      id: iterationId,
+      widgetHtmlUrl: stale,
+    }));
+    const { result } = renderHook(() =>
+      useTrialBlobs({
+        iterations: [iteration("a", 1), iteration("b", 2)],
+        seed: { iterationId: "b", blob: { seeded: true } as never },
+        enabled: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(action).toHaveBeenCalledTimes(1);
+
+    // Somewhere on the page a link answered 401: every loader re-reads.
+    action.mockImplementation(async ({ iterationId }) => ({
+      id: iterationId,
+      widgetHtmlUrl: fresh,
+    }));
+    act(() => {
+      requestArtifactUrlRefresh();
+    });
+
+    await waitFor(() =>
+      expect(result.current.reads.get("a")).toMatchObject({
+        state: "ok",
+        blob: { widgetHtmlUrl: fresh },
+      }),
+    );
+    expect(freshestArtifactUrl(stale)).toBe(fresh);
+    // The seeded trial is the page's to renew, not this hook's.
+    expect(action).toHaveBeenCalledTimes(2);
+    expect(action).toHaveBeenLastCalledWith({ iterationId: "a" });
+    expect(result.current.reads.get("b")).toMatchObject({
       blob: { seeded: true },
     });
   });

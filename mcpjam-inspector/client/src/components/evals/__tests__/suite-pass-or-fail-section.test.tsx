@@ -81,17 +81,21 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("says 'No evaluator' for an unconfigured response stage", () => {
+  it("leads an unconfigured response stage with its runner check", () => {
     const { container } = renderSection();
-    // The stage lists its standard assertions as off rows, none of them on.
+    // The runner check first, then the standard assertions as off rows, none
+    // of them on.
     const rows = Array.from(
       container.querySelectorAll(
         '[data-stage-group="response"] [data-scorer-row]',
       ),
     );
-    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]?.getAttribute("data-scorer-row")).toBe("observed");
+    expect(rows[0]?.textContent).toContain("Result returned to the model");
+    const rest = rows.slice(1);
+    expect(rest.length).toBeGreaterThan(0);
     expect(
-      rows.every(
+      rest.every(
         (row) =>
           row.getAttribute("data-scorer-row") === "preset" &&
           row.getAttribute("data-scorer-enabled") === "false",
@@ -103,7 +107,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Required");
+      expect(copy, stage).toContain("Built-in");
       expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
@@ -115,7 +119,7 @@ describe("SuitePassOrFailSection", () => {
     const advisory = renderSection();
     fireEvent.click(
       within(advisory.container).getByRole("button", {
-        name: "Goal completion judge",
+        name: "Edit evaluators",
       }),
     );
     expect(
@@ -135,7 +139,7 @@ describe("SuitePassOrFailSection", () => {
     ) as HTMLElement;
     // The row's control reads Required; it sits on the row itself.
     fireEvent.click(
-      within(group).getByRole("button", { name: "Goal completion judge" }),
+      within(gating.container).getByRole("button", { name: "Edit evaluators" }),
     );
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
