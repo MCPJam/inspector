@@ -31,6 +31,10 @@ import {
   MIN_SWARM_ITERATIONS,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
+import {
+  describeReusedEnvironmentMove,
+  type EnvironmentMoveRow,
+} from "@/components/swarms/reused-environment-move";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { type JourneyCriterion } from "@/shared/journey-rubric";
 import { toast } from "@/lib/toast";
@@ -78,6 +82,11 @@ export type LaunchTarget = {
    * journey must be re-stamped before launching. Absent on created targets —
    * they are born with the selection. */
   environmentIds?: string[] | null;
+  /** Legacy origin of a REUSED journey — the clients it runs against and the
+   * server group overriding their servers. Inactive compatibility data on an
+   * env-based row, so they are read only when `environmentIds` is `null`. */
+  hostIds?: string[];
+  legacyServerAttachmentId?: string | null;
   /** Stored sessions-per-target of a REUSED journey (`null` = the row carries
    * no config). Launch does not rewrite a shared journey's config, so this —
    * not the intensity preset — is what the run will execute. Absent on created
@@ -701,6 +710,8 @@ function ReusedPersonaJourneyLoader({
         rubric?: JourneyCriterion[] | null;
         judgeConfig?: GoalJudgeConfig;
         environmentIds?: string[] | null;
+        hostIds?: string[] | null;
+        serverAttachmentId?: string | null;
         config?: { sessionsPerTarget?: number; maxTurns?: number } | null;
       }[]
     | undefined;
@@ -718,6 +729,8 @@ function ReusedPersonaJourneyLoader({
         personaName: persona.name,
         personaRole: persona.role,
         environmentIds: journey.environmentIds ?? null,
+        hostIds: journey.hostIds ?? [],
+        legacyServerAttachmentId: journey.serverAttachmentId ?? null,
         sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
         ...(persona.avatarShape !== undefined
           ? { avatarShape: persona.avatarShape }
@@ -827,6 +840,9 @@ export function NewSwarmConfirmStep({
   onIterationsChange,
   environmentCount,
   environmentLabels,
+  environmentIds,
+  environmentRowsById,
+  hostNameById,
   launching,
   errorMessage,
   onBack,
@@ -847,6 +863,16 @@ export function NewSwarmConfirmStep({
   environmentCount: number;
   /** Display names of the environments this launch will fan out across. */
   environmentLabels: string[];
+  /**
+   * The ids behind those labels, same order. The move notice compares ids —
+   * two environments can share a display name, which is half of why a reused
+   * goal ends up somewhere nobody chose.
+   */
+  environmentIds: string[];
+  /** Every environment this project can name, for the move notice. */
+  environmentRowsById: ReadonlyMap<string, EnvironmentMoveRow>;
+  /** Client names, so a legacy goal's origin can be named rather than counted. */
+  hostNameById: (hostId: string) => string;
   launching: boolean;
   errorMessage: string | null;
   onBack: () => void;
@@ -995,6 +1021,36 @@ export function NewSwarmConfirmStep({
       sessionsPerTarget: reusedIterationsFor(persona._id),
     }))
   );
+  /**
+   * Which reused goals this launch is about to re-stamp onto the selected
+   * environment, and what they were authored against.
+   *
+   * The override is not new and is not a bug — it is what lets a swarm run
+   * shared goals somewhere new without rewriting definitions other swarms also
+   * launch. What was missing is anyone being TOLD, which is how 15 goals
+   * written for one server's tools ran against a different server and looked
+   * like a successful wave.
+   */
+  const reusedMoves = reusedPersonas.flatMap((persona) => {
+    const targets = reusedResolved[persona._id]?.targets ?? null;
+    // Still loading. Launch is blocked on the same condition, so no move can
+    // slip past while this is empty.
+    if (targets === null) return [];
+    const move = describeReusedEnvironmentMove({
+      goals: targets.map((target) => ({
+        environmentIds: target.environmentIds,
+        hostIds: target.hostIds,
+        serverAttachmentId: target.legacyServerAttachmentId,
+      })),
+      selection: environmentIds,
+      rowsById: environmentRowsById,
+      hostName: hostNameById,
+    });
+    return move
+      ? [{ personaId: persona._id, personaName: persona.name, move }]
+      : [];
+  });
+
   const iterationsFor = (personaKey: string) =>
     iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
   // Empty draft goals stay visible for authoring but never launch, so they
@@ -1191,12 +1247,16 @@ export function NewSwarmConfirmStep({
             {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
             total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
-          {environmentLabels.length > 0 && proposed.length > 0 ? (
+          {/* Shown for ANY swarm that has a target, not just one with newly
+              authored goals. A reuse-only swarm used to name no environment at
+              all on this screen, while its launch quietly re-stamped every
+              reused goal onto the pre-filled selection. */}
+          {environmentLabels.length > 0 ? (
             <p
               className="text-sm leading-relaxed text-muted-foreground"
               data-testid="new-swarm-confirm-clients"
             >
-              New goals run on{" "}
+              {proposed.length > 0 ? "New goals run on" : "Runs on"}{" "}
               <span className="font-medium text-foreground">
                 {environmentLabels.join(" · ")}
               </span>
@@ -1204,6 +1264,45 @@ export function NewSwarmConfirmStep({
                 ? " — pick more environments on Describe to compare clients."
                 : "."}
             </p>
+          ) : null}
+          {reusedMoves.length > 0 ? (
+            <ul
+              className="space-y-1 text-sm leading-relaxed text-muted-foreground"
+              data-testid="new-swarm-confirm-env-moves"
+            >
+              {reusedMoves.map(({ personaId, personaName, move }) => (
+                <li key={personaId}>
+                  <span className="font-medium text-foreground">
+                    {personaName}
+                  </span>
+                  {": "}
+                  {move.goalCount}{" "}
+                  {move.goalCount === 1 ? "goal was" : "goals were"} authored
+                  against{" "}
+                  {move.fromLabels.length > 0 ? (
+                    <span className="font-medium text-foreground">
+                      {move.fromLabels.join(" · ")}
+                    </span>
+                  ) : (
+                    "another environment"
+                  )}
+                  {" and will run here instead."}
+                  {move.differentClient || move.differentServerGroup ? (
+                    <span className="font-medium text-foreground">
+                      {" "}
+                      {move.differentServerGroup
+                        ? move.differentClient
+                          ? "Different client and server group."
+                          : "Different server group."
+                        : "Different client."}
+                    </span>
+                  ) : null}
+                  {move.differentServerGroup
+                    ? " These goals were written for another server\u2019s tools."
+                    : ""}
+                </li>
+              ))}
+            </ul>
           ) : null}
         </div>
 

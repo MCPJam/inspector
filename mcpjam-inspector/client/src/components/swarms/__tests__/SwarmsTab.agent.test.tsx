@@ -20,6 +20,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
 // useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
 // without providers, so stub it to an empty catalog.
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));

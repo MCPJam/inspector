@@ -216,7 +216,7 @@ export function explainReadinessIssues(
       severity: "warning",
       message: `Readiness flagged ${readiness.issueCount} issue${
         readiness.issueCount === 1 ? "" : "s"
-      } — open the Trace tab for details.`,
+      }. Open the Trace tab for details.`,
     });
   }
 
@@ -237,7 +237,7 @@ export function buildReadinessDetailLines(
     );
   }
   if (readiness.status === "partial") {
-    lines.push("Partial analysis — tool inventory was unavailable");
+    lines.push("Partial analysis: tool inventory was unavailable");
   }
   if (typeof readiness.toolCallCount === "number") {
     lines.push(
@@ -397,7 +397,7 @@ export function SessionInsightBar({
   const primaryIssue =
     issues[0]?.message ??
     (readiness.status === "partial"
-      ? "Tool inventory was unavailable — coverage could not be fully verified."
+      ? "Tool inventory was unavailable, so coverage could not be fully verified."
       : meta.label);
   const detailLines = buildReadinessDetailLines(readiness);
   const hasExtraDetail = detailLines.length > 1;
