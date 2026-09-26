@@ -98,7 +98,14 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
-import { harnessUsesExternalAccount } from "./harness/registry.js";
+import {
+  getHarnessAdapter,
+  harnessUsesExternalAccount,
+} from "./harness/registry.js";
+import {
+  harnessModelPurposeForSourceType,
+  harnessModelRefusal,
+} from "./harness/harness-availability.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
@@ -528,6 +535,25 @@ export interface WebChatTurnRuntime {
    * fail for "your sandbox was reset, earlier files are gone".
    */
   ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
+  /**
+   * Ask MCPJam only: asks the backend to bill this turn's model calls to
+   * MCPJam rather than to the customer.
+   *
+   * It is a REQUEST, not a decision. Convex honours it only alongside
+   * `x-inspector-service-token` and only for the pinned agent model
+   * (`shared/mcpjam-agent-model.ts`), and refuses the turn outright if either
+   * fails rather than falling back to a customer debit. Set by the agent route
+   * for signed-in callers; absent everywhere else, which leaves every other
+   * surface on exactly the path it has always taken.
+   */
+  billingFeature?: string;
+  /**
+   * Per-turn step budget for the MCPJam-free engine. Set alongside
+   * `billingFeature` because the backend enforces the same ceiling on every
+   * attested step: a loop that runs past it does not get a longer answer, it
+   * gets `agent_billing_rejected` in the middle of one.
+   */
+  maxSteps?: number;
   /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
 }
@@ -1101,6 +1127,33 @@ export async function streamWebChatTurn(
     !!persist.harness && harnessUsesExternalAccount(persist.harness);
   const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
 
+  // A harness turn never takes the org-BYOK branch below: that branch runs the
+  // EMULATED engine on the org's key, which would report the harness's name
+  // over a turn the harness never touched. The route pre-flight refuses a
+  // non-MCPJam model on a brokered harness already; this refuses the same
+  // thing here, with the same sentence, for any caller that reaches this
+  // helper without one.
+  if (persist.harness && !usesMcpjamFreePath) {
+    const { refusal } = harnessModelRefusal({
+      adapter: getHarnessAdapter(persist.harness),
+      model: {
+        id: String(prepare.modelDefinition.id),
+        provider: prepare.modelDefinition.provider,
+        hosted: prepare.modelDefinition.hosted,
+      },
+      purpose: harnessModelPurposeForSourceType(persist.sourceType),
+    });
+    throw new WebRouteError(
+      503,
+      ErrorCode.INTERNAL_ERROR,
+      `This host runs the ${persist.harness} harness, which isn't available: ` +
+        `${
+          refusal?.reason ??
+          "the harness only runs MCPJam-provided models — pick one on this host to run the real runtime"
+        }.`,
+    );
+  }
+
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
   // callers preserve that by passing a closure here.
@@ -1392,6 +1445,9 @@ export async function streamWebChatTurn(
       failureReporter,
       providerKey: orgRuntime.providerKey,
       modelId,
+      ...(typeof prepare.modelDefinition.nativeModelId === "string"
+        ? { nativeModelId: prepare.modelDefinition.nativeModelId }
+        : {}),
       chatSessionId: hostedChatSessionId,
       sourceType: persist.sourceType,
       messages: scrubbedMessages,
@@ -1477,6 +1533,13 @@ export async function streamWebChatTurn(
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     failureReporter,
+    // Ask MCPJam's platform-billing claim. Rides `extraBodyFields`, which the
+    // step loop already merges into every per-step Convex body — the same
+    // channel org BYOK uses for its providerKey.
+    ...(runtime.billingFeature
+      ? { extraBodyFields: { billingFeature: runtime.billingFeature } }
+      : {}),
+    ...(runtime.maxSteps !== undefined ? { maxSteps: runtime.maxSteps } : {}),
     modelId: mcpjamModelId,
     provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,

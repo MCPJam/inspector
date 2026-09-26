@@ -396,6 +396,13 @@ export interface ModelDefinition {
    */
   orgProvider?: { providerKey: string; id?: string };
   /**
+   * The id the provider API is called with, when it is chosen explicitly
+   * rather than being the row id: the deployment name of an org Azure OpenAI
+   * row. Copied to the saved selection's `nativeModelId` by the selection
+   * builder (`model-selection.ts`), and sent with the request.
+   */
+  nativeModelId?: string;
+  /**
    * Whether MCPJam serves this hosted model to signed-out guests. Sourced from
    * the catalog DTO; absent → treated as guest-gated (locked for guests).
    */
@@ -507,6 +514,20 @@ export enum Model {
   GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
+
+/**
+ * When the static BYOK list below was last reviewed against the providers'
+ * own model lists (ISO date). Bump it with every review.
+ *
+ * The list is the reviewed FALLBACK for BYOK discovery: the provider adapters
+ * (`server/utils/byok/providers/`) read the live list where a provider has one,
+ * and a static id the live list stops reporting is recorded as a miss and only
+ * dropped after a second observation
+ * (`server/utils/byok/static-model-observations.ts`), never on one answer.
+ * Each OpenAI / Anthropic / Google row here has a reviewed canonical ↔ native
+ * row in its adapter's table (pinned by the adapter contract tests).
+ */
+export const SUPPORTED_MODELS_REVIEWED_AT = "2026-09-25";
 
 // SUPPORTED_MODELS now holds only BYOK entries (the user brings their own key):
 // `Model.*`-enum ids and "azure/…" ids. Hosted ("free") models are no longer

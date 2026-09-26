@@ -41,7 +41,10 @@ import type {
 } from "@/lib/client-styles";
 // Single source of truth for the empty host-config builder: the same
 // Node-safe function the server `--template` resolver and the CLI use.
-import { emptyHostConfigInputV2 as sdkEmptyHostConfigInputV2 } from "@mcpjam/sdk/host-config/templates";
+import {
+  DEFAULT_TEMPLATE_MODEL_ID,
+  emptyHostConfigInputV2 as sdkEmptyHostConfigInputV2,
+} from "@mcpjam/sdk/host-config/templates";
 // Shareable host-config primitives + the portable protocol-version resolver
 // live in @mcpjam/sdk/host-config/internal — single source of truth for the
 // backend canonicalizer and the inspector client. Re-exported below so the
@@ -347,8 +350,10 @@ export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 // but synthetic/swarm runs consume the pinned value directly and fail on
 // "" — seeding a real model keeps the default host runnable everywhere.
 // Matches the top of getDefaultModel's priority list and the dominant
-// template choice; keep the three in sync.
-export const DEFAULT_SEEDED_HOST_MODEL_ID = "anthropic/claude-haiku-4.5";
+// template choice. Re-exported from the SDK's default template so the seeded
+// host and the "mcpjam" template can't drift; getDefaultModel's list still
+// needs to lead with the same id.
+export const DEFAULT_SEEDED_HOST_MODEL_ID = DEFAULT_TEMPLATE_MODEL_ID;
 
 // Delegates to the Node-safe SDK builder so the empty-config defaults have a
 // single source of truth shared with the server `--template` resolver and the

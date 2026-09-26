@@ -106,6 +106,17 @@ export function buildAvailableModels(params: {
 }
 
 /**
+ * Org providers whose picker rows are the model ids the org configured
+ * (`modelIds`), because no static list covers them.
+ */
+const ORG_LISTED_MODEL_PROVIDERS: ReadonlySet<string> = new Set([
+  "moonshotai",
+  "z-ai",
+  "qwen",
+  "minimax",
+]);
+
+/**
  * OrgVisibleConfig shape as returned by the org model config query.
  */
 export type OrgVisibleConfig = {
@@ -178,14 +189,23 @@ export function buildAvailableModelsFromOrgConfig(
       orgProviderByKey.set(p.providerKey, p);
     }
   }
+  // Azure OpenAI runs on deployments the admin named. When the org lists its
+  // deployment names, those replace the static `azure/…` rows, which name no
+  // deployment (see `azureDeploymentModels`).
+  const azureConfig = orgProviderByKey.get("azure");
+  const azureDeployments =
+    azureConfig && availableProviderKeys.has("azure")
+      ? azureDeploymentModels(azureConfig, orgStamp(azureConfig))
+      : [];
   const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
+    if (m.provider === "azure" && azureDeployments.length > 0) return false;
     return availableProviderKeys.has(m.provider);
   }).map((m) => {
     const provider = orgProviderByKey.get(m.provider);
     return provider ? { ...m, orgProvider: orgStamp(provider) } : m;
   });
-  const models: ModelDefinition[] = [...orgKeyModels];
+  const models: ModelDefinition[] = [...orgKeyModels, ...azureDeployments];
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
@@ -243,6 +263,26 @@ export function buildAvailableModelsFromOrgConfig(
     }
   }
 
+  // OpenAI-compatible providers the backend reaches at a fixed base URL
+  // (Moonshot, Z.ai, Qwen, MiniMax): no static list covers them, so the org
+  // lists the model ids to offer, in the provider's own spelling.
+  for (const p of orgConfig.providers) {
+    if (!ORG_LISTED_MODEL_PROVIDERS.has(p.providerKey)) continue;
+    if (!p.enabled || !p.hasSecret) continue;
+    const seen = new Set<string>();
+    for (const raw of p.modelIds ?? []) {
+      const modelId = raw.trim();
+      if (!modelId || seen.has(modelId)) continue;
+      seen.add(modelId);
+      models.push({
+        id: modelId,
+        name: modelId,
+        provider: p.providerKey,
+        orgProvider: orgStamp(p),
+      });
+    }
+  }
+
   // Custom providers (providerKey starts with "custom:")
   for (const p of orgConfig.providers) {
     if (!p.providerKey.startsWith("custom:")) continue;
@@ -266,6 +306,36 @@ export function buildAvailableModelsFromOrgConfig(
   }
 
   return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
+}
+
+/**
+ * Picker rows for an org Azure OpenAI provider's deployments (its `modelIds`).
+ *
+ * A deployment is named by the admin, so the name is the only id Azure
+ * accepts. The row id is `azure/<deployment>` (the selection's canonical id)
+ * and the deployment rides EXPLICITLY on `nativeModelId`, which the selection
+ * builder saves and the request sends. It is never recovered by stripping the
+ * `azure/` prefix.
+ */
+export function azureDeploymentModels(
+  provider: OrgModelProvider,
+  orgProvider?: ModelDefinition["orgProvider"]
+): ModelDefinition[] {
+  const seen = new Set<string>();
+  const rows: ModelDefinition[] = [];
+  for (const raw of provider.modelIds ?? []) {
+    const deployment = raw.trim();
+    if (!deployment || seen.has(deployment)) continue;
+    seen.add(deployment);
+    rows.push({
+      id: `azure/${deployment}`,
+      name: `${deployment} (Azure)`,
+      provider: "azure",
+      nativeModelId: deployment,
+      ...(orgProvider ? { orgProvider } : {}),
+    });
+  }
+  return rows;
 }
 
 /** Strip the redundant "(Free)" tier suffix for denser labels. */

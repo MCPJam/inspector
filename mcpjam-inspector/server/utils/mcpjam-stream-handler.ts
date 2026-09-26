@@ -78,6 +78,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -596,6 +597,15 @@ export interface MCPJamEngineErrorEvent {
 const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
 
 /**
+ * Backend code (convex `stream/routes.ts` `categorizeError`) for a 401/403
+ * whose upstream detail is the hosted gateway's provider-allowlist refusal:
+ * the model's provider is not enabled on MCPJam's gateway. Read by status it
+ * would become `provider/auth_error` and tell the user to fix their API key,
+ * which was never involved; retrying cannot help either.
+ */
+export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
+
+/**
  * Backend refusal code (convex `stream/routes.ts` `categorizeError`): the
  * provider failed and the request's model selection forbids the OpenRouter
  * fallback (`fallback.provider === "none"`, the eval/swarm/judge default). It
@@ -622,6 +632,19 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Ask MCPJam's refusals. Read by status alone these would be badly wrong in
+  // both directions: the 429s would become `provider/quota` (somebody else's
+  // rate limit) and the 403 `provider/auth_error` ("the provider rejected the
+  // key"), when what actually happened is MCPJam's own budget, MCPJam's own
+  // turn cap, and MCPJam's own attestation. The platform-budget slug already
+  // carries the right copy and a `user_config` origin, so none of them pages.
+  if (isAgentRefusalCode(code)) {
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  }
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
@@ -674,6 +697,13 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  if (isAgentRefusalCode(code)) {
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  }
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
@@ -1614,7 +1644,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : metadata ?? usage;
+      : (metadata ?? usage);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -1806,6 +1836,17 @@ export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex free-allowance model gate — the caller's plan, not our fault; see
   // `describeBackendStreamFailure` for the slug it maps to.
   FREE_TIER_MODEL_RESTRICTED_CODE,
+  // Ask MCPJam's own refusals (convex `stream/agentBilling.ts` +
+  // `generationRateLimit.ts`). "User-owned" here means only "not an outage" —
+  // the boundary this set governs is whether an unrecognized 200-with-a-code is
+  // captured as a FAULT. A spent platform budget, a per-user turn cap and a
+  // claim that did not hold are all a backend working exactly as designed, so
+  // none of them should page. `platform_generation_unavailable` is deliberately
+  // ABSENT: that one IS the guard failing closed, and it arrives as a 5xx we
+  // want counted as ours.
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
 ]);
 
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
@@ -1836,11 +1877,34 @@ const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
   "mcpjam_rate_limit",
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's gateway allowlist — our setting.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ]);
 
 /** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
 export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
   return MCPJAM_OWNED_FAILURE_CODES.has(code ?? "");
+}
+
+/**
+ * Ask MCPJam's three refusals: MCPJam's daily budget for the feature, the
+ * per-user turn cap, and a platform-billing claim that did not hold.
+ *
+ * Kept separate from {@link MCPJAM_OWNED_FAILURE_CODES} because these are not
+ * outages — the backend is working correctly and saying no. They share a slug
+ * with the platform-budget refusal, whose copy ("MCPJam's budget for this is
+ * used up, nothing was charged") is the accurate thing to tell a user on a
+ * surface they were told is free.
+ */
+const AGENT_REFUSAL_CODES = new Set<string>([
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+]);
+
+/** See {@link AGENT_REFUSAL_CODES}. */
+export function isAgentRefusalCode(code: string | undefined): boolean {
+  return AGENT_REFUSAL_CODES.has(code ?? "");
 }
 
 /**
@@ -1901,6 +1965,37 @@ function attachedNormalized(error: unknown): NormalizedError | undefined {
   if (!error || typeof error !== "object") return undefined;
   const candidate = (error as { normalized?: unknown }).normalized;
   return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/**
+ * The client-facing error chunk text for a mid-stream `provider_not_allowlisted`
+ * failure. Every other mid-stream chunk reaches the client as its bare
+ * sentence, but the client can only choose the allowlist banner (no retry, no
+ * API-key advice) from the code, so this one keeps the structured shape the
+ * non-OK path already delivers.
+ */
+function providerNotAllowlistedErrorText(
+  parsed: ReturnType<typeof parseStreamErrorChunkText>,
+): string {
+  return JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message: parsed.message,
+    ...(parsed.statusCode !== undefined
+      ? { statusCode: parsed.statusCode }
+      : {}),
+    isRetryable: false,
+    ...(parsed.details ? { details: parsed.details } : {}),
+  });
+}
+
+/**
+ * Error chunk text a thrower prepared for the client, when the bare message
+ * would lose what the client needs to render the failure.
+ */
+function attachedClientErrorText(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const text = (error as { clientErrorText?: unknown }).clientErrorText;
+  return typeof text === "string" ? text : undefined;
 }
 
 /** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
@@ -2096,9 +2191,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-              parseErr !== null &&
-              "message" in parseErr &&
-              typeof (parseErr as { message?: unknown }).message === "string"
+                parseErr !== null &&
+                "message" in parseErr &&
+                typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2378,6 +2473,9 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
+              ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
+              : {}),
           });
         }
 
@@ -2453,7 +2551,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : part.output ?? rawResult;
+              : (part.output ?? rawResult);
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2466,7 +2564,8 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -3387,6 +3486,38 @@ async function processOneStep(
   if (scenarioId && scenarioServiceToken) {
     convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
   }
+  // A platform-billing claim is only ever honoured with this token, and
+  // `guestIpForwardHeaders` only attaches it ALONGSIDE an IP hash — so a turn
+  // with no resolvable client IP would send the claim bare and be refused at
+  // every step. Attach it unconditionally instead.
+  //
+  // Fail loudly rather than sending a claim that cannot be honoured: without
+  // the token the backend answers 403 for every step, which reads to the user
+  // as the agent being broken with no clue why. A deployment that asks for
+  // platform billing and has no service token is misconfigured, and that is
+  // the sentence worth putting in the log.
+  const billingFeature = extraBodyFields?.billingFeature;
+  if (billingFeature !== undefined) {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+    if (!serviceToken) {
+      throw new Error(
+        "INSPECTOR_SERVICE_TOKEN is not set, so this server cannot attest an " +
+          "MCPJam-paid agent turn. Set it, or run the agent without " +
+          "billingFeature.",
+      );
+    }
+    convexHeaders["x-inspector-service-token"] = serviceToken;
+  }
+  // A claimed turn goes to the PLATFORM route and NEVER falls back to the
+  // ordinary one. Falling back is the whole failure being fixed: the ordinary
+  // route bills the customer, and on a backend that ignores `billingFeature`
+  // it does so while answering a perfectly normal 200.
+  //
+  // This also overrides a BYOK `endpointPath` on purpose. `/stream/org` runs on
+  // the organization's own provider key, which by definition is not MCPJam
+  // paying, so a claim there is incoherent rather than merely misrouted.
+  const dispatchPath =
+    billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -3394,7 +3525,7 @@ async function processOneStep(
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
   try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
+    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3447,6 +3578,76 @@ async function processOneStep(
       data: { usingCredits: true },
       transient: true,
     });
+  }
+  // The backend does not implement the platform route: a deployment older than
+  // it, or a rollback mid-session.
+  //
+  // This is the case the response header could never cover. A 404 or 405 means
+  // the request was REFUSED BY THE ROUTER — no admission ran, no provider was
+  // called, nothing was billed to anybody — so this is the one place the
+  // "stopped rather than charged" promise is actually true. Checked before the
+  // confirmation check below because an unimplemented route obviously carries
+  // no confirmation header, and the generic message would misdescribe it.
+  if (
+    billingFeature !== undefined &&
+    (res.status === 404 || res.status === 405)
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment does not support MCPJam-paid Ask MCPJam " +
+          "turns yet, so the request was refused before it reached a model " +
+          "and nothing was charged to your organization. This usually means " +
+          "the backend is still rolling out.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+  }
+  // A claimed turn must come back CONFIRMED platform-paid.
+  //
+  // This is now an ASSERTION, not the mechanism. The platform route is what
+  // guarantees no customer was charged, because a backend without it 404s above
+  // before any provider work. Reaching this branch means a backend that DOES
+  // serve the platform route answered without confirming — a bug or a partial
+  // deploy — and by then it has already admitted and billed the step. So the
+  // refusal stands, but the copy must NOT claim nothing was charged: unlike the
+  // 404 above, that is precisely what cannot be known from here.
+  //
+  // Swapping in a synthetic denial rather than hand-rolling the failure here
+  // keeps one failure path: the branch below already writes the spans, fires
+  // `onEngineError` and classifies the code, and `agent_billing_rejected` is
+  // already the code for "the claim did not hold" and already renders as "Ask
+  // MCPJam is temporarily unavailable." The body is cancelled unread — it is a
+  // real model stream, so draining it would only put noise in the log.
+  if (
+    billingFeature !== undefined &&
+    res.ok &&
+    res.headers?.get("x-mcpjam-platform-paid") !== billingFeature
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Already closed or never a real stream; nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment did not confirm that the turn was billed " +
+          "to MCPJam, so Ask MCPJam stopped. If your organization was " +
+          "charged for it, contact support — this should not happen and we " +
+          "want to know about it.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
   }
   const isJsonDenial =
     res.ok &&
@@ -4601,25 +4802,28 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(() => {
-        if (streamClosed || aborted) return;
-        const sinceLastWrite = Date.now() - lastWriteAt;
-        if (sinceLastWrite < resolvedHeartbeatMs) return;
-        try {
-          writeTraceEvent(safeWriter, {
-            type: "heartbeat",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-          });
-        } catch (error) {
-          // Should not happen — safeWriter swallows write errors —
-          // but a final guard here keeps a misbehaving writeTraceEvent
-          // from killing the loop.
-          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
+      heartbeatTimer = setInterval(
+        () => {
+          if (streamClosed || aborted) return;
+          const sinceLastWrite = Date.now() - lastWriteAt;
+          if (sinceLastWrite < resolvedHeartbeatMs) return;
+          try {
+            writeTraceEvent(safeWriter, {
+              type: "heartbeat",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+            });
+          } catch (error) {
+            // Should not happen — safeWriter swallows write errors —
+            // but a final guard here keeps a misbehaving writeTraceEvent
+            // from killing the loop.
+            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
+      );
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4678,7 +4882,10 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
-      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+      if (
+        options.durableCheckpoint &&
+        hasUnresolvedApprovalResponses(messageHistory)
+      ) {
         await options.durableCheckpoint({
           phase: "tools",
           messages: messageHistory,
@@ -4865,8 +5072,8 @@ export async function runChatEngineLoop(
           phase: shouldContinue
             ? "ready"
             : didEmitFinish
-            ? "complete"
-            : "model",
+              ? "complete"
+              : "model",
           messages: messageHistory,
           step: effectiveSteps(),
         });
@@ -5024,7 +5231,7 @@ export async function runChatEngineLoop(
           promptIndex: traceTurn.promptIndex,
           usage: traceTurn.turnUsage,
         });
-        emitError(safeWriter, errorText);
+        emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.
