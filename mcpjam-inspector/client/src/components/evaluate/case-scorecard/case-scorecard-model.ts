@@ -16,6 +16,12 @@ import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
  * question, its own steps, its own predicate list, and the suite's defaults)
  * where a suite has one, so every row carries its provenance.
  *
+ * A fifth kind of row has no author at all: the BUILT-IN runner check on each
+ * stage the runner measures (connection, discovery, call, response). It is not
+ * an evaluator — it decides nothing and cannot be edited — but it sits in the
+ * same list, so every stage shows at least one row and reads in the same
+ * EXPECTED / ACTUAL form as the rest.
+ *
  * THREE RULES KEEP IT HONEST.
  *
  *   1. Stage routing is `PREDICATE_STAGE`, the same table the analyzer's own
@@ -37,6 +43,7 @@ import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
  */
 
 import {
+  isPositiveToolCallPredicateKind,
   PREDICATE_STAGE,
   STANDARD_CHECKS,
   STANDARD_CHECK_NAME_BY_KIND,
@@ -50,8 +57,10 @@ import type { PredicateScope } from "@mcpjam/sdk/predicates";
 import {
   hostedCriterionId,
   HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
+import { ARGS_OPTIONS } from "@/components/evals/validators-section";
 import {
   MATCH_OPTIONS_DEFAULTS,
   resolveCasePredicates,
@@ -63,6 +72,7 @@ import {
 import {
   actionRows,
   isAssertStep,
+  isToolCallStep,
   isWidgetAssertion,
   isModelFree,
   stepTurnIndices,
@@ -88,6 +98,13 @@ import {
   judgeMode,
   type JudgeMode,
 } from "@/components/evals/suite-grading-model";
+import {
+  isRunnerCheckStage,
+  runnerCheckOf,
+  RUNNER_CHECK_EXPECTED,
+  RUNNER_CHECK_STAGES,
+  type RunnerCheckStage,
+} from "@/components/evals/runner-checks";
 import type {
   EvalJudgeConfig,
   EvalJudgeConfigOverride,
@@ -163,11 +180,32 @@ export function spineLibraryKinds(): PredicateKind[] {
 }
 
 export type ScorecardProvenance =
-  "route" | "step" | "case" | "suite" | "snapshot" | "judge";
+  | "route"
+  | "step"
+  | "case"
+  | "suite"
+  | "snapshot"
+  | "judge"
+  /**
+   * One rubric-check answer. Never authored on a case: these rows come from
+   * the trial's own stored score rows (`rubricCheckTrialRows`), so a trial
+   * shows exactly the questions it was asked.
+   */
+  | "rubricCheck"
+  | "builtin";
 
 /** How a row finds its result on a trial. See `joinTrialResults`. */
 export type ScorecardJoin =
   | { kind: "toolMatch"; scorerId: string }
+  /**
+   * The arguments half of the tool-call matcher. Its score row, or nothing:
+   * unlike the route there is no chain fallback, because the `call` stage
+   * also fails for reasons that are not arguments. A trial that never
+   * declared the scorer — one graded before the split — shows no such row.
+   */
+  | { kind: "toolArguments"; scorerId: string }
+  /** A runner check: the verified chain's own row for this stage. */
+  | { kind: "stage"; stage: RunnerCheckStage }
   | {
       kind: "step";
       stepId: string;
@@ -175,7 +213,11 @@ export type ScorecardJoin =
       scope?: PredicateScope;
     }
   | { kind: "predicate"; criterionId: string }
-  | { kind: "judge"; slot: "goalCompletion"; scorerId: string };
+  | {
+      kind: "judge";
+      slot: "goalCompletion" | "rubricChecks";
+      scorerId: string;
+    };
 
 /** What the route question currently answers. */
 export type RouteState =
@@ -259,7 +301,7 @@ export type ScorecardRow = {
   kindLabel: string;
   role: ScorerUiRole;
   /** Why this surface cannot author the role. `"none"` means it can. */
-  roleLock: "none" | "route" | "inherited" | "widget" | "judge";
+  roleLock: "none" | "route" | "inherited" | "widget" | "judge" | "builtin";
   /** Whether the case page may edit or delete this row's own fields. */
   editable: boolean;
   /**
@@ -282,6 +324,13 @@ export type ScorecardRow = {
   widgetAssertion?: WidgetAssertion;
   route?: RouteState;
   judge?: JudgeFacts;
+  /** Rubric-check rows only: the question's key, and whether it is a criterion. */
+  rubricCheck?: { key: string; criterion: boolean };
+  /**
+   * The EXPECTED line, for a row whose configuration is neither a predicate
+   * nor the route question it belongs to. See `expectationOf`.
+   */
+  expectation?: string;
   tooltip: string;
   join?: ScorecardJoin;
 };
@@ -750,6 +799,104 @@ function stepRows(
 }
 
 /**
+ * The built-in runner check for one stage.
+ *
+ * `advisory` only so no tally counts it as a gate: it decides nothing, and it
+ * renders a Built-in badge rather than this role.
+ */
+export function runnerCheckRow(stage: RunnerCheckStage): ScorecardRow {
+  const check = runnerCheckOf(stage);
+  return {
+    key: `builtin:${stage}`,
+    stage,
+    provenance: "builtin",
+    label: check.name,
+    kindLabel: "Runner check",
+    role: "advisory",
+    roleLock: "builtin",
+    editable: false,
+    tooltip:
+      "Built-in runner check. Reports what the stage analysis decided; it is on for every iteration and never fails one by itself.",
+    join: { kind: "stage", stage },
+  };
+}
+
+/**
+ * The stages this case gives the runner something to measure, read off what it
+ * authored.
+ *
+ * Mirrors the analyzer's own applicability (`deriveStageResults`), from the
+ * configuration alone: connection and discovery on every case; the call when
+ * the case expects one (its route, a pinned call, a positive tool assertion),
+ * is negative, or gates a check on the call; the response when the call
+ * applies, a view is asserted, or a check on the response gates. A run can
+ * still turn a stage on that this cannot foresee — an observed tool error
+ * does — which is why the run page adds the rows its chain names on top
+ * (`withRunnerChecks`).
+ */
+function runnerCheckStages(
+  route: RouteState,
+  steps: TestStep[],
+  rows: readonly ScorecardRow[],
+): RunnerCheckStage[] {
+  const gatesAt = (stage: UserValueStage) =>
+    rows.some((row) => row.stage === stage && row.role === "required");
+  const expectsToolCall =
+    ((route.kind === "tools" || route.kind === "locked") &&
+      route.tools.length > 0) ||
+    steps.some(isToolCallStep) ||
+    rows.some((row) => isPositiveToolCallPredicateKind(row.predicate?.type));
+  const call = expectsToolCall || route.kind === "noTool" || gatesAt("call");
+  const response =
+    call ||
+    rows.some((row) => row.widgetAssertion !== undefined) ||
+    gatesAt("response");
+  return RUNNER_CHECK_STAGES.filter(
+    (stage) =>
+      stage === "connection" ||
+      stage === "discovery" ||
+      (stage === "call" && call) ||
+      (stage === "response" && response),
+  );
+}
+
+/**
+ * Add the runner check for each of `stages` that the groups do not carry yet,
+ * first in its stage, creating the stage's group in chain order when needed.
+ *
+ * Pure. The run page passes the stages its verified chain measured, so a
+ * stage the run measured always has a row to say what happened there —
+ * including one the configuration could not foresee. It leaves out the stages
+ * the chain calls not applicable: their heading already says so.
+ */
+export function withRunnerChecks(
+  groups: readonly ScorecardGroup[],
+  stages: readonly UserValueStage[],
+): ScorecardGroup[] {
+  const wanted = new Set(stages.filter(isRunnerCheckStage));
+  const out: ScorecardGroup[] = [];
+  for (const stage of USER_VALUE_STAGES) {
+    const group = groups.find((candidate) => candidate.stage === stage);
+    const needs =
+      isRunnerCheckStage(stage) &&
+      wanted.has(stage) &&
+      !group?.rows.some((row) => row.provenance === "builtin");
+    if (!group && !needs) continue;
+    const rows = group?.rows ?? [];
+    out.push({
+      stage,
+      label: group?.label ?? USER_VALUE_STAGE_LABELS[stage],
+      question: group?.question ?? USER_VALUE_STAGE_QUESTIONS[stage],
+      rows:
+        needs && isRunnerCheckStage(stage)
+          ? [runnerCheckRow(stage), ...rows]
+          : rows,
+    });
+  }
+  return out;
+}
+
+/**
  * Build one case's scorecard.
  *
  * Pure and cheap: it reads a draft (or a frozen snapshot) and returns a
@@ -788,6 +935,39 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
         }
       : {}),
   };
+
+  // The route's arguments, graded at Tool call by their own scorer since the
+  // split: the route row above says WHICH tools, this one says HOW. Edited
+  // through the route (its tools' argument fields and the matching mode), so
+  // it is locked here. Only where arguments are compared at all.
+  const argumentsRow: ScorecardRow | null =
+    route.kind === "tools" &&
+    route.tools.length > 0 &&
+    route.resolvedMatch.argumentMatching !== "ignore"
+      ? {
+          key: "route:arguments",
+          stage: "call",
+          provenance: "route",
+          label: "Arguments match",
+          kindLabel: "Arguments",
+          role: "required",
+          roleLock: "route",
+          editable: false,
+          expectation: `Call ${route.tools
+            .map((tool) => tool.toolName)
+            .filter(Boolean)
+            .join(", ")} with the expected arguments (${(
+            ARGS_OPTIONS.find(
+              (option) => option.value === route.resolvedMatch.argumentMatching,
+            )?.label ?? String(route.resolvedMatch.argumentMatching)
+          ).toLowerCase()} matching)`,
+          tooltip: rowTooltip("Tool-call argument matching", "required", false),
+          join: {
+            kind: "toolArguments",
+            scorerId: HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+          },
+        }
+      : null;
 
   const judgeRole = roleOfJudgeSlot("goalCompletion", input.suiteJudgeConfig);
   const judgeRow: ScorecardRow = {
@@ -855,6 +1035,11 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
 
   const steps = frozen ? input.steps : input.steps;
   const authoredStepRows = stepRows(steps, input.numbering ?? "flat");
+  const builtinRows = runnerCheckStages(route, steps, [
+    ...authoredStepRows,
+    ...caseRows,
+    ...suiteRows,
+  ]).map(runnerCheckRow);
 
   const byStage = new Map<UserValueStage, ScorecardRow[]>();
   const push = (row: ScorecardRow) => {
@@ -862,7 +1047,10 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     list.push(row);
     byStage.set(row.stage, list);
   };
+  // First in each stage, ahead of anything authored there.
+  builtinRows.forEach(push);
   push(routeRow);
+  if (argumentsRow) push(argumentsRow);
   authoredStepRows.forEach(push);
   caseRows.forEach(push);
   suiteRows.forEach(push);
@@ -994,9 +1182,16 @@ export function removeCaseScorer(
  * the authoring pane uses for the same fact.
  */
 export function expectationOf(row: ScorecardRow): string {
+  if (row.join?.kind === "stage") return RUNNER_CHECK_EXPECTED[row.join.stage];
+  if (row.expectation) return row.expectation;
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
   if (row.route) return routeLabel(row.route);
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
+  if (row.provenance === "rubricCheck") {
+    return row.rubricCheck?.criterion
+      ? `Yes: ${row.label}`
+      : `On or above the pass line: ${row.label}`;
+  }
   if (row.provenance === "judge") {
     const goal = row.judge?.goal.trim();
     if (goal) return goal;

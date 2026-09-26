@@ -32,6 +32,7 @@
  * cannot be broken by a caller that forgets to ask.
  */
 
+import { withServerCheckSignal } from "./server-check-scope.js";
 import { isBlockedEgressHost } from "./hosted-egress-guard.js";
 import { HOSTED_MODE } from "../config.js";
 import { createStreamingPinnedFetch } from "./pinned-fetch.js";
@@ -67,12 +68,12 @@ const MCP_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * wins where one is set deliberately (the conformance runners set their own).
  */
 export function hostedMcpBaseFetch(): typeof fetch {
-  return createStreamingPinnedFetch({
+  return withServerCheckSignal(createStreamingPinnedFetch({
     targetLabel: "MCP server",
     chainTimeoutMs: MCP_CHAIN_TIMEOUT_MS,
     bodyIdleTimeoutMs: MCP_BODY_IDLE_TIMEOUT_MS,
     maxResponseBytes: MCP_MAX_RESPONSE_BYTES,
-  });
+  }));
 }
 
 /**

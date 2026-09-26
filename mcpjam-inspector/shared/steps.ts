@@ -513,6 +513,23 @@ export function resolvePromptTurns(input: {
   ];
 }
 
+/**
+ * The turns a runner executes for one case: its `steps` when it has any,
+ * otherwise the legacy `promptTurns` / `advancedConfig` / top-level fields.
+ *
+ * Both grading passes read this one resolver. A steps-authored case keeps its
+ * tool-call expectations in its steps and leaves the top-level
+ * `expectedToolCalls` undefined, so a pass that reads the raw fields instead
+ * sees a different case from the one the matcher graded.
+ */
+export function resolveCasePromptTurns(
+  input: Parameters<typeof resolvePromptTurns>[0] & { steps?: unknown }
+): PromptTurn[] {
+  return Array.isArray(input.steps) && input.steps.length > 0
+    ? stepsToPromptTurns(normalizeSteps(input.steps))
+    : resolvePromptTurns(input);
+}
+
 export function deriveLegacyPromptFields(promptTurns: PromptTurn[]): {
   query: string;
   expectedToolCalls: PromptTurnToolCall[];

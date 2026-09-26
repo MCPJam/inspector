@@ -1,3 +1,4 @@
+import { serverCheckQueue, loadServerOrder } from "@/lib/server-check-queue";
 import { useEffect, useMemo, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
@@ -37,6 +38,13 @@ const attemptedByProject = new Map<string, Set<string>>();
  */
 const lastSeenScopeByProject = new Map<string, string>();
 
+/**
+ * Scope transitions waiting for the connected-server recycle pass. The first
+ * observed scope is startup hydration, not a client switch, so it is recorded
+ * above without being added here.
+ */
+const pendingRecycleScopeByProject = new Map<string, string>();
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -66,7 +74,7 @@ function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
 function markAttempted(
   projectId: string,
   hostScopeKey: string,
-  serverNamesKey: string
+  serverNamesKey: string,
 ) {
   let set = attemptedByProject.get(projectId);
   if (!set) {
@@ -79,7 +87,7 @@ function markAttempted(
 function isAttempted(
   projectId: string,
   hostScopeKey: string,
-  serverNamesKey: string
+  serverNamesKey: string,
 ): boolean {
   return (
     attemptedByProject
@@ -97,9 +105,11 @@ export function resetAutoConnectAttempts(projectId?: string): void {
   if (projectId === undefined) {
     attemptedByProject.clear();
     lastSeenScopeByProject.clear();
+    pendingRecycleScopeByProject.clear();
   } else {
     attemptedByProject.delete(projectId);
     lastSeenScopeByProject.delete(projectId);
+    pendingRecycleScopeByProject.delete(projectId);
   }
 }
 
@@ -144,6 +154,8 @@ export function useAutoConnectProjectServers({
   projectId,
   hostScopeKey,
   serverNames,
+  suspendAutoConnect = false,
+  catalogLoaded = true,
 }: {
   projectId: string | null;
   /**
@@ -156,6 +168,14 @@ export function useAutoConnectProjectServers({
   hostScopeKey: string | null;
   /** Every server in the project catalog, by runtime name. */
   serverNames: ReadonlyArray<string>;
+  /** True only after the project catalog query has returned, including an empty result. */
+  catalogLoaded?: boolean;
+  /**
+   * Ignore host transitions while a blocking flow, such as first-run
+   * onboarding, owns the screen. Those transitions come from hydration and
+   * must not interrupt the flow with reconnect work or toasts.
+   */
+  suspendAutoConnect?: boolean;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
@@ -164,14 +184,22 @@ export function useAutoConnectProjectServers({
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
+  useEffect(() => {
+    if (!projectId) return;
+    if (!suspendAutoConnect && hostScopeKey != null) serverCheckQueue.setScope(projectId, hostScopeKey);
+    const order = loadServerOrder(sharedAppState.activeProjectId) ?? serverNames;
+    serverCheckQueue.setOrder(projectId, [...order]);
+    if (catalogLoaded) serverCheckQueue.keepServers(projectId, [...serverNames]);
+    serverCheckQueue.setAutomaticEnabled(projectId, enabled);
+  }, [projectId, enabled, serverNames, sharedAppState.activeProjectId, hostScopeKey, suspendAutoConnect, catalogLoaded]);
   // Stable key for the catalog, so reordering never looks like a change.
   const catalogNamesKey = useMemo(
     () => serverNames.slice().sort().join("\0"),
-    [serverNames]
+    [serverNames],
   );
   const catalogNames = useMemo(
     () => (catalogNamesKey ? catalogNamesKey.split("\0") : []),
-    [catalogNamesKey]
+    [catalogNamesKey],
   );
 
   // Build the candidate name list. Skip servers that are already connected,
@@ -180,7 +208,12 @@ export function useAutoConnectProjectServers({
   // catalog" path; reconnecting the ALREADY-connected set on a client switch
   // is handled separately below.
   const candidateNamesKey = useMemo(() => {
-    if (!enabled || !projectId || catalogNames.length === 0) {
+    if (
+      !enabled ||
+      suspendAutoConnect ||
+      !projectId ||
+      catalogNames.length === 0
+    ) {
       return null;
     }
     const candidates = catalogNames.filter((name) => {
@@ -195,7 +228,13 @@ export function useAutoConnectProjectServers({
     // Stable key: sorted and joined with NUL so reordering doesn't trigger a
     // fresh batch.
     return candidates.sort().join("\0");
-  }, [enabled, projectId, catalogNames, sharedAppState.servers]);
+  }, [
+    enabled,
+    suspendAutoConnect,
+    projectId,
+    catalogNames,
+    sharedAppState.servers,
+  ]);
 
   // Detect a scope transition (user switched the active/lead client) and
   // clear the prior attempt log so revisiting a previously-tried host
@@ -208,11 +247,17 @@ export function useAutoConnectProjectServers({
   // that declare no required servers.
   useEffect(() => {
     if (!projectId || hostScopeKey == null) return;
-    if (lastSeenScopeByProject.get(projectId) !== scopeKey) {
-      attemptedByProject.delete(projectId);
-      lastSeenScopeByProject.set(projectId, scopeKey);
+    const previousScopeKey = lastSeenScopeByProject.get(projectId);
+    if (previousScopeKey === scopeKey) return;
+
+    attemptedByProject.delete(projectId);
+    lastSeenScopeByProject.set(projectId, scopeKey);
+    if (previousScopeKey === undefined || suspendAutoConnect) {
+      pendingRecycleScopeByProject.delete(projectId);
+      return;
     }
-  }, [projectId, scopeKey, hostScopeKey]);
+    pendingRecycleScopeByProject.set(projectId, scopeKey);
+  }, [projectId, scopeKey, hostScopeKey, suspendAutoConnect]);
 
   // Reconnect-on-client-switch: fires at most once per (project, scopeKey).
   // On switching the active/lead client, every currently-connected server must
@@ -226,6 +271,12 @@ export function useAutoConnectProjectServers({
   // several surfaces.
   useEffect(() => {
     if (!enabled || !projectId || hostScopeKey == null) return;
+    if (suspendAutoConnect) {
+      pendingRecycleScopeByProject.delete(projectId);
+      return;
+    }
+    if (pendingRecycleScopeByProject.get(projectId) !== scopeKey) return;
+    pendingRecycleScopeByProject.delete(projectId);
     if (isAttempted(projectId, scopeKey, "recycle")) return;
     markAttempted(projectId, scopeKey, "recycle");
     const connectedNow = Object.entries(sharedAppState.servers)
@@ -239,14 +290,15 @@ export function useAutoConnectProjectServers({
     // same toast id keeps the loading → result transition on a single toast
     // instead of stacking a second one.
     const toastId = toast.loading(
-      reconnectingToastMessage(connectedNow.length)
+      reconnectingToastMessage(connectedNow.length),
     );
 
+    serverCheckQueue.markAutomatic(projectId, connectedNow);
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
         return name;
-      })
+      }),
     ).then((results) => {
       const failures = results.flatMap((result, index) => {
         if (result.status === "fulfilled") return [];
@@ -276,7 +328,15 @@ export function useAutoConnectProjectServers({
     // purpose: this must fire only on scope transitions, not whenever the
     // connected set changes within a scope. The dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
+  }, [
+    enabled,
+    projectId,
+    scopeKey,
+    hostScopeKey,
+    reconnectServer,
+    logger,
+    suspendAutoConnect,
+  ]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Dedupe is per-server-within-scope, not per
@@ -294,13 +354,14 @@ export function useAutoConnectProjectServers({
     if (!enabled || !projectId || !candidateNamesKey) return;
     const allNames = candidateNamesKey.split("\0");
     const fresh = allNames.filter(
-      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`)
+      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`),
     );
     if (fresh.length === 0) return;
     for (const name of fresh) {
       markAttempted(projectId, scopeKey, `srv:${name}`);
     }
 
+    serverCheckQueue.markAutomatic(projectId, fresh);
     let cancelled = false;
     ensureServersReady(fresh).then(
       (result) => {
@@ -314,7 +375,7 @@ export function useAutoConnectProjectServers({
       // rejections in dev/test.
       () => {
         // intentionally empty
-      }
+      },
     );
     return () => {
       cancelled = true;
