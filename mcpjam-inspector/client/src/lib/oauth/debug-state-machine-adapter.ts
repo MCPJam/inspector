@@ -6,6 +6,7 @@ import {
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
   isAuthenticatedRequestFailure,
+  stepFailureFindingKey,
   isResourceMetadataNotImplemented,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
@@ -384,10 +385,15 @@ function withStepFailureReporting(
       error !== lastReportedError
     ) {
       lastReportedError = error;
-      reportCaught(new Error(sanitizeStepError(error)), {
+      const sanitized = sanitizeStepError(error);
+      reportCaught(new Error(sanitized), {
         source: "oauth_debugger_step",
         level: "warning",
         extra: {
+          // What error reporting groups on — see `groupOAuthDebuggerStepFailures`.
+          // From the sanitized text, never the raw one, and computed by the SDK
+          // that writes these messages, so the key cannot drift from them.
+          finding: stepFailureFindingKey(sanitized),
           // Prefer the step this update is moving TO. An update that both
           // advances the step and carries an error would otherwise be
           // attributed to the PREVIOUS step, making the dimension misleading.

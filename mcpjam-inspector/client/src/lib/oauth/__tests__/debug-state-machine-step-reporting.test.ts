@@ -143,6 +143,35 @@ describe("OAuth debugger step-failure reporting", () => {
     });
   });
 
+  // Error reporting groups on `extra.finding`. Without it the rule falls back
+  // to the raw message and every server's wording opens its own issue, so the
+  // wiring itself needs a test, not only the key function.
+  it("sends the SDK finding key with every report", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "token_request");
+
+    wrapped({
+      error:
+        "Token request failed: 400 Bad Request: invalid_grant: Authorization code not found or expired",
+    });
+
+    const [, options] = reportCaught.mock.calls[0];
+    expect(options.extra.finding).toBe("Token request failed: 400: invalid_grant");
+  });
+
+  it("keys on the sanitized message, never the raw one", () => {
+    // A secret the sanitizer removes must not survive into the grouping key.
+    // Short and digit-free on purpose: a long token with a digit would be
+    // replaced by the key's own id rule, and the test would pass even when the
+    // key was built from the raw text.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "boom: access_token=hunterhunter" });
+
+    const [error, options] = reportCaught.mock.calls[0];
+    expect(options.extra.finding).not.toContain("hunterhunter");
+    expect((error as Error).message).not.toContain("hunterhunter");
+  });
+
   it("does not re-report the same error on a repeated update", () => {
     const { wrapped } = wrappedUpdateState();
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stepFailureFindingKey } from "@mcpjam/sdk/browser";
 import {
   BROWSER_IGNORE_ERRORS,
   buildClientSentryConfig,
@@ -9,6 +10,7 @@ import {
   electronBuildSurface,
   type FingerprintableEvent,
   groupDomMutationConflicts,
+  groupOAuthDebuggerStepFailures,
   isSentryBuildSurface,
   resolveClientBuildSurface,
   SENTRY_BUILD_SURFACES,
@@ -232,24 +234,41 @@ describe("surface builders", () => {
     ).toBe(true);
   });
 
-  it("groups DOM mutation conflicts on the browser client only", () => {
+  // Behaviour, not identity: `beforeSend` is a composition now, so asserting
+  // it IS one of the rules would pass only while there is exactly one.
+  it("applies both fingerprinting rules on the browser client only", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
-    const event = {
+    const beforeSend = buildClientSentryConfig(ctx).beforeSend;
+
+    const dom = beforeSend<FingerprintableEvent>({
       environment: "prod",
       exception: {
         values: [
           {
             type: "NotFoundError",
-            value: "Failed to execute 'removeChild' on 'Node': oops",
+            value:
+              "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
           },
         ],
       },
-    };
-    expect(buildClientSentryConfig(ctx).beforeSend(event)).toEqual(
-      groupDomMutationConflicts({ ...event }),
-    );
+    });
+    expect(dom?.fingerprint).toEqual(["dom-mutation-conflict", "prod"]);
+
+    const step = beforeSend<FingerprintableEvent>({
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { step: "request_client_registration" },
+      exception: {
+        values: [
+          { type: "Error", value: "Dynamic Client Registration failed (400)." },
+        ],
+      },
+    });
+    expect(step?.fingerprint?.[0]).toBe("oauth-debugger-step");
+
     // A server-side NotFoundError is an upstream or storage failure, so
-    // collapsing those by message would merge unrelated defects.
+    // collapsing those by message would merge unrelated defects — and the
+    // OAuth debugger never runs off the browser client.
     expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
     expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
   });
@@ -604,4 +623,189 @@ describe("build surfaces", () => {
       /not a client build surface/,
     );
   });
+});
+
+describe("groupOAuthDebuggerStepFailures", () => {
+  // Built the way the reporting adapter builds them: `extra.finding` from the
+  // real SDK key. So these exercise the composition that ships — SDK key plus
+  // this rule — not the rule against hand-picked keys.
+  function stepEvent(
+    value: string,
+    {
+      step = "request_client_registration",
+      environment = "prod",
+      source = "oauth_debugger_step",
+      withFinding = true,
+    }: {
+      step?: string;
+      environment?: string;
+      source?: string;
+      withFinding?: boolean;
+    } = {},
+  ): FingerprintableEvent {
+    return {
+      environment,
+      tags: { source },
+      extra: {
+        step,
+        ...(withFinding ? { finding: stepFailureFindingKey(value) } : {}),
+      },
+      exception: { values: [{ type: "Error", value }] },
+    };
+  }
+
+  const fingerprint = (event: FingerprintableEvent) =>
+    groupOAuthDebuggerStepFailures(event).fingerprint;
+
+  // INSPECTOR-CLIENT-2FE: nine events titled "Dynamic Client Registration
+  // failed (400)" that were five unrelated findings, one stack between them.
+  it("splits the findings that shared one stack", () => {
+    const findings = [
+      stepEvent("Dynamic Client Registration failed (400)."),
+      stepEvent("Dynamic Client Registration failed (401)."),
+      stepEvent("Token request failed: 400: invalid_client: invalid_client_secret", {
+        step: "token_request",
+      }),
+      stepEvent(
+        "MCP server returned HTTP 404 Not Found where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+      stepEvent(
+        "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        { step: "request_resource_metadata" },
+      ),
+    ].map((event) => JSON.stringify(fingerprint(event)));
+
+    expect(new Set(findings).size).toBe(5);
+  });
+
+  it("keeps a registration failure together with and without the advisory", () => {
+    const withHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (401). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    // Pinned to a value, not only to its twin: two absent fingerprints would
+    // compare equal too.
+    expect(withHint).toEqual([
+      "oauth-debugger-step",
+      "request_client_registration",
+      "Dynamic Client Registration failed (401)",
+      "prod",
+    ]);
+    expect(withHint).toEqual(
+      fingerprint(stepEvent("Dynamic Client Registration failed (401).")),
+    );
+  });
+
+  // INSPECTOR-CLIENT-2FD: six events titled "Token request failed: 403
+  // Forbidden: invalid_target", which only one of them was. The other five were
+  // two more findings, from different servers and users.
+  it("splits the findings that shared the 2FD stack", () => {
+    const invalidTarget = fingerprint(
+      stepEvent(
+        "Token request failed: 403 Forbidden: invalid_target: Unauthorized resource: http://localhost:8080/v2/local",
+        { step: "token_request" },
+      ),
+    );
+    const registration = fingerprint(
+      stepEvent("Dynamic Client Registration failed (400)."),
+    );
+    const registrationWithHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    const wrongStatus = fingerprint(
+      stepEvent(
+        "MCP server returned HTTP 405 Method Not Allowed where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+    );
+
+    expect(
+      new Set(
+        [invalidTarget, registration, wrongStatus].map((f) => JSON.stringify(f)),
+      ).size,
+    ).toBe(3);
+    // The two registration events were one finding, one with the advisory.
+    expect(registrationWithHint).toEqual(registration);
+    // The server's own resource URL is free text, not part of the finding.
+    expect(invalidTarget?.[2]).not.toContain("localhost");
+  });
+
+  // Review of #5473: the cause of a discovery failure comes after the first
+  // period. The first version cut there and merged all of these.
+  it("keeps discovery failures with different causes apart", () => {
+    // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532).
+    const prefix = "Could not discover authorization server metadata.";
+    const url = "https://auth.example.com/.well-known/oauth-authorization-server";
+    const keys = [
+      `${prefix} ${url}/t returned HTTP 404; ${url} returned HTTP 404.`,
+      `${prefix} ${url} returned HTTP 500.`,
+      `${prefix} ${url} failed: Failed to fetch.`,
+    ].map((value) =>
+      JSON.stringify(fingerprint(stepEvent(value, { step: "request_authorization_server_metadata" }))),
+    );
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  // Review of #5473: the server writes part of a token failure, so keyed on
+  // the whole text one finding opened an issue per server wording.
+  it("keeps one token failure together across servers' wording", () => {
+    const keys = [
+      "Token request failed: 400 Bad Request: invalid_grant: Authorization code not found or expired",
+      "Token request failed: 400: invalid_grant: code already used",
+      "Token request failed: 400 Client Error: invalid_grant",
+    ].map((value) => JSON.stringify(fingerprint(stepEvent(value, { step: "token_request" }))));
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it("separates the same finding on different steps", () => {
+    expect(fingerprint(stepEvent("boom", { step: "a" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { step: "b" })),
+    );
+  });
+
+  it("keeps environments apart", () => {
+    expect(fingerprint(stepEvent("boom", { environment: "prod" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { environment: "dev" })),
+    );
+  });
+
+  it("files a report with no step under a stable bucket", () => {
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { finding: "boom" },
+      exception: { values: [{ type: "Error", value: "boom" }] },
+    };
+    expect(groupOAuthDebuggerStepFailures(event).fingerprint).toEqual([
+      "oauth-debugger-step",
+      "unknown",
+      "boom",
+      "prod",
+    ]);
+  });
+
+  it("falls back to the capped message, never a first-sentence cut", () => {
+    // No `finding` should reach here — the adapter and this rule ship
+    // together — but if one does, it must split rather than merge.
+    const value = `Could not discover authorization server metadata. https://a.test/x returned HTTP 404; ${"x".repeat(300)}`;
+    const [, , finding] = fingerprint(stepEvent(value, { withFinding: false }))!;
+    expect(finding).toBe(value.slice(0, 160));
+    expect(finding).toContain("returned HTTP 404");
+  });
+
+  it.each(["oauth_debugger_advance", "react_boundary", undefined])(
+    "leaves source %j on default grouping",
+    (source) => {
+      const event: FingerprintableEvent = {
+        environment: "prod",
+        ...(source ? { tags: { source } } : {}),
+        exception: { values: [{ type: "Error", value: "boom" }] },
+      };
+      expect(groupOAuthDebuggerStepFailures(event).fingerprint).toBeUndefined();
+    },
+  );
 });
