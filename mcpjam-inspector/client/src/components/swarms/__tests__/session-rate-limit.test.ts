@@ -109,3 +109,72 @@ it.each([
     );
   },
 );
+
+describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
+  const backendBody = JSON.stringify({
+    ok: false,
+    code: "provider_not_allowlisted",
+    error:
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.',
+    statusCode: 403,
+    isRetryable: false,
+    details:
+      "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.",
+  });
+
+  it("cards the gateway refusal from the envelope code, with no API-key remedy", () => {
+    const result = describeSwarmAttemptFailure(
+      `Backend stream error: 403 ${backendBody}`,
+      null,
+      "OpenAI",
+    );
+
+    expect(result.slug).toBe("provider/not_allowlisted");
+    expect(result.title).toBe("Model provider not enabled on MCPJam");
+    expect(result.oneLine).toContain('The "openai" provider is not enabled');
+    expect(result.rawCode).toBe("provider_not_allowlisted");
+    expect(result.nextSteps.join(" ")).not.toMatch(
+      /(check|update|verify) (your|the) (api )?key/i,
+    );
+    expect(result.slug).not.toBe(ERROR_CATALOG["provider/auth_error"].slug);
+  });
+
+  it("keeps the provider-naming headline without the gateway's upstream instruction", () => {
+    const result = describeSwarmAttemptFailure(
+      `Backend stream error: 403 ${backendBody}`,
+      "provider_not_allowlisted",
+      "OpenAI",
+    );
+
+    expect(result.oneLine).toBe(
+      "The \"openai\" provider is not enabled on MCPJam's AI Gateway provider allowlist, so MCPJam cannot serve this model right now. Retrying or changing your API key won't help.",
+    );
+    expect(result.oneLine).not.toMatch(/Update your Provider Allowlist settings/i);
+    expect(result.oneLine).not.toMatch(/Your team has restricted access/i);
+  });
+
+  it("strips the upstream instruction from a row stored with it folded in", () => {
+    const result = describeSwarmAttemptFailure(
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist. Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.',
+      "provider_not_allowlisted",
+      "OpenAI",
+    );
+
+    expect(result.oneLine).toBe(
+      "The \"openai\" provider is not enabled on MCPJam's AI Gateway provider allowlist. Retrying or changing your API key won't help.",
+    );
+  });
+
+  it("cards it from the attempt row's stored code too", () => {
+    const result = describeSwarmAttemptFailure(
+      "The provider is not enabled on MCPJam's gateway.",
+      "provider_not_allowlisted",
+      "OpenAI",
+    );
+
+    expect(result.slug).toBe("provider/not_allowlisted");
+    expect(result.oneLine).toBe(
+      "The provider is not enabled on MCPJam's gateway. Retrying or changing your API key won't help.",
+    );
+  });
+});

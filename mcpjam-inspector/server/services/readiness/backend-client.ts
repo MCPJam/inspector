@@ -23,6 +23,7 @@ import {
   getInternalBackendConfig,
   isEntityNotFound,
 } from "../internal-backend.js";
+import { backendFailureText } from "../../utils/backend-failure-text.js";
 import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
@@ -176,10 +177,12 @@ export async function requestManagedObservations(
       const body = (await response.json().catch(() => null)) as {
         error?: unknown;
       } | null;
-      const detail =
-        typeof body?.error === "string"
-          ? body.error
-          : `HTTP ${response.status}`;
+      const detail = backendFailureText({
+        source: "readiness-observations",
+        status: response.status,
+        detail: body?.error,
+        fallback: `HTTP ${response.status}`,
+      });
       return {
         status: "provider-failed",
         reason: "provider_error",

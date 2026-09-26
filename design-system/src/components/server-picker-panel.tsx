@@ -12,6 +12,7 @@ import { Checkbox } from "./checkbox";
 import { Input } from "./input";
 import { Label } from "./label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 import { cn } from "../cn";
 
 /** Which tab the panel is showing. Structurally identical to the app's own. */
@@ -30,6 +31,11 @@ export type ServerPickerGroupRow = {
   id: string;
   name: string;
   serverNames: string[];
+  /**
+   * Set when the backend would refuse the delete. The control is greyed out
+   * and this shows on hover. Copy, not a flag: the reason is a product rule.
+   */
+  deleteDisabledReason?: string;
 };
 
 export type ServerPickerPanelProps = {
@@ -84,6 +90,12 @@ export type ServerPickerPanelProps = {
    * jsdom, so the budget is what a test can pin.
    */
   chipRoomPx?: number;
+  /**
+   * Leave an empty catalog. Only callers that can send the user somewhere
+   * pass it, and only they get the control — a dead "Add server" is worse
+   * than the empty copy alone.
+   */
+  onAddServer?: () => void;
 };
 
 const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
@@ -119,6 +131,26 @@ const TAB =
   "w-full justify-center rounded-md border-0 px-3 py-1.5 text-sm font-medium text-muted-foreground shadow-none " +
   "data-[state=active]:bg-accent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
+function AddServerButton({
+  onAddServer,
+  busy,
+}: {
+  onAddServer: () => void;
+  busy: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onAddServer}
+      disabled={busy}
+      className={cn(ROW, "text-sm hover:bg-accent disabled:opacity-50")}
+    >
+      <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+      <span>Add server</span>
+    </button>
+  );
+}
+
 function SelectionDot() {
   // The design marks the current row with a brand-orange dot on the right.
   // `aria-current` on the row carries the meaning; this is only its paint.
@@ -147,6 +179,7 @@ export function ServerPickerPanel({
   onDeleteGroup,
   canDeleteSelected = true,
   chipRoomPx = 200,
+  onAddServer,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
   // stays controlled by the caller — that is the part that persists.
@@ -181,6 +214,9 @@ export function ServerPickerPanel({
     draftName.trim().length > 0 &&
     !submitting &&
     !busy;
+
+  const offerAddServer =
+    servers.length === 0 && catalogKnown && Boolean(onAddServer);
 
   const submitDraft = async () => {
     setSubmitting(true);
@@ -238,6 +274,9 @@ export function ServerPickerPanel({
               ? "No servers in this project yet."
               : "Loading servers…"}
           </p>
+        ) : null}
+        {offerAddServer && onAddServer ? (
+          <AddServerButton onAddServer={onAddServer} busy={busy} />
         ) : null}
         {servers.map((server) => {
           const selected = server.id === selectedServerId;
@@ -432,25 +471,51 @@ export function ServerPickerPanel({
                   </button>
                   {selected ? <SelectionDot /> : null}
                   {onDeleteGroup && (canDeleteSelected || !selected) ? (
-                    <button
-                      type="button"
-                      aria-label={`Delete ${group.name}`}
-                      disabled={busy}
-                      onClick={() => onDeleteGroup(group.id)}
-                      className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
+                    group.deleteDisabledReason ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {/* Not a disabled <button>: that gets no hover or
+                              focus, so the tooltip could never open. */}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Delete ${group.name}`}
+                            aria-disabled="true"
+                            className="flex size-6 shrink-0 cursor-not-allowed items-center justify-center rounded text-muted-foreground opacity-30"
+                          >
+                            <Trash2 className="size-3" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent variant="muted">
+                          {group.deleteDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${group.name}`}
+                        disabled={busy}
+                        onClick={() => onDeleteGroup(group.id)}
+                        className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    )
                   ) : null}
                 </div>
               );
             })}
         {!showForm && groups.length === 0 && !busy ? (
           <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
-            No server groups yet — create one below.
+            {servers.length === 0 && catalogKnown
+              ? "No servers in this project yet."
+              : "No server groups yet — create one below."}
           </p>
         ) : null}
-        {!showForm ? (
+        {!showForm && offerAddServer && onAddServer ? (
+          <AddServerButton onAddServer={onAddServer} busy={busy} />
+        ) : null}
+        {!showForm && !offerAddServer ? (
           <button
             type="button"
             onClick={() => setShowForm(true)}

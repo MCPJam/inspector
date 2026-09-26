@@ -12,13 +12,13 @@
     "verify": "npm run test && npm run check && npm run lint"
   },
   "dependencies": {
-    "@slack/bolt": "^5.0.0",
+    "@slack/bolt": "^5.1.0",
     "@mcpjam/surface-core": "*",
     "dotenv": "~17.4.2",
     "undici": "^7.24.8"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.5.14",
     "@mcpjam/sdk": "*",
     "@slack/cli-hooks": "^2.0.0",
     "typescript": "^7.0.2"

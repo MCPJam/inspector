@@ -95,11 +95,16 @@ describe("useOrganizationBilling seat payment retry", () => {
       await result.current.cancelSeatPayment();
     });
 
+    let retryResult: unknown;
     await act(async () => {
       resolveRetry({ restarted: true, seatPaymentIntentId: "seat-payment-1" });
-      await retryPromise;
+      retryResult = await retryPromise;
     });
 
+    expect(retryResult).toEqual({
+      status: "noop",
+      reason: "seat_payment_canceled",
+    });
     expect(convexFns.cancelSeatPayment).toHaveBeenCalledTimes(1);
     // The whole point: payment must not be reopened on a cancelled charge.
     expect(convexFns.startSeatPayment).not.toHaveBeenCalled();
