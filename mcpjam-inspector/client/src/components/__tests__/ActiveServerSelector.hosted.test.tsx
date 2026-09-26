@@ -34,7 +34,7 @@ vi.mock("../connection/AddServerModal", () => ({
 }));
 
 const HOSTED_HINT =
-  "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
+  "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
 
 const createServer = (
   overrides: Partial<ServerWithName> = {},

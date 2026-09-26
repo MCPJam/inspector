@@ -86,6 +86,11 @@ vi.mock("../lib/app-navigation", async (importOriginal) => {
   return { ...actual, useAppNavigate: () => mockNavigate };
 });
 
+vi.mock("../hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useProjects")>()),
+  useCanManageProjectClients: () => ({ canManage: true, isLoading: false }),
+}));
+
 vi.mock("../lib/toast", () => ({
   toast: { error: mockToastError, success: vi.fn(), message: vi.fn() },
 }));

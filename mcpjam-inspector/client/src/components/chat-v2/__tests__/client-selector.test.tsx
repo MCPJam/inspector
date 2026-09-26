@@ -12,7 +12,8 @@ vi.mock("@/lib/app-navigation", () => ({
 const mockResolveHostLogoByName = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
-  CreateHostDialog: () => null,
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/lib/host-logo", () => ({
@@ -415,7 +416,16 @@ describe("ClientSelector", () => {
   });
 });
 
-it("offers Manage clients even in a picker without a creation project", async () => {
+it("opens the New Client modal from Add clients when a project exists", async () => {
+  renderClientSelector();
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("client-selector-trigger"));
+  await user.click(screen.getByRole("button", { name: "Add clients" }));
+  expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
+  expect(navigateMock).not.toHaveBeenCalled();
+});
+
+it("sends Add clients to Connect when the picker has no creation project", async () => {
   render(
     <ClientSelector
       hosts={hosts}
@@ -430,6 +440,6 @@ it("offers Manage clients even in a picker without a creation project", async ()
   );
   const user = userEvent.setup();
   await user.click(screen.getByTestId("client-selector-trigger"));
-  await user.click(screen.getByRole("button", { name: "Manage clients" }));
+  await user.click(screen.getByRole("button", { name: "Add clients" }));
   expect(navigateMock).toHaveBeenCalledWith("/clients");
 });

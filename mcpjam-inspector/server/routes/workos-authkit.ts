@@ -8,6 +8,9 @@ import {
 } from "crypto";
 import { getOrCreateLocalSecret } from "../utils/local-secret-store.js";
 import { resolveWorkosApiBaseUrl } from "../services/workos-api-base.js";
+import { resolveWorkosClientId } from "../services/authkit-jwt.js";
+import { revokeAuthKitSession } from "../services/auth-session-revocation.js";
+import { logger } from "../utils/logger.js";
 
 // Resolved per call, not captured at module load: a test stubs
 // `WORKOS_API_BASE_URL` long after this module is imported. Unset, both are
@@ -212,7 +215,10 @@ function setSessionCookies(c: Context, session: StoredWorkosSession) {
     });
   }
 
-  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "true", {
+  // authkit-js (>= 0.20) only trusts "1" or a value naming the client id;
+  // any other value makes it skip the on-load refresh, so every reload
+  // lands signed out.
+  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "1", {
     secure: !isLocalHttpUrl(c.req.url),
     sameSite: "Lax",
     path: "/",
@@ -282,7 +288,10 @@ function getStoredSession(c: Context) {
   return parseStoredSession(unsealValue(getCookie(c, WORKOS_SESSION_COOKIE)));
 }
 
-async function postToWorkos(body: Record<string, unknown>) {
+async function postToWorkos(
+  body: Record<string, unknown>,
+  init: { signal?: AbortSignal } = {},
+) {
   return fetch(workosAuthenticateUrl(), {
     method: "POST",
     headers: {
@@ -290,7 +299,58 @@ async function postToWorkos(body: Record<string, unknown>) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: init.signal,
   });
+}
+
+/** Bound on the logout-time refresh below; the redirect waits on it. */
+const LOGOUT_REVOCATION_REFRESH_TIMEOUT_MS = 3_000;
+
+/**
+ * Revoke, in Convex, the session this browser is signing out of (MJ-011).
+ *
+ * WorkOS's logout ends the session but cannot recall access tokens it already
+ * issued, and Convex accepts those until they expire. The backend revokes a
+ * session only for the token that asks, and this request carries no access
+ * token — a logout is a top-level navigation. What it does carry is the sealed
+ * refresh-token cookie, so the session is proven the only way this route can:
+ * refresh it once, and revoke with the token that comes back. The
+ * `session_id` in the query string is NOT used for this; it is caller-supplied
+ * and would let anyone name a session to sign out.
+ *
+ * The Inspector client already revokes before calling `signOut()`; this covers
+ * a logout that reaches the proxy any other way. Best effort and bounded: the
+ * logout below always proceeds.
+ */
+async function revokeStoredSessionBeforeLogout(c: Context): Promise<void> {
+  const stored = getStoredSession(c);
+  const clientId = resolveWorkosClientId();
+  if (!stored || !clientId) return;
+  try {
+    const response = await postToWorkos(
+      {
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: stored.refreshToken,
+      },
+      { signal: AbortSignal.timeout(LOGOUT_REVOCATION_REFRESH_TIMEOUT_MS) },
+    );
+    if (!response.ok) return;
+    const body = (await response.json()) as { access_token?: unknown };
+    if (typeof body.access_token !== "string") return;
+    const result = await revokeAuthKitSession(body.access_token);
+    if (!result.revoked) {
+      logger.info("Logout did not revoke the session in Convex", {
+        event: "auth.logout_session_revoke_skipped",
+        reason: result.reason,
+      });
+    }
+  } catch (error) {
+    logger.info("Logout could not refresh the session to revoke it", {
+      event: "auth.logout_session_revoke_skipped",
+      reason: error instanceof Error ? error.name : "unknown",
+    });
+  }
 }
 
 /**
@@ -328,7 +388,8 @@ workosAuthkitRoutes.get("/authorize", (c) =>
   redirectToWorkos(c, "/user_management/authorize"),
 );
 
-workosAuthkitRoutes.get("/sessions/logout", (c) => {
+workosAuthkitRoutes.get("/sessions/logout", async (c) => {
+  await revokeStoredSessionBeforeLogout(c);
   clearSessionCookies(c);
   return redirectToWorkos(c, "/user_management/sessions/logout");
 });

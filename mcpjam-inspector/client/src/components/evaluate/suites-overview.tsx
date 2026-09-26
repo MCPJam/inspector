@@ -21,7 +21,10 @@ import {
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { compactModelIdTail } from "@/lib/environment-label";
-import { getEffectiveSuiteServers } from "../evals/helpers";
+import {
+  getEffectiveSuiteServers,
+  suiteHasRunnableServers,
+} from "../evals/helpers";
 import type {
   EvalSuite,
   EvalSuiteOverviewEntry,
@@ -400,7 +403,9 @@ function RowRunControl({
   cancellingRunId: string | null;
 }) {
   const suiteTitle = suite.name || "Untitled suite";
-  const hasServers = getEffectiveSuiteServers(suite).length > 0;
+  // An environment suite runs its environments' servers, not its legacy
+  // server fields (which are usually empty for it).
+  const hasServers = suiteHasRunnableServers(suite);
   const latestRunInProgress =
     latestRun?.status === "running" || latestRun?.status === "pending";
   const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;

@@ -305,6 +305,7 @@ export function HostBuilderViewRedesigned({
     projectId,
     hostScopeKey: hostId,
     serverNames: projectServerNames,
+    catalogLoaded: servers !== undefined,
   });
 
   // `availableServers` (the focus-panel-shaped catalog) was retired
