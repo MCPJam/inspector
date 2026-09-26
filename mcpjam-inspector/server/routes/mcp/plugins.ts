@@ -36,7 +36,7 @@ plugins.use("*", async (c, next) => {
       {
         success: false,
         error:
-          "Plugin bundles are materialized by the local runtime; hosted mode cannot spawn local processes.",
+          "Importing plugin bundles isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
         readiness: "local_runtime_required",
       },
       400

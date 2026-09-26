@@ -79,6 +79,20 @@ import {
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
+  PlatformGoal,
+  PlatformGoalArchived,
+  PlatformGoalRun,
+  PlatformGoalRunCanceled,
+  PlatformGoalRunLaunched,
+  PlatformGoalRunSession,
+  PlatformStudy,
+  PlatformStudyDeleted,
+  PlatformStudyDetail,
+  PlatformStudyInsightsRequested,
+  PlatformStudySession,
+  PlatformStudySessionDetail,
+  PlatformStudySummary,
+  PlatformStudyUpdated,
   PlatformChatSession,
   PlatformWidgetRender,
   PlatformChatTurn,
@@ -98,6 +112,7 @@ import type {
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
+  PlatformEvalCasesImported,
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
@@ -151,6 +166,9 @@ import type {
   PlatformSwarmArchived,
   PlatformSwarmFinding,
   PlatformSwarmOverview,
+  PlatformSwarmRunInsights,
+  PlatformSwarmRunInsightsCanceled,
+  PlatformSwarmRunInsightsRequested,
   PlatformWaveInsights,
   PlatformWaveInsightsCanceled,
   PlatformUserTestingInsightsRequested,
@@ -820,6 +838,12 @@ export type CreateEvalCasesResult = Omit<
 /** `generate_eval_cases`, with each generated case's suite stamped on. */
 export type GenerateEvalCasesResult = Omit<
   PlatformEvalCasesGenerated,
+  "created"
+> & { created: PlatformEvalCaseWithSuite[] };
+
+/** `import_eval_cases`, with each imported case's suite stamped on. */
+export type ImportEvalCasesResult = Omit<
+  PlatformEvalCasesImported,
   "created"
 > & { created: PlatformEvalCaseWithSuite[] };
 
@@ -3188,6 +3212,19 @@ async function composeRunEnvironment(
   signal: AbortSignal | undefined,
   options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
+  // `hostServers` used to mean "run against the client's current server
+  // list". Eval runs no longer have such a list: since the backend made eval
+  // launches group-only, an environment without a server group resolves to NO
+  // servers and the launch is refused (`ENV_NO_SERVERS`). Accepting the flag
+  // would only compose that refused environment, so it is rejected up front,
+  // before any group is resolved or created, with the replacement named.
+  // Still declared in the schema so an older caller gets this sentence
+  // instead of an unknown-key error.
+  if (stack.hostServers === true) {
+    throw operationInputError(
+      "`hostServers` is no longer supported for eval runs: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Pass `server`/`servers` (resolved to a server group) or `serverGroup` instead."
+    );
+  }
   // Once, before the fan-out: every model cell shares one server group, and
   // resolving inside the loop would re-list (and race to create) per cell.
   const pinned = await materializeComposeServers(
@@ -3201,25 +3238,11 @@ async function composeRunEnvironment(
   // for presence alone would clear this guard and then compose the exact
   // unpinned environment it exists to refuse.
   const pinnedGroup = pinned.serverGroup?.trim();
-  // Asking to follow the host AND to pin is a contradiction, and resolving it
-  // silently would drop one of the two things the caller said. The CLI rejects
-  // the pair too; repeated here because `execute` is reachable without it.
-  if (
-    stack.hostServers === true &&
-    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
-  ) {
+  // The server is the thing under test, so a composed RUN has to say which
+  // one, as a server group.
+  if (!pinnedGroup) {
     throw operationInputError(
-      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
-    );
-  }
-  // The server is the thing under test, so a composed RUN has to say which one.
-  // Without a pin the run reads the host's list at execution time, and editing
-  // that shared host silently repoints every eval composed against it — the
-  // failure this guard exists to stop. Following the host stays available, but
-  // only as something the caller asked for out loud.
-  if (!pinnedGroup && stack.hostServers !== true) {
-    throw operationInputError(
-      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+      "A composed eval run must say which servers to test: pass `server`/`servers` (resolved to a server group) or `serverGroup`."
     );
   }
   const choices = expandComposeModelChoices(pinned);
@@ -3774,13 +3797,13 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required: an eval run takes its servers from a server group alone."
       ),
     hostServers: z
       .boolean()
       .optional()
       .describe(
-        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
+        "No longer supported — rejected. Eval runs take their servers from a server group alone; pass `server`/`servers` or `serverGroup` instead."
       ),
     server: z
       .string()
@@ -6647,6 +6670,195 @@ export const generateEvalCasesOperation: PlatformOperation<
   },
 };
 
+const MAX_IMPORT_DOCUMENT_BYTES = 100 * 1024;
+
+const importEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  content: z
+    .string()
+    .min(1)
+    .describe(
+      "The whole document, as text. At most 100 KiB — split a larger one and import the parts separately."
+    ),
+  fileName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      "The document's name, recorded on each case so a reviewer can trace it back. Nothing is gated on it — a pasted document needs no name."
+    ),
+  servers: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Server names/IDs to discover tools from; defaults to the suite's selection."
+    ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  caseModels: z
+    .array(caseModelSchema)
+    .optional()
+    .describe("Execution models to set on the imported cases."),
+  duplicatePolicy: z
+    .enum(["block", "warn", "create_anyway"])
+    .optional()
+    .describe(
+      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`."
+    ),
+  overrideReason: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Why importing a duplicate is intended. Recorded on the case's revision."
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key: pass one, because a retry must not author and bill the same document twice. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
+    ),
+});
+export type ImportEvalCasesInput = z.infer<typeof importEvalCasesInput>;
+
+export const importEvalCasesOperation: PlatformOperation<
+  ImportEvalCasesInput,
+  ImportEvalCasesResult
+> = {
+  name: "import_eval_cases",
+  // Authoring a document runs MCPJam's model on the customer's behalf, and
+  // MCPJam pays for it: the backend bills it as `markdown_case_import`, which
+  // sits in PLATFORM_PAID_INTERNAL_LLM beside `eval_generation`, so nothing is
+  // debited from the customer. It is not a `spend` risk.
+  //
+  // Re-importing the same text still re-runs the model, which is wasteful even
+  // when it is free, so the description keeps the advice to re-send one case
+  // rather than the whole document.
+  //
+  // `none`, the same classification `generate_eval_cases` carries: both author
+  // cases with a model MCPJam pays for. Leaving `risk` off entirely is not the
+  // fix — an unclassified write fails the agent-op registry pin, and rightly:
+  // the classification is what derives the operation's agent tier.
+  risk: "none",
+  title: "Import MCPJam eval cases from a document",
+  description:
+    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. Authoring is on MCPJam, like `generate_eval_cases`. Cases the model could not finish, and cases it was unsure about, are NOT created — they come back in `skipped` with the reason, and `reviewUrl` opens the app page holding exactly those drafts for a person to read and save. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors every case in it. IDEMPOTENT on idempotencyKey.",
+  readOnly: false,
+  permalink: derivePermalinks((result) =>
+    result.created.flatMap((testCase) =>
+      evalCaseRef(testCase, testCase.suiteId)
+    )
+  ),
+  inputSchema: importEvalCasesInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    assertNoServerOverrideWithEnvironment(input);
+    // Both checks are HERE rather than as schema `.refine`s: an operation's
+    // `inputSchema` is handed to the agent tool surface, which needs a plain
+    // object schema — a refinement wraps it in `ZodEffects` and the toolset
+    // stops building. Same reasoning as `create_eval_cases`.
+    if (
+      input.duplicatePolicy !== undefined &&
+      input.duplicatePolicy !== "block" &&
+      !input.overrideReason
+    ) {
+      throw new PlatformApiError(
+        `duplicatePolicy \`${input.duplicatePolicy}\` imports a case that duplicates ` +
+          "an existing one, so it requires an overrideReason — the reason is what " +
+          "gets recorded on the case's revision.",
+        "VALIDATION_ERROR",
+        // Client-synthesized: no request was made, so quoting a server status
+        // would misreport what happened.
+        { status: 0 }
+      );
+    }
+    // Refused before the request: the document is the whole payload, and
+    // sending 100 KiB only to have the route reject it wastes the round trip.
+    const documentBytes = new TextEncoder().encode(input.content).length;
+    if (documentBytes > MAX_IMPORT_DOCUMENT_BYTES) {
+      throw new PlatformApiError(
+        `The document is ${documentBytes} bytes; the limit is ${MAX_IMPORT_DOCUMENT_BYTES}. ` +
+          "Split it and import the parts separately.",
+        "VALIDATION_ERROR",
+        { status: 0 }
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    // Server name/id selectors resolve to project server IDs before sending,
+    // the way generate_eval_cases does — the route hands `servers` straight to
+    // batch authorization, which expects IDs.
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
+    const imported = await client.importEvalCases(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          content: input.content,
+          ...(input.fileName ? { fileName: input.fileName } : {}),
+          ...(overrideServers
+            ? { servers: overrideServers.map((server) => server.id) }
+            : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
+          ...(input.caseModels ? { caseModels: input.caseModels } : {}),
+          ...(input.duplicatePolicy
+            ? { duplicatePolicy: input.duplicatePolicy }
+            : {}),
+          ...(input.overrideReason
+            ? { overrideReason: input.overrideReason }
+            : {}),
+          // In the BODY as well as the header, the way generate_eval_cases
+          // sends it: one key on the wire rather than two channels that could
+          // disagree. The route merges a header key over this one.
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
+        },
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return {
+      ...imported,
+      created: imported.created.map((testCase) =>
+        stampSuiteId(testCase, suite.id)
+      ),
+    };
+  },
+};
+
 const evalRunScopedInput = z.object({
   project: z.string().trim().min(1).describe(RUN_PROJECT_DESCRIPTION),
   runId: z
@@ -8568,6 +8780,9 @@ export type ListScenariosResult = {
   otherProjects: ProjectInfo[];
 };
 
+/**
+ * @deprecated Use {@link listStudiesOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listScenariosOperation: PlatformOperation<
   ProjectScopedInput,
   ListScenariosResult
@@ -8620,6 +8835,9 @@ export type GetScenarioResult = {
   scenario: PlatformScenarioDetail;
 };
 
+/**
+ * @deprecated Use {@link getStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getScenarioOperation: PlatformOperation<
   GetScenarioInput,
   GetScenarioResult
@@ -9358,7 +9576,20 @@ export const getChatSessionTraceOperation: PlatformOperation<
   },
 };
 
-const SESSION_SOURCE_TYPES = ["direct", "scenario", "eval", "swarm"] as const;
+/**
+ * `scenario` and `study` are the SAME surface under two vocabularies, and both
+ * are accepted as a filter at all times: the operation forwards the value
+ * verbatim and the boundary folds it, so a caller that learned `study` from a
+ * vocabulary-2 response can filter by what it read without having to know
+ * which header its client happens to send.
+ */
+const SESSION_SOURCE_TYPES = [
+  "direct",
+  "scenario",
+  "study",
+  "eval",
+  "swarm",
+] as const;
 
 const searchSessionsInput = z.object({
   query: z
@@ -9679,7 +9910,7 @@ const createClientInput = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });
@@ -10297,7 +10528,7 @@ const createHostInput = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });
@@ -10781,7 +11012,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4.5").'
     ),
   skillSelection: skillSelectionInput.optional(),
   secretSelection: secretSelectionInput.optional(),
@@ -12232,6 +12463,679 @@ export const deleteProjectServerOperation: PlatformOperation<
 /** Any catalog operation with its input/output types erased. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
 
+// ── Goals (the Swarms product) ──────────────────────────────────────────────
+//
+// "Swarm" is not a resource noun in this API. A swarm is a container users
+// author in the UI; a GOAL (a persona pursuing a task against one or more
+// environments) is what executes, and a GOAL RUN is what it produces. The
+// marketing name appears in help text, where it belongs.
+//
+// This family replaces the `*_journey*` operations, which still work from the
+// deprecated section below and still call their own old routes. They go at GA.
+//
+// BETA (`sandboxes-enabled`), gated server-side per organization — but only on
+// the exposure-CREATING writes: launch and authoring. Those answer a structured
+// FEATURE_UNAVAILABLE to an unflagged caller.
+//
+// The reads here need project membership and nothing more, and
+// `cancel_goal_run` is ungated for the same reason: an organization that has
+// lost the flag with a run already in flight must still be able to see it and
+// stop it. Losing the feature is when stopping it matters most.
+
+const DEPRECATED_GOAL_SELECTOR_SUFFIX =
+  " DEPRECATED: use `goalId`, which means exactly this.";
+
+/**
+ * Fold a `goalId` selector onto its deprecated `journey` spelling.
+ *
+ * The selector is `goalId`, not `goal`, and that is not a stylistic choice: a
+ * goal's own TASK TEXT is the field `goal` (`PlatformGoal.goal`, and
+ * `update_goal`'s editable body), so one input object cannot carry both. The
+ * id keeps the suffix; the task keeps the bare noun.
+ *
+ * Exactly one, never both, for the reason {@link foldStudySelector} gives:
+ * `launch_goal_run` spends model credits, so silently preferring one of two
+ * possibly-different ids would spend them on the wrong goal.
+ */
+function foldGoalSelector(input: {
+  goalId?: string;
+  journey?: string;
+}): string {
+  if (input.goalId !== undefined && input.journey !== undefined) {
+    throw operationInputError(
+      "Pass either goalId or its deprecated journey alias, not both."
+    );
+  }
+  const selected = input.goalId ?? input.journey;
+  if (selected === undefined) {
+    throw operationInputError(
+      "goalId is required — the id from list_goals or create_goal."
+    );
+  }
+  return selected;
+}
+
+const listGoalsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListGoalsInput = z.infer<typeof listGoalsInput>;
+
+export type ListGoalsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformGoal[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listGoalsOperation: PlatformOperation<
+  ListGoalsInput,
+  ListGoalsResult
+> = {
+  name: "list_goals",
+  title: "List MCPJam goals",
+  description:
+    "List the goals in an MCPJam project. A goal is one persona pursuing a task against one or more environments — the unit that Swarms actually executes. Use the returned id with list_goal_runs.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: listGoalsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listGoals({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const goalRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goalId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id, from list_goals."),
+  journey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id, from list_goals." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListGoalRunsInput = z.infer<typeof goalRunsInput>;
+
+export type ListGoalRunsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformGoalRun[];
+  nextCursor?: string;
+};
+
+export const listGoalRunsOperation: PlatformOperation<
+  ListGoalRunsInput,
+  ListGoalRunsResult
+> = {
+  name: "list_goal_runs",
+  title: "List runs of an MCPJam goal",
+  description:
+    "List a goal's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((run) => ({
+      type: "goal_run" as const,
+      id: run.id,
+      projectId: run.projectId,
+    }))
+  ),
+  inputSchema: goalRunsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listGoalRuns(
+      {
+        projectId: project.id,
+        goalId,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const goalRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("Goal run id."),
+});
+export type GetGoalRunInput = z.infer<typeof goalRunSelectorInput>;
+
+export type GetGoalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformGoalRun;
+};
+
+export const getGoalRunOperation: PlatformOperation<
+  GetGoalRunInput,
+  GetGoalRunResult
+> = {
+  name: "get_goal_run",
+  title: "Get one MCPJam goal run",
+  description:
+    "One goal run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's swarm run with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "goal_run",
+      id: result.run.id,
+      projectId: result.run.projectId,
+    },
+  ]),
+  inputSchema: goalRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getGoalRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const goalRunSessionsInput = goalRunSelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListGoalRunSessionsInput = z.infer<typeof goalRunSessionsInput>;
+
+export type ListGoalRunSessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformGoalRunSession[];
+  nextCursor?: string;
+};
+
+export const listGoalRunSessionsOperation: PlatformOperation<
+  ListGoalRunSessionsInput,
+  ListGoalRunSessionsResult
+> = {
+  name: "list_goal_run_sessions",
+  title: "List the sessions a goal run produced",
+  description:
+    "The chat sessions a goal run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.chatSessionId,
+      projectId: session.projectId,
+    }))
+  ),
+  inputSchema: goalRunSessionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listGoalRunSessions(
+      {
+        projectId: project.id,
+        runId: input.run,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+export type CancelGoalRunInput = z.infer<typeof goalRunSelectorInput>;
+
+export type CancelGoalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformGoalRunCanceled;
+};
+
+const launchGoalRunInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goalId: z.string().trim().min(1).optional().describe("Goal id to launch."),
+  journey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id to launch." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the goal twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run."
+    ),
+  swarmRunId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe("Opaque id linking the sibling runs of one co-launched batch."),
+  environmentIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Fan out across these project environments instead of the goal's authored targets."
+    ),
+});
+export type LaunchGoalRunInput = z.infer<typeof launchGoalRunInput>;
+
+export type LaunchGoalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformGoalRunLaunched;
+};
+
+export const launchGoalRunOperation: PlatformOperation<
+  LaunchGoalRunInput,
+  LaunchGoalRunResult
+> = {
+  name: "launch_goal_run",
+  risk: "spend",
+  title: "Launch an MCPJam goal run",
+  description:
+    "Start a goal run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_goal_run, or list_goal_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the goal twice. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "goal_run",
+      id: result.run.id,
+      projectId: result.run.projectId,
+    },
+  ]),
+  inputSchema: launchGoalRunInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.launchGoalRun(
+      {
+        projectId: project.id,
+        goalId,
+        ...(input.swarmRunId ? { swarmRunId: input.swarmRunId } : {}),
+        ...(input.environmentIds?.length
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+export const cancelGoalRunOperation: PlatformOperation<
+  CancelGoalRunInput,
+  CancelGoalRunResult
+> = {
+  name: "cancel_goal_run",
+  risk: "destructive",
+  title: "Stop a running MCPJam goal run",
+  description:
+    "Stop a goal run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+  readOnly: false,
+  permalink: noPermalink("mutation-only"),
+  inputSchema: goalRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.cancelGoalRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const goalSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goalId: z.string().trim().min(1).optional().describe("Goal id."),
+  journey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+});
+
+export type GetGoalInput = z.infer<typeof goalSelectorInput>;
+export type GetGoalResult = {
+  project: SelectedProjectInfo;
+  goal: PlatformGoal;
+};
+
+export const getGoalOperation: PlatformOperation<GetGoalInput, GetGoalResult> =
+  {
+    name: "get_goal",
+    title: "Get one MCPJam goal",
+    description:
+      "One goal in full: its task, persona, environments and execution config. Read this before launching if you need to know how many sessions a run will produce — that is targets x iterations, and it is what spends.",
+    readOnly: true,
+    permalink: noPermalink(
+      "route-not-addressable",
+      "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+    ),
+    inputSchema: goalSelectorInput,
+    async execute(input, { client, signal, onScopeResolved }) {
+      const goalId = foldGoalSelector(input);
+      const { project } = await resolveProjectOrThrow(
+        { client, signal, onScopeResolved },
+        input.project
+      );
+      const goal_ = await client.getGoal(
+        { projectId: project.id, goalId },
+        { signal }
+      );
+      return { project: toSelectedProjectInfo(project), goal: goal_ };
+    },
+  };
+
+const createGoalInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goal: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4000)
+    .describe(
+      "What the persona is trying to accomplish. Drives the whole run."
+    ),
+  persona: z.string().trim().min(1).describe("Persona id to run as."),
+  name: z.string().trim().min(1).max(200).optional(),
+  swarm: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm container id. Authoring provenance only."),
+  environmentIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .optional()
+    .describe("Environments to fan out across, in order."),
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .describe(
+      "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
+    ),
+  maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+});
+
+export type CreateGoalInput = z.infer<typeof createGoalInput>;
+export type CreateGoalResult = {
+  project: SelectedProjectInfo;
+  goal: PlatformGoal;
+};
+
+export const createGoalOperation: PlatformOperation<
+  CreateGoalInput,
+  CreateGoalResult
+> = {
+  name: "create_goal",
+  title: "Create an MCPJam goal",
+  description:
+    "Author a goal: a persona, a task, and the environments to pursue it against. Creating does NOT run it — launch_goal_run does, and that is the call that spends. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: createGoalInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const goal_ = await client.createGoal(
+      {
+        projectId: project.id,
+        goal: input.goal,
+        personaId: input.persona,
+        iterations: input.iterations,
+        maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), goal: goal_ };
+  },
+};
+
+const updateGoalInput = goalSelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  goal: z.string().trim().min(1).max(4000).optional(),
+  environmentIds: z
+    .union([z.array(z.string().min(1)).min(1), z.null()])
+    .optional()
+    .describe("null clears the fan-out and returns the goal to its hosts."),
+  iterations: z.number().int().min(1).max(100).optional(),
+  maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing iterations/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
+});
+
+export type UpdateGoalInput = z.infer<typeof updateGoalInput>;
+export type UpdateGoalResult = CreateGoalResult;
+
+export const updateGoalOperation: PlatformOperation<
+  UpdateGoalInput,
+  UpdateGoalResult
+> = {
+  name: "update_goal",
+  title: "Update an MCPJam goal",
+  description:
+    "Edit a goal. iterations and maxTurns must be sent together; setupWrites requires that pair. A run already in flight keeps the config it launched with.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: updateGoalInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    requireConfigPair(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const goal_ = await client.updateGoal(
+      {
+        projectId: project.id,
+        goalId,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.iterations !== undefined
+          ? { iterations: input.iterations }
+          : {}),
+        ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), goal: goal_ };
+  },
+};
+
+export type ArchiveGoalInput = z.infer<typeof goalSelectorInput>;
+export type ArchiveGoalResult = {
+  project: SelectedProjectInfo;
+  goal: PlatformGoalArchived;
+};
+
+export const archiveGoalOperation: PlatformOperation<
+  ArchiveGoalInput,
+  ArchiveGoalResult
+> = {
+  name: "archive_goal",
+  title: "Archive an MCPJam goal",
+  description:
+    "Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it. A second call answers not-found.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: goalSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const goal_ = await client.archiveGoal(
+      { projectId: project.id, goalId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), goal: goal_ };
+  },
+};
+
+export type GetGoalRunScorecardInput = z.infer<typeof goalRunSelectorInput>;
+export type GetGoalRunScorecardResult = {
+  project: SelectedProjectInfo;
+  scorecard: PlatformRunScorecard;
+};
+
+export const getGoalRunScorecardOperation: PlatformOperation<
+  GetGoalRunScorecardInput,
+  GetGoalRunScorecardResult
+> = {
+  name: "get_goal_run_scorecard",
+  title: "Get a journey run's rubric scorecard",
+  description:
+    "Per-criterion pass/fail counts for one run. DETERMINISTIC — no model involved — so this is the first thing to read when explaining a failure, and usually the whole answer. failedGradingCount is grading that BROKE, not a product failure; do not add it to failCount. Answers not-found when the run has no rubric.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "goal_run",
+      id: result.scorecard.runId,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: goalRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const scorecard = await client.getGoalRunScorecard(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), scorecard };
+  },
+};
+
 // ── Journeys (the Swarms product) ───────────────────────────────────────────
 //
 // "Swarm" is not a resource noun in this API. A swarm is a container users
@@ -12264,6 +13168,9 @@ export type ListJourneysResult = {
   otherProjects: ProjectInfo[];
 };
 
+/**
+ * @deprecated Use {@link listGoalsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listJourneysOperation: PlatformOperation<
   ListJourneysInput,
   ListJourneysResult
@@ -12319,6 +13226,9 @@ export type ListJourneyRunsResult = {
   nextCursor?: string;
 };
 
+/**
+ * @deprecated Use {@link listGoalRunsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listJourneyRunsOperation: PlatformOperation<
   ListJourneyRunsInput,
   ListJourneyRunsResult
@@ -12374,6 +13284,9 @@ export type GetJourneyRunResult = {
   run: PlatformJourneyRun;
 };
 
+/**
+ * @deprecated Use {@link getGoalRunOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getJourneyRunOperation: PlatformOperation<
   GetJourneyRunInput,
   GetJourneyRunResult
@@ -12423,6 +13336,9 @@ export type ListJourneyRunSessionsResult = {
   nextCursor?: string;
 };
 
+/**
+ * @deprecated Use {@link listGoalRunSessionsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listJourneyRunSessionsOperation: PlatformOperation<
   ListJourneyRunSessionsInput,
   ListJourneyRunSessionsResult
@@ -12507,6 +13423,9 @@ export type LaunchJourneyRunResult = {
   run: PlatformJourneyRunLaunched;
 };
 
+/**
+ * @deprecated Use {@link launchGoalRunOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const launchJourneyRunOperation: PlatformOperation<
   LaunchJourneyRunInput,
   LaunchJourneyRunResult
@@ -12550,6 +13469,9 @@ export const launchJourneyRunOperation: PlatformOperation<
   },
 };
 
+/**
+ * @deprecated Use {@link cancelGoalRunOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const cancelJourneyRunOperation: PlatformOperation<
   CancelJourneyRunInput,
   CancelJourneyRunResult
@@ -12575,12 +13497,12 @@ export const cancelJourneyRunOperation: PlatformOperation<
   },
 };
 
-// ── Scenarios (user testing) ────────────────────────────────────────────────
+// ── Scenarios (deprecated compatibility operations) ─────────────────────────
 //
-// A scenario is a project environment published for people outside the project
-// to talk to. Internally these are `scenarios` rows and will stay that way;
-// "scenario" is the public noun. The older `list_scenarios` / `get_scenario`
-// operations still work and still point at the old routes until GA.
+// Superseded by `publish_study` / `unpublish_study`. Kept executable with their
+// old names, inputs and `PlatformScenario*` DTOs, calling the deprecated
+// `/environments/{id}/scenario` route, for an embedder holding a reference to
+// one. They are deliberately ABSENT from `ALL_OPERATIONS` — see the note there.
 //
 // Both operations need project ADMIN. Publishing is additionally behind the
 // `sandboxes-enabled` beta flag; unpublishing deliberately is not.
@@ -12641,6 +13563,9 @@ export type PublishScenarioResult = {
   overridesIgnored?: boolean;
 };
 
+/**
+ * @deprecated Use {@link publishStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const publishScenarioOperation: PlatformOperation<
   PublishScenarioInput,
   PublishScenarioResult
@@ -12694,6 +13619,9 @@ export type UnpublishScenarioResult = {
   result: PlatformScenarioDeleted;
 };
 
+/**
+ * @deprecated Use {@link unpublishStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const unpublishScenarioOperation: PlatformOperation<
   UnpublishScenarioInput,
   UnpublishScenarioResult
@@ -12750,19 +13678,40 @@ function requireExactlyOneGrounding(input: {
 }
 
 function requireConfigPair(input: {
-  sessionsPerTarget?: number;
+  iterations?: number;
   maxTurns?: number;
   setupWrites?: boolean;
 }): void {
   if (
-    (input.sessionsPerTarget === undefined) !==
-      (input.maxTurns === undefined) ||
-    (input.setupWrites !== undefined && input.sessionsPerTarget === undefined)
+    (input.iterations === undefined) !== (input.maxTurns === undefined) ||
+    (input.setupWrites !== undefined && input.iterations === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair."
+      "iterations and maxTurns must be sent together; setupWrites requires that pair."
     );
   }
+}
+
+/**
+ * The per-target session count off an operation that takes both spellings.
+ *
+ * Only the operations that KEPT their name through the goal rename need this:
+ * a renamed operation takes `iterations` alone, and its deprecated twin takes
+ * `sessionsPerTarget` alone, so neither has two spellings to reconcile.
+ * `create_swarm` and `update_swarm` have no twin, so they carry both until GA.
+ * Passing both is refused rather than resolved by precedence — this number
+ * multiplies into what a launch spends.
+ */
+function foldIterations(input: {
+  iterations?: number;
+  sessionsPerTarget?: number;
+}): number | undefined {
+  if (input.iterations !== undefined && input.sessionsPerTarget !== undefined) {
+    throw operationInputError(
+      "Pass either iterations or its deprecated sessionsPerTarget alias, not both."
+    );
+  }
+  return input.iterations ?? input.sessionsPerTarget;
 }
 
 // ── Swarms authoring ────────────────────────────────────────────────────────
@@ -13365,9 +14314,11 @@ const ORGANIZATION_SELECTOR_DESCRIPTION =
 const TRACE_DESTINATION_ROUTE_NOTE =
   "No `organizations/:organizationId/observability/:destinationId` route: the Observability section lists every destination and selects one as component state, so there is no page a single destination can be opened at.";
 
+/** Both spellings of the renamed surface — see `SESSION_SOURCE_TYPES`. */
 const traceDestinationSourceTypes = z.enum([
   "eval",
   "scenario",
+  "study",
   "swarm",
   "direct",
 ]);
@@ -13763,6 +14714,9 @@ export type GetJourneyResult = {
   journey: PlatformJourney;
 };
 
+/**
+ * @deprecated Use {@link getGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getJourneyOperation: PlatformOperation<
   GetJourneyInput,
   GetJourneyResult
@@ -13842,6 +14796,9 @@ export type CreateJourneyResult = {
   journey: PlatformJourney;
 };
 
+/**
+ * @deprecated Use {@link createGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const createJourneyOperation: PlatformOperation<
   CreateJourneyInput,
   CreateJourneyResult
@@ -13909,6 +14866,9 @@ const updateJourneyInput = journeySelectorInput.extend({
 export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
 export type UpdateJourneyResult = CreateJourneyResult;
 
+/**
+ * @deprecated Use {@link updateGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const updateJourneyOperation: PlatformOperation<
   UpdateJourneyInput,
   UpdateJourneyResult
@@ -13925,7 +14885,9 @@ export const updateJourneyOperation: PlatformOperation<
   ),
   inputSchema: updateJourneyInput,
   async execute(input, { client, signal, onScopeResolved }) {
-    requireConfigPair(input);
+    // The deprecated operation keeps the deprecated spelling; the shared guard
+    // reads the canonical one.
+    requireConfigPair({ ...input, iterations: input.sessionsPerTarget });
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -13959,6 +14921,9 @@ export type ArchiveJourneyResult = {
   journey: PlatformJourneyArchived;
 };
 
+/**
+ * @deprecated Use {@link archiveGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const archiveJourneyOperation: PlatformOperation<
   ArchiveJourneyInput,
   ArchiveJourneyResult
@@ -14066,7 +15031,26 @@ const createSwarmInput = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(2000).optional(),
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
-  sessionsPerTarget: z.number().int().min(1).max(100),
+  // `create_swarm` keeps its name through the goal rename, so it has no
+  // deprecated twin to hold the old field spelling. It takes both until GA
+  // instead: `iterations` canonically, `sessionsPerTarget` as the pre-rename
+  // alias, exactly one of them.
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "Sessions per target for goals authored here. TOTAL sessions = targets x this, and the total is what spends."
+    ),
+  sessionsPerTarget: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Deprecated spelling of iterations."),
   maxTurns: z.number().int().min(1).max(200),
   setupWrites: z
     .boolean()
@@ -14090,7 +15074,7 @@ export const createSwarmOperation: PlatformOperation<
   name: "create_swarm",
   title: "Create an MCPJam swarm container",
   description:
-    "Create a container to author journeys under. Creating one runs nothing. Behind the sandboxes-enabled beta.",
+    "Create a container to author goals under. Creating one runs nothing. Send iterations (its deprecated alias sessionsPerTarget is still accepted, but not both). Behind the sandboxes-enabled beta.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -14099,6 +15083,12 @@ export const createSwarmOperation: PlatformOperation<
   ),
   inputSchema: createSwarmInput,
   async execute(input, { client, signal, onScopeResolved }) {
+    const iterations = foldIterations(input);
+    if (iterations === undefined) {
+      throw operationInputError(
+        "iterations is required — sessions run against each target."
+      );
+    }
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -14107,7 +15097,7 @@ export const createSwarmOperation: PlatformOperation<
       {
         projectId: project.id,
         name: input.name,
-        sessionsPerTarget: input.sessionsPerTarget,
+        iterations,
         maxTurns: input.maxTurns,
         ...(input.setupWrites !== undefined
           ? { setupWrites: input.setupWrites }
@@ -14136,13 +15126,27 @@ const updateSwarmInput = swarmSelectorInput.extend({
   environmentIds: z
     .union([z.array(z.string().min(1)).min(1), z.null()])
     .optional(),
-  sessionsPerTarget: z.number().int().min(1).max(100).optional(),
+  // Both spellings, exactly one of them — see `createSwarmInput`.
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Sessions per target for goals authored here."),
+  sessionsPerTarget: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Deprecated spelling of iterations."),
   maxTurns: z.number().int().min(1).max(200).optional(),
   setupWrites: z
     .boolean()
     .optional()
     .describe(
-      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing iterations/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
     ),
 });
 
@@ -14156,7 +15160,7 @@ export const updateSwarmOperation: PlatformOperation<
   name: "update_swarm",
   title: "Update an MCPJam swarm container",
   description:
-    "Edit a swarm container. sessionsPerTarget and maxTurns must be sent together — they are one config object upstream.",
+    "Edit a swarm container. iterations (deprecated alias: sessionsPerTarget, not both) and maxTurns must be sent together — they are one config object upstream.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -14165,7 +15169,8 @@ export const updateSwarmOperation: PlatformOperation<
   ),
   inputSchema: updateSwarmInput,
   async execute(input, { client, signal, onScopeResolved }) {
-    requireConfigPair(input);
+    const iterations = foldIterations(input);
+    requireConfigPair({ ...input, iterations });
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -14181,9 +15186,7 @@ export const updateSwarmOperation: PlatformOperation<
         ...(input.environmentIds !== undefined
           ? { environmentIds: input.environmentIds }
           : {}),
-        ...(input.sessionsPerTarget !== undefined
-          ? { sessionsPerTarget: input.sessionsPerTarget }
-          : {}),
+        ...(iterations !== undefined ? { iterations } : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
         ...(input.setupWrites !== undefined
           ? { setupWrites: input.setupWrites }
@@ -14333,12 +15336,87 @@ const generateJourneysInput = generationGroundingInput.extend({
     ),
 });
 
+const generateGoalsInput = generationGroundingInput.extend({
+  persona: z
+    .object({
+      name: z.string().min(1),
+      role: z.string().min(1),
+      notes: z.string().optional(),
+    })
+    .describe(
+      "The persona to draft goals for, BY VALUE — it does not have to exist yet."
+    ),
+  // `journeyCount` is declared on the shared grounding input, which
+  // `generate_personas` uses too, so the goal spelling is added here rather
+  // than renamed there.
+  goalCount: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional()
+    .describe("How many goals to draft."),
+});
+
+export type GenerateGoalsInput = z.infer<typeof generateGoalsInput>;
+export type GenerateGoalsResult = {
+  project: SelectedProjectInfo;
+  drafts: PlatformGenerationDrafts;
+};
+
+export const generateGoalsOperation: PlatformOperation<
+  GenerateGoalsInput,
+  GenerateGoalsResult
+> = {
+  name: "generate_goals",
+  title: "Draft MCPJam goals with a model",
+  description:
+    "Draft candidate goals for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_goal. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: generateGoalsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    requireExactlyOneGrounding(input);
+    if (input.goalCount !== undefined && input.journeyCount !== undefined) {
+      throw operationInputError(
+        "Pass either goalCount or its deprecated journeyCount alias, not both."
+      );
+    }
+    const goalDraftCount = input.goalCount ?? input.journeyCount;
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const drafts = await client.generateGoals(
+      {
+        projectId: project.id,
+        persona: input.persona,
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+        ...(input.serverAttachmentId
+          ? { serverAttachmentId: input.serverAttachmentId }
+          : {}),
+        ...(input.description ? { description: input.description } : {}),
+        ...(goalDraftCount !== undefined ? { goalCount: goalDraftCount } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), drafts };
+  },
+};
+
 export type GenerateJourneysInput = z.infer<typeof generateJourneysInput>;
 export type GenerateJourneysResult = {
   project: SelectedProjectInfo;
   drafts: PlatformGenerationDrafts;
 };
 
+/**
+ * @deprecated Use {@link generateGoalsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const generateJourneysOperation: PlatformOperation<
   GenerateJourneysInput,
   GenerateJourneysResult
@@ -14422,6 +15500,9 @@ export type GetJourneyRunScorecardResult = {
   scorecard: PlatformRunScorecard;
 };
 
+/**
+ * @deprecated Use {@link getGoalRunScorecardOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getJourneyRunScorecardOperation: PlatformOperation<
   GetJourneyRunScorecardInput,
   GetJourneyRunScorecardResult
@@ -14553,6 +15634,61 @@ export const undismissSwarmFindingOperation: PlatformOperation<
   },
 };
 
+const DEPRECATED_SWARM_RUN_SELECTOR_SUFFIX =
+  " DEPRECATED: use `swarmRun`, which means exactly this.";
+
+/**
+ * Fold a `swarmRun` selector onto its deprecated `wave` spelling.
+ *
+ * In `execute` rather than a `.refine()` because the CLI calls `execute`
+ * directly and would otherwise skip the check — the same reason
+ * `foldGoalSelector` above lives here.
+ */
+function foldSwarmRunSelector(input: {
+  swarmRun?: string;
+  wave?: string;
+}): string {
+  if (input.swarmRun !== undefined && input.wave !== undefined) {
+    throw operationInputError(
+      "Pass either swarmRun or its deprecated wave alias, not both."
+    );
+  }
+  const selected = input.swarmRun ?? input.wave;
+  if (selected === undefined) {
+    throw operationInputError(
+      "swarmRun is required — the `swarmRunId` on a goal run."
+    );
+  }
+  return selected;
+}
+
+const swarmRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  swarmRun: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm run id — the `swarmRunId` on a goal run."),
+  wave: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm run id." + DEPRECATED_SWARM_RUN_SELECTOR_SUFFIX),
+});
+
+export type GetSwarmRunInsightsInput = z.infer<typeof swarmRunSelectorInput>;
+export type GetSwarmRunInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: PlatformSwarmRunInsights;
+};
+
 const waveSelectorInput = z.object({
   project: z
     .string()
@@ -14581,6 +15717,129 @@ export type GetWaveInsightsResult = {
 const INCLUDED_ANALYSIS_FAILURE_NOTE =
   "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity — try again later, not in a loop.";
 
+export const getSwarmRunInsightsOperation: PlatformOperation<
+  GetSwarmRunInsightsInput,
+  GetSwarmRunInsightsResult
+> = {
+  name: "get_swarm_run_insights",
+  title: "Get an MCPJam swarm run's insights",
+  description:
+    "The model's analysis of a whole swarm run — the batch of sibling goal runs launched together — if one has been requested. Poll this after request_swarm_run_insights; status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    // A swarm run IS a run on the Swarms surface: `/swarms/<swarmRunId>`.
+    // The permalink TYPE key is still `journey_run`; it moves in the
+    // wire-value step, once the Slack and Discord apps accept both.
+    {
+      type: "goal_run",
+      id: result.insights.swarmRunId,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: swarmRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const swarmRunId = foldSwarmRunSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const insights = await client.getSwarmRunInsights(
+      { projectId: project.id, swarmRunId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestSwarmRunInsightsInput = swarmRunSelectorInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe(
+      "Regenerate over a swarm run that already has insights. TAKES ANOTHER SLICE of the daily insight quota (no credits either way) — the usual reason a swarm run looks stuck is a caller that did not poll, so read get_swarm_run_insights before reaching for this."
+    ),
+});
+
+export type RequestSwarmRunInsightsInput = z.infer<
+  typeof requestSwarmRunInsightsInput
+>;
+export type RequestSwarmRunInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformSwarmRunInsightsRequested;
+};
+
+export const requestSwarmRunInsightsOperation: PlatformOperation<
+  RequestSwarmRunInsightsInput,
+  RequestSwarmRunInsightsResult
+> = {
+  name: "request_swarm_run_insights",
+  title: "Request MCPJam swarm run insights",
+  description:
+    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; poll get_swarm_run_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: requestSwarmRunInsightsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const swarmRunId = foldSwarmRunSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const request = await client.requestSwarmRunInsights(
+      {
+        projectId: project.id,
+        swarmRunId,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelSwarmRunInsightsInput = z.infer<typeof swarmRunSelectorInput>;
+export type CancelSwarmRunInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: PlatformSwarmRunInsightsCanceled;
+};
+
+export const cancelSwarmRunInsightsOperation: PlatformOperation<
+  CancelSwarmRunInsightsInput,
+  CancelSwarmRunInsightsResult
+> = {
+  name: "cancel_swarm_run_insights",
+  title: "Cancel an MCPJam swarm run insights request",
+  description:
+    "Stop an in-flight insights generation. This is the recovery path for a swarm run stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: swarmRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const swarmRunId = foldSwarmRunSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const canceled = await client.cancelSwarmRunInsights(
+      { projectId: project.id, swarmRunId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+// ── Swarm run insights (deprecated compatibility operations) ────────────────
+//
+// The `wave` spelling, kept executable so an embedded caller holding one of
+// these names keeps working. Each calls its OWN old route and returns the old
+// DTO — never the canonical operation — so its caller's response shape does
+// not change under it. Absent from ALL_OPERATIONS, so no surface offers one.
+// Deleted at GA.
+
+/** @deprecated Use {@link getSwarmRunInsightsOperation}. */
 export const getWaveInsightsOperation: PlatformOperation<
   GetWaveInsightsInput,
   GetWaveInsightsResult
@@ -14588,7 +15847,8 @@ export const getWaveInsightsOperation: PlatformOperation<
   name: "get_wave_insights",
   title: "Get an MCPJam wave's insights",
   description:
-    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
+    "DEPRECATED — use get_swarm_run_insights, which is this operation under the name the product uses. The model's analysis of a whole wave, if one has been requested. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
     // A wave IS a journey run on the Swarms surface: `/swarms/<waveId>`.
@@ -14627,6 +15887,7 @@ export type RequestWaveInsightsResult = {
   request: PlatformWaveInsightsRequested;
 };
 
+/** @deprecated Use {@link requestSwarmRunInsightsOperation}. */
 export const requestWaveInsightsOperation: PlatformOperation<
   RequestWaveInsightsInput,
   RequestWaveInsightsResult
@@ -14634,7 +15895,7 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
+    "DEPRECATED — use request_swarm_run_insights, which is this operation under the name the product uses. Asks a model to analyze a whole wave; returns immediately with status pending. Included with MCPJam; no customer credits consumed; it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -14662,6 +15923,7 @@ export type CancelWaveInsightsResult = {
   canceled: PlatformWaveInsightsCanceled;
 };
 
+/** @deprecated Use {@link cancelSwarmRunInsightsOperation}. */
 export const cancelWaveInsightsOperation: PlatformOperation<
   CancelWaveInsightsInput,
   CancelWaveInsightsResult
@@ -14669,7 +15931,7 @@ export const cancelWaveInsightsOperation: PlatformOperation<
   name: "cancel_wave_insights",
   title: "Cancel an MCPJam wave insights request",
   description:
-    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+    "DEPRECATED — use cancel_swarm_run_insights, which is this operation under the name the product uses. Stops an in-flight insights generation.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -14722,7 +15984,1132 @@ export const getCapabilitiesOperation: PlatformOperation<
   },
 };
 
-// ── User testing ────────────────────────────────────────────────────────────
+// ── Studies ─────────────────────────────────────────────────────────────────
+//
+// A **study** is one project environment published for people outside the
+// project to talk to. Internally these are `scenarios` rows and will stay that
+// way; `study` is the public noun.
+//
+// This family replaces two generations of names at once: the `*_scenario`
+// operations and the `*_user_testing_*` ones. Both still work under their old
+// names, from the deprecated sections further down, and both point at their own
+// old routes. They are deleted at GA.
+//
+// AUTHORIZATION: publishing and unpublishing need project ADMIN, and publishing
+// is additionally behind the `sandboxes-enabled` beta flag (unpublishing
+// deliberately is not — losing a feature is exactly when taking something down
+// matters most). Everything keyed by a study gates on the WORKSPACE role, where
+// membership is enough for mode changes, renames, member edits and link
+// rotation; only guest execution and rebinding need project admin.
+
+const DEPRECATED_STUDY_SELECTOR_SUFFIX =
+  " DEPRECATED: use `study`, which means exactly this.";
+
+/**
+ * Fold a `study` selector onto its deprecated `scenario` spelling.
+ *
+ * Exactly one, never both. A precedence rule is invisible: a script that half
+ * finished its migration and passes both keeps running, silently addressing
+ * whichever of two possibly-different studies this function happened to prefer
+ * — and `rotate_study_link` and `remove_study_member` are in this family, so
+ * "whichever it happened to prefer" revokes real people's access.
+ *
+ * In `execute` rather than `.refine()` for the reason
+ * {@link operationInputError} gives: the CLI calls `execute` directly and never
+ * parses the input schema, so a refine-only guard would simply not fire there.
+ */
+function foldStudySelector(input: {
+  study?: string;
+  scenario?: string;
+}): string {
+  if (input.study !== undefined && input.scenario !== undefined) {
+    throw operationInputError(
+      "Pass either study or its deprecated scenario alias, not both."
+    );
+  }
+  const selected = input.study ?? input.scenario;
+  if (selected === undefined) {
+    throw operationInputError(
+      "study is required — the id from list_studies or publish_study."
+    );
+  }
+  return selected;
+}
+
+/**
+ * Both spellings are OPTIONAL in the schema even though exactly one is
+ * required, because "exactly one of two" is not a shape Zod states in a way the
+ * MCP tool catalog renders usefully. {@link foldStudySelector} enforces it, and
+ * it is the guard the CLI hits too.
+ */
+const studySelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  study: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Study id (the `id` from list_studies / publish_study)."),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Study id (the `id` from list_studies / publish_study)." +
+        DEPRECATED_STUDY_SELECTOR_SUFFIX
+    ),
+});
+
+export type ListStudiesResult = {
+  project: SelectedProjectInfo;
+  items: PlatformStudySummary[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listStudiesOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListStudiesResult
+> = {
+  name: "list_studies",
+  title: "List MCPJam studies",
+  description:
+    "List the studies published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((study) => ({
+      type: "study" as const,
+      id: study.id,
+      projectId: result.project?.id,
+      label: `Open ${study.name}`,
+    }))
+  ),
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listStudies(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const studyEnvironmentSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Project environment id to publish (or unpublish). One study per environment."
+    ),
+});
+
+// Create-time overrides, forwarded to the publish IN THE SAME CALL — without
+// them, "publish this restricted to invited people only" is two operations with
+// a window between them where the study is live in the default mode.
+const publishStudyInput = studyEnvironmentSelectorInput.extend({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Study name. CREATE-TIME ONLY — ignored on a republish of an already-published environment (rename with update_study)."
+    ),
+  description: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe("Study description. CREATE-TIME ONLY — ignored on a republish."),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link: project_members (signed-in project members only), invited_only (named members, invited individually), anyone_with_link (anyone holding the URL). CREATE-TIME ONLY — ignored on a republish; change an existing study's mode with update_study."
+    ),
+});
+
+export type PublishStudyInput = z.infer<typeof publishStudyInput>;
+
+export type PublishStudyResult = {
+  project: SelectedProjectInfo;
+  study: PlatformStudy;
+  /**
+   * True when overrides were sent but the environment was ALREADY published,
+   * so they were ignored upstream. The study in the result carries the real
+   * name and mode — a caller who asked for `invited_only` must not conclude
+   * the link is restricted when it is not.
+   */
+  overridesIgnored?: boolean;
+};
+
+export const publishStudyOperation: PlatformOperation<
+  PublishStudyInput,
+  PublishStudyResult
+> = {
+  name: "publish_study",
+  risk: "exposure",
+  title: "Publish a project environment as a study",
+  description:
+    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at CREATE TIME, so the study is never briefly live in a wider mode than asked for. IDEMPOTENT — publishing an already-published environment returns the existing study rather than creating a second one; `created` tells you which happened, and `overridesIgnored: true` means the overrides were discarded because the study already existed. Requires project admin.",
+  readOnly: false,
+  permalink: derivePermalinks((result) => [
+    // The study's own page. `result.study.link` is the token-bearing GUEST
+    // share link — a backend-minted product capability, not a permalink, and
+    // untouched by this policy.
+    {
+      type: "study",
+      id: result.study.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: publishStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const { overridesIgnored, ...study } = await client.publishStudy(
+      {
+        projectId: project.id,
+        environmentId: input.environment,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      study,
+      ...(overridesIgnored ? { overridesIgnored: true } : {}),
+    };
+  },
+};
+
+/**
+ * `study` names WHICH study to take down, and is only needed once an
+ * environment backs more than one — the route refuses to guess between them
+ * rather than deleting whichever an index yielded first. Optional because
+ * omitting it is the whole contract for the single-study case.
+ */
+const unpublishStudyInput = studyEnvironmentSelectorInput.extend({
+  study: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Study id, when the environment backs more than one. Omit for the single-study case; required once there are several, because the route refuses to pick."
+    ),
+});
+
+export type UnpublishStudyInput = z.infer<typeof unpublishStudyInput>;
+
+export type UnpublishStudyResult = {
+  project: SelectedProjectInfo;
+  result: PlatformStudyDeleted;
+};
+
+export const unpublishStudyOperation: PlatformOperation<
+  UnpublishStudyInput,
+  UnpublishStudyResult
+> = {
+  name: "unpublish_study",
+  risk: "destructive",
+  title: "Take a study down",
+  description:
+    "Unpublish an environment's study, invalidating its share link and any live guest sessions. Idempotent — an environment with no study reports `deleted: false` rather than failing. Requires project admin.",
+  readOnly: false,
+  permalink: noPermalink("mutation-only"),
+  inputSchema: unpublishStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.unpublishStudy(
+      {
+        projectId: project.id,
+        environmentId: input.environment,
+        ...(input.study ? { studyId: input.study } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+export type GetStudyInput = z.infer<typeof studySelectorInput>;
+
+export type GetStudyResult = {
+  project: SelectedProjectInfo;
+  study: PlatformStudyDetail;
+};
+
+/**
+ * The merged read. `get_scenario` served the execution settings and
+ * `get_user_testing_scenario` served the environment id and the insights
+ * envelope; they were two generations of one question, and this is the one
+ * that survives.
+ *
+ * ID FIRST, name second. The id path is one request, which is what an agent
+ * holding a `list_studies` result always has, and what the deprecated
+ * `get_user_testing_scenario` did. The name path costs a list and exists
+ * because the deprecated `get_scenario` accepted one; a study's name is the
+ * label a visitor sees, so it is edited often and duplicated freely, and
+ * `resolveByIdOrName` refuses an ambiguous one rather than picking.
+ */
+export const getStudyOperation: PlatformOperation<
+  GetStudyInput,
+  GetStudyResult
+> = {
+  name: "get_study",
+  title: "Get one MCPJam study",
+  description:
+    "One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope — findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_study_insights does, and it takes a slice of the daily insight quota. Matched by id, or by name within the project.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "study",
+      id: result.study.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const selector = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    try {
+      const study = await client.getStudy(
+        { projectId: project.id, studyId: selector },
+        { signal }
+      );
+      return { project: toSelectedProjectInfo(project), study };
+    } catch (error) {
+      // Only NOT_FOUND and VALIDATION_ERROR fall through to the name path.
+      // The second is how a NAME arrives: "Checkout" is not a Convex id, and
+      // `/v1/scenario` answers a malformed id with a 400 rather than a 404.
+      // Anything else — a permission refusal, a rate limit, a dead upstream —
+      // is the caller's real answer, and listing every study in the project to
+      // re-ask a question already answered would hide it behind a second
+      // failure.
+      if (
+        !(error instanceof PlatformApiError) ||
+        (error.code !== "NOT_FOUND" && error.code !== "VALIDATION_ERROR")
+      ) {
+        throw error;
+      }
+    }
+    const page = await client.listStudies(
+      { projectId: project.id },
+      { signal }
+    );
+    const match = resolveByIdOrName(
+      page.items,
+      selector,
+      "Study",
+      `project "${project.name}"`
+    );
+    const study = await client.getStudy(
+      { projectId: project.id, studyId: match.id },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), study };
+  },
+};
+
+const updateStudyInput = studySelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(2000).optional(),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link. Send this ON ITS OWN — identity and exposure are separate operations, and a mixed request is rejected."
+    ),
+});
+
+export type UpdateStudyInput = z.infer<typeof updateStudyInput>;
+export type UpdateStudyResult = {
+  project: SelectedProjectInfo;
+  study: PlatformStudyUpdated;
+};
+
+export const updateStudyOperation: PlatformOperation<
+  UpdateStudyInput,
+  UpdateStudyResult
+> = {
+  name: "update_study",
+  title: "Update an MCPJam study",
+  description:
+    "Rename a study, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the study live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Workspace membership is enough — no admin needed.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "study",
+      id: result.study.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: updateStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const selector = foldStudySelector(input);
+    // Identity and exposure are separate mutations upstream, so the route
+    // refuses to chain them: a failure between the two would leave the
+    // study half-updated on the half that decides who can reach it.
+    if (
+      input.mode !== undefined &&
+      (input.name !== undefined || input.description !== undefined)
+    ) {
+      throw operationInputError(
+        "Send `mode` on its own: identity and exposure are separate operations upstream."
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const study = await client.updateStudy(
+      {
+        projectId: project.id,
+        studyId: selector,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), study };
+  },
+};
+
+const listStudySessionsInput = studySelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type ListStudySessionsInput = z.infer<typeof listStudySessionsInput>;
+export type ListStudySessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformStudySession[];
+  nextCursor?: string;
+};
+
+export const listStudySessionsOperation: PlatformOperation<
+  ListStudySessionsInput,
+  ListStudySessionsResult
+> = {
+  name: "list_study_sessions",
+  title: "List the sessions a study produced",
+  description:
+    "Sessions real visitors had with a published study: message counts, feedback, device and visitor segment, and a first-message preview. SUMMARIES only — transcripts are a separate call, because these are real people's conversations and a listing should not page them into every caller that wanted counts.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.chatSessionId,
+      projectId: result.project?.id,
+    }))
+  ),
+  inputSchema: listStudySessionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listStudySessions(
+      {
+        projectId: project.id,
+        studyId: study,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const getStudySessionInput = studySelectorInput.extend({
+  session: z.string().trim().min(1).describe("Session id."),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type GetStudySessionInput = z.infer<typeof getStudySessionInput>;
+export type GetStudySessionResult = {
+  project: SelectedProjectInfo;
+  session: PlatformStudySessionDetail;
+};
+
+export const getStudySessionOperation: PlatformOperation<
+  GetStudySessionInput,
+  GetStudySessionResult
+> = {
+  name: "get_study_session",
+  title: "Read one user-testing session's transcript",
+  description:
+    "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.session.chatSessionId
+      ? [
+          {
+            type: "chat_session" as const,
+            id: result.session.chatSessionId,
+            projectId: result.project?.id,
+          },
+        ]
+      : []
+  ),
+  inputSchema: getStudySessionInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const session = await client.getStudySession(
+      {
+        projectId: project.id,
+        studyId: study,
+        sessionId: input.session,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), session };
+  },
+};
+
+const studyMetricsInput = studySelectorInput.extend({
+  population: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Restrict the metrics to a session population."),
+});
+
+export type GetStudyMetricsInput = z.infer<typeof studyMetricsInput>;
+export type GetStudyMetricsResult = {
+  project: SelectedProjectInfo;
+  metrics: Record<string, unknown>;
+};
+
+export const getStudyMetricsOperation: PlatformOperation<
+  GetStudyMetricsInput,
+  GetStudyMetricsResult
+> = {
+  name: "get_study_metrics",
+  title: "Get a study's session metrics",
+  description:
+    "Aggregate metrics across a study's sessions. Start here rather than reading transcripts — it answers 'how is this going' without pulling anyone's conversation into the turn.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An aggregate over a study's sessions; the numbers are not a resource."
+  ),
+  inputSchema: studyMetricsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const metrics = await client.getStudyMetrics(
+      {
+        projectId: project.id,
+        studyId: study,
+        ...(input.population ? { population: input.population } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), metrics };
+  },
+};
+
+export type GetStudyUsageInput = z.infer<typeof studySelectorInput>;
+export type GetStudyUsageResult = {
+  project: SelectedProjectInfo;
+  usage: Record<string, unknown>;
+};
+
+export const getStudyUsageOperation: PlatformOperation<
+  GetStudyUsageInput,
+  GetStudyUsageResult
+> = {
+  name: "get_study_usage",
+  title: "Get a study's usage breakdown",
+  description:
+    "Usage rates for a study, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An aggregate over a study's usage; the numbers are not a resource."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const usage = await client.getStudyUsage(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), usage };
+  },
+};
+
+export type ListStudyFindingsInput = z.infer<typeof studySelectorInput>;
+export type ListStudyFindingsResult = {
+  project: SelectedProjectInfo;
+  items: Array<Record<string, unknown>>;
+};
+
+export const listStudyFindingsOperation: PlatformOperation<
+  ListStudyFindingsInput,
+  ListStudyFindingsResult
+> = {
+  name: "list_study_findings",
+  title: "List a study's findings",
+  description:
+    "Problems detected across a study's sessions, tracked over time so a recurring one is distinguishable from a new one.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "Findings are rows inside a study's insights panel with no addressable route of their own."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listStudyFindings(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetStudySignalsInput = z.infer<typeof studySelectorInput>;
+export type GetStudySignalsResult = {
+  project: SelectedProjectInfo;
+  signals: Record<string, unknown>;
+};
+
+export const getStudySignalsOperation: PlatformOperation<
+  GetStudySignalsInput,
+  GetStudySignalsResult
+> = {
+  name: "get_study_signals",
+  title: "Get a study's current window signals",
+  description:
+    "The study's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A derived signal summary, not a resource."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const signals = await client.getStudySignals(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), signals };
+  },
+};
+
+const studyWindowInput = studySelectorInput.extend({
+  window: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Window id, from get_user_testing_signals."),
+});
+
+export type GetStudyInsightsInput = z.infer<typeof studyWindowInput>;
+export type GetStudyInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: Record<string, unknown>;
+};
+
+export const getStudyInsightsOperation: PlatformOperation<
+  GetStudyInsightsInput,
+  GetStudyInsightsResult
+> = {
+  name: "get_study_insights",
+  title: "Get a user-testing window's insights",
+  description:
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A derived insights payload, not a resource."
+  ),
+  inputSchema: studyWindowInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const insights = await client.getStudyInsights(
+      {
+        projectId: project.id,
+        studyId: study,
+        windowId: input.window,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestStudyInsightsInput = studySelectorInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe(
+      "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
+    ),
+});
+
+export type RequestStudyInsightsInput = z.infer<
+  typeof requestStudyInsightsInput
+>;
+export type RequestStudyInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformStudyInsightsRequested;
+};
+
+export const requestStudyInsightsOperation: PlatformOperation<
+  RequestStudyInsightsInput,
+  RequestStudyInsightsResult
+> = {
+  name: "request_study_insights",
+  title: "Request insights for a study",
+  description:
+    "Ask a model to analyze the study's current window. Returns immediately with the windowId and status pending; poll get_study_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm-run insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: requestStudyInsightsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const request = await client.requestStudyInsights(
+      {
+        projectId: project.id,
+        studyId: study,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelStudyInsightsInput = z.infer<typeof studyWindowInput>;
+export type CancelStudyInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: Record<string, unknown>;
+};
+
+export const cancelStudyInsightsOperation: PlatformOperation<
+  CancelStudyInsightsInput,
+  CancelStudyInsightsResult
+> = {
+  name: "cancel_study_insights",
+  title: "Cancel a user-testing insights request",
+  description:
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyWindowInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const canceled = await client.cancelStudyInsights(
+      {
+        projectId: project.id,
+        studyId: study,
+        windowId: input.window,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+const studyFindingInput = studySelectorInput.extend({
+  finding: z.string().trim().min(1).describe("Finding id."),
+});
+
+export type DismissStudyFindingInput = z.infer<typeof studyFindingInput>;
+export type DismissStudyFindingResult = {
+  project: SelectedProjectInfo;
+  finding: Record<string, unknown>;
+};
+
+export const dismissStudyFindingOperation: PlatformOperation<
+  DismissStudyFindingInput,
+  DismissStudyFindingResult
+> = {
+  name: "dismiss_study_finding",
+  title: "Dismiss a user-testing finding",
+  description:
+    "Mark a finding as not worth acting on. Its lifecycle keeps updating underneath, so undismissing later shows honest current state.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyFindingInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const finding = await client.dismissStudyFinding(
+      {
+        projectId: project.id,
+        studyId: study,
+        findingId: input.finding,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+export type UndismissStudyFindingInput = DismissStudyFindingInput;
+export type UndismissStudyFindingResult = DismissStudyFindingResult;
+
+export const undismissStudyFindingOperation: PlatformOperation<
+  UndismissStudyFindingInput,
+  UndismissStudyFindingResult
+> = {
+  name: "undismiss_study_finding",
+  title: "Undismiss a user-testing finding",
+  description: "Bring a dismissed finding back into the active list.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyFindingInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const finding = await client.undismissStudyFinding(
+      {
+        projectId: project.id,
+        studyId: study,
+        findingId: input.finding,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+const setStudyGuestExecutionInput = studySelectorInput.extend({
+  enabled: z.boolean(),
+  computerEnabled: z.boolean(),
+  sharedSkillsEnabled: z.boolean(),
+  dailyCreditCap: z
+    .number()
+    .min(0)
+    .describe("Hard ceiling on what visitors can spend per day, in credits."),
+  dailyComputerStartCap: z.number().int().min(0),
+  maxConcurrentComputers: z.number().int().min(0),
+  harnessEnabled: z.boolean().optional(),
+  dailyHarnessSpendCapMicros: z.number().int().min(0).optional(),
+  dailyHarnessCallCap: z.number().int().min(0).optional(),
+  maxConcurrentHarnessRuns: z.number().int().min(0).optional(),
+});
+
+export type SetStudyGuestExecutionInput = z.infer<
+  typeof setStudyGuestExecutionInput
+>;
+export type SetStudyGuestExecutionResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const setStudyGuestExecutionOperation: PlatformOperation<
+  SetStudyGuestExecutionInput,
+  SetStudyGuestExecutionResult
+> = {
+  name: "set_study_guest_execution",
+  title: "Set a study's guest execution caps",
+  description:
+    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: setStudyGuestExecutionInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const study = foldStudySelector(input);
+    // Both selector spellings are dropped from the rest: whichever the caller
+    // sent, it is a selector, not a cap, and forwarding it would put an unknown
+    // key in a strict body.
+    const {
+      project: _project,
+      study: _study,
+      scenario: _scenario,
+      ...guestExecution
+    } = input;
+    const result = await client.setStudyGuestExecution(
+      {
+        projectId: project.id,
+        studyId: study,
+        guestExecution,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+export type RotateStudyLinkInput = z.infer<typeof studySelectorInput>;
+export type RotateStudyLinkResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const rotateStudyLinkOperation: PlatformOperation<
+  RotateStudyLinkInput,
+  RotateStudyLinkResult
+> = {
+  name: "rotate_study_link",
+  title: "Rotate a study's share link",
+  description:
+    "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Workspace membership is enough — no admin needed.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink(
+    "mutation-only",
+    "Mints a NEW guest share link and invalidates the old one. That link is a backend-owned product capability with its own delivery, not a permalink."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.rotateStudyLink(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const upsertStudyMemberInput = studySelectorInput.extend({
+  email: z.string().trim().min(3).max(320),
+  sendInviteEmail: z
+    .boolean()
+    .optional()
+    .describe(
+      "Off by default — adding someone is not the same as telling them."
+    ),
+});
+
+export type UpsertStudyMemberInput = z.infer<typeof upsertStudyMemberInput>;
+export type UpsertStudyMemberResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const upsertStudyMemberOperation: PlatformOperation<
+  UpsertStudyMemberInput,
+  UpsertStudyMemberResult
+> = {
+  name: "upsert_study_member",
+  title: "Invite someone to a study",
+  description:
+    "Grant one person access to a study by email. Upsert, so re-inviting an existing member is not an error. Widens who can reach the study.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: upsertStudyMemberInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.upsertStudyMember(
+      {
+        projectId: project.id,
+        studyId: study,
+        email: input.email,
+        ...(input.sendInviteEmail !== undefined
+          ? { sendInviteEmail: input.sendInviteEmail }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const removeStudyMemberInput = studySelectorInput.extend({
+  member: z.string().trim().min(1).describe("Member id or email."),
+});
+
+export type RemoveStudyMemberInput = z.infer<typeof removeStudyMemberInput>;
+export type RemoveStudyMemberResult = UpsertStudyMemberResult;
+
+export const removeStudyMemberOperation: PlatformOperation<
+  RemoveStudyMemberInput,
+  RemoveStudyMemberResult
+> = {
+  name: "remove_study_member",
+  title: "Remove someone from a study",
+  description:
+    "Revoke one person's access. Narrowing exposure is the safe direction, so this is never blocked by the beta gate — losing access to a feature is exactly when revoking matters most. It is still a REMOVAL: the person loses a study they could reach, and getting it back means inviting them again.",
+  readOnly: false,
+  // `destructive` is about HARM, not about gating. Revoking access removes
+  // something a named person had, which is what a client should be able to
+  // confirm before it fires; that it is also ungated by the beta flag is a
+  // separate property, decided by direction of exposure rather than by risk.
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: removeStudyMemberInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.removeStudyMember(
+      {
+        projectId: project.id,
+        studyId: study,
+        member: input.member,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const rebindStudyInput = studySelectorInput.extend({
+  environmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The environment to point at."),
+});
+
+export type RebindStudyInput = z.infer<typeof rebindStudyInput>;
+export type RebindStudyResult = UpsertStudyMemberResult;
+
+export const rebindStudyOperation: PlatformOperation<
+  RebindStudyInput,
+  RebindStudyResult
+> = {
+  name: "rebind_study",
+  title: "Point a study at a different environment",
+  description:
+    "Swap the environment behind a study, KEEPING its share link, its members and its session history. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone. Changes what visitors are talking to; project admin.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink(
+    "mutation-only",
+    "Repoints a study at another environment and returns an opaque receipt that names no id to address."
+  ),
+  inputSchema: rebindStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.rebindStudy(
+      {
+        projectId: project.id,
+        studyId: study,
+        environmentId: input.environmentId,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+// ── User testing (deprecated compatibility operations) ──────────────────────
+//
+// Superseded by the `*_study*` operations above. Kept executable with their old
+// names, their `scenario` selector and their `PlatformUserTesting*` DTOs,
+// calling the deprecated `/user-testing/scenarios` routes, for an embedder
+// holding a reference to one. Deliberately ABSENT from `ALL_OPERATIONS`.
 //
 // What a published scenario produced, and who may reach it. `publish_scenario`
 // creates one; everything here addresses the scenario itself.
@@ -14755,6 +17142,9 @@ export type GetUserTestingScenarioResult = {
   scenario: PlatformUserTestingScenarioDetail;
 };
 
+/**
+ * @deprecated Use {@link getStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingScenarioOperation: PlatformOperation<
   GetUserTestingScenarioInput,
   GetUserTestingScenarioResult
@@ -14804,6 +17194,9 @@ export type UpdateUserTestingScenarioResult = {
   scenario: PlatformUserTestingScenario;
 };
 
+/**
+ * @deprecated Use {@link updateStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const updateUserTestingScenarioOperation: PlatformOperation<
   UpdateUserTestingScenarioInput,
   UpdateUserTestingScenarioResult
@@ -14873,6 +17266,9 @@ export type ListUserTestingSessionsResult = {
   nextCursor?: string;
 };
 
+/**
+ * @deprecated Use {@link listStudySessionsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listUserTestingSessionsOperation: PlatformOperation<
   ListUserTestingSessionsInput,
   ListUserTestingSessionsResult
@@ -14926,6 +17322,9 @@ export type GetUserTestingSessionResult = {
   session: PlatformUserTestingSessionDetail;
 };
 
+/**
+ * @deprecated Use {@link getStudySessionOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingSessionOperation: PlatformOperation<
   GetUserTestingSessionInput,
   GetUserTestingSessionResult
@@ -14983,6 +17382,9 @@ export type GetUserTestingMetricsResult = {
   metrics: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudyMetricsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingMetricsOperation: PlatformOperation<
   GetUserTestingMetricsInput,
   GetUserTestingMetricsResult
@@ -15022,6 +17424,9 @@ export type GetUserTestingUsageResult = {
   usage: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudyUsageOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingUsageOperation: PlatformOperation<
   GetUserTestingUsageInput,
   GetUserTestingUsageResult
@@ -15057,6 +17462,9 @@ export type ListUserTestingFindingsResult = {
   items: Array<Record<string, unknown>>;
 };
 
+/**
+ * @deprecated Use {@link listStudyFindingsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listUserTestingFindingsOperation: PlatformOperation<
   ListUserTestingFindingsInput,
   ListUserTestingFindingsResult
@@ -15092,6 +17500,9 @@ export type GetUserTestingSignalsResult = {
   signals: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudySignalsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingSignalsOperation: PlatformOperation<
   GetUserTestingSignalsInput,
   GetUserTestingSignalsResult
@@ -15135,6 +17546,9 @@ export type GetUserTestingInsightsResult = {
   insights: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudyInsightsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingInsightsOperation: PlatformOperation<
   GetUserTestingInsightsInput,
   GetUserTestingInsightsResult
@@ -15142,7 +17556,8 @@ export const getUserTestingInsightsOperation: PlatformOperation<
   name: "get_user_testing_insights",
   title: "Get a user-testing window's insights",
   description:
-    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -15185,6 +17600,9 @@ export type RequestUserTestingInsightsResult = {
   request: PlatformUserTestingInsightsRequested;
 };
 
+/**
+ * @deprecated Use {@link requestStudyInsightsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const requestUserTestingInsightsOperation: PlatformOperation<
   RequestUserTestingInsightsInput,
   RequestUserTestingInsightsResult
@@ -15222,6 +17640,9 @@ export type CancelUserTestingInsightsResult = {
   canceled: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link cancelStudyInsightsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const cancelUserTestingInsightsOperation: PlatformOperation<
   CancelUserTestingInsightsInput,
   CancelUserTestingInsightsResult
@@ -15263,6 +17684,9 @@ export type DismissUserTestingFindingResult = {
   finding: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link dismissStudyFindingOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const dismissUserTestingFindingOperation: PlatformOperation<
   DismissUserTestingFindingInput,
   DismissUserTestingFindingResult
@@ -15295,6 +17719,9 @@ export const dismissUserTestingFindingOperation: PlatformOperation<
 export type UndismissUserTestingFindingInput = DismissUserTestingFindingInput;
 export type UndismissUserTestingFindingResult = DismissUserTestingFindingResult;
 
+/**
+ * @deprecated Use {@link undismissStudyFindingOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const undismissUserTestingFindingOperation: PlatformOperation<
   UndismissUserTestingFindingInput,
   UndismissUserTestingFindingResult
@@ -15347,6 +17774,9 @@ export type SetUserTestingGuestExecutionResult = {
   result: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link setStudyGuestExecutionOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const setUserTestingGuestExecutionOperation: PlatformOperation<
   SetUserTestingGuestExecutionInput,
   SetUserTestingGuestExecutionResult
@@ -15385,6 +17815,9 @@ export type RotateUserTestingLinkResult = {
   result: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link rotateStudyLinkOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const rotateUserTestingLinkOperation: PlatformOperation<
   RotateUserTestingLinkInput,
   RotateUserTestingLinkResult
@@ -15431,6 +17864,9 @@ export type UpsertUserTestingMemberResult = {
   result: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link upsertStudyMemberOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const upsertUserTestingMemberOperation: PlatformOperation<
   UpsertUserTestingMemberInput,
   UpsertUserTestingMemberResult
@@ -15472,6 +17908,9 @@ export type RemoveUserTestingMemberInput = z.infer<
 >;
 export type RemoveUserTestingMemberResult = UpsertUserTestingMemberResult;
 
+/**
+ * @deprecated Use {@link removeStudyMemberOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const removeUserTestingMemberOperation: PlatformOperation<
   RemoveUserTestingMemberInput,
   RemoveUserTestingMemberResult
@@ -15518,6 +17957,9 @@ export type RebindUserTestingScenarioInput = z.infer<
 >;
 export type RebindUserTestingScenarioResult = UpsertUserTestingMemberResult;
 
+/**
+ * @deprecated Use {@link rebindStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const rebindUserTestingScenarioOperation: PlatformOperation<
   RebindUserTestingScenarioInput,
   RebindUserTestingScenarioResult
@@ -15777,13 +18219,15 @@ const shareResourceSelectorInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   resourceType: z
-    .enum(["scenario", "conformanceRun", "evalRun"])
-    .describe("Shared resource kind."),
+    .enum(["scenario", "study", "conformanceRun", "evalRun"])
+    .describe(
+      "Shared resource kind. `study` and `scenario` name the same one; the route folds either onto the stored spelling."
+    ),
   resourceId: z
     .string()
     .trim()
     .min(1)
-    .describe("Id of the scenario, conformance run, or eval run."),
+    .describe("Id of the study, conformance run, or eval run."),
 });
 
 export type GetShareSettingsInput = z.infer<typeof shareResourceSelectorInput>;
@@ -16394,6 +18838,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
@@ -16420,8 +18865,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
+  getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
@@ -16429,14 +18874,18 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
-  listJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
+  listGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
+  // Studies. The deprecated `*_scenario` and `*_user_testing_*` operations are
+  // deliberately NOT here, for the same reason the `*_host` ones are not: every
+  // registered surface partitions this list, so leaving them out is what
+  // guarantees no old name can be advertised or persisted under.
+  publishStudyOperation,
+  unpublishStudyOperation,
   // Clients. The deprecated `*_host` operations are deliberately NOT here —
   // see the note above them: every registered surface partitions this list, so
   // leaving them out is what guarantees no old name can be advertised or
@@ -16506,43 +18955,42 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   backfillTraceDestinationOperation,
   listTraceDestinationBackfillsOperation,
   generatePersonasOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
   // User testing — what a published scenario produced, and who may reach it.
-  getUserTestingScenarioOperation,
-  updateUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  updateStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   getShareSettingsOperation,
   setShareModeOperation,
   rotateShareLinkOperation,
