@@ -60,6 +60,9 @@ export async function buildPinnedSkillSource(args: {
           kind: "pinned-effective",
           capabilities: buildRunCapabilitySet({
             pins: args.pins,
+            // Pinned files are read from the bytes downloaded above, not
+            // from the prepared links, which a long run can outlast.
+            downloadedPins: pinnedHarnessSkills,
             pluginVersions: args.pluginVersions,
             pluginServers: args.pluginServers,
             effectiveServerIds: args.effectiveServerIds,

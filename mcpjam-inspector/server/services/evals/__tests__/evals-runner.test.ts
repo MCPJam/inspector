@@ -392,6 +392,27 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("hands the run's bearer to finalize so evidence uploads as the launching user", async () => {
+    const config = buildQuickRunConfig();
+    const recorder = {
+      startIteration: vi.fn().mockResolvedValue("iteration"),
+      finishIteration: vi.fn().mockResolvedValue(undefined),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      runId: "suite-run",
+      recorder,
+    } as any);
+    expect(recorder.finishIteration).toHaveBeenCalled();
+    for (const [params] of recorder.finishIteration.mock.calls) {
+      expect(params).toMatchObject({
+        iterationId: "iteration",
+        convexAuthToken: "token",
+      });
+    }
+  });
+
   async function runQuickTestCase(compareRunId?: string, intent?: string) {
     // Use a BYOK-only model id so the runner takes the local generateText
     // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"

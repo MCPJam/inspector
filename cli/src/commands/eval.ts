@@ -187,6 +187,11 @@ import {
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
+  formatRecordedExecutionDisclosure,
+  writeIterationProvenance,
+  type IterationProvenanceInput,
+} from "../lib/eval-provenance.js";
+import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
 } from "../lib/eval-decision-summary.js";
@@ -646,6 +651,11 @@ function writeRunDisclosure(
             })`
           : model.tenantEgress;
         lines.push(`  Model: ${model.modelId} — ${destination}`);
+        // What the run's own execution records say, when the disclosure was
+        // read off them (same facts as the inspector tooltip). Absent on a
+        // pre-run disclosure and on older backends: nothing is printed.
+        const recorded = formatRecordedExecutionDisclosure(model);
+        if (recorded) lines.push(`    ${recorded}`);
       }
     } else if (execution.modelsUnresolved) {
       lines.push(
@@ -3989,11 +3999,45 @@ export function registerEvalCommands(program: Command): void {
               // stderr message. The caller cannot find, resume, or cancel the
               // runs it just paid for. The shared exit path below raises the
               // same failure after the receipt is on stdout.
+              // What each iteration actually ran on, printed after the
+              // receipt. Human mode only — the JSON document stays one
+              // document — so it costs one iteration walk per run only where
+              // a person is reading. A failed walk is reported in the block,
+              // never thrown: it must not cost the caller the receipt.
+              const provenance: IterationProvenanceInput[] =
+                globalOptions.format === "human"
+                  ? await Promise.all(
+                      runs.map(async (run) => {
+                        try {
+                          const iterations = await fetchAllIterations(
+                            client,
+                            signal,
+                            result.project.id,
+                            run.id
+                          );
+                          return {
+                            runId: run.id,
+                            iterations: iterations.items,
+                          };
+                        } catch (error) {
+                          return {
+                            runId: run.id,
+                            iterations: [],
+                            error:
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                          };
+                        }
+                      })
+                    )
+                  : [];
               return {
                 runs,
                 waitErrors,
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
+                provenance,
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
               };
             }
@@ -4057,6 +4101,16 @@ export function registerEvalCommands(program: Command): void {
               waitErrors,
               reportInputs,
               iterationErrorCodes,
+              // Free: the walk the report already paid for.
+              provenance: reportInputs.map(
+                (input): IterationProvenanceInput => ({
+                  runId: input.run.id,
+                  iterations: input.iterations,
+                  ...(input.iterationError !== undefined
+                    ? { error: input.iterationError }
+                    : {}),
+                })
+              ),
               ...(decisionSummary ? { decisionSummary } : {}),
             };
           },
@@ -4138,6 +4192,13 @@ export function registerEvalCommands(program: Command): void {
         }
         if (reporter && report) {
           writeReporterResult(reporter, report);
+          // Stdout is the reporter's single document; the provenance block
+          // goes to stderr, the same rule the pre-run disclosure follows.
+          writeIterationProvenance(
+            globalOptions.format,
+            completion.provenance,
+            process.stderr
+          );
         } else {
           writeResult(
             {
@@ -4164,6 +4225,11 @@ export function registerEvalCommands(program: Command): void {
           writeEvalDecisionSummary(
             globalOptions.format,
             completion.decisionSummary,
+            process.stdout
+          );
+          writeIterationProvenance(
+            globalOptions.format,
+            completion.provenance,
             process.stdout
           );
         }

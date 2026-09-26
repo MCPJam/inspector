@@ -23,8 +23,15 @@ import {
   type EnvironmentComposerState,
   type EnvironmentStack,
   type ModelSelection,
+  type SkippedModelCell,
 } from "@/components/environment-composer/environment-stack";
+import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import {
+  selectionKey,
+  type ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
+import { clientDisplayName } from "@/lib/client-display-name";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -38,6 +45,8 @@ export type AdhocStackInput = {
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
+  /** Saved selection behind `modelId` (only with `modelSelectionsEnabled`). */
+  modelSelection?: SavedModelSelection;
 };
 
 export type EnsureAdhocEnvironmentsFn = (args: {
@@ -101,6 +110,12 @@ export type ResolveComposerResult = {
   createdIds: string[];
   /** Ids that already existed (matched fingerprint, or a named row we reused). */
   reusedIds: string[];
+  /**
+   * Client × model cells left out because the client's harness cannot run the
+   * model (see `expandModelChoices`). Empty when nothing was skipped; surfaces
+   * show these so a dropped pair is never silent.
+   */
+  skipped: SkippedModelCell[];
 };
 
 /**
@@ -151,6 +166,12 @@ function matchingNamedEnvironment(
   preferIds: readonly string[] = [],
   /** Inherit cell = undefined. A named row with an override must not match. */
   modelId?: string,
+  /**
+   * The cell's saved selection. When set, a named row is reused only if it
+   * saved the SAME selection — an org-connection pick must not reuse a row
+   * that runs the same id on the hosted catalog.
+   */
+  modelSelection?: SavedModelSelection,
 ): ProjectEnvironmentView | undefined {
   const matches = (env: ProjectEnvironmentView) =>
     !env.archivedAt &&
@@ -158,6 +179,9 @@ function matchingNamedEnvironment(
     isNamedEnvironment(env) &&
     (env.pluginVersionIds?.length ?? 0) === 0 &&
     sameOptionalModel(env.modelId, modelId) &&
+    (!modelSelection ||
+      (env.modelSelection !== undefined &&
+        selectionKey(env.modelSelection) === selectionKey(modelSelection))) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -197,6 +221,19 @@ export async function resolveComposerEnvironments(args: {
    * servers and leave this off.
    */
   requireServerAttachment?: boolean;
+  /**
+   * The harness a client runs (`null` = emulated). Injected, like the
+   * mutation, so this module stays pure. Only consulted for clients with
+   * explicit model choices; absent ⇒ no client × model cell is skipped here
+   * (the server's admission still refuses an incompatible pair).
+   */
+  loadHostHarness?: (hostId: string) => Promise<HarnessModelTarget | null>;
+  /**
+   * Backend `modelSelections` capability. Undefined / false means this client
+   * must not send `modelSelection` — an older validator would reject the arg;
+   * the cell then mints with its legacy `modelId` alone.
+   */
+  modelSelectionsEnabled?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -208,6 +245,8 @@ export async function resolveComposerEnvironments(args: {
     max,
     modelMatrixEnabled = false,
     requireServerAttachment = false,
+    loadHostHarness,
+    modelSelectionsEnabled = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -244,6 +283,7 @@ export async function resolveComposerEnvironments(args: {
       environments,
       createdIds: [],
       reusedIds: environments.map((e) => e.environmentId),
+      skipped: [],
     };
   }
 
@@ -257,13 +297,13 @@ export async function resolveComposerEnvironments(args: {
   if (
     hostIds.length === 0 ||
     selectionsByHost.some(
-      ({ selection }) => expandModelChoices(selection).length === 0,
+      ({ selection }) => expandModelChoices(selection).cells.length === 0,
     )
   ) {
     throw new ComposerResolveError(
       "NO_TARGETS",
       selectionsByHost.some(
-        ({ selection }) => expandModelChoices(selection).length === 0,
+        ({ selection }) => expandModelChoices(selection).cells.length === 0,
       )
         ? "Pick at least one model choice — Client defaults or a catalog model."
         : "Pick at least one client to choose where this runs.",
@@ -305,16 +345,51 @@ export async function resolveComposerEnvironments(args: {
     );
   }
 
-  type Cell = { hostId: string; modelId: string | undefined; key: string };
+  type Cell = {
+    hostId: string;
+    modelId: string | undefined;
+    modelSelection?: SavedModelSelection;
+    key: string;
+  };
   const cells: Cell[] = [];
+  const skipped: SkippedModelCell[] = [];
   for (const { hostId, selection } of selectionsByHost) {
-    for (const choice of expandModelChoices(selection)) {
+    // Only a client with explicit picks can have a pair to skip, so only those
+    // pay for the harness read.
+    const harness =
+      loadHostHarness && selection.explicitModelIds.length > 0
+        ? await loadHostHarness(hostId)
+        : null;
+    const expanded = expandModelChoices(selection, {
+      clientId: hostId,
+      harness,
+    });
+    // A client whose every choice is a pair its harness cannot run contributes
+    // no cells; its pairs stay in `skipped`, which the surface reports. The
+    // model picker admits a model any selected client can run, so one such
+    // client must not sink the resolve for the others.
+    skipped.push(...expanded.skipped);
+    for (const choice of expanded.cells) {
+      // A selection the backend cannot store must not steer reuse either.
+      const modelSelection = modelSelectionsEnabled
+        ? choice.modelSelection
+        : undefined;
       cells.push({
         hostId,
         modelId: choice.modelId,
+        ...(modelSelection ? { modelSelection } : {}),
         key: cellKey(hostId, choice.modelId),
       });
     }
+  }
+
+  if (cells.length === 0) {
+    // Nothing runnable anywhere: every chosen pair was one its client's
+    // harness cannot run. Say so rather than persist an empty target list.
+    throw new ComposerResolveError(
+      "NO_TARGETS",
+      `None of the chosen clients can run the chosen models: ${skipped[0]?.reason ?? "no runnable model"}.`,
+    );
   }
 
   // Reuse named rows first; only the rest need minting.
@@ -327,6 +402,7 @@ export async function resolveComposerEnvironments(args: {
       live,
       state.environmentIds,
       cell.modelId,
+      cell.modelSelection,
     );
     if (named) reusedByCell.set(cell.key, named);
     else toMint.push(cell);
@@ -352,6 +428,9 @@ export async function resolveComposerEnvironments(args: {
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),
       ...(cell.modelId ? { modelId: cell.modelId } : {}),
+      ...(cell.modelId && cell.modelSelection
+        ? { modelSelection: cell.modelSelection }
+        : {}),
     }));
 
     let results: Awaited<ReturnType<EnsureAdhocEnvironmentsFn>>;
@@ -406,7 +485,37 @@ export async function resolveComposerEnvironments(args: {
     );
   }
 
-  return { environmentIds, environments, createdIds, reusedIds };
+  return { environmentIds, environments, createdIds, reusedIds, skipped };
+}
+
+/**
+ * The name a person knows a client by, for the skipped-pairs toast: the host
+ * list's display name when the id is in it, else the raw id.
+ */
+export function clientNameResolver(
+  hosts: ReadonlyArray<{ hostId: string; name: string; displayName?: string }>,
+): (clientId: string) => string {
+  return (clientId) => {
+    const host = hosts.find((candidate) => candidate.hostId === clientId);
+    return host ? clientDisplayName(host) : clientId;
+  };
+}
+
+/**
+ * One sentence naming the client × model pairs a resolve left out, for the
+ * surface's warning toast; undefined when nothing was skipped.
+ */
+export function describeSkippedModelCells(
+  skipped: readonly SkippedModelCell[] | undefined,
+  clientName: (clientId: string) => string = (id) => id,
+): string | undefined {
+  if (!skipped || skipped.length === 0) return undefined;
+  const pairs = skipped.map(
+    (cell) => `${clientName(cell.clientId)} × ${cell.modelId} (${cell.reason})`,
+  );
+  return `Skipped ${skipped.length} client × model ${
+    skipped.length === 1 ? "pair" : "pairs"
+  } the client can't run: ${pairs.join("; ")}`;
 }
 
 /**
@@ -436,9 +545,21 @@ export function composerMissingServerGroup(
 }
 
 function normalizeModelSelection(selection: ModelSelection): ModelSelection {
+  const explicitModelIds = [
+    ...new Set(selection.explicitModelIds.filter(Boolean)),
+  ];
+  const explicitModelSelections = Object.fromEntries(
+    explicitModelIds.flatMap((id) => {
+      const saved = selection.explicitModelSelections?.[id];
+      return saved?.modelId === id ? [[id, saved] as const] : [];
+    }),
+  );
   return {
     includeClientDefaults: selection.includeClientDefaults,
-    explicitModelIds: [...new Set(selection.explicitModelIds.filter(Boolean))],
+    explicitModelIds,
+    ...(Object.keys(explicitModelSelections).length > 0
+      ? { explicitModelSelections }
+      : {}),
   };
 }
 

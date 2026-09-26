@@ -9910,7 +9910,7 @@ const createClientInput = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });
@@ -10528,7 +10528,7 @@ const createHostInput = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });
@@ -11012,7 +11012,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4.5").'
     ),
   skillSelection: skillSelectionInput.optional(),
   secretSelection: secretSelectionInput.optional(),

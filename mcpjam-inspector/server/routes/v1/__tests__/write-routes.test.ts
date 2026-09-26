@@ -85,6 +85,10 @@ vi.mock("convex/browser", () => ({
 
 import v1Routes from "../index.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
+import {
+  __resetHostedModelCatalogForTests,
+  __setHostedCatalogForTests,
+} from "../../../services/hosted-model-catalog.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -1102,8 +1106,8 @@ describe("v1 write routes", () => {
         // is not hosted and has no BYOK key, so the run would 202 and then
         // die with zero tokens and an opaque stream error.
         //
-        // Use a RETIRED id here. The gate admits anything in MODEL_LOOKUP
-        // (BYOK statics ∪ hosted snapshot), so any id we might later add to
+        // Use a RETIRED id here. The gate admits anything in `modelLookup()`
+        // (BYOK statics ∪ hosted catalog), so any id we might later add to
         // SUPPORTED_MODELS stops exercising this path — which is how the
         // previous fixture, claude-sonnet-4-6, quietly stopped testing the
         // rejection once that model shipped in the picker (MMA-2).
@@ -1127,6 +1131,37 @@ describe("v1 write routes", () => {
           "anthropic/claude-haiku-4.5"
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("suggests hosted ids the live catalog added after the snapshot", async () => {
+        // The model lookup falls through to the live catalog service, so a
+        // model the backend added since `hosted-model-ids.generated.ts` was
+        // last regenerated is offered without a regeneration.
+        __setHostedCatalogForTests(["anthropic/claude-live-only-9"]);
+        try {
+          const res = await request(
+            makeApp(),
+            "POST",
+            "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+            {
+              suiteName: "smoke",
+              serverIds: ["s1"],
+              tests: [inlineTest("claude-3-7-sonnet-latest")],
+            }
+          );
+          expect(res.status).toBe(400);
+          const body = (await res.json()) as {
+            details?: { hostedModels?: string[] };
+          };
+          expect(body.details?.hostedModels).toContain(
+            "anthropic/claude-live-only-9"
+          );
+          expect(body.details?.hostedModels).toContain(
+            "anthropic/claude-haiku-4.5"
+          );
+        } finally {
+          __resetHostedModelCatalogForTests();
+        }
       });
 
       it("admits a hosted catalog id", async () => {
@@ -2612,6 +2647,66 @@ describe("v1 write routes", () => {
         details: { reason: "HARNESS_UNAVAILABLE" },
       });
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("judges an ENVIRONMENT target on its MODEL OVERRIDE, not the host's model", async () => {
+      // The host pins a model Codex runs (gpt-5.5); the environment overrides
+      // it with one the pinned Codex CLI runs without tools. The run executes
+      // the override, so the dry run must refuse — judging the host's model
+      // would answer 202 and fail (or run tool-less) after siblings started.
+      vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc_token");
+      vi.stubEnv("E2B_API_KEY", "e2b-test");
+      vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
+      try {
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({
+            ...SUITE_DOC,
+            environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          }),
+          "projectEnvironments:listEnvironments": () => [
+            { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging" },
+            { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Prod" },
+          ],
+          "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+            environmentRef: { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 1 },
+            hostId: "hostharnessxxxxxxxxxxxxxxxxxxxxx",
+            selectedServerIds: ["s_env"],
+            modelId: "openai/gpt-5.6-luna",
+            effectiveModelId: "openai/gpt-5.6-luna",
+            modelSource: "environment",
+          }),
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_env"],
+            serverNames: ["env server"],
+            source: "environment",
+          }),
+          "hostConfigsV2:getSuiteConfig": () => ({ hostStyle: "mcpjam" }),
+          "hosts:getHost": () => ({
+            config: { harness: "codex", modelId: "openai/gpt-5.5" },
+          }),
+        });
+        mockPendingLaunches();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+          {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            targets: [{ environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }],
+          }
+        );
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as any;
+        expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+        expect(body.message).toContain(
+          "the Codex harness can't run this host's model"
+        );
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
 
     it("REJECTS a knob this route does not carry instead of dropping it", async () => {

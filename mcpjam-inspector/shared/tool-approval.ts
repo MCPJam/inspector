@@ -22,14 +22,15 @@
  *
  * `always` is for what must ask whatever the switch says, because the switch
  * is a preference the REQUEST carries and these are not preferences. One
- * family sits there as a floor: the workspace operations the agent-op catalog
- * gates behind a human click (`built-in-tools/mcpjam.ts`, MJ-008) — a request
- * body that turns approval off must not be able to turn off the click the
- * headless agent can never skip. The other thing that asks unconditionally
- * declares it as a function, because the answer depends on which value the
- * model named — a third party's instructions entering the turn
- * (`computers/effective-skill-tools.ts`), which is a trust boundary rather
- * than a preference.
+ * family sits there as a floor: the workspace operations that change state
+ * (`built-in-tools/mcpjam.ts`, MJ-008). The workspace family's other gated
+ * members, the reads that open a connection to a saved server, are handed a
+ * setting the server resolves from saved configuration; the request's switch
+ * can raise it but not lower it. The other thing that
+ * asks unconditionally declares it as a function, because the answer depends
+ * on which value the model named — a third party's instructions entering the
+ * turn (`computers/effective-skill-tools.ts`), which is a trust boundary
+ * rather than a preference.
  *
  * WHY A FLOOR RATHER THAN A BOOLEAN AT EACH BUILDER. Before this, each builder
  * wrote its own expression — `isLocal ? true : opts.requireToolApproval ===
@@ -46,9 +47,9 @@
  *  - `never`   — asking buys nothing. Reads, observations, discovery.
  *  - `setting` — every tool that acts: the user's switch decides.
  *  - `always`  — asks whatever the switch says. See the header: only the
- *                catalog-gated workspace operations sit here, and a family
- *                that wants it should have to argue why the user's own switch
- *                does not apply.
+ *                workspace operations that change state sit here, and a
+ *                family that wants it should have to argue why the user's own
+ *                switch does not apply.
  */
 export type ApprovalFloor = "never" | "setting" | "always";
 

@@ -43,6 +43,7 @@ import type {
 import type { ToolExposureSignals } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
 import { getInternalBackendConfig } from "../internal-backend.js";
+import { backendFailureText } from "../../utils/backend-failure-text.js";
 
 const EVALS_BASE_PATH = "/internal/v1/evals";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -111,7 +112,12 @@ async function postJson<T>(
       // when the answer is a stale backend or a wrong CONVEX_HTTP_URL.
       const undeployed = response.status === 404 && payload?.ok === undefined;
       throw new JudgeStageBackendError(
-        payload?.error ?? `Judge-stage call failed (${response.status})`,
+        backendFailureText({
+          source: "judge-stage",
+          status: response.status,
+          detail: payload?.error,
+          fallback: `Judge-stage call failed (${response.status})`,
+        }),
         response.status,
         undeployed ? "ROUTE_NOT_DEPLOYED" : payload?.code
       );

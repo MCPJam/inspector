@@ -17,6 +17,7 @@ import {
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
   remapSnapshotServerIdsForAttachment,
+  storedSelectionForCaseModel,
 } from "../evals";
 import { WebRouteError } from "../../web/errors";
 import { SERVER_TOOL_SNAPSHOT_VERSION } from "../../../utils/export-helpers";
@@ -1226,5 +1227,52 @@ describe("authorEvalSuite — the suite write a rerun does not need", () => {
       name: "Billing smoke",
       description: "Nightly",
     });
+  });
+});
+
+describe("storedSelectionForCaseModel", () => {
+  const openai = {
+    modelId: "openai/gpt-5.1",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_openai" },
+    fallback: { provider: "none", model: "none" },
+  };
+  const azure = {
+    modelId: "openai/gpt-5.1",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_azure" },
+    nativeModelId: "prod-gpt51",
+    fallback: { provider: "none", model: "none" },
+  };
+  const testCase = {
+    models: [
+      { model: "gpt-5.1", provider: "openai", selection: openai },
+      { model: "gpt-5.1", provider: "azure", selection: azure },
+    ],
+  };
+
+  it("takes the entry of the requested provider when a model id repeats", () => {
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "azure"),
+    ).toMatchObject({ connectionRef: { id: "conn_azure" } });
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "openai"),
+    ).toMatchObject({ connectionRef: { id: "conn_openai" } });
+  });
+
+  it("returns nothing for a provider the case does not list", () => {
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "anthropic"),
+    ).toBeUndefined();
+  });
+
+  it("matches an entry saved without a provider on the model alone", () => {
+    expect(
+      storedSelectionForCaseModel(
+        { models: [{ model: "gpt-5.1", selection: openai }] },
+        "gpt-5.1",
+        "openai",
+      ),
+    ).toMatchObject({ connectionRef: { id: "conn_openai" } });
   });
 });

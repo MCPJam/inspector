@@ -663,6 +663,14 @@ export type EvalIteration = {
    * an em dash rather than a currency amount.
    */
   usage?: EvalIterationUsage;
+  /**
+   * What this iteration actually ran on (backend `lib/executionRecord.ts`):
+   * resolved model, rail and connection, harness runtime, effective settings,
+   * routing attempts and any deviation. Absent on rows recorded before the
+   * record existed — render "not recorded", never a guess. Read it through
+   * `readExecutionRecord` (the `ExecutionProvenance` component does).
+   */
+  execution?: unknown;
   error?: string;
   errorDetails?: string;
   resultSource?: "reported" | "derived";

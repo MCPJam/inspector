@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ComposerResolveError,
+  clientNameResolver,
   composerMissingServerGroup,
+  describeSkippedModelCells,
   isAdhocUnavailable,
   lacksEvalServerSource,
   resolveComposerEnvironments,
@@ -14,6 +16,7 @@ import {
   environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
+  expandModelChoices,
   type EnvironmentComposerState,
 } from "../environment-stack";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -1088,5 +1091,176 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
       includeClientDefaults: true,
       explicitModelIds: [],
     });
+  });
+});
+
+describe("expandModelChoices — harness × model support", () => {
+  it("skips, and reports, the explicit models a client's harness can't run", () => {
+    const { cells, skipped } = expandModelChoices(
+      {
+        includeClientDefaults: true,
+        explicitModelIds: [
+          "anthropic/claude-sonnet-4.5",
+          "openai/gpt-5.6-luna",
+          "anthropic/claude-fable-5",
+        ],
+      },
+      { clientId: "h-claude", harness: { harnessId: "claude-code" } },
+    );
+    // The inherit cell is the host's own configuration; never skipped here.
+    expect(cells).toEqual([
+      { modelId: undefined },
+      { modelId: "anthropic/claude-sonnet-4.5" },
+    ]);
+    expect(skipped).toEqual([
+      {
+        clientId: "h-claude",
+        modelId: "openai/gpt-5.6-luna",
+        reason: expect.stringContaining(
+          "the Claude Code harness can't run this host's model",
+        ),
+      },
+      {
+        clientId: "h-claude",
+        modelId: "anthropic/claude-fable-5",
+        reason: expect.stringMatching(/^not verified for claude-code /),
+      },
+    ]);
+  });
+
+  it("skips nothing for an emulated client or without a harness", () => {
+    for (const harness of [null, undefined]) {
+      const { cells, skipped } = expandModelChoices(
+        { includeClientDefaults: false, explicitModelIds: ["openai/gpt-5.6-luna"] },
+        { clientId: "h", harness },
+      );
+      expect(cells).toEqual([{ modelId: "openai/gpt-5.6-luna" }]);
+      expect(skipped).toEqual([]);
+    }
+  });
+
+  it("reads the version: an unmeasured Codex runtime is unknown, not unsupported", () => {
+    const { skipped } = expandModelChoices(
+      { includeClientDefaults: false, explicitModelIds: ["openai/gpt-5.6"] },
+      {
+        clientId: "h",
+        harness: { harnessId: "codex", runtimeVersion: "0.160.0" },
+      },
+    );
+    expect(skipped[0]?.reason).toBe("not verified for codex 0.160.0");
+  });
+});
+
+describe("resolveComposerEnvironments — harness-incompatible cells", () => {
+  it("does not mint a cell the client's harness can't run, and returns it", async () => {
+    const ensure = ensureReturning(["a", "b", "c"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h-codex", "h-emulated"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["openai/gpt-5.6-luna"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+      loadHostHarness: async (hostId) =>
+        hostId === "h-codex" ? { harnessId: "codex" } : null,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h-codex" },
+        { hostId: "h-emulated" },
+        { hostId: "h-emulated", modelId: "openai/gpt-5.6-luna" },
+      ],
+    });
+    expect(result.skipped).toEqual([
+      {
+        clientId: "h-codex",
+        modelId: "openai/gpt-5.6-luna",
+        reason: expect.stringContaining("Codex harness can't run"),
+      },
+    ]);
+    expect(describeSkippedModelCells(result.skipped, () => "Codex")).toMatch(
+      /^Skipped 1 client × model pair the client can't run: Codex × openai\/gpt-5\.6-luna/,
+    );
+  });
+
+  it("drops only the client that can run nothing, keeping the others", async () => {
+    // The picker admits a model any selected client can run; the Codex client
+    // cannot run gpt-5.6-luna, the emulated one can. The resolve must mint the
+    // emulated cell and report the Codex pair, not fail the whole selection.
+    const ensure = ensureReturning(["emu-luna"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h-codex", "h-emulated"],
+        modelSelection: {
+          includeClientDefaults: false,
+          explicitModelIds: ["openai/gpt-5.6-luna"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+      loadHostHarness: async (hostId) =>
+        hostId === "h-codex" ? { harnessId: "codex" } : null,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h-emulated", modelId: "openai/gpt-5.6-luna" }],
+    });
+    expect(result.environmentIds).toEqual(["emu-luna"]);
+    expect(result.skipped).toEqual([
+      {
+        clientId: "h-codex",
+        modelId: "openai/gpt-5.6-luna",
+        reason: expect.stringContaining("Codex harness can't run"),
+      },
+    ]);
+  });
+
+  it("refuses when no client is left with anything to run", async () => {
+    const ensure = ensureReturning([]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        modelMatrixEnabled: true,
+        state: composeState({
+          hostIds: ["h-claude"],
+          modelSelection: {
+            includeClientDefaults: false,
+            explicitModelIds: ["openai/gpt-5.5"],
+          },
+        }),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+        loadHostHarness: async () => ({ harnessId: "claude-code" }),
+      }),
+    ).rejects.toMatchObject({ code: "NO_TARGETS" });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+});
+
+describe("clientNameResolver", () => {
+  it("names a skipped pair by the client's display name, else its id", () => {
+    const name = clientNameResolver([
+      { hostId: "h1", name: "Claude", displayName: "Claude (2)" },
+      { hostId: "h2", name: "Codex" },
+    ]);
+    expect(name("h1")).toBe("Claude (2)");
+    expect(name("h2")).toBe("Codex");
+    expect(name("gone")).toBe("gone");
+    expect(
+      describeSkippedModelCells(
+        [{ clientId: "h2", modelId: "openai/gpt-5.6-luna", reason: "r" }],
+        name,
+      ),
+    ).toBe(
+      "Skipped 1 client × model pair the client can't run: Codex × openai/gpt-5.6-luna (r)",
+    );
   });
 });

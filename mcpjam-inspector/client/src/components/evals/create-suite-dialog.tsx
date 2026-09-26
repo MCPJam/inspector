@@ -29,7 +29,11 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
-import { composerMissingServerGroup } from "@/components/environment-composer/resolve-stacks";
+import {
+  clientNameResolver,
+  composerMissingServerGroup,
+  describeSkippedModelCells,
+} from "@/components/environment-composer/resolve-stacks";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -268,6 +272,11 @@ export function CreateSuiteDialog({
           liveEnvironments: composerEnvironments ?? [],
           max: MAX_SUITE_ENVIRONMENTS,
         });
+        const skippedSummary = describeSkippedModelCells(
+          resolved.skipped,
+          clientNameResolver(hosts),
+        );
+        if (skippedSummary) toast.warning(skippedSummary);
         // Legacy fields ride along as rollback data, the way journey writes keep
         // theirs from going stale — built from the RESOLVED environments, not
         // from the stack. Picking two saved environments seeds the stack from
