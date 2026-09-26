@@ -97,8 +97,8 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "$RAILWAY_STAGING_ENVIRONMENT" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app" \
-            WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://*.up.railway.app" \
+            ALLOWED_ORIGINS="$STAGING_APP_URL,https://*.mcpjam.dev,https://mcp-inspector-pr-*.up.railway.app" \
+            WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://*.mcpjam.dev,https://*.up.railway.app" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             VITE_ENVIRONMENT=staging \
             MCPJAM_INSPECTOR_PUBLIC_URL="$STAGING_APP_URL"
