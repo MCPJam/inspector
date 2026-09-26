@@ -540,7 +540,7 @@ violation. Read what you recognize; ignore the rest.
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
+| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, the booleans to branch on, and the eval `vocabulary` block |
 
 <Note>
   `capabilities` is a **planning aid, not a gate**. Every write still enforces
@@ -551,6 +551,34 @@ violation. Read what you recognize; ignore the rest.
   attempting the write and reading the failure, by which point the agent has
   usually already told someone what it was about to do.
 </Note>
+
+The response includes a `vocabulary` block that describes the eval vocabulary
+this deployment understands. Read it to learn which field spellings a request
+sending `x-mcpjam-eval-vocabulary: 2` may use — do not infer support from the
+presence of a field on an unrelated object. The block is absent on a deployment
+that predates vocabulary negotiation, which then speaks only vocabulary 1.
+
+```json
+{
+  "vocabulary": {
+    "version": 2,
+    "evaluatorKinds": ["assertion", "judge"],
+    "assertionKinds": ["..."],
+    "fields": {
+      "assertions": ["checks", "predicates"],
+      "defaultAssertions": ["defaultPredicates"],
+      "iterations": ["repetitions"],
+      "legacyIterations": ["runs"]
+    }
+  }
+}
+```
+
+Each `fields` entry lists the **legacy spellings** a vocabulary-2 body may
+still use for that canonical field. Sending a canonical spelling together with
+one of its legacy spellings is refused. `iterations` is deliberately absent
+from `legacyIterations`: under vocabulary 2 that key is the exact count, not
+the floor.
 
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
