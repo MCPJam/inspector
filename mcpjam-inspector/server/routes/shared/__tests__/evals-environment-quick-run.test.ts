@@ -284,6 +284,47 @@ describe("environment quick runs", () => {
     expect(actionMock).not.toHaveBeenCalled();
   });
 
+  it("refuses an environment with no model as that, not as deploy skew", async () => {
+    const { effectiveModelId: _omitted, ...withoutModel } = RESOLVED;
+    queryMock.mockImplementation(async (name: string) =>
+      name === "projectEnvironments:resolveEnvironmentForLaunch"
+        ? { ...withoutModel, modelSource: "none" }
+        : null,
+    );
+    const failure = await runEvalTestCaseWithManager(
+      clientManager as never,
+      baseRequest(),
+    ).catch((error) => error);
+    expect(failure).toBeInstanceOf(WebRouteError);
+    expect(failure).toMatchObject({
+      status: 409,
+      message:
+        'Environment "Prod" has no model. Pick a model for this run or set one on the client.',
+      details: { code: "ENV_MODEL_REQUIRED" },
+    });
+    expect(actionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deploy-skew refusal for a backend without the model fields", async () => {
+    const {
+      effectiveModelId: _model,
+      modelSource: _source,
+      ...predatesModelFields
+    } = RESOLVED;
+    queryMock.mockImplementation(async (name: string) =>
+      name === "projectEnvironments:resolveEnvironmentForLaunch"
+        ? predatesModelFields
+        : null,
+    );
+    await expect(
+      runEvalTestCaseWithManager(clientManager as never, baseRequest()),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/cannot run environment quick runs yet/),
+    });
+    expect(actionMock).not.toHaveBeenCalled();
+  });
+
   it("a refused commit executes nothing", async () => {
     actionMock.mockImplementation(async (name: string) => {
       if (name === "testSuites:startQuickRunIterations") {

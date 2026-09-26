@@ -180,6 +180,48 @@ export function assertEnvironmentQuickRunAdmissible(
 }
 
 /**
+ * Refuse, before any row exists, an environment that names no model to run.
+ *
+ * Two different causes, told apart by whether the backend reported the model
+ * fields at all:
+ *  - NEITHER field present: a backend that predates them, so this deployment
+ *    cannot say which model the environment runs. That is deploy skew, and
+ *    retrying after the backend deploys is the fix.
+ *  - A field present but no model (`modelSource: 'none'`, or an empty
+ *    `effectiveModelId`): the environment and its client really have no
+ *    model. That is the user's one-field misconfiguration, answered with the
+ *    same `ENV_MODEL_REQUIRED` 409 the backend's own refusal maps to
+ *    (`environmentModelRequiredError`), so a caller branching on the code or
+ *    `details.reason` gets one answer whichever side refused it.
+ */
+export function assertEnvironmentQuickRunModel(
+  resolved: ResolvedEnvironmentForLaunch,
+): void {
+  if (resolved.effectiveModelId) return;
+  if (
+    resolved.effectiveModelId === undefined &&
+    resolved.modelSource === undefined
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This deployment cannot run environment quick runs yet. Retry after the backend deploys.",
+      { reason: "ENVIRONMENT_QUICK_RUN_UNAVAILABLE" },
+    );
+  }
+  throw new WebRouteError(
+    409,
+    ErrorCode.CONFLICT,
+    `Environment "${resolved.environmentRef.name}" has no model. Pick a model for this run or set one on the client.`,
+    {
+      code: "ENV_MODEL_REQUIRED",
+      reason: "environment_model_required",
+      environmentId: resolved.environmentRef.environmentId,
+    },
+  );
+}
+
+/**
  * Map a commit rejection onto the route envelope. Every refusal here happens
  * BEFORE anything was reserved or written, so each is the caller's to act on:
  * drift is a 409 to retry, admission a 409 naming the reason, a cap a 402.

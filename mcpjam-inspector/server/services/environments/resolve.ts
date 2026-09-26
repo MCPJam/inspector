@@ -32,15 +32,6 @@ export interface ResolvedEnvironmentForLaunch {
   hostId: string;
   hostName?: string;
   /**
-   * The model this environment runs: its own `modelId` when set, else its
-   * client's. The backend refuses to resolve an environment with no model
-   * (`ENV_MODEL_REQUIRED`), so this is present on every current backend;
-   * optional for deploy skew only.
-   */
-  effectiveModelId?: string;
-  /** Where {@link effectiveModelId} came from. */
-  modelSource?: "environment" | "host";
-  /**
    * The host's CURRENT config at resolve time, echoed back as
    * `expectedEnvironmentHostConfigId`. An environment pins a `hostId`, never a
    * config, so a host rotation drifts this preview at an unchanged revision —
@@ -100,8 +91,16 @@ export interface ResolvedEnvironmentForLaunch {
    * actually use, which is this override when one is set.
    */
   modelId?: string;
-  /** The model that will run: the override, else the host's model. */
+  /**
+   * The model that will run: the override, else the host's model. The current
+   * backend refuses to resolve an environment with no model
+   * (`ENV_MODEL_REQUIRED`), so it is present there. BOTH model fields absent
+   * means a backend that predates them (deploy skew); `modelSource: 'none'`,
+   * or a present but empty `effectiveModelId`, means the environment has no
+   * model — see `assertEnvironmentQuickRunModel`.
+   */
   effectiveModelId?: string;
+  /** Where {@link effectiveModelId} came from. */
   modelSource?: "environment" | "host" | "none";
 }
 

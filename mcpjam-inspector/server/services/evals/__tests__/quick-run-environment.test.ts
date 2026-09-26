@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertCommittedExecutionMatchesPreflight,
   assertEnvironmentQuickRunAdmissible,
+  assertEnvironmentQuickRunModel,
   assertNoConflictingEnvironmentOverrides,
   commitEnvironmentQuickRun,
   failCommittedQuickRun,
@@ -127,6 +128,61 @@ describe("assertEnvironmentQuickRunAdmissible", () => {
 
   it("admits an environment without one", () => {
     expect(() => assertEnvironmentQuickRunAdmissible(RESOLVED)).not.toThrow();
+  });
+});
+
+describe("assertEnvironmentQuickRunModel", () => {
+  function refusal(resolved: ResolvedEnvironmentForLaunch): WebRouteError {
+    try {
+      assertEnvironmentQuickRunModel(resolved);
+    } catch (caught) {
+      expect(caught).toBeInstanceOf(WebRouteError);
+      return caught as WebRouteError;
+    }
+    throw new Error("expected a refusal");
+  }
+
+  it("admits an environment with a model", () => {
+    expect(() => assertEnvironmentQuickRunModel(RESOLVED)).not.toThrow();
+  });
+
+  it("names the environment and the fix when it has no model", () => {
+    const { effectiveModelId: _omitted, ...withoutModel } = RESOLVED;
+    for (const resolved of [
+      { ...withoutModel, modelSource: "none" as const },
+      { ...RESOLVED, effectiveModelId: "" },
+      {
+        ...RESOLVED,
+        // What a JSON `null` looks like after the untyped Convex cast.
+        effectiveModelId: null as unknown as string,
+        modelSource: undefined,
+      },
+    ]) {
+      const error = refusal(resolved);
+      expect(error.status).toBe(409);
+      expect(error.message).toBe(
+        'Environment "Prod" has no model. Pick a model for this run or set one on the client.',
+      );
+      expect(error.details).toMatchObject({
+        code: "ENV_MODEL_REQUIRED",
+        reason: "environment_model_required",
+        environmentId: "env-1",
+      });
+    }
+  });
+
+  it("keeps the deploy-skew answer for a backend that reports no model fields", () => {
+    const {
+      effectiveModelId: _model,
+      modelSource: _source,
+      ...predatesModelFields
+    } = RESOLVED;
+    const error = refusal(predatesModelFields);
+    expect(error.status).toBe(400);
+    expect(error.message).toMatch(/cannot run environment quick runs yet/);
+    expect(error.details).toMatchObject({
+      reason: "ENVIRONMENT_QUICK_RUN_UNAVAILABLE",
+    });
   });
 });
 

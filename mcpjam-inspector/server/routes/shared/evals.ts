@@ -51,6 +51,7 @@ import {
 import {
   assertCommittedExecutionMatchesPreflight,
   assertEnvironmentQuickRunAdmissible,
+  assertEnvironmentQuickRunModel,
   assertNoConflictingEnvironmentOverrides,
   commitEnvironmentQuickRun,
   failCommittedQuickRun,
@@ -3368,14 +3369,9 @@ export async function prepareSingleCaseExecution(
           });
     assertNoConflictingEnvironmentOverrides(request, environmentLaunch);
     assertEnvironmentQuickRunAdmissible(environmentLaunch);
-    if (!environmentLaunch.effectiveModelId) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "This deployment cannot run environment quick runs yet. Retry after the backend deploys.",
-        { reason: "ENVIRONMENT_QUICK_RUN_UNAVAILABLE" },
-      );
-    }
+    // Deploy skew (no model fields at all) and an environment with no model
+    // are different refusals with different fixes.
+    assertEnvironmentQuickRunModel(environmentLaunch);
   } else {
     logLegacyEvalRequest({
       surface: "quick_run",
