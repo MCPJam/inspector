@@ -98,9 +98,9 @@ describe("securityHeadersMiddleware document policies", () => {
     vi.restoreAllMocks();
   });
 
-  it("enforces frame-ancestors, object-src and base-uri on HTML documents", async () => {
+  it("enforces frame-ancestors and object-src on HTML documents", async () => {
     expect(DOCUMENT_CONTENT_SECURITY_POLICY).toBe(
-      "frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
+      "frame-ancestors 'self'; object-src 'none'",
     );
     const res = await createApp().request("/");
     expect(res.headers.get("Content-Security-Policy")).toBe(
@@ -109,10 +109,21 @@ describe("securityHeadersMiddleware document policies", () => {
     const enforced = directives(res.headers.get("Content-Security-Policy"));
     expect(enforced.get("frame-ancestors")).toEqual(["'self'"]);
     expect(enforced.get("object-src")).toEqual(["'none'"]);
-    expect(enforced.get("base-uri")).toEqual(["'self'"]);
+    expect([...enforced.keys()]).toEqual(["frame-ancestors", "object-src"]);
     // The pre-existing headers are unchanged.
     expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+
+  it("keeps base-uri out of the enforcing policy and in the report-only one", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("/");
+    const enforced = directives(res.headers.get("Content-Security-Policy"));
+    expect(enforced.has("base-uri")).toBe(false);
+    const reportOnly = directives(
+      res.headers.get("Content-Security-Policy-Report-Only"),
+    );
+    expect(reportOnly.get("base-uri")).toEqual(["'self'"]);
   });
 
   it("leaves non-HTML responses without a policy", async () => {
@@ -380,6 +391,7 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https:",
     ]);
     expect(policy.get("worker-src")).toEqual(["'self'", "blob:"]);
+    expect(policy.get("base-uri")).toEqual(["'self'"]);
     expect(policy.get("report-uri")).toHaveLength(1);
     expect(policy.has("default-src")).toBe(false);
   });

@@ -10,8 +10,9 @@
  * HTML documents also get a Permissions-Policy denying hardware and sensor
  * features nothing here uses, and a Content-Security-Policy (MJ-016):
  * - an ENFORCING policy limited to directives that cannot break the app:
- *   `frame-ancestors 'self'` (what X-Frame-Options already says), no plugin
- *   content, and no `<base>` pointing elsewhere;
+ *   `frame-ancestors 'self'` (what X-Frame-Options already says) and no
+ *   plugin content. It is inherited by srcdoc iframes, including MCP-UI
+ *   rawHtml widgets, so it holds nothing a widget document may rely on;
  * - in hosted mode, a REPORT-ONLY policy describing the full intended source
  *   list, built from this deploy's runtime config. It blocks nothing; its
  *   reports are what a later enforcing policy gets tuned against. The app
@@ -34,7 +35,7 @@ import { SENTRY_DSN } from "../../shared/sentry-config.js";
 
 /** Enforced on every HTML document that does not set its own policy. */
 export const DOCUMENT_CONTENT_SECURITY_POLICY =
-  "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+  "frame-ancestors 'self'; object-src 'none'";
 
 /**
  * Denied on every HTML document (MJ-016). Only hardware and sensor features
@@ -182,6 +183,7 @@ function reportOnlyDirectives(
     ["frame-src", frameSources],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["worker-src", ["'self'", "blob:"]],
+    ["base-uri", ["'self'"]],
     ...(sentry ? ([["report-uri", [sentry.reportUri]]] as Directive[]) : []),
   ];
 }
