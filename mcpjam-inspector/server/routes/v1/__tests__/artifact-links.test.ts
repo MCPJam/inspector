@@ -20,6 +20,8 @@ const STORAGE_URL =
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", SITE);
+  vi.stubEnv("CONVEX_URL", "");
+  vi.stubEnv("VITE_CONVEX_URL", "");
 });
 
 afterEach(() => {
@@ -31,8 +33,36 @@ describe("publicArtifactLink", () => {
     expect(publicArtifactLink(SIGNED)).toBe(SIGNED);
   });
 
-  it("keeps a signed link on a default convex.site host", () => {
+  it("keeps a signed link on the configured default convex.site host", () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://happy-otter-123.convex.site");
     expect(publicArtifactLink(DEFAULT_HOST_SIGNED)).toBe(DEFAULT_HOST_SIGNED);
+  });
+
+  it("keeps a link on the HTTP half of a configured default Convex URL", () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "");
+    vi.stubEnv("CONVEX_URL", "https://happy-otter-123.convex.cloud");
+    expect(publicArtifactLink(DEFAULT_HOST_SIGNED)).toBe(DEFAULT_HOST_SIGNED);
+  });
+
+  it("reads a link on another deployment's convex.site host as absent", () => {
+    // Configured with a custom domain, nothing on convex.site is this
+    // deployment's.
+    expect(publicArtifactLink(DEFAULT_HOST_SIGNED)).toBeNull();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://quiet-heron-456.convex.site");
+    expect(publicArtifactLink(DEFAULT_HOST_SIGNED)).toBeNull();
+  });
+
+  it("derives nothing from a custom-domain Convex URL", () => {
+    vi.stubEnv("CONVEX_URL", "https://rt.example.com");
+    expect(
+      publicArtifactLink("https://rt.example.site/web/artifact?t=abc.def"),
+    ).toBeNull();
+  });
+
+  it("reads every link as absent when no backend is configured", () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "");
+    expect(publicArtifactLink(SIGNED)).toBeNull();
+    expect(publicArtifactLink(DEFAULT_HOST_SIGNED)).toBeNull();
   });
 
   it("keeps a local backend's link when that is the configured origin", () => {
@@ -123,8 +153,9 @@ describe("withPublicTraceArtifactLinks", () => {
         { toolCallId: "tc-1", screenshotUrl: STORAGE_URL },
       ],
       browserInteractionSteps: [
-        { toolCallId: "tc-1", screenshotUrl: DEFAULT_HOST_SIGNED },
+        { toolCallId: "tc-1", screenshotUrl: SIGNED },
         { toolCallId: "tc-2", screenshotUrl: STORAGE_URL },
+        { toolCallId: "tc-3", screenshotUrl: DEFAULT_HOST_SIGNED },
       ],
     };
 
@@ -140,7 +171,7 @@ describe("withPublicTraceArtifactLinks", () => {
     });
     expect(checked.widgetRenderObservations[0].screenshotUrl).toBeNull();
     expect(checked.browserInteractionSteps.map((s) => s.screenshotUrl)).toEqual(
-      [DEFAULT_HOST_SIGNED, null],
+      [SIGNED, null, null],
     );
     // Everything else is the backend's shape, unchanged.
     expect(checked.messages).toBe(envelope.messages);

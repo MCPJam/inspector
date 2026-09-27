@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   mutation: vi.fn(),
@@ -60,6 +60,9 @@ const request = (op: string, body: unknown = {}) =>
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.scoped.mockResolvedValue({
@@ -196,6 +199,8 @@ describe("conversation browser commands", () => {
     );
   });
   it("joins artifacts using command identity and does not wake the desktop", async () => {
+    // The link is on this deployment's configured HTTP-actions origin.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
     mocks.query.mockResolvedValue({
       browserInteractionSteps: [
         { turnId: "other", toolCallId: "c1", screenshotUrl: "wrong" },
