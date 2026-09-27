@@ -117,12 +117,13 @@ import {
   type HistoryPresentation,
 } from "./history-provenance.js";
 import {
-  claimToolApprovalUse,
+  claimToolApproval,
   EXPIRED_APPROVAL_RESULT,
   mintToolApprovalId,
   requiresServerVerifiedApproval,
   toolApprovalBindingFor,
   UNAPPROVED_HISTORY_CALL_RESULT,
+  UNCONFIRMED_APPROVAL_RESULT,
   UNVERIFIED_APPROVAL_RESULT,
   USED_APPROVAL_RESULT,
   verifyToolApprovalId,
@@ -132,6 +133,7 @@ import {
 export {
   EXPIRED_APPROVAL_RESULT,
   UNAPPROVED_HISTORY_CALL_RESULT,
+  UNCONFIRMED_APPROVAL_RESULT,
   UNVERIFIED_APPROVAL_RESULT,
   USED_APPROVAL_RESULT,
 };
@@ -2739,11 +2741,13 @@ function emitInheritedToolCalls(
  * unresolved in the same history is not the approval's to authorize.
  *
  * On a client-sent history an approval also runs its call only ONCE: it is
- * claimed immediately before the call runs, and an approval that was already
- * claimed is answered with {@link USED_APPROVAL_RESULT} instead of running
- * the call again. One that comes back after its lifetime is answered with
- * {@link EXPIRED_APPROVAL_RESULT}. Both reach the user as an error on the
- * tool card with that reason, not as a bare denial.
+ * claimed immediately before the call runs (`claimToolApproval`), and an
+ * approval that was already claimed is answered with
+ * {@link USED_APPROVAL_RESULT} instead of running the call again. One whose
+ * claim could not be confirmed is answered with
+ * {@link UNCONFIRMED_APPROVAL_RESULT}, and one that comes back after its
+ * lifetime with {@link EXPIRED_APPROVAL_RESULT}. All three reach the user as
+ * an error on the tool card with that reason, not as a bare denial.
  *
  * Returns true if approvals were found and handled (agentic loop should continue).
  */
@@ -2871,17 +2875,24 @@ async function handlePendingApprovals(
               typeof (
                 tools as Record<string, { execute?: unknown } | undefined>
               )[call?.toolName ?? ""]?.execute === "function";
-            if (
-              singleUseApprovals &&
-              runsHere &&
-              !claimToolApprovalUse(part.approvalId)
-            ) {
+            const claim =
+              singleUseApprovals && runsHere
+                ? await claimToolApproval(part.approvalId)
+                : "claimed";
+            if (claim !== "claimed") {
               logger.warn(
-                "[mcpjam-stream-handler] approval already used; not running the call again",
+                claim === "already_claimed"
+                  ? "[mcpjam-stream-handler] approval already used; not running the call again"
+                  : "[mcpjam-stream-handler] approval claim not confirmed; not running the call",
                 { toolCallId, toolName: call?.toolName },
               );
               deniedToolCallIds.add(toolCallId);
-              refusedApprovalReasons.set(toolCallId, USED_APPROVAL_RESULT);
+              refusedApprovalReasons.set(
+                toolCallId,
+                claim === "already_claimed"
+                  ? USED_APPROVAL_RESULT
+                  : UNCONFIRMED_APPROVAL_RESULT,
+              );
               continue;
             }
             approvedToolCallIds.add(toolCallId);

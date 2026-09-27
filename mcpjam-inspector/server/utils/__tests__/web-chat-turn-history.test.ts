@@ -354,6 +354,10 @@ beforeEach(() => {
       if (url === `${CONVEX_HTTP_URL}/stream/org/local-usage`) {
         return new Response("{}", { status: 200 });
       }
+      // The backend's record of approval claims: each is new here.
+      if (url === `${CONVEX_HTTP_URL}/internal/v1/tool-approvals/claim`) {
+        return Response.json({ status: "claimed" });
+      }
       if (url !== `${CONVEX_HTTP_URL}/stream`) {
         throw new Error(`unexpected fetch: ${url}`);
       }
