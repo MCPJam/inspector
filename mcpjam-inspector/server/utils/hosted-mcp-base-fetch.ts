@@ -68,12 +68,94 @@ const MCP_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * wins where one is set deliberately (the conformance runners set their own).
  */
 export function hostedMcpBaseFetch(): typeof fetch {
-  return withServerCheckSignal(createStreamingPinnedFetch({
-    targetLabel: "MCP server",
-    chainTimeoutMs: MCP_CHAIN_TIMEOUT_MS,
-    bodyIdleTimeoutMs: MCP_BODY_IDLE_TIMEOUT_MS,
-    maxResponseBytes: MCP_MAX_RESPONSE_BYTES,
-  }));
+  return withServerCheckSignal(
+    withHostedMcpAnswerBodies(
+      createStreamingPinnedFetch({
+        targetLabel: "MCP server",
+        chainTimeoutMs: MCP_CHAIN_TIMEOUT_MS,
+        bodyIdleTimeoutMs: MCP_BODY_IDLE_TIMEOUT_MS,
+        maxResponseBytes: MCP_MAX_RESPONSE_BYTES,
+      }),
+    ),
+  );
+}
+
+/** A JSON media type: `application/json` or a `+json` suffix. */
+function isJsonContentType(contentType: string | null): boolean {
+  const type = contentType?.split(";")[0]?.trim().toLowerCase();
+  return !!type && (type === "application/json" || type.endsWith("+json"));
+}
+
+/** A JSON-RPC 2.0 message, or a batch of them. */
+function isJsonRpcPayload(value: unknown): boolean {
+  const messages = Array.isArray(value) ? value : [value];
+  return (
+    messages.length > 0 &&
+    messages.every(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        (message as { jsonrpc?: unknown }).jsonrpc === "2.0",
+    )
+  );
+}
+
+function parseJson(text: string): { value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(text) as unknown };
+  } catch {
+    return undefined;
+  }
+}
+
+/** `response` with `body` in place of its own, and the same status line. */
+function withBody(response: Response, body: string): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  // Statuses that cannot carry a body (204, 205, 304) take `null`.
+  const replaced = new Response(body === "" ? null : body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  Object.defineProperty(replaced, "url", { value: response.url });
+  Object.defineProperty(replaced, "redirected", { value: response.redirected });
+  return replaced;
+}
+
+/**
+ * Hosted MCP transports read an answer as MCP, and nothing else (MJ-001).
+ *
+ * The MCP SDK quotes a response body it cannot use in the error it raises —
+ * an unsuccessful answer's text, or the opening characters of a JSON body
+ * that does not parse — and those errors reach tool results, chat turns,
+ * eval runs and conformance reports. Under this wrapper:
+ *
+ * - an unsuccessful answer keeps its body only when that body is a JSON-RPC
+ *   message, which is how an MCP server reports an error;
+ * - a successful JSON answer keeps its body only when it parses as JSON.
+ *
+ * Any other body is replaced with an empty one. Status, headers and event
+ * streams are untouched. Outside hosted mode this returns `fetchFn` as is.
+ */
+export function withHostedMcpAnswerBodies(fetchFn: typeof fetch): typeof fetch {
+  if (!HOSTED_MODE) return fetchFn;
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await fetchFn(input, init);
+    const json = isJsonContentType(response.headers.get("content-type"));
+    if (response.ok && !json) return response;
+    if (!json) {
+      await response.body?.cancel().catch(() => undefined);
+      return withBody(response, "");
+    }
+    const text = await response.text();
+    const parsed = parseJson(text);
+    const keep = response.ok
+      ? parsed !== undefined
+      : parsed !== undefined && isJsonRpcPayload(parsed.value);
+    return withBody(response, keep ? text : "");
+  }) as typeof fetch;
 }
 
 /**
