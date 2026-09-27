@@ -107,7 +107,7 @@ export function documentScriptNonce(c: Context): string {
 
 /** `script` (an inline `<script>…</script>` element) carrying `nonce`. */
 export function withScriptNonce(script: string, nonce: string): string {
-  return script.replace(/^<script(?=[\s>])/, `<script nonce="${nonce}"`);
+  return script.replace(/^<script(?=[\s>])/i, `<script nonce="${nonce}"`);
 }
 
 function originOf(value: string | undefined): URL | null {

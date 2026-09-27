@@ -80,7 +80,7 @@ function directives(policy: string | null): Map<string, string[]> {
 
 function inlineScriptNonces(html: string): Array<string | null> {
   return Array.from(
-    html.matchAll(/<script(?: nonce="([^"]*)")?>/g),
+    html.matchAll(/<script(?: nonce="([^"]*)")?>/gi),
     (match) => match[1] ?? null,
   );
 }
@@ -316,6 +316,12 @@ describe("withScriptNonce", () => {
     expect(
       withScriptNonce('<script>window.x="<script>";</script>', "abc+/="),
     ).toBe('<script nonce="abc+/=">window.x="<script>";</script>');
+  });
+
+  it("matches the tag name in any case", () => {
+    expect(withScriptNonce("<SCRIPT>x</SCRIPT>", "n")).toBe(
+      '<script nonce="n">x</SCRIPT>',
+    );
   });
 
   it("leaves anything that is not an inline script element unchanged", () => {
