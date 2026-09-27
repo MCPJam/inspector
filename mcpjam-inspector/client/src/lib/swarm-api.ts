@@ -288,6 +288,11 @@ export interface JourneyRun {
   };
   /** Judge rollup for this run's sessions (absent until first grading). */
   goalScoreSummary?: GoalScoreRollup;
+  /**
+   * Durable wave id shared by every run of one co-launched swarm (see
+   * {@link LaunchJourneyRunArgs.swarmRunGroupId}). Absent on legacy runs.
+   */
+  swarmRunGroupId?: string;
   createdAt: number;
 }
 
@@ -1035,6 +1040,10 @@ export async function launchJourneyRun(
     // budget like every other action that already shows this dialog.
     const limitDialogRaised = notifyMCPJamLimitError({
       ...(code ? { code } : {}),
+      // One dialog per wave: the wave's later launches hit the same wall.
+      ...(args.swarmRunGroupId
+        ? { swarmRunGroupId: args.swarmRunGroupId }
+        : {}),
       details: body,
       message,
       surface: "swarm",

@@ -59,11 +59,33 @@ export const SPEND_REFUSAL_REASONS = [
   "insufficient_for_request",
 ] as const;
 
+/**
+ * The backend's sentence for a `holds_committed` refusal
+ * (`buildSpendRefusalBody` in the backend's `convex/lib/spendRefusal.ts`):
+ * "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the
+ * remaining credits and release them as they finish."
+ *
+ * A stored attempt row keeps that sentence and the generic `user_rate_limit`
+ * code, but not the `refusalReason`, so on a row the sentence is the only
+ * signal left that the credits were HELD rather than spent. Anchored on the
+ * backend's own words: "in-flight" alone turns up in unrelated text.
+ */
+const HOLDS_COMMITTED_SENTENCE =
+  /MCPJam model limit reached for the moment\b|in-flight request\(s\) hold the remaining credits/i;
+
+/**
+ * Other in-flight requests hold the last credits and release them in seconds:
+ * a wait, never an exhausted wallet. Reads the structured pair when the caller
+ * has it, and the stored sentence when all it has is an attempt row.
+ */
 export function isTransientSpendRefusal(
-  code?: string,
-  refusalReason?: string,
+  code?: string | null,
+  refusalReason?: string | null,
+  message?: string | null,
 ): boolean {
-  return code === "user_rate_limit" && refusalReason === "holds_committed";
+  if (code === "user_rate_limit" && refusalReason === "holds_committed")
+    return true;
+  return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
 }
 
 export const MAX_ATTEMPT_ERROR_CHARS = 500;

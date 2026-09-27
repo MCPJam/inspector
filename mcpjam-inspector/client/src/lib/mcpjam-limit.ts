@@ -49,6 +49,11 @@ type MCPJamLimitErrorInput = {
   code?: string;
   /** Stable run identity, shared by live streams and persisted failure updates. */
   runId?: string;
+  /**
+   * The run's wave. Every run of a swarm meets the same wall, so the dialog
+   * opens once per wave, not once per run.
+   */
+  swarmRunGroupId?: string;
   message?: string | null;
   details?: unknown;
   organizationId?: string;
@@ -285,6 +290,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
     ...(args.runId ? { runId: args.runId } : {}),
+    ...(args.swarmRunGroupId ? { swarmRunGroupId: args.swarmRunGroupId } : {}),
     limitKind: args.limitKind,
     organizationId: findMCPJamLimitOrganizationId(args),
     ...(args.surface ? { surface: args.surface } : {}),

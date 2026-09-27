@@ -53,6 +53,7 @@ import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isTransientSpendRefusal,
 } from "@/shared/swarm-attempt-error";
 import { providerLabelForModelId } from "./session-rate-limit";
 import {
@@ -349,17 +350,19 @@ function RunLiveBridge({
     { journeyRunId: runId } as any,
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
+  const swarmRunGroupId = run?.swarmRunGroupId;
   useEffect(() => {
     for (const attempt of run?.attempts ?? []) {
       notifyMCPJamLimitError({
         runId,
+        ...(swarmRunGroupId ? { swarmRunGroupId } : {}),
         organizationId,
         code: attempt.errorCode ?? undefined,
         message: attempt.errorMessage,
         surface: "swarm",
       });
     }
-  }, [runId, organizationId, run?.attempts]);
+  }, [runId, swarmRunGroupId, organizationId, run?.attempts]);
   const runStatus = run?.status ?? "running";
   // Convex supplies the whole matrix's progress over its shared connection.
   // Only the selected trace needs SSE: one stream per row exhausts the
@@ -367,6 +370,7 @@ function RunLiveBridge({
   const stream = useJourneyRunStream(
     runId,
     streamEnabled && runStatus === "running",
+    swarmRunGroupId,
   );
 
   useEffect(() => {
@@ -1103,7 +1107,7 @@ export function NewSwarmRunningStep({
             "budget_reached",
             "admission_invalid",
           ].includes(info.refusalReason ?? "") &&
-          !/in-flight|hold the remaining credits/i.test(info.message)
+          !isTransientSpendRefusal(code, info.refusalReason, info.message)
         )
           exhausted += 1;
         // The whole-run finalize writes a code and no message; any sibling

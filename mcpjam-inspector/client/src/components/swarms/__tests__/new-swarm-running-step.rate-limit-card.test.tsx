@@ -348,6 +348,30 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not call held credits exhausted, nor open the dialog", async () => {
+    // What the runner stores for a `holds_committed` refusal once its wait
+    // budget runs out: the backend's sentence under the generic code, with the
+    // refusal reason gone. The wallet was never empty.
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+    renderStep();
+
+    const banner = await screen.findByTestId("new-swarm-running-account-limit");
+    expect(banner).not.toHaveTextContent("Out of MCPJam credits.");
+    expect(
+      screen.queryByRole("button", { name: "View credit options" }),
+    ).not.toBeInTheDocument();
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
+  });
+
   it("shows the credit callout for an all-limited run", async () => {
     attempt.errorCode = "user_rate_limit";
     attempt.errorMessage =
