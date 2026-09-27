@@ -98,7 +98,6 @@ const stats = {
   rateLimitRejects: 0,
   projectRejects: 0,
   busyRejects: 0,
-  bodyReadTimeouts: 0,
   latenciesMs: [] as number[],
 };
 
@@ -135,7 +134,6 @@ export function flushRelayStats(): void {
     rateLimitRejects: stats.rateLimitRejects,
     projectRejects: stats.projectRejects,
     busyRejects: stats.busyRejects,
-    bodyReadTimeouts: stats.bodyReadTimeouts,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -152,7 +150,6 @@ export function flushRelayStats(): void {
   stats.rateLimitRejects = 0;
   stats.projectRejects = 0;
   stats.busyRejects = 0;
-  stats.bodyReadTimeouts = 0;
   stats.latenciesMs = [];
 }
 
@@ -948,7 +945,6 @@ relayRoutes.all("*", async (c) => {
   if (method !== "GET" && method !== "HEAD") {
     const read = await readBodyWithin(c, RELAY_BODY_READ_TIMEOUT_MS);
     if (read === BODY_READ_TIMED_OUT) {
-      stats.bodyReadTimeouts++;
       recordResponseStatus(408);
       c.header("Connection", "close");
       return c.json({ error: "relay_body_timeout" }, 408);

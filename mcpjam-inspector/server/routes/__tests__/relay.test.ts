@@ -725,9 +725,11 @@ describe("posthog relay proxy", () => {
   });
 
   describe("large payload reads", () => {
+    type Events = Array<Record<string, unknown>>;
+
     // Pads a payload past the size that is parsed outright, the way a replay
     // batch's snapshot data does: a large value on each event.
-    function padded(events: Array<Record<string, unknown>>) {
+    function padded(events: Events): Events {
       return events.map((event) => ({
         ...event,
         properties: {
