@@ -19,6 +19,8 @@ export interface ServerSecretsResult {
    * (`bindCredentialHeaders`) — the decision itself is the backend's.
    */
   boundOrigins: string[];
+  /** Stored credential headers only; plugin-declared public literals are excluded. */
+  credentialHeaderNames?: string[];
 }
 
 /**
@@ -360,6 +362,13 @@ export async function fetchRuntimeServerSecrets(args: {
     env: parseRecord(body.env),
     headers: parseRecord(body.headers),
     boundOrigins: boundOriginsFromReveal(body),
+    // Older backends did not distinguish public literals from credentials.
+    // Preserve their fail-closed behavior unless an explicit valid list arrives.
+    credentialHeaderNames:
+      Array.isArray(body.credentialHeaderNames) &&
+      body.credentialHeaderNames.every((name: unknown) => typeof name === "string")
+        ? body.credentialHeaderNames
+        : Object.keys(parseRecord(body.headers) ?? {}),
   };
 }
 

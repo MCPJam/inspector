@@ -26,6 +26,37 @@ describe("fetchRuntimeServerSecrets", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    { names: [], expected: [] },
+    { names: ["X-Api-Key"], expected: ["X-Api-Key"] },
+    { names: undefined, expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: null, expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: [42], expected: ["X-Api-Version", "X-Api-Key"] },
+  ])(
+    "uses an explicit credential header list and fails closed for old/invalid responses: $names",
+    async ({ names, expected }) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({
+            success: true,
+            headers: { "X-Api-Version": "2", "X-Api-Key": "secret-canary" },
+            boundOrigins: [],
+            credentialHeaderNames: names,
+          }),
+        ),
+      );
+      const result = await fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
+        bearerToken: "bearer-token",
+        projectId: "project-1",
+        serverId: "server-1",
+      });
+      expect(result.credentialHeaderNames).toEqual(expected);
+      expect(result.boundOrigins).toEqual([]);
+    },
+  );
+
   it("preserves Convex error codes on failed reveals", async () => {
     vi.stubGlobal(
       "fetch",

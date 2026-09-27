@@ -2155,7 +2155,8 @@ export async function createAuthorizedManager(
           : null;
       if (revealed?.headers && auth.serverConfig.transportType === "http") {
         credentialBindings.set(serverId, {
-          headerNames: Object.keys(revealed.headers),
+          headerNames:
+            revealed.credentialHeaderNames ?? Object.keys(revealed.headers),
           boundOrigins: revealed.boundOrigins ?? [],
         });
       } else if (!revealed && auth.serverConfig.transportType === "http") {
