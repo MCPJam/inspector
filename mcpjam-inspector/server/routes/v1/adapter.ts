@@ -12,8 +12,12 @@
  */
 import type { Context } from "hono";
 import type { z } from "zod";
+import { HOSTED_MODE } from "../../config.js";
 import { runEphemeralConnection } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { createHostedRpcLogCollector } from "../web/hosted-rpc-logs.js";
+import { projectHostedV1Failure } from "../../utils/hosted-route-failure.js";
+import { v1OnError } from "./envelope.js";
 
 /**
  * Parse the body as a JSON object (or `{}` when empty), WITHOUT merging path
@@ -99,6 +103,12 @@ export async function synthesizeServerBody(
  * connect via the shared connection layer, run `coreFn`, then format the result
  * with `format`. The core helpers (`listTools`, `validateServerCore`, ...) are
  * the exact ones the `/api/web/*` routes use — no forked handler logic.
+ *
+ * Hosted, a failure is answered here rather than by the router's `onError`,
+ * through the same account the web twins give (MJ-001): the exchange log is
+ * collected to describe it from and is never returned, and a target the
+ * egress guard refused is a 400. Outside hosted mode errors propagate to the
+ * v1 router's `onError` as before.
  */
 export async function runV1ServerOp<S extends z.ZodTypeAny, T>(
   c: Context,
@@ -107,14 +117,27 @@ export async function runV1ServerOp<S extends z.ZodTypeAny, T>(
   format: (c: Context, result: T) => Response | Promise<Response>,
   options?: Pick<
     NonNullable<Parameters<typeof runEphemeralConnection>[4]>,
-    "timeoutMs" | "rpcLogger" | "httpLogger"
+    "timeoutMs"
   >,
 ): Promise<Response> {
-  const rawBody = await synthesizeServerBody(c);
-  const result = await runEphemeralConnection(c, rawBody, schema, coreFn, {
-    timeoutMs: options?.timeoutMs,
-    rpcLogger: options?.rpcLogger,
-    httpLogger: options?.httpLogger,
-  });
-  return await format(c, result);
+  const collector = HOSTED_MODE ? createHostedRpcLogCollector(null) : undefined;
+  try {
+    const rawBody = await synthesizeServerBody(c);
+    const result = await runEphemeralConnection(c, rawBody, schema, coreFn, {
+      timeoutMs: options?.timeoutMs,
+      rpcLogger: collector?.rpcLogger,
+      httpLogger: collector?.httpLogger,
+    });
+    return await format(c, result);
+  } catch (error) {
+    if (!collector) throw error;
+    return v1OnError(
+      error,
+      c,
+      projectHostedV1Failure(
+        error,
+        collector.buildEnvelope() as Record<string, unknown>,
+      ),
+    );
+  }
 }
