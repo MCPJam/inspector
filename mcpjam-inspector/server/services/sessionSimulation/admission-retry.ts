@@ -25,7 +25,10 @@ export function spendRefusalOf(error: unknown): SpendRefusal | undefined {
     return undefined;
   if (!(error instanceof Error)) return undefined;
   const info = humanizeSwarmAttemptError(error.message);
-  return info.refusalReason ? info : undefined;
+  // A busy reservation carries no `refusalReason`, only its code.
+  return info.refusalReason || isTransientSpendRefusal(info.code)
+    ? info
+    : undefined;
 }
 
 /** Shared by all persona and host calls in one session. */

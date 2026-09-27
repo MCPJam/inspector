@@ -447,6 +447,14 @@ describe("isTransientSpendRefusal", () => {
     ).toBe(false);
   });
 
+  it("waits out a busy spending reservation, which committed nothing", () => {
+    expect(isTransientSpendRefusal("spending_reservation_busy")).toBe(true);
+    const info = humanizeSwarmAttemptError(
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+    );
+    expect(isTransientSpendRefusal(info.code, info.refusalReason)).toBe(true);
+  });
+
   it("reads a stored row, which keeps the sentence but not the reason", () => {
     expect(
       isTransientSpendRefusal(
