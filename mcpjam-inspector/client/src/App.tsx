@@ -2862,18 +2862,18 @@ export default function App() {
         : nextIds;
     });
   }, [isLoadingOrganizations, sortedOrganizations]);
-  const deletingOrganizationId = useOrganizationDeletionStore(
-    (state) => state.deletingOrganizationId,
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
   );
   const effectiveOrganizations = useMemo(
     () =>
       sortedOrganizations.filter(
         (organization) =>
-          organization._id !== deletingOrganizationId &&
+          !deletingOrganizationIds.includes(organization._id) &&
           !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
     [
-      deletingOrganizationId,
+      deletingOrganizationIds,
       optimisticallyDeletedOrganizationIds,
       sortedOrganizations,
     ],
@@ -4960,7 +4960,7 @@ export default function App() {
 
     if (
       routeOrganizationId &&
-      (routeOrganizationId === deletingOrganizationId ||
+      (deletingOrganizationIds.includes(routeOrganizationId) ||
         optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
@@ -4984,7 +4984,7 @@ export default function App() {
     }
   }, [
     activeTab,
-    deletingOrganizationId,
+    deletingOrganizationIds,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,

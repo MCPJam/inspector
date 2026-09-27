@@ -2,19 +2,26 @@ import { create } from "zustand";
 import { flushSync } from "react-dom";
 
 export const useOrganizationDeletionStore = create<{
-  deletingOrganizationId: string | null;
-}>(() => ({ deletingOrganizationId: null }));
+  deletingOrganizationIds: string[];
+}>(() => ({ deletingOrganizationIds: [] }));
 
 export function beginOrganizationDeletion(organizationId: string) {
   // Unmount the org's query subscribers before the delete is sent, or Convex
   // re-runs them against the deleted org and each one throws server-side.
   flushSync(() =>
-    useOrganizationDeletionStore.setState({
-      deletingOrganizationId: organizationId,
-    }),
+    useOrganizationDeletionStore.setState((state) => ({
+      deletingOrganizationIds: [
+        ...state.deletingOrganizationIds,
+        organizationId,
+      ],
+    })),
   );
 }
 
-export function endOrganizationDeletion() {
-  useOrganizationDeletionStore.setState({ deletingOrganizationId: null });
+export function endOrganizationDeletion(organizationId: string) {
+  useOrganizationDeletionStore.setState((state) => ({
+    deletingOrganizationIds: state.deletingOrganizationIds.filter(
+      (id) => id !== organizationId,
+    ),
+  }));
 }

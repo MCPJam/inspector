@@ -15,7 +15,11 @@ import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { offeredPlans } from "@/lib/pricing-catalog";
-import { endOrganizationDeletion } from "@/stores/organization-deletion-store";
+import {
+  beginOrganizationDeletion,
+  endOrganizationDeletion,
+  useOrganizationDeletionStore,
+} from "@/stores/organization-deletion-store";
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -398,7 +402,7 @@ describe("OrganizationsTab billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // A successful delete leaves the org gated for the rest of the session.
-    endOrganizationDeletion();
+    useOrganizationDeletionStore.setState({ deletingOrganizationIds: [] });
     addMemberMock.mockResolvedValue({ isPending: false });
     removeMemberMock.mockResolvedValue(undefined);
 
@@ -3721,6 +3725,28 @@ describe("OrganizationsTab billing", () => {
       expect(
         screen.queryByText("Deleting organization..."),
       ).not.toBeInTheDocument();
+    });
+
+    it("keeps another org gated when this delete fails", async () => {
+      deleteOrganizationMock.mockRejectedValue(new Error("Delete refused"));
+      act(() => beginOrganizationDeletion("org-2"));
+
+      render(
+        <>
+          <OrganizationsTab organizationId="org-1" />
+          <OrganizationsTab organizationId="org-2" />
+        </>,
+      );
+      await confirmDelete();
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          errorToastMessage("Delete refused"),
+          { duration: 8000 },
+        );
+      });
+      expect(screen.getByText("Deleting organization...")).toBeInTheDocument();
+      act(() => endOrganizationDeletion("org-2"));
     });
   });
   /**

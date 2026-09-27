@@ -514,8 +514,8 @@ export function OrganizationsTab({
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
     isAuthenticated,
   });
-  const deletingOrganizationId = useOrganizationDeletionStore(
-    (state) => state.deletingOrganizationId,
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
   );
 
   // Find the organization by ID
@@ -569,7 +569,7 @@ export function OrganizationsTab({
     );
   }
 
-  if (organizationId && organizationId === deletingOrganizationId) {
+  if (organizationId && deletingOrganizationIds.includes(organizationId)) {
     return (
       <OrganizationStateShell>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1313,7 +1313,7 @@ function OrganizationPage({
       }
     } catch (error) {
       // Only on failure: clearing after success re-renders before the org list drops it.
-      endOrganizationDeletion();
+      endOrganizationDeletion(organization._id);
       toast.error((error as Error).message || "Failed to delete organization");
     } finally {
       setIsDeleting(false);
