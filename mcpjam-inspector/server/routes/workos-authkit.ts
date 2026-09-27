@@ -309,10 +309,10 @@ const LOGOUT_REVOCATION_REFRESH_TIMEOUT_MS = 3_000;
 /**
  * Revoke, in Convex, the session this browser is signing out of (MJ-011).
  *
- * WorkOS's logout ends the session but cannot recall access tokens it already
- * issued, and Convex accepts those until they expire. The backend revokes a
- * session only for the token that asks, and this request carries no access
- * token — a logout is a top-level navigation. What it does carry is the sealed
+ * A logout also revokes the session in Convex, so the access tokens it issued
+ * stop working there too. The backend revokes a session only for the token
+ * that asks, and this request carries no access token — a logout is a
+ * top-level navigation. What it does carry is the sealed
  * refresh-token cookie, so the session is proven the only way this route can:
  * refresh it once, and revoke with the token that comes back. The
  * `session_id` in the query string is NOT used for this; it is caller-supplied

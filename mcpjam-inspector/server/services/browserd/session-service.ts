@@ -97,10 +97,9 @@ function isLoopbackHost(hostname: string): boolean {
  * The same policy `normalizeDataPlaneUrl` already applies to the computers
  * data plane (utils/computers/remote-data-plane.ts), and the one the backend
  * enforces on `/computers/data-plane-url`: http(s) only, and plain `http:`
- * only for loopback, where nothing leaves the machine. This module was the
- * one in the family without it — it posts a user's bearer and pulls back a
- * saved profile archive full of that user's cookies, so a misconfigured
- * `CONVEX_HTTP_URL` could have downgraded both onto the wire in the clear.
+ * only for loopback, where nothing leaves the machine. This module posts a
+ * user's bearer and reads back a saved profile archive holding that user's
+ * cookies, so both requests require it.
  *
  * Thrown, not silently skipped: a deployment pointed at a cleartext origin is
  * misconfigured, and failing loudly at the first call is how that gets found.
