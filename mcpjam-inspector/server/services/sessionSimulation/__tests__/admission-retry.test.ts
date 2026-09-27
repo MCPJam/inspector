@@ -119,6 +119,30 @@ it.each([refusal, busy])(
     expect(op).toHaveBeenCalledTimes(1);
   },
 );
+it("waits out a busy spending reservation instead of failing", async () => {
+  // MCPJam's own reservation lost its concurrency race and committed nothing:
+  // the model was never called, so asking again is safe.
+  vi.useFakeTimers();
+  const busy = new Error(
+    'swarm-agent https://example.test/persona failed (503): {"ok":false,"code":"spending_reservation_busy","error":"MCPJam could not reserve spending capacity because concurrent requests kept changing it. The model was not called for this request. Please retry.","statusCode":503,"isRetryable":true}',
+  );
+  const op = vi.fn().mockRejectedValueOnce(busy).mockResolvedValue("done");
+  const result = withAdmissionRetry(op, { budget: new AdmissionWaitBudget() });
+  await vi.runAllTimersAsync();
+  expect(await result).toBe("done");
+  expect(op).toHaveBeenCalledTimes(2);
+});
+it("retries a host step's structured busy refusal", async () => {
+  vi.useFakeTimers();
+  const busy = Object.assign(new Error("MCPJam is temporarily busy."), {
+    refusal: { code: "spending_reservation_busy", httpStatus: 503 },
+  });
+  const op = vi.fn().mockRejectedValueOnce(busy).mockResolvedValue("done");
+  const result = withAdmissionRetry(op, { budget: new AdmissionWaitBudget() });
+  await vi.runAllTimersAsync();
+  expect(await result).toBe("done");
+  expect(op).toHaveBeenCalledTimes(2);
+});
 it.each([
   new Error("provider 429"),
   new Error('{"code":"user_rate_limit","refusalReason":"allowance_exhausted"}'),

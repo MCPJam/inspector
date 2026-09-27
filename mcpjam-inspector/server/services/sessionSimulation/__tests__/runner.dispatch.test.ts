@@ -350,6 +350,40 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.origin).toBe("scenario");
   });
 
+  it("sends a swarm host step's output ceiling in the hosted body", async () => {
+    // The backend reserves credits against this ceiling before each step, so
+    // it is what makes a swarm host step's hold realistic.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).extraBodyFields).toMatchObject({
+      maxOutputTokens: 16_384,
+      journeyRunId: "journey-run-1",
+    });
+  });
+
+  it("sends no output ceiling for a scenario turn", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).extraBodyFields?.maxOutputTokens).toBeUndefined();
+  });
+
   it('posts the local-BYOK usage writeback with sourceType:"swarm" for the swarm surface', async () => {
     // CONTRACT (finding 3): the local-BYOK usage writeback row must also carry
     // "swarm" so per-journey local spend is attributed correctly.

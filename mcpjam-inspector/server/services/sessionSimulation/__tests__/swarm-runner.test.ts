@@ -170,6 +170,9 @@ describe("swarm single-host runner — attempt ordering", () => {
     // engine's Playground default; a persona turn resends every tool result
     // on every step, so this is what bounds turn time and tokens.
     expect(adapter.runtime.maxSteps).toBe(10);
+    // …and its own output ceiling: the backend holds credits against it
+    // before every step, and the model-sized default overstated the hold.
+    expect(adapter.runtime.maxOutputTokens).toBe(16_384);
     expect(adapter.runtime.scenarioId).toBeUndefined();
     // A legacy host target pins no environment, so there is no grant boundary
     // to forward — and inventing one would let a harness turn believe a
