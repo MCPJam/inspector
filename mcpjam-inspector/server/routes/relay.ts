@@ -24,8 +24,9 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * session auth (analytics must flow before any session exists — see the note
  * in middleware/session-auth.ts). The upstream hosts are hardcoded constants,
  * never derived from the request, so there is no SSRF surface. Abuse is
- * bounded by path-scoped body limits, a body read deadline, bounded payload
- * reads, a hosted-only per-IP rate limit, and the 30s upstream timeout.
+ * bounded by path-scoped body limits, a body read deadline, buffering
+ * budgets, bounded payload reads, a hosted-only per-IP rate limit, and the
+ * 30s upstream timeout.
  * Requests are forwarded for our own PostHog project only (see "Project
  * pinning" below).
  */
@@ -182,9 +183,13 @@ setInterval(
   5 * 60_000,
 ).unref();
 
+function relayClientKey(c: Context): string {
+  return getAttestedClientIp(c) ?? UNATTESTED_CLIENT_KEY;
+}
+
 function relayRateLimit(c: Context): Response | null {
   if (!HOSTED_MODE) return null;
-  const ip = getAttestedClientIp(c) ?? UNATTESTED_CLIENT_KEY;
+  const ip = relayClientKey(c);
   const now = Date.now();
   const entry = ipWindows.get(ip);
   if (entry && now - entry.windowStart < RATE_WINDOW_MS) {
@@ -202,7 +207,10 @@ function relayRateLimit(c: Context): Response | null {
 // ---------------------------------------------------------------------------
 // Body limit, exported for the mount sites in server/index.ts and
 // server/app.ts (both production entries must wire it in front of the route).
-// Path-scoped: replay gets the high cap, everything else the low one.
+// Path-scoped: replay gets the high cap, everything else the low one. The
+// mount-site check refuses a body whose declared length is over its cap; the
+// route enforces the same cap on the bytes that actually arrive, while it
+// reads them (see readRelayBody).
 // ---------------------------------------------------------------------------
 
 function makeBodyLimit(maxSize: number) {
@@ -215,42 +223,142 @@ function makeBodyLimit(maxSize: number) {
   });
 }
 
-const defaultBodyLimit = makeBodyLimit(DEFAULT_MAX_BODY_BYTES);
-const replayBodyLimit = makeBodyLimit(REPLAY_MAX_BODY_BYTES);
+function maxBodyBytes(subpath: string): number {
+  return subpath.startsWith("/s/")
+    ? REPLAY_MAX_BODY_BYTES
+    : DEFAULT_MAX_BODY_BYTES;
+}
 
 export function relayBodyLimit() {
-  return (c: Context, next: Next) => {
-    const subpath = stripRelayPrefix(c.req.path);
-    const limiter = subpath.startsWith("/s/")
-      ? replayBodyLimit
-      : defaultBodyLimit;
-    return limiter(c, next);
+  return async (c: Context, next: Next) => {
+    const declared = c.req.header("content-length");
+    if (
+      declared !== undefined &&
+      c.req.header("transfer-encoding") === undefined &&
+      parseInt(declared, 10) > maxBodyBytes(stripRelayPrefix(c.req.path))
+    ) {
+      stats.bodyLimitRejects++;
+      return c.json({ error: "payload_too_large" }, 413);
+    }
+    await next();
   };
 }
 
-// A request body must finish arriving within this long. Past it the relay
-// answers 408 and closes the connection.
+// ---------------------------------------------------------------------------
+// Body reads. The route reads each request body itself, so one deadline and
+// one size cap cover the whole read: a body must finish arriving within
+// RELAY_BODY_READ_TIMEOUT_MS. Bytes count against two buffering budgets as
+// they arrive and until the request is forwarded or refused: one for the
+// whole relay, and in hosted mode one per client, keyed like the rate limit.
+// A read refused for time, size or budget is answered at once and its
+// connection closed.
+// ---------------------------------------------------------------------------
+
 export const RELAY_BODY_READ_TIMEOUT_MS = 10_000;
+export const RELAY_MAX_BUFFERED_BYTES = 128 * 1024 * 1024;
+export const RELAY_MAX_CLIENT_BUFFERED_BYTES = 32 * 1024 * 1024;
+
+let bufferedBytes = 0;
+const clientBufferedBytes = new Map<string, number>();
+
+type BufferHold = {
+  take(bytes: number): boolean;
+  release(): void;
+};
+
+function bufferHold(clientKey: string | null): BufferHold {
+  let held = 0;
+  return {
+    take(bytes) {
+      const client =
+        clientKey === null ? 0 : (clientBufferedBytes.get(clientKey) ?? 0);
+      if (
+        bufferedBytes + bytes > RELAY_MAX_BUFFERED_BYTES ||
+        (clientKey !== null && client + bytes > RELAY_MAX_CLIENT_BUFFERED_BYTES)
+      ) {
+        return false;
+      }
+      bufferedBytes += bytes;
+      held += bytes;
+      if (clientKey !== null)
+        clientBufferedBytes.set(clientKey, client + bytes);
+      return true;
+    },
+    release() {
+      bufferedBytes -= held;
+      if (clientKey !== null) {
+        const left = (clientBufferedBytes.get(clientKey) ?? 0) - held;
+        if (left > 0) clientBufferedBytes.set(clientKey, left);
+        else clientBufferedBytes.delete(clientKey);
+      }
+      held = 0;
+    },
+  };
+}
+
+type BodyRefusal = "timeout" | "too_large" | "busy";
 
 const BODY_READ_TIMED_OUT = Symbol("body read timed out");
 
-// Reads the request body, or gives up on it at the deadline. A read given up
-// on settles once its connection closes, and its result is discarded.
-async function readBodyWithin(
+async function readRelayBody(
   c: Context,
-  timeoutMs: number,
-): Promise<ArrayBuffer | typeof BODY_READ_TIMED_OUT> {
-  const read = c.req.arrayBuffer();
+  maxBytes: number,
+  hold: BufferHold,
+): Promise<ArrayBuffer | BodyRefusal> {
+  const stream = c.req.raw.body;
+  if (!stream) return new ArrayBuffer(0);
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<typeof BODY_READ_TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(BODY_READ_TIMED_OUT), timeoutMs);
+    timer = setTimeout(
+      () => resolve(BODY_READ_TIMED_OUT),
+      RELAY_BODY_READ_TIMEOUT_MS,
+    );
   });
   try {
-    return await Promise.race([read, deadline]);
+    for (;;) {
+      const read = reader.read();
+      const next = await Promise.race([read, deadline]);
+      if (next === BODY_READ_TIMED_OUT) {
+        // Settles once the connection closes; the result is discarded.
+        read.catch(() => {});
+        return "timeout";
+      }
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > maxBytes) return "too_large";
+      if (!hold.take(next.value.byteLength)) return "busy";
+      chunks.push(next.value);
+    }
   } finally {
     clearTimeout(timer);
-    read.catch(() => {});
   }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
+}
+
+function refuseBody(c: Context, refusal: BodyRefusal): Response {
+  c.header("Connection", "close");
+  if (refusal === "timeout") {
+    recordResponseStatus(408);
+    return c.json({ error: "relay_body_timeout" }, 408);
+  }
+  if (refusal === "too_large") {
+    stats.bodyLimitRejects++;
+    recordResponseStatus(413);
+    return c.json({ error: "payload_too_large" }, 413);
+  }
+  stats.busyRejects++;
+  recordResponseStatus(503);
+  c.header("Retry-After", "1");
+  return c.json({ error: "relay_busy" }, 503);
 }
 
 // ---------------------------------------------------------------------------
@@ -431,9 +539,15 @@ function isJsonWhitespace(byte: number): boolean {
   return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
 }
 
-function skipJsonWhitespace(bytes: Buffer, from: number): number {
+// The first byte at or after `from` that is not JSON whitespace, looking no
+// further than `limit`.
+function skipJsonWhitespace(
+  bytes: Buffer,
+  from: number,
+  limit: number,
+): number {
   let i = from;
-  while (i < bytes.length && isJsonWhitespace(bytes[i])) i++;
+  while (i < limit && isJsonWhitespace(bytes[i])) i++;
   return i;
 }
 
@@ -550,19 +664,22 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Token scan for payloads over RELAY_PARSE_MAX_BYTES. It walks the JSON
-// grammar byte by byte without building the payload, and records the value at
-// every place collectPayloadTokens reads a token from: an event's
-// api_key / token / $token and its properties.token, where an event is the
-// payload itself, an element of a top-level array, or an element of a
-// top-level `batch` array. Every occurrence is recorded, a repeated key
-// included, and a value that is not a string is recorded as null so it never
-// matches. Malformed or truncated JSON throws.
+// Token scan for payloads over RELAY_PARSE_MAX_BYTES. It validates the JSON
+// grammar byte by byte (RFC 8259: string escapes and control characters,
+// number syntax, literals, nesting) without building the payload, yielding
+// every SCAN_SLICE_BYTES, and records the value at every place
+// collectPayloadTokens reads a token from: an event's api_key / token /
+// $token and its properties.token, where an event is the payload itself, an
+// element of a top-level array, or an element of a top-level `batch` array.
+// Every occurrence is recorded, a repeated key included, and a value that is
+// not a string is recorded as null so it never matches. Malformed or
+// truncated JSON throws.
 // ---------------------------------------------------------------------------
 
 const JSON_OBJECT = 1;
 const JSON_ARRAY = 2;
 
+// What the grammar expects next, between tokens.
 const EXPECT_VALUE = 0;
 const EXPECT_VALUE_OR_ARRAY_END = 1;
 const EXPECT_KEY = 2;
@@ -570,63 +687,92 @@ const EXPECT_KEY_OR_OBJECT_END = 3;
 const EXPECT_COLON = 4;
 const AFTER_VALUE = 5;
 
+// Where the scan is inside a token.
+const IN_NOTHING = 0;
+const IN_STRING = 1;
+const IN_ESCAPE = 2;
+const IN_UNICODE_ESCAPE = 3;
+const IN_NUMBER = 4;
+const IN_LITERAL = 5;
+
+// Number states: after "-", "0", integer digits, ".", fraction digits, "e",
+// the exponent's sign, exponent digits.
+const NUMBER_MINUS = 0;
+const NUMBER_ZERO = 1;
+const NUMBER_INTEGER = 2;
+const NUMBER_POINT = 3;
+const NUMBER_FRACTION = 4;
+const NUMBER_E = 5;
+const NUMBER_E_SIGN = 6;
+const NUMBER_EXPONENT = 7;
+
 // Keys are only needed down to the deepest token path,
 // batch[].properties.token.
 const TRACKED_KEY_DEPTH = 4;
 // A longer key cannot name a tracked field, however it is escaped.
 const MAX_TRACKED_KEY_BYTES = 64;
 
-// Index of the closing quote of the string whose opening quote is at `open`.
-function stringEnd(bytes: Buffer, open: number): number {
-  let from = open + 1;
-  for (;;) {
-    const quote = bytes.indexOf(QUOTE, from);
-    if (quote < 0) throw new Error("unterminated string");
-    let backslashes = 0;
-    for (let i = quote - 1; i > open && bytes[i] === BACKSLASH; i--) {
-      backslashes++;
-    }
-    if (backslashes % 2 === 0) return quote;
-    from = quote + 1;
+function isDigit(byte: number): boolean {
+  return byte >= 0x30 && byte <= 0x39;
+}
+
+// The next number state for `byte`, or -1 when `byte` does not continue the
+// number.
+function numberStep(state: number, byte: number): number {
+  const digit = isDigit(byte);
+  const exponent = byte === 0x65 || byte === 0x45;
+  switch (state) {
+    case NUMBER_MINUS:
+      return byte === 0x30 ? NUMBER_ZERO : digit ? NUMBER_INTEGER : -1;
+    case NUMBER_ZERO:
+      return byte === 0x2e ? NUMBER_POINT : exponent ? NUMBER_E : -1;
+    case NUMBER_INTEGER:
+      if (digit) return NUMBER_INTEGER;
+      return byte === 0x2e ? NUMBER_POINT : exponent ? NUMBER_E : -1;
+    case NUMBER_POINT:
+      return digit ? NUMBER_FRACTION : -1;
+    case NUMBER_FRACTION:
+      return digit ? NUMBER_FRACTION : exponent ? NUMBER_E : -1;
+    case NUMBER_E:
+      if (byte === 0x2b || byte === 0x2d) return NUMBER_E_SIGN;
+      return digit ? NUMBER_EXPONENT : -1;
+    case NUMBER_E_SIGN:
+    case NUMBER_EXPONENT:
+      return digit ? NUMBER_EXPONENT : -1;
+    default:
+      return -1;
   }
 }
 
+function isCompleteNumber(state: number): boolean {
+  return (
+    state === NUMBER_ZERO ||
+    state === NUMBER_INTEGER ||
+    state === NUMBER_FRACTION ||
+    state === NUMBER_EXPONENT
+  );
+}
+
+// `"`, `\`, `/`, b, f, n, r, t: the escapes that are not \uXXXX.
+function isShortEscape(byte: number): boolean {
+  return (
+    byte === QUOTE ||
+    byte === BACKSLASH ||
+    byte === 0x2f ||
+    byte === 0x62 ||
+    byte === 0x66 ||
+    byte === 0x6e ||
+    byte === 0x72 ||
+    byte === 0x74
+  );
+}
+
+// The string whose quotes are at `open` and `close`, already validated.
 function decodeString(bytes: Buffer, open: number, close: number): string {
   const raw = bytes.subarray(open + 1, close);
   return raw.includes(BACKSLASH)
     ? (JSON.parse(bytes.toString("utf8", open, close + 1)) as string)
     : raw.toString("utf8");
-}
-
-function literalEnd(bytes: Buffer, start: number, literal: string): number {
-  for (let k = 0; k < literal.length; k++) {
-    if (bytes[start + k] !== literal.charCodeAt(k)) {
-      throw new Error("invalid literal");
-    }
-  }
-  return start + literal.length;
-}
-
-function isNumberByte(byte: number): boolean {
-  return (
-    (byte >= 0x30 && byte <= 0x39) ||
-    byte === 0x2d ||
-    byte === 0x2b ||
-    byte === 0x2e ||
-    byte === 0x65 ||
-    byte === 0x45
-  );
-}
-
-function scalarEnd(bytes: Buffer, start: number): number {
-  const byte = bytes[start];
-  if (byte === 0x74) return literalEnd(bytes, start, "true");
-  if (byte === 0x66) return literalEnd(bytes, start, "false");
-  if (byte === 0x6e) return literalEnd(bytes, start, "null");
-  let end = start;
-  while (end < bytes.length && isNumberByte(bytes[end])) end++;
-  if (end === start) throw new Error("unexpected byte");
-  return end;
 }
 
 // Whether the container at `level` is an event object.
@@ -667,42 +813,115 @@ export async function scanPayloadTokens(
   const keys: string[] = new Array<string>(TRACKED_KEY_DEPTH).fill("");
   let depth = 0;
   let state = EXPECT_VALUE;
-  let i = 0;
+  let inside = IN_NOTHING;
+  // The open string: where its quote is, whether it is a key, and whether it
+  // is a value at a token path.
+  let stringOpen = 0;
+  let stringIsKey = false;
+  let stringIsToken = false;
+  let numberState = NUMBER_MINUS;
+  let literal = "";
+  let literalAt = 0;
+  let hexDigitsLeft = 0;
   let nextYield = SCAN_SLICE_BYTES;
 
-  for (;;) {
+  for (let i = 0; i < bytes.length; i++) {
     if (i >= nextYield) {
       await yieldToEventLoop();
       nextYield = i + SCAN_SLICE_BYTES;
     }
-    i = skipJsonWhitespace(bytes, i);
-    if (i >= bytes.length) break;
     const byte = bytes[i];
+
+    if (inside === IN_STRING) {
+      // Plain string bytes, up to the slice end.
+      const stop = Math.min(bytes.length, nextYield);
+      let j = i;
+      while (
+        j < stop &&
+        bytes[j] !== QUOTE &&
+        bytes[j] !== BACKSLASH &&
+        bytes[j] >= 0x20
+      ) {
+        j++;
+      }
+      if (j === stop) {
+        i = j - 1;
+        continue;
+      }
+      i = j;
+      const end = bytes[j];
+      if (end === BACKSLASH) {
+        inside = IN_ESCAPE;
+        continue;
+      }
+      if (end !== QUOTE) throw new Error("control character in a string");
+      inside = IN_NOTHING;
+      if (stringIsKey) {
+        const level = depth - 1;
+        if (level < TRACKED_KEY_DEPTH) {
+          keys[level] =
+            i - stringOpen - 1 <= MAX_TRACKED_KEY_BYTES
+              ? decodeString(bytes, stringOpen, i)
+              : "";
+        }
+      } else if (stringIsToken) {
+        tokens.push(decodeString(bytes, stringOpen, i));
+      }
+      continue;
+    }
+    if (inside === IN_ESCAPE) {
+      if (byte === 0x75) {
+        inside = IN_UNICODE_ESCAPE;
+        hexDigitsLeft = 4;
+      } else if (isShortEscape(byte)) {
+        inside = IN_STRING;
+      } else {
+        throw new Error("invalid escape");
+      }
+      continue;
+    }
+    if (inside === IN_UNICODE_ESCAPE) {
+      if (hexValue(byte) < 0) throw new Error("invalid unicode escape");
+      if (--hexDigitsLeft === 0) inside = IN_STRING;
+      continue;
+    }
+    if (inside === IN_LITERAL) {
+      if (byte !== literal.charCodeAt(literalAt)) {
+        throw new Error("invalid literal");
+      }
+      if (++literalAt === literal.length) inside = IN_NOTHING;
+      continue;
+    }
+    if (inside === IN_NUMBER) {
+      const next = numberStep(numberState, byte);
+      if (next >= 0) {
+        numberState = next;
+        continue;
+      }
+      if (!isCompleteNumber(numberState)) throw new Error("invalid number");
+      // The number has ended; `byte` belongs to the grammar.
+      inside = IN_NOTHING;
+    }
+
+    if (isJsonWhitespace(byte)) continue;
 
     if (state === EXPECT_KEY || state === EXPECT_KEY_OR_OBJECT_END) {
       if (state === EXPECT_KEY_OR_OBJECT_END && byte === CLOSE_OBJECT) {
         depth--;
-        i++;
         state = AFTER_VALUE;
         continue;
       }
       if (byte !== QUOTE) throw new Error("expected a key");
-      const close = stringEnd(bytes, i);
-      const level = depth - 1;
-      if (level < TRACKED_KEY_DEPTH) {
-        keys[level] =
-          close - i - 1 <= MAX_TRACKED_KEY_BYTES
-            ? decodeString(bytes, i, close)
-            : "";
-      }
-      i = close + 1;
+      inside = IN_STRING;
+      stringOpen = i;
+      stringIsKey = true;
+      stringIsToken = false;
       state = EXPECT_COLON;
       continue;
     }
 
     if (state === EXPECT_COLON) {
       if (byte !== COLON) throw new Error("expected a colon");
-      i++;
       state = EXPECT_VALUE;
       continue;
     }
@@ -711,14 +930,12 @@ export async function scanPayloadTokens(
       if (depth === 0) throw new Error("unexpected trailing data");
       const kind = kinds[depth - 1];
       if (byte === COMMA) {
-        i++;
         state = kind === JSON_OBJECT ? EXPECT_KEY : EXPECT_VALUE;
       } else if (
         (byte === CLOSE_OBJECT && kind === JSON_OBJECT) ||
         (byte === CLOSE_ARRAY && kind === JSON_ARRAY)
       ) {
         depth--;
-        i++;
       } else {
         throw new Error("expected a comma or a closing bracket");
       }
@@ -728,7 +945,6 @@ export async function scanPayloadTokens(
     // EXPECT_VALUE or EXPECT_VALUE_OR_ARRAY_END
     if (state === EXPECT_VALUE_OR_ARRAY_END && byte === CLOSE_ARRAY) {
       depth--;
-      i++;
       state = AFTER_VALUE;
       continue;
     }
@@ -739,25 +955,48 @@ export async function scanPayloadTokens(
       kinds[depth] = byte === OPEN_OBJECT ? JSON_OBJECT : JSON_ARRAY;
       if (depth < TRACKED_KEY_DEPTH) keys[depth] = "";
       depth++;
-      i++;
       state =
         byte === OPEN_OBJECT
           ? EXPECT_KEY_OR_OBJECT_END
           : EXPECT_VALUE_OR_ARRAY_END;
       continue;
     }
-    if (byte === QUOTE) {
-      const close = stringEnd(bytes, i);
-      if (tokenPath) tokens.push(decodeString(bytes, i, close));
-      i = close + 1;
-    } else {
-      i = scalarEnd(bytes, i);
-      if (tokenPath) tokens.push(null);
-    }
     state = AFTER_VALUE;
+    if (byte === QUOTE) {
+      inside = IN_STRING;
+      stringOpen = i;
+      stringIsKey = false;
+      stringIsToken = tokenPath;
+      continue;
+    }
+    if (tokenPath) tokens.push(null);
+    if (byte === 0x2d || isDigit(byte)) {
+      inside = IN_NUMBER;
+      numberState =
+        byte === 0x2d
+          ? NUMBER_MINUS
+          : byte === 0x30
+            ? NUMBER_ZERO
+            : NUMBER_INTEGER;
+      continue;
+    }
+    literal =
+      byte === 0x74
+        ? "true"
+        : byte === 0x66
+          ? "false"
+          : byte === 0x6e
+            ? "null"
+            : "";
+    if (literal === "") throw new Error("unexpected byte");
+    inside = IN_LITERAL;
+    literalAt = 1;
   }
 
-  if (state !== AFTER_VALUE || depth !== 0) {
+  if (inside === IN_NUMBER && isCompleteNumber(numberState)) {
+    inside = IN_NOTHING;
+  }
+  if (inside !== IN_NOTHING || state !== AFTER_VALUE || depth !== 0) {
     throw new Error("truncated payload");
   }
 }
@@ -783,8 +1022,14 @@ async function collectBodyTokens(
   const text = isGzip(bytes)
     ? await gunzipAsync(bytes, { maxOutputLength: Math.max(1, textBytes) })
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const start = skipJsonWhitespace(text, 0);
-  if (text[start] === OPEN_OBJECT || text[start] === OPEN_ARRAY) {
+  const lookahead = Math.min(text.length, SCAN_SLICE_BYTES);
+  const start = skipJsonWhitespace(text, 0, lookahead);
+  if (
+    text[start] === OPEN_OBJECT ||
+    text[start] === OPEN_ARRAY ||
+    (start === lookahead && start < text.length)
+  ) {
+    // JSON, or a run of leading whitespace the JSON reader works through.
     await collectJsonTokens(text.subarray(start), tokens);
     return;
   }
@@ -935,60 +1180,62 @@ relayRoutes.all("*", async (c) => {
     headers.set("X-Real-IP", clientIp);
   }
 
-  // Buffer the body (bounded by relayBodyLimit at the mount site) rather
-  // than streaming: undici streaming request bodies require duplex:"half"
-  // and posthog batches are small enough that buffering is simpler. The body
-  // must arrive within RELAY_BODY_READ_TIMEOUT_MS, and only a body that has
-  // arrived is admitted for payload checks.
+  // Buffer the body rather than streaming it: undici streaming request
+  // bodies require duplex:"half" and posthog batches are small enough that
+  // buffering is simpler. readRelayBody bounds the read in time, size and
+  // buffered bytes, and only a body that has arrived is admitted for
+  // payload checks. The buffered bytes are held until the upstream request
+  // settles.
   const method = c.req.method;
-  let body: ArrayBuffer | undefined;
-  if (method !== "GET" && method !== "HEAD") {
-    const read = await readBodyWithin(c, RELAY_BODY_READ_TIMEOUT_MS);
-    if (read === BODY_READ_TIMED_OUT) {
-      recordResponseStatus(408);
-      c.header("Connection", "close");
-      return c.json({ error: "relay_body_timeout" }, 408);
-    }
-    body = read;
-  }
-  const project = await checkProjectTokens(subpath, url, method, body);
-  if (project === "busy") {
-    stats.busyRejects++;
-    recordResponseStatus(503);
-    c.header("Retry-After", "1");
-    return c.json({ error: "relay_busy" }, 503);
-  }
-  if (project !== "ours") {
-    stats.projectRejects++;
-    const status = project === "other" ? 403 : 400;
-    recordResponseStatus(status);
-    return c.json(
-      {
-        error:
-          project === "other" ? "unsupported_project" : "unreadable_payload",
-      },
-      status,
-    );
-  }
-
+  const hold = bufferHold(HOSTED_MODE ? relayClientKey(c) : null);
   let upstream: Response;
   try {
-    upstream = await fetch(target, {
-      method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
-      redirect: "follow",
-    });
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      stats.timeouts++;
-      stats.res5xx++;
-      return c.json({ error: "relay_upstream_timeout" }, 504);
+    let body: ArrayBuffer | undefined;
+    if (method !== "GET" && method !== "HEAD") {
+      const read = await readRelayBody(c, maxBodyBytes(subpath), hold);
+      if (typeof read === "string") return refuseBody(c, read);
+      body = read;
     }
-    stats.upstreamErrors++;
-    stats.res5xx++;
-    return c.json({ error: "relay_upstream_unavailable" }, 502);
+    const project = await checkProjectTokens(subpath, url, method, body);
+    if (project === "busy") {
+      stats.busyRejects++;
+      recordResponseStatus(503);
+      c.header("Retry-After", "1");
+      return c.json({ error: "relay_busy" }, 503);
+    }
+    if (project !== "ours") {
+      stats.projectRejects++;
+      const status = project === "other" ? 403 : 400;
+      recordResponseStatus(status);
+      return c.json(
+        {
+          error:
+            project === "other" ? "unsupported_project" : "unreadable_payload",
+        },
+        status,
+      );
+    }
+
+    try {
+      upstream = await fetch(target, {
+        method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+        redirect: "follow",
+      });
+    } catch (error) {
+      if (isTimeoutError(error)) {
+        stats.timeouts++;
+        stats.res5xx++;
+        return c.json({ error: "relay_upstream_timeout" }, 504);
+      }
+      stats.upstreamErrors++;
+      stats.res5xx++;
+      return c.json({ error: "relay_upstream_unavailable" }, 502);
+    }
+  } finally {
+    hold.release();
   }
 
   if (upstream.status >= 500) stats.upstream5xx++;

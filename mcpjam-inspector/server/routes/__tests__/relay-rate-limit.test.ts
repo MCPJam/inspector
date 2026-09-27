@@ -11,6 +11,10 @@ vi.mock("../../config.js", async (importOriginal) => {
 });
 
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
+import {
+  RELAY_BODY_READ_TIMEOUT_MS,
+  RELAY_MAX_CLIENT_BUFFERED_BYTES,
+} from "../relay.js";
 
 const ORIGINAL_FETCH = global.fetch;
 const EDGE_SECRET = "edge-secret-for-tests";
@@ -61,6 +65,7 @@ describe("posthog relay rate limit (hosted mode)", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     global.fetch = ORIGINAL_FETCH;
   });
@@ -117,5 +122,53 @@ describe("posthog relay rate limit (hosted mode)", () => {
     // An attested caller keeps its own bucket.
     const ok = await capture(app, attested("203.0.113.9"));
     expect(ok.status).toBe(200);
+  });
+
+  it("caps the bytes one client has buffered at once", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const app = await createTestApp();
+    const MIB = new Uint8Array(1024 * 1024);
+    const perRequest = 17;
+    expect(2 * perRequest * 1024 * 1024).toBeGreaterThan(
+      RELAY_MAX_CLIENT_BUFFERED_BYTES,
+    );
+    // A replay body that sends 17 MiB and then never finishes arriving.
+    const partial = (ip: string) =>
+      app.request(
+        new Request("http://localhost:6274/relay/s/", {
+          method: "POST",
+          headers: attested(ip),
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let i = 0; i < perRequest; i++) controller.enqueue(MIB);
+            },
+          }),
+          duplex: "half",
+        } as RequestInit),
+      );
+
+    const held = [partial("203.0.113.20")];
+    await new Promise((resolve) => setImmediate(resolve));
+    const refused = await partial("203.0.113.20");
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+    // Another client has its own share.
+    let otherSettled = false;
+    held.push(
+      Promise.resolve(partial("203.0.113.21")).finally(() => {
+        otherSettled = true;
+      }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(otherSettled).toBe(false);
+    expect((await capture(app, attested("203.0.113.21"))).status).toBe(200);
+
+    await vi.advanceTimersByTimeAsync(RELAY_BODY_READ_TIMEOUT_MS);
+    for (const response of await Promise.all(held)) {
+      expect(response.status).toBe(408);
+    }
+    // Released once the reads end.
+    expect((await capture(app, attested("203.0.113.20"))).status).toBe(200);
   });
 });
