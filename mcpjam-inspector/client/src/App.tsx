@@ -3,6 +3,7 @@ import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
 import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { useOrganizationDeletionStore } from "@/stores/organization-deletion-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -2861,13 +2862,21 @@ export default function App() {
         : nextIds;
     });
   }, [isLoadingOrganizations, sortedOrganizations]);
+  const deletingOrganizationId = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationId,
+  );
   const effectiveOrganizations = useMemo(
     () =>
       sortedOrganizations.filter(
         (organization) =>
+          organization._id !== deletingOrganizationId &&
           !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+    [
+      deletingOrganizationId,
+      optimisticallyDeletedOrganizationIds,
+      sortedOrganizations,
+    ],
   );
   // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
   // whose membership hasn't linked yet, so every org-scoped query for it is
@@ -4951,7 +4960,8 @@ export default function App() {
 
     if (
       routeOrganizationId &&
-      optimisticallyDeletedOrganizationIds.includes(routeOrganizationId)
+      (routeOrganizationId === deletingOrganizationId ||
+        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
     }
@@ -4974,6 +4984,7 @@ export default function App() {
     }
   }, [
     activeTab,
+    deletingOrganizationId,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,

@@ -15,6 +15,7 @@ import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { offeredPlans } from "@/lib/pricing-catalog";
+import { endOrganizationDeletion } from "@/stores/organization-deletion-store";
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -396,6 +397,8 @@ vi.mock("../organization/OrganizationMemberRow", () => ({
 describe("OrganizationsTab billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // A successful delete leaves the org gated for the rest of the session.
+    endOrganizationDeletion();
     addMemberMock.mockResolvedValue({ isPending: false });
     removeMemberMock.mockResolvedValue(undefined);
 
@@ -3632,6 +3635,93 @@ describe("OrganizationsTab billing", () => {
 
     expect(window.location.pathname).toBe("/organizations/org-1");
     expect(window.location.hash).toBe("");
+  });
+
+  describe("delete subscriptions", () => {
+    async function confirmDelete() {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Delete Organization" }),
+      );
+      const dialog = await screen.findByRole("alertdialog");
+      fireEvent.change(
+        within(dialog).getByPlaceholderText("Organization name"),
+        { target: { value: "Org One" } },
+      );
+      within(dialog)
+        .getAllByRole("checkbox")
+        .forEach((checkbox) => fireEvent.click(checkbox));
+      fireEvent.click(
+        within(dialog).getByRole("button", {
+          name: "Permanently delete organization",
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({ plan: "free" }),
+        }),
+      );
+    });
+
+    // Convex re-runs every live subscription when the delete commits; any
+    // still pointed at the org throws server-side (CONVEX-2A7, CONVEX-31F).
+    it("unmounts the org page before the delete is sent", async () => {
+      let pageMountedAtSend: boolean | undefined;
+      let placeholderShownAtSend: boolean | undefined;
+      deleteOrganizationMock.mockImplementation(async () => {
+        // `hidden`: the open alertdialog aria-hides the page behind it.
+        pageMountedAtSend =
+          screen.queryByRole("button", {
+            name: "Delete Organization",
+            hidden: true,
+          }) !== null;
+        placeholderShownAtSend =
+          screen.queryByText("Deleting organization...") !== null;
+      });
+
+      render(
+        <OrganizationsTab
+          organizationId="org-1"
+          onOrganizationDeleted={vi.fn()}
+        />,
+      );
+      await confirmDelete();
+
+      await waitFor(() => {
+        expect(deleteOrganizationMock).toHaveBeenCalledTimes(1);
+      });
+      expect(pageMountedAtSend).toBe(false);
+      expect(placeholderShownAtSend).toBe(true);
+      // The deleted org must not re-mount and re-subscribe once it resolves.
+      expect(
+        screen.queryByRole("button", {
+          name: "Delete Organization",
+          hidden: true,
+        }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("brings the org page back when the delete fails", async () => {
+      deleteOrganizationMock.mockRejectedValue(new Error("Delete refused"));
+
+      render(<OrganizationsTab organizationId="org-1" />);
+      await confirmDelete();
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          errorToastMessage("Delete refused"),
+          { duration: 8000 },
+        );
+      });
+      expect(
+        screen.getByRole("button", { name: "Delete Organization" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Deleting organization..."),
+      ).not.toBeInTheDocument();
+    });
   });
   /**
    * `?plans=open` is how the swarm limit dialog's "Explore MCPJam plans" link
