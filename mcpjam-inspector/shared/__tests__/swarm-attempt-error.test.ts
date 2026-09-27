@@ -4,8 +4,10 @@ import {
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
+import { isCreditExhaustion } from "../credit-exhaustion";
 
 /**
  * The exact string that was being stored on every attempt of a rate-limited
@@ -428,5 +430,67 @@ describe("humanizeSwarmAttemptError provider_not_allowlisted", () => {
     expect(info.message).toBe(headline);
     expect(info.code).toBe("provider_not_allowlisted");
     expect(info.httpStatus).toBe(403);
+  });
+});
+
+describe("isTransientSpendRefusal", () => {
+  /** What `buildSpendRefusalBody` writes, humanized as an attempt row stores it. */
+  const STORED_HOLDS_SENTENCE =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("reads the structured pair", () => {
+    expect(isTransientSpendRefusal("user_rate_limit", "holds_committed")).toBe(
+      true,
+    );
+    expect(
+      isTransientSpendRefusal("user_rate_limit", "allowance_exhausted"),
+    ).toBe(false);
+  });
+
+  it("reads a stored row, which keeps the sentence but not the reason", () => {
+    expect(
+      isTransientSpendRefusal(
+        "user_rate_limit",
+        undefined,
+        STORED_HOLDS_SENTENCE,
+      ),
+    ).toBe(true);
+    expect(
+      isTransientSpendRefusal(
+        null,
+        null,
+        humanizeSwarmAttemptErrorMessage(
+          'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","error":"MCPJam model limit reached for the moment: 1 in-flight request(s) hold the remaining credits and release them as they finish.","details":"Retry in a few seconds."}',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+    "Stopped 2 in-flight tool calls before the credit limit was reached.",
+    "MCPJam model limit reached for the momentum tracker",
+  ])("stays anchored to the backend's own words: %s", (message) => {
+    expect(isTransientSpendRefusal("user_rate_limit", undefined, message)).toBe(
+      false,
+    );
+  });
+
+  it("keeps a stored held-credits row out of credit exhaustion", () => {
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: STORED_HOLDS_SENTENCE,
+      }),
+    ).toBe(false);
+    expect(isCreditExhaustion(STORED_HOLDS_SENTENCE)).toBe(false);
+    // A real exhaustion still counts, whatever `details` happens to quote.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: { history: [STORED_HOLDS_SENTENCE] },
+      }),
+    ).toBe(true);
   });
 });
