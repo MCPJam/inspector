@@ -2,6 +2,8 @@ import { Hono, type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
+import { checkSessionRevocation } from "../../services/revoked-session-cache.js";
+import { sessionRevokedResponse } from "../../middleware/session-revocation.js";
 import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
 
@@ -22,9 +24,11 @@ import { getAttestedClientIp } from "../../utils/client-ip.js";
  *
  * "No values" is a 200 with `{ flags: {} }`, never an error: the client keeps
  * the flags it already has, and app boot never depends on PostHog being
- * reachable (local, Electron and air-gapped installs included). The one
- * refusal is the hosted per-IP ceiling below, a 429 the client treats the
- * same way.
+ * reachable (local, Electron and air-gapped installs included). There are two
+ * refusals, and the client keeps its flags on both: the hosted per-IP ceiling
+ * below (429), and an AuthKit session that has been signed out (401
+ * `SESSION_REVOKED`, the same answer and the same check as
+ * `bearerAuthMiddleware`).
  */
 
 const ANONYMOUS_ID_PATTERN =
@@ -34,32 +38,49 @@ const ANONYMOUS_ID_PATTERN =
 // Hosted is always "web".
 const LOCAL_PLATFORMS = new Set(["npm", "docker", "mac", "win", "electron"]);
 
-async function verifiedDistinctId(token: string): Promise<string | null> {
+/** Whose flags a request gets: an id, nobody, or a signed-out session. */
+type FlagsIdentity =
+  | { kind: "id"; distinctId: string }
+  | { kind: "none" }
+  | { kind: "revoked" };
+
+const NO_IDENTITY: FlagsIdentity = { kind: "none" };
+
+async function verifiedIdentity(token: string): Promise<FlagsIdentity> {
   try {
     const guest = await validateGuestTokenDetailedAsync(token);
-    if (guest.valid && guest.guestId) return guest.guestId;
+    if (guest.valid && guest.guestId) {
+      return { kind: "id", distinctId: guest.guestId };
+    }
   } catch {
     // Guest token service unavailable; the AuthKit check below still runs.
   }
+  let session: Awaited<ReturnType<typeof verifyAuthKitToken>>;
   try {
-    return (await verifyAuthKitToken(token)).sub;
+    session = await verifyAuthKitToken(token);
   } catch {
-    return null;
+    return NO_IDENTITY;
   }
+  // The check `bearerAuthMiddleware` applies to every AuthKit bearer: a
+  // session this process knows to be signed out is refused (MJ-011).
+  if (!checkSessionRevocation(session.sid, { requireFresh: false }).ok) {
+    return { kind: "revoked" };
+  }
+  return { kind: "id", distinctId: session.sub };
 }
 
-async function resolveDistinctId(c: Context): Promise<string | null> {
+async function resolveIdentity(c: Context): Promise<FlagsIdentity> {
   const authorization = c.req.header("authorization");
   if (authorization !== undefined) {
     const token = authorization.startsWith("Bearer ")
       ? authorization.slice("Bearer ".length).trim()
       : "";
-    return token ? verifiedDistinctId(token) : null;
+    return token ? verifiedIdentity(token) : NO_IDENTITY;
   }
   const anonymousId = c.req.query("distinct_id");
   return anonymousId && ANONYMOUS_ID_PATTERN.test(anonymousId)
-    ? anonymousId
-    : null;
+    ? { kind: "id", distinctId: anonymousId }
+    : NO_IDENTITY;
 }
 
 // The person properties the client used to send with its own flag requests,
@@ -138,10 +159,15 @@ clientFlags.get("/", async (c) => {
     c.header("Retry-After", String(retryAfter));
     return c.json({ flags: {} }, 429);
   }
-  const distinctId = await resolveDistinctId(c);
-  const flags = distinctId
-    ? await evaluateClientFeatureFlags(distinctId, flagPersonProperties(c))
-    : {};
+  const identity = await resolveIdentity(c);
+  if (identity.kind === "revoked") return sessionRevokedResponse(c);
+  const flags =
+    identity.kind === "id"
+      ? await evaluateClientFeatureFlags(
+          identity.distinctId,
+          flagPersonProperties(c),
+        )
+      : {};
   return c.json({ flags });
 });
 
