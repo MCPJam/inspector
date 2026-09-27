@@ -5,7 +5,7 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
 import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
-import { getClientIp } from "../utils/client-ip.js";
+import { getAttestedClientIp, getClientIp } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 
 /**
@@ -24,9 +24,10 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * session auth (analytics must flow before any session exists — see the note
  * in middleware/session-auth.ts). The upstream hosts are hardcoded constants,
  * never derived from the request, so there is no SSRF surface. Abuse is
- * bounded by path-scoped body limits, bounded payload reads, a hosted-only
- * per-IP rate limit, and the 30s upstream timeout. Requests are forwarded for
- * our own PostHog project only (see "Project pinning" below).
+ * bounded by path-scoped body limits, a body read deadline, bounded payload
+ * reads, a hosted-only per-IP rate limit, and the 30s upstream timeout.
+ * Requests are forwarded for our own PostHog project only (see "Project
+ * pinning" below).
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -97,6 +98,7 @@ const stats = {
   rateLimitRejects: 0,
   projectRejects: 0,
   busyRejects: 0,
+  bodyReadTimeouts: 0,
   latenciesMs: [] as number[],
 };
 
@@ -133,6 +135,7 @@ export function flushRelayStats(): void {
     rateLimitRejects: stats.rateLimitRejects,
     projectRejects: stats.projectRejects,
     busyRejects: stats.busyRejects,
+    bodyReadTimeouts: stats.bodyReadTimeouts,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -149,6 +152,7 @@ export function flushRelayStats(): void {
   stats.rateLimitRejects = 0;
   stats.projectRejects = 0;
   stats.busyRejects = 0;
+  stats.bodyReadTimeouts = 0;
   stats.latenciesMs = [];
 }
 
@@ -156,15 +160,16 @@ setInterval(flushRelayStats, STATS_FLUSH_INTERVAL_MS).unref();
 
 // ---------------------------------------------------------------------------
 // Rate limit (hosted only). Local installs are single-user; hosted is a
-// public unauthenticated endpoint. Keyed on getClientIp, whose header
-// precedence (cf-connecting-ip > x-real-ip > x-forwarded-for > socket) means
-// the key comes from trusted-edge headers on hosted — a client rotating its
-// own X-Forwarded-For cannot rotate buckets there because the edge headers
-// win. 600/min is ~10x the busiest real posthog-js client.
+// public unauthenticated endpoint. Keyed on getAttestedClientIp: the address
+// a trusted edge vouched for. Requests without one share a single bucket, so
+// forwarding headers a client writes itself never select a bucket (the same
+// keying as GET /api/web/flags). 600/min is ~10x the busiest real posthog-js
+// client.
 // ---------------------------------------------------------------------------
 
 const RATE_LIMIT_PER_MIN = 600;
 const RATE_WINDOW_MS = 60_000;
+const UNATTESTED_CLIENT_KEY = "unattested";
 
 const ipWindows = new Map<string, { count: number; windowStart: number }>();
 
@@ -182,7 +187,7 @@ setInterval(
 
 function relayRateLimit(c: Context): Response | null {
   if (!HOSTED_MODE) return null;
-  const ip = getClientIp(c) ?? "unknown";
+  const ip = getAttestedClientIp(c) ?? UNATTESTED_CLIENT_KEY;
   const now = Date.now();
   const entry = ipWindows.get(ip);
   if (entry && now - entry.windowStart < RATE_WINDOW_MS) {
@@ -224,6 +229,31 @@ export function relayBodyLimit() {
       : defaultBodyLimit;
     return limiter(c, next);
   };
+}
+
+// A request body must finish arriving within this long. Past it the relay
+// answers 408 and closes the connection.
+export const RELAY_BODY_READ_TIMEOUT_MS = 10_000;
+
+const BODY_READ_TIMED_OUT = Symbol("body read timed out");
+
+// Reads the request body, or gives up on it at the deadline. A read given up
+// on settles once its connection closes, and its result is discarded.
+async function readBodyWithin(
+  c: Context,
+  timeoutMs: number,
+): Promise<ArrayBuffer | typeof BODY_READ_TIMED_OUT> {
+  const read = c.req.arrayBuffer();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof BODY_READ_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(BODY_READ_TIMED_OUT), timeoutMs);
+  });
+  try {
+    return await Promise.race([read, deadline]);
+  } finally {
+    clearTimeout(timer);
+    read.catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,21 +329,30 @@ function supportsRelayRequest(path: string, method: string): boolean {
 // Only /static assets carry no token.
 // ---------------------------------------------------------------------------
 
-type ProjectCheck = "ours" | "other" | "unreadable";
+type ProjectCheck = "ours" | "other" | "unreadable" | "busy";
 
-// Reading a capture payload's tokens means inflating and parsing it, so that
-// work is bounded (MJ-015). A gzip body inflates off the event loop, to at
-// most INFLATE_RATIO_LIMIT times its compressed size (never below the floor)
-// and never past its path's cap. posthog-js flushes a replay batch at about
+// Reading a capture payload's tokens means inflating it and finding its token
+// fields, so that work is bounded (MJ-015). A gzip body inflates off the event
+// loop, to exactly the size its gzip trailer declares, which may be at most
+// INFLATE_RATIO_LIMIT times its compressed size (never below the floor) and
+// never past its path's cap. posthog-js flushes a replay batch at about
 // 0.9 MiB uncompressed, so real payloads sit well inside these bounds.
 const INFLATE_FLOOR_BYTES = 2 * 1024 * 1024;
 const INFLATE_RATIO_LIMIT = 32;
 const MAX_INFLATED_BODY_BYTES = 8 * 1024 * 1024;
 const REPLAY_MAX_INFLATED_BODY_BYTES = 20 * 1024 * 1024;
 
-// Capture payloads are admitted before their bodies are read: a limited
-// number at a time, and fewer still of those that may take more than the
-// floor to read. Past either limit the relay answers 503, and posthog-js
+// A payload of up to RELAY_PARSE_MAX_BYTES is parsed outright. A larger one
+// is read by scanning it for its token fields SCAN_SLICE_BYTES at a time,
+// yielding to the event loop between slices so other requests are served
+// meanwhile.
+export const RELAY_PARSE_MAX_BYTES = 64 * 1024;
+const SCAN_SLICE_BYTES = 256 * 1024;
+const SCAN_MAX_DEPTH = 4096;
+
+// Capture payloads are admitted once their bodies have arrived: a limited
+// number are inflated and read at a time, and fewer still of those whose text
+// exceeds the floor. Past either limit the relay answers 503, and posthog-js
 // retries later.
 export const RELAY_MAX_PAYLOAD_CHECKS = 16;
 export const RELAY_MAX_LARGE_PAYLOAD_CHECKS = 2;
@@ -324,6 +363,7 @@ const gunzipAsync = promisify(gunzip);
 
 const TOKEN_QUERY_PARAMS = ["token", "api_key"];
 const TOKEN_FIELDS = ["api_key", "token", "$token"];
+const TOKEN_FIELD_SET = new Set(TOKEN_FIELDS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -334,13 +374,15 @@ function isCapturePath(path: string): boolean {
 }
 
 // A `data=` value: JSON, or base64-encoded JSON (`compression=base64`).
-function parseDataParam(data: string): unknown {
+function dataParamBytes(data: string): Buffer {
   const trimmed = data.trim();
-  const json =
-    trimmed.startsWith("{") || trimmed.startsWith("[")
-      ? trimmed
-      : Buffer.from(trimmed, "base64").toString("utf8");
-  return JSON.parse(json);
+  return trimmed.startsWith("{") || trimmed.startsWith("[")
+    ? Buffer.from(trimmed, "utf8")
+    : Buffer.from(trimmed, "base64");
+}
+
+function parseDataParam(data: string): unknown {
+  return JSON.parse(dataParamBytes(data).toString("utf8"));
 }
 
 function capturePayloadCap(subpath: string): number {
@@ -353,6 +395,21 @@ function isGzip(bytes: Uint8Array): boolean {
   return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
 }
 
+// A gzip member is at least a 10-byte header and an 8-byte trailer.
+const GZIP_MIN_BYTES = 18;
+
+// The inflated size a gzip body declares in its trailer (ISIZE). Inflation
+// is held to exactly this size, so a body that declares less than it holds
+// (or holds more than one member) fails to inflate.
+function gzipDeclaredBytes(bytes: Uint8Array): number | null {
+  if (bytes.length < GZIP_MIN_BYTES) return null;
+  return Buffer.from(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  ).readUInt32LE(bytes.length - 4);
+}
+
 function inflateBudget(compressedBytes: number, cap: number): number {
   return Math.min(
     cap,
@@ -360,36 +417,106 @@ function inflateBudget(compressedBytes: number, cap: number): number {
   );
 }
 
-// The most text a capture request's payload can produce, judged from its
-// declared length before the body is read; the path's cap when it declares
-// none.
-function declaredReadBytes(c: Context, subpath: string): number {
-  const cap = capturePayloadCap(subpath);
-  const declared = Number(c.req.header("content-length"));
-  return Number.isSafeInteger(declared) && declared >= 0
-    ? inflateBudget(declared, cap)
-    : cap;
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
-// posthog-js sends gzip (detected by its magic bytes — the SDK drops the
-// `compression` query param for gzip), a form-encoded `data=` body, or JSON.
-async function parseCapturePayload(
-  bytes: Uint8Array,
-  cap: number,
-): Promise<unknown> {
-  const text = (
-    isGzip(bytes)
-      ? await gunzipAsync(bytes, {
-          maxOutputLength: inflateBudget(bytes.length, cap),
-        })
-      : Buffer.from(bytes)
-  )
-    .toString("utf8")
-    .trimStart();
-  if (text.startsWith("{") || text.startsWith("[")) return JSON.parse(text);
-  const data = new URLSearchParams(text).get("data");
-  if (data === null) throw new Error("no capture payload");
-  return parseDataParam(data);
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
+const OPEN_OBJECT = 0x7b;
+const CLOSE_OBJECT = 0x7d;
+const OPEN_ARRAY = 0x5b;
+const CLOSE_ARRAY = 0x5d;
+const COLON = 0x3a;
+const COMMA = 0x2c;
+
+function isJsonWhitespace(byte: number): boolean {
+  return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
+}
+
+function skipJsonWhitespace(bytes: Buffer, from: number): number {
+  let i = from;
+  while (i < bytes.length && isJsonWhitespace(bytes[i])) i++;
+  return i;
+}
+
+function hexValue(byte: number): number {
+  if (byte >= 0x30 && byte <= 0x39) return byte - 0x30;
+  if (byte >= 0x41 && byte <= 0x46) return byte - 0x37;
+  if (byte >= 0x61 && byte <= 0x66) return byte - 0x57;
+  return -1;
+}
+
+// application/x-www-form-urlencoded decoding, as URLSearchParams does it:
+// `+` is a space, `%XX` is a byte, and any other `%` stays as it is. Decodes
+// from `from` into `out` until `stopAt` (never splitting an escape) and
+// returns where it stopped and the decoded length so far.
+function formDecodeSpan(
+  bytes: Buffer,
+  from: number,
+  stopAt: number,
+  out: Buffer,
+  decoded: number,
+): [number, number] {
+  let i = from;
+  let length = decoded;
+  for (; i < bytes.length && i < stopAt; i++) {
+    const byte = bytes[i];
+    if (byte === 0x2b) {
+      out[length++] = 0x20;
+      continue;
+    }
+    if (byte === 0x25 && i + 2 < bytes.length) {
+      const high = hexValue(bytes[i + 1]);
+      const low = hexValue(bytes[i + 2]);
+      if (high >= 0 && low >= 0) {
+        out[length++] = high * 16 + low;
+        i += 2;
+        continue;
+      }
+    }
+    out[length++] = byte;
+  }
+  return [i, length];
+}
+
+async function formDecode(bytes: Buffer): Promise<Buffer> {
+  const out = Buffer.allocUnsafe(bytes.length);
+  let i = 0;
+  let length = 0;
+  while (i < bytes.length) {
+    [i, length] = formDecodeSpan(bytes, i, i + SCAN_SLICE_BYTES, out, length);
+    if (i < bytes.length) await yieldToEventLoop();
+  }
+  return out.subarray(0, length);
+}
+
+const DATA_FIELD_NAME = Buffer.from("data");
+// A longer name cannot decode to `data`, however it is percent-encoded.
+const MAX_FORM_NAME_BYTES = 3 * DATA_FIELD_NAME.length;
+// posthog-js sends a single field.
+const MAX_FORM_FIELDS = 32;
+
+// The first `data` field of a form body, like URLSearchParams#get("data").
+async function formDataParam(body: Buffer): Promise<Buffer | null> {
+  let start = 0;
+  for (let fields = 0; start < body.length; fields++) {
+    if (fields >= MAX_FORM_FIELDS) throw new Error("too many form fields");
+    const amp = body.indexOf(0x26, start);
+    const end = amp < 0 ? body.length : amp;
+    const field = body.subarray(start, end);
+    const eq = field.indexOf(0x3d);
+    const name = eq < 0 ? field : field.subarray(0, eq);
+    if (name.length <= MAX_FORM_NAME_BYTES) {
+      const out = Buffer.allocUnsafe(name.length);
+      const [, length] = formDecodeSpan(name, 0, name.length, out, 0);
+      if (out.subarray(0, length).equals(DATA_FIELD_NAME)) {
+        return eq < 0 ? Buffer.alloc(0) : formDecode(field.subarray(eq + 1));
+      }
+    }
+    start = end + 1;
+  }
+  return null;
 }
 
 function collectFieldTokens(
@@ -409,6 +536,9 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
     events = payload;
   } else if (isRecord(payload) && Array.isArray(payload.batch)) {
     collectFieldTokens(payload, TOKEN_FIELDS, tokens);
+    if (isRecord(payload.properties)) {
+      collectFieldTokens(payload.properties, ["token"], tokens);
+    }
     events = payload.batch;
   } else {
     events = [payload];
@@ -419,6 +549,290 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
     if (isRecord(event.properties)) {
       collectFieldTokens(event.properties, ["token"], tokens);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Token scan for payloads over RELAY_PARSE_MAX_BYTES. It walks the JSON
+// grammar byte by byte without building the payload, and records the value at
+// every place collectPayloadTokens reads a token from: an event's
+// api_key / token / $token and its properties.token, where an event is the
+// payload itself, an element of a top-level array, or an element of a
+// top-level `batch` array. Every occurrence is recorded, a repeated key
+// included, and a value that is not a string is recorded as null so it never
+// matches. Malformed or truncated JSON throws.
+// ---------------------------------------------------------------------------
+
+const JSON_OBJECT = 1;
+const JSON_ARRAY = 2;
+
+const EXPECT_VALUE = 0;
+const EXPECT_VALUE_OR_ARRAY_END = 1;
+const EXPECT_KEY = 2;
+const EXPECT_KEY_OR_OBJECT_END = 3;
+const EXPECT_COLON = 4;
+const AFTER_VALUE = 5;
+
+// Keys are only needed down to the deepest token path,
+// batch[].properties.token.
+const TRACKED_KEY_DEPTH = 4;
+// A longer key cannot name a tracked field, however it is escaped.
+const MAX_TRACKED_KEY_BYTES = 64;
+
+// Index of the closing quote of the string whose opening quote is at `open`.
+function stringEnd(bytes: Buffer, open: number): number {
+  let from = open + 1;
+  for (;;) {
+    const quote = bytes.indexOf(QUOTE, from);
+    if (quote < 0) throw new Error("unterminated string");
+    let backslashes = 0;
+    for (let i = quote - 1; i > open && bytes[i] === BACKSLASH; i--) {
+      backslashes++;
+    }
+    if (backslashes % 2 === 0) return quote;
+    from = quote + 1;
+  }
+}
+
+function decodeString(bytes: Buffer, open: number, close: number): string {
+  const raw = bytes.subarray(open + 1, close);
+  return raw.includes(BACKSLASH)
+    ? (JSON.parse(bytes.toString("utf8", open, close + 1)) as string)
+    : raw.toString("utf8");
+}
+
+function literalEnd(bytes: Buffer, start: number, literal: string): number {
+  for (let k = 0; k < literal.length; k++) {
+    if (bytes[start + k] !== literal.charCodeAt(k)) {
+      throw new Error("invalid literal");
+    }
+  }
+  return start + literal.length;
+}
+
+function isNumberByte(byte: number): boolean {
+  return (
+    (byte >= 0x30 && byte <= 0x39) ||
+    byte === 0x2d ||
+    byte === 0x2b ||
+    byte === 0x2e ||
+    byte === 0x65 ||
+    byte === 0x45
+  );
+}
+
+function scalarEnd(bytes: Buffer, start: number): number {
+  const byte = bytes[start];
+  if (byte === 0x74) return literalEnd(bytes, start, "true");
+  if (byte === 0x66) return literalEnd(bytes, start, "false");
+  if (byte === 0x6e) return literalEnd(bytes, start, "null");
+  let end = start;
+  while (end < bytes.length && isNumberByte(bytes[end])) end++;
+  if (end === start) throw new Error("unexpected byte");
+  return end;
+}
+
+// Whether the container at `level` is an event object.
+function isEventLevel(kinds: Uint8Array, keys: string[], level: number) {
+  if (kinds[level] !== JSON_OBJECT) return false;
+  if (level === 0) return true;
+  if (level === 1) return kinds[0] === JSON_ARRAY;
+  return (
+    level === 2 &&
+    kinds[0] === JSON_OBJECT &&
+    keys[0] === "batch" &&
+    kinds[1] === JSON_ARRAY
+  );
+}
+
+// Whether a value starting inside `depth` open containers sits at a token
+// path. keys[level] is the current key of the object at that level.
+function isTokenPath(kinds: Uint8Array, keys: string[], depth: number) {
+  const parent = depth - 1;
+  if (parent < 0 || parent >= TRACKED_KEY_DEPTH) return false;
+  if (kinds[parent] !== JSON_OBJECT) return false;
+  if (TOKEN_FIELD_SET.has(keys[parent]) && isEventLevel(kinds, keys, parent)) {
+    return true;
+  }
+  return (
+    parent >= 1 &&
+    keys[parent] === "token" &&
+    keys[parent - 1] === "properties" &&
+    isEventLevel(kinds, keys, parent - 1)
+  );
+}
+
+export async function scanPayloadTokens(
+  bytes: Buffer,
+  tokens: unknown[],
+): Promise<void> {
+  const kinds = new Uint8Array(SCAN_MAX_DEPTH);
+  const keys: string[] = new Array<string>(TRACKED_KEY_DEPTH).fill("");
+  let depth = 0;
+  let state = EXPECT_VALUE;
+  let i = 0;
+  let nextYield = SCAN_SLICE_BYTES;
+
+  for (;;) {
+    if (i >= nextYield) {
+      await yieldToEventLoop();
+      nextYield = i + SCAN_SLICE_BYTES;
+    }
+    i = skipJsonWhitespace(bytes, i);
+    if (i >= bytes.length) break;
+    const byte = bytes[i];
+
+    if (state === EXPECT_KEY || state === EXPECT_KEY_OR_OBJECT_END) {
+      if (state === EXPECT_KEY_OR_OBJECT_END && byte === CLOSE_OBJECT) {
+        depth--;
+        i++;
+        state = AFTER_VALUE;
+        continue;
+      }
+      if (byte !== QUOTE) throw new Error("expected a key");
+      const close = stringEnd(bytes, i);
+      const level = depth - 1;
+      if (level < TRACKED_KEY_DEPTH) {
+        keys[level] =
+          close - i - 1 <= MAX_TRACKED_KEY_BYTES
+            ? decodeString(bytes, i, close)
+            : "";
+      }
+      i = close + 1;
+      state = EXPECT_COLON;
+      continue;
+    }
+
+    if (state === EXPECT_COLON) {
+      if (byte !== COLON) throw new Error("expected a colon");
+      i++;
+      state = EXPECT_VALUE;
+      continue;
+    }
+
+    if (state === AFTER_VALUE) {
+      if (depth === 0) throw new Error("unexpected trailing data");
+      const kind = kinds[depth - 1];
+      if (byte === COMMA) {
+        i++;
+        state = kind === JSON_OBJECT ? EXPECT_KEY : EXPECT_VALUE;
+      } else if (
+        (byte === CLOSE_OBJECT && kind === JSON_OBJECT) ||
+        (byte === CLOSE_ARRAY && kind === JSON_ARRAY)
+      ) {
+        depth--;
+        i++;
+      } else {
+        throw new Error("expected a comma or a closing bracket");
+      }
+      continue;
+    }
+
+    // EXPECT_VALUE or EXPECT_VALUE_OR_ARRAY_END
+    if (state === EXPECT_VALUE_OR_ARRAY_END && byte === CLOSE_ARRAY) {
+      depth--;
+      i++;
+      state = AFTER_VALUE;
+      continue;
+    }
+    const tokenPath = isTokenPath(kinds, keys, depth);
+    if (byte === OPEN_OBJECT || byte === OPEN_ARRAY) {
+      if (tokenPath) tokens.push(null);
+      if (depth >= SCAN_MAX_DEPTH) throw new Error("payload nested too deep");
+      kinds[depth] = byte === OPEN_OBJECT ? JSON_OBJECT : JSON_ARRAY;
+      if (depth < TRACKED_KEY_DEPTH) keys[depth] = "";
+      depth++;
+      i++;
+      state =
+        byte === OPEN_OBJECT
+          ? EXPECT_KEY_OR_OBJECT_END
+          : EXPECT_VALUE_OR_ARRAY_END;
+      continue;
+    }
+    if (byte === QUOTE) {
+      const close = stringEnd(bytes, i);
+      if (tokenPath) tokens.push(decodeString(bytes, i, close));
+      i = close + 1;
+    } else {
+      i = scalarEnd(bytes, i);
+      if (tokenPath) tokens.push(null);
+    }
+    state = AFTER_VALUE;
+  }
+
+  if (state !== AFTER_VALUE || depth !== 0) {
+    throw new Error("truncated payload");
+  }
+}
+
+async function collectJsonTokens(
+  json: Buffer,
+  tokens: unknown[],
+): Promise<void> {
+  if (json.length <= RELAY_PARSE_MAX_BYTES) {
+    collectPayloadTokens(JSON.parse(json.toString("utf8")), tokens);
+  } else {
+    await scanPayloadTokens(json, tokens);
+  }
+}
+
+// posthog-js sends gzip (detected by its magic bytes — the SDK drops the
+// `compression` query param for gzip), a form-encoded `data=` body, or JSON.
+async function collectBodyTokens(
+  bytes: Uint8Array,
+  textBytes: number,
+  tokens: unknown[],
+): Promise<void> {
+  const text = isGzip(bytes)
+    ? await gunzipAsync(bytes, { maxOutputLength: Math.max(1, textBytes) })
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const start = skipJsonWhitespace(text, 0);
+  if (text[start] === OPEN_OBJECT || text[start] === OPEN_ARRAY) {
+    await collectJsonTokens(text.subarray(start), tokens);
+    return;
+  }
+  const data = await formDataParam(text);
+  if (data === null) throw new Error("no capture payload");
+  await collectJsonTokens(dataParamBytes(data.toString("utf8")), tokens);
+}
+
+type PayloadRead = "read" | "unreadable" | "busy";
+
+// Reads a capture body's tokens under the admission limits above.
+async function readBodyPayloadTokens(
+  subpath: string,
+  body: ArrayBuffer | undefined,
+  tokens: unknown[],
+): Promise<PayloadRead> {
+  const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
+  let textBytes = bytes.length;
+  if (isGzip(bytes)) {
+    const declared = gzipDeclaredBytes(bytes);
+    if (
+      declared === null ||
+      declared > inflateBudget(bytes.length, capturePayloadCap(subpath))
+    ) {
+      return "unreadable";
+    }
+    textBytes = declared;
+  }
+  const large = textBytes > INFLATE_FLOOR_BYTES;
+  if (
+    payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
+    (large && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS)
+  ) {
+    return "busy";
+  }
+  payloadChecks++;
+  if (large) largePayloadChecks++;
+  try {
+    await collectBodyTokens(bytes, textBytes, tokens);
+    return "read";
+  } catch {
+    return "unreadable";
+  } finally {
+    payloadChecks--;
+    if (large) largePayloadChecks--;
   }
 }
 
@@ -437,17 +851,18 @@ async function checkProjectTokens(
 
   if (isCapturePath(subpath)) {
     const payloadTokens: unknown[] = [];
-    try {
-      const payload =
-        method === "GET" || method === "HEAD"
-          ? parseDataParam(url.searchParams.get("data") ?? "")
-          : await parseCapturePayload(
-              new Uint8Array(body ?? new ArrayBuffer(0)),
-              capturePayloadCap(subpath),
-            );
-      collectPayloadTokens(payload, payloadTokens);
-    } catch {
-      return "unreadable";
+    if (method === "GET" || method === "HEAD") {
+      try {
+        collectPayloadTokens(
+          parseDataParam(url.searchParams.get("data") ?? ""),
+          payloadTokens,
+        );
+      } catch {
+        return "unreadable";
+      }
+    } else {
+      const read = await readBodyPayloadTokens(subpath, body, payloadTokens);
+      if (read !== "read") return read;
     }
     if (payloadTokens.length === 0) return "unreadable";
     tokens.push(...payloadTokens);
@@ -525,32 +940,27 @@ relayRoutes.all("*", async (c) => {
 
   // Buffer the body (bounded by relayBodyLimit at the mount site) rather
   // than streaming: undici streaming request bodies require duplex:"half"
-  // and posthog batches are small enough that buffering is simpler.
+  // and posthog batches are small enough that buffering is simpler. The body
+  // must arrive within RELAY_BODY_READ_TIMEOUT_MS, and only a body that has
+  // arrived is admitted for payload checks.
   const method = c.req.method;
-  const bodyless = method === "GET" || method === "HEAD";
-  const readsPayload = !bodyless && isCapturePath(subpath);
-  const largePayload =
-    readsPayload && declaredReadBytes(c, subpath) > INFLATE_FLOOR_BYTES;
-  if (
-    readsPayload &&
-    (payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
-      (largePayload && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS))
-  ) {
+  let body: ArrayBuffer | undefined;
+  if (method !== "GET" && method !== "HEAD") {
+    const read = await readBodyWithin(c, RELAY_BODY_READ_TIMEOUT_MS);
+    if (read === BODY_READ_TIMED_OUT) {
+      stats.bodyReadTimeouts++;
+      recordResponseStatus(408);
+      c.header("Connection", "close");
+      return c.json({ error: "relay_body_timeout" }, 408);
+    }
+    body = read;
+  }
+  const project = await checkProjectTokens(subpath, url, method, body);
+  if (project === "busy") {
     stats.busyRejects++;
     recordResponseStatus(503);
     c.header("Retry-After", "1");
     return c.json({ error: "relay_busy" }, 503);
-  }
-  if (readsPayload) payloadChecks++;
-  if (largePayload) largePayloadChecks++;
-  let body: ArrayBuffer | undefined;
-  let project: ProjectCheck;
-  try {
-    body = bodyless ? undefined : await c.req.arrayBuffer();
-    project = await checkProjectTokens(subpath, url, method, body);
-  } finally {
-    if (readsPayload) payloadChecks--;
-    if (largePayload) largePayloadChecks--;
   }
   if (project !== "ours") {
     stats.projectRejects++;
