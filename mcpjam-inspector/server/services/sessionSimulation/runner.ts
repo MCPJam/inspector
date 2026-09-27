@@ -319,6 +319,13 @@ export interface SyntheticHostRuntime {
    * the swarm runner pins its own, the scenario runner keeps the default.
    */
   maxSteps?: number;
+  /**
+   * Output-token ceiling for each assistant step, sent as the hosted body's
+   * `maxOutputTokens`. Absent ⇒ the backend sizes it to the model, and holds
+   * credits against that. The swarm runner pins its own
+   * (`SWARM_HOST_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
+   */
+  maxOutputTokens?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -522,6 +529,7 @@ export async function runSyntheticHostSession(
     systemPrompt,
     temperature,
     maxSteps,
+    maxOutputTokens,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -1151,6 +1159,7 @@ export async function runSyntheticHostSession(
             systemPrompt: prepared.enhancedSystemPrompt,
             temperature: prepared.resolvedTemperature,
             ...(maxSteps !== undefined ? { maxSteps } : {}),
+            ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
@@ -1908,6 +1917,13 @@ export async function drainAssistantTurn(
      * `resolveTurnRuntime` on the rail it resolves.
      */
     reasoningEffort?: ModelReasoningEffort;
+    /**
+     * Per-step output-token ceiling for the hosted body (see
+     * `SyntheticHostRuntime.maxOutputTokens`). The backend reserves credits
+     * against it, so a realistic ceiling is a realistic hold. Merged into
+     * `extraBodyFields`, which the hosted engines post verbatim.
+     */
+    maxOutputTokens?: number;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   },
@@ -1936,6 +1952,7 @@ export async function drainAssistantTurn(
     hooks,
     modelSelection,
     reasoningEffort,
+    maxOutputTokens,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1962,8 +1979,12 @@ export async function drainAssistantTurn(
   // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
   // so this is forward-compatible and inert for the scenario path.
   const mergedExtraBodyFields =
-    journeyRunId !== undefined
-      ? { ...(extraBodyFields ?? {}), journeyRunId }
+    journeyRunId !== undefined || maxOutputTokens !== undefined
+      ? {
+          ...(extraBodyFields ?? {}),
+          ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+          ...(journeyRunId !== undefined ? { journeyRunId } : {}),
+        }
       : extraBodyFields;
 
   // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union.

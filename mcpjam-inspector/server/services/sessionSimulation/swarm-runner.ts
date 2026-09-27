@@ -5,6 +5,7 @@ import {
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
 import { SwarmSetupError } from "./swarm-setup-turn";
+import { SWARM_HOST_MAX_OUTPUT_TOKENS } from "./swarm-host-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
@@ -1298,6 +1299,7 @@ async function runJourneyFanOut(
                 ? { reasoningEffort: targetSettings.reasoningEffort }
                 : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
+              maxOutputTokens: SWARM_HOST_MAX_OUTPUT_TOKENS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,

@@ -74,9 +74,16 @@ const HOLDS_COMMITTED_SENTENCE =
   /MCPJam model limit reached for the moment\b|in-flight request\(s\) hold the remaining credits/i;
 
 /**
- * Other in-flight requests hold the last credits and release them in seconds:
- * a wait, never an exhausted wallet. Reads the structured pair when the caller
- * has it, and the stored sentence when all it has is an attempt row.
+ * A refusal that lifts in seconds on its own: a wait, never an exhausted
+ * wallet.
+ *
+ * - `holds_committed`: other in-flight requests hold the last credits and
+ *   release them as they finish. Read off the structured pair when the caller
+ *   has it, and off the stored sentence when all it has is an attempt row.
+ * - `spending_reservation_busy` (503): MCPJam's own reservation lost its
+ *   concurrency race on every retry and committed nothing — the model was not
+ *   called, so asking again is safe (`runSpendingReservationWithOccRetry` in
+ *   the backend's `convex/lib/occRetry.ts`).
  */
 export function isTransientSpendRefusal(
   code?: string | null,
@@ -85,6 +92,7 @@ export function isTransientSpendRefusal(
 ): boolean {
   if (code === "user_rate_limit" && refusalReason === "holds_committed")
     return true;
+  if (code === "spending_reservation_busy") return true;
   return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
 }
 
