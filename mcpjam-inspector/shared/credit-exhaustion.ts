@@ -1,7 +1,15 @@
+import { isTransientSpendRefusal } from "./swarm-attempt-error.js";
+
+/** The fields a refusal states itself in; see the `holds_committed` check. */
+const OWN_MESSAGE_KEYS = ["message", "error", "errorMessage"] as const;
+
 /** Account credit exhaustion, shared by notifications and run schedulers.
  * Provider 429s and admin spend caps must never be treated as a top-up signal.
  */
 export function isCreditExhaustion(value: unknown): boolean {
+  // A bare string is the refusal's own message (a stored attempt row's text).
+  if (typeof value === "string" && isTransientSpendRefusal(null, null, value))
+    return false;
   const seen = new WeakSet<object>();
   const strings = new Set<string>();
   let exhausted = false;
@@ -63,7 +71,20 @@ export function isCreditExhaustion(value: unknown): boolean {
       excluded = true;
     // Other in-flight requests hold the last credits; the backend says retry
     // in seconds. Treating it as exhaustion stopped runs and locked models.
-    if ("refusalReason" in item && item.refusalReason === "holds_committed")
+    // The reason alone decides: a nested refusal can carry it without a code.
+    // A stored attempt row keeps only the backend's sentence, so this object's
+    // OWN message counts too — but not a string quoted anywhere else inside
+    // it, which would let unrelated `details` text veto a real exhaustion.
+    const record = item as Record<string, unknown>;
+    if (
+      record.refusalReason === "holds_committed" ||
+      OWN_MESSAGE_KEYS.some((key) => {
+        const own = record[key];
+        return (
+          typeof own === "string" && isTransientSpendRefusal(null, null, own)
+        );
+      })
+    )
       excluded = true;
     if (item instanceof Error) visit(item.message);
     for (const nested of Object.values(item)) visit(nested);

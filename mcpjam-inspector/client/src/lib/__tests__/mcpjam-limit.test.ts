@@ -14,7 +14,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 beforeEach(() => {
   useFrontierSignInDialogStore.getState().close();
   useMCPJamLimitDialogStore.setState({
-    notifiedRunIds: new Set<string>(),
+    notifiedKeys: new Set<string>(),
     authStatus: "loading",
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -465,6 +465,103 @@ describe("credits held by in-flight requests", () => {
     expect(describeMCPJamLimitMessage(HOLDS_COMMITTED_BODY)).toBe(
       "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.",
     );
+  });
+
+  // What a swarm attempt row stores: the humanized sentence and the generic
+  // code, with the `refusalReason` gone. This opened "Out of MCPJam credits"
+  // once per run of a wave that was only waiting on its own in-flight calls.
+  it.each([
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.",
+    "MCPJam model limit reached for the moment.",
+  ])("does not open the dialog for a stored row: %s", (message) => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+
+    expect(
+      notifyMCPJamLimitError({
+        runId: "run-a",
+        code: "user_rate_limit",
+        message,
+        surface: "swarm",
+      }),
+    ).toBe(false);
+    expect(isMCPJamModelLimitError({ message })).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
+  });
+
+  it("still opens for a real exhaustion whose details mention in-flight work", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+
+    expect(
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        details: {
+          note: "2 in-flight tool calls were cancelled.",
+          // Quoted from an earlier refusal, not this one's own reason.
+          previous:
+            "MCPJam model limit reached for the moment: 1 in-flight request(s) hold the remaining credits.",
+        },
+      }),
+    ).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});
+
+describe("one dialog per swarm wave", () => {
+  const EXHAUSTED =
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+  const notify = (keys: { runId?: string; swarmRunGroupId?: string }) =>
+    notifyMCPJamLimitError({
+      ...keys,
+      code: "user_rate_limit",
+      message: EXHAUSTED,
+      surface: "swarm",
+    });
+
+  it("opens once for A, then A with its wave, then B in the same wave", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-a" });
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().close();
+
+    // The run doc arrives with its wave id: suppressed, but the wave is learnt.
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+
+    notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().notifiedKeys).toEqual(
+      new Set(["run:run-a", "wave:wave-1", "run:run-b"]),
+    );
+  });
+
+  it("opens again for a different wave", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    store.getState().close();
+    notify({ swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+
+    notify({ runId: "run-c", swarmRunGroupId: "wave-2" });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("keeps the wave suppressed across the loading-to-signed-in handoff", () => {
+    const store = useMCPJamLimitDialogStore;
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().close();
+
+    notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
   });
 });
 

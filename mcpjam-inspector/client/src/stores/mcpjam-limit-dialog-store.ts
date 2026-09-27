@@ -16,6 +16,8 @@ export type MCPJamLimitSurface = "chat" | "swarm" | "scenario";
 
 export interface MCPJamLimitNotifyInput {
   runId?: string;
+  /** The run's wave; see {@link dedupeKeys}. */
+  swarmRunGroupId?: string;
   limitKind?: MCPJamLimitKind;
   organizationId?: string;
   surface?: MCPJamLimitSurface;
@@ -24,7 +26,8 @@ export interface MCPJamLimitNotifyInput {
 }
 
 interface MCPJamLimitDialogState {
-  notifiedRunIds: ReadonlySet<string>;
+  /** Every run and wave key a notice has carried; see {@link dedupeKeys}. */
+  notifiedKeys: ReadonlySet<string>;
   isOpen: boolean;
   hasPendingLimit: boolean;
   outOfCreditsHit: boolean;
@@ -44,6 +47,17 @@ interface MCPJamLimitDialogState {
   clearOutOfCreditsHit: (organizationId?: string | null) => void;
   close: () => void;
 }
+
+/**
+ * The identities one notice speaks for. A swarm's runs all meet the same wall,
+ * so its wave dedupes the dialog alongside each run: without it a 15-run wave
+ * opened the dialog once per run. Prefixed so a run id and a wave id can never
+ * collide.
+ */
+const dedupeKeys = (input: MCPJamLimitNotifyInput): string[] => [
+  ...(input.runId ? [`run:${input.runId}`] : []),
+  ...(input.swarmRunGroupId ? [`wave:${input.swarmRunGroupId}`] : []),
+];
 
 const intentForAuth = (
   authStatus: MCPJamLimitAuthStatus,
@@ -81,7 +95,7 @@ const latchFor = (
 
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
-    notifiedRunIds: new Set<string>(),
+    notifiedKeys: new Set<string>(),
     isOpen: false,
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -95,13 +109,19 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     pendingInput: null,
     notifyLimitHit: (input = {}) =>
       set((state) => {
-        if (input.runId && state.notifiedRunIds.has(input.runId)) return state;
-        const notifiedRunIds = input.runId
-          ? new Set([...state.notifiedRunIds, input.runId])
-          : state.notifiedRunIds;
+        const keys = dedupeKeys(input);
+        const notifiedKeys = keys.every((key) => state.notifiedKeys.has(key))
+          ? state.notifiedKeys
+          : new Set([...state.notifiedKeys, ...keys]);
+        // Suppressed when ANY key was seen, but every key is still recorded:
+        // a run first seen alone (A), then with its wave (A+W), has to teach
+        // the store W, or the wave's next run (B+W) would open it again.
+        if (keys.some((key) => state.notifiedKeys.has(key))) {
+          return notifiedKeys === state.notifiedKeys ? state : { notifiedKeys };
+        }
         if (state.authStatus === "loading") {
           return {
-            notifiedRunIds,
+            notifiedKeys,
             hasPendingLimit: true,
             ...latchFor(state, input),
             pendingInput: input,
@@ -110,13 +130,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         const intent = intentForAuth(state.authStatus, input);
         if (!intent) {
           return {
-            notifiedRunIds,
+            notifiedKeys,
             hasPendingLimit: false,
             ...latchFor(state, input),
           };
         }
         return {
-          notifiedRunIds,
+          notifiedKeys,
           hasPendingLimit: false,
           ...latchFor(state, input),
           isOpen: true,
