@@ -9,17 +9,19 @@
  * FOUR PARTS:
  *
  *   1. SIGN WHAT THE SERVER PRODUCED ({@link createUiChunkProvenanceSigner}).
- *      As a turn streams, in the `mcpjam` provider metadata: every assistant
- *      text part on each `text-delta` (over the text so far, so the text of a
- *      stopped turn verifies too) and on its `text-end`; reasoning on
- *      `reasoning-end`; assistant files; every tool CALL the model issues, on
- *      `tool-input-available`; and every tool result, on
- *      `tool-output-available` / `tool-output-error` / `tool-input-error`. The
- *      AI SDK keeps these on the UI message parts, so the signatures come back
- *      with the history, unchanged. When the turn is persisted, the same
- *      content is signed again in the form a REOPENED conversation hydrates
- *      back into ({@link signHistoryForPersistence}), so a conversation
- *      continued from the history sidebar verifies too.
+ *      As a turn streams, in the `mcpjam` provider metadata: each assistant
+ *      text part once, over its final text, on its `text-end` — or, for a part
+ *      still open when the stream stops (`finish`, `abort` or `error`), on a
+ *      `text-end` the signer adds just before that chunk; reasoning the same
+ *      way, on `reasoning-end`; assistant files; every tool CALL the model
+ *      issues, on `tool-input-available`; and every tool result, on
+ *      `tool-output-available` / `tool-output-error` / `tool-input-error`.
+ *      Deltas carry no signature. The AI SDK keeps these on the UI message
+ *      parts, so the signatures come back with the history, unchanged. When
+ *      the turn is persisted, the same content is signed again in the form a
+ *      REOPENED conversation hydrates back into
+ *      ({@link signHistoryForPersistence}), so a conversation continued from
+ *      the history sidebar verifies too.
  *   2. VERIFY WHAT COMES BACK ({@link verifyClientHistory}). Content whose
  *      signature does not match is marked in its metadata, and kept: the
  *      transcript is persisted as the browser sent it. A tool CALL counts as
@@ -39,17 +41,26 @@
  *      browser's `MCPJAM_PAGE_CONTENT` fence, and the system prompt says what
  *      the fence means ({@link TOOL_OUTPUT_TRUST_NOTE}).
  *
- * THE BINDING is the project. A signature proves "this server produced this
- * content in this project"; moving authentic content between a user's own
- * chats, forks or shared sessions is not refused.
+ * WHAT A SIGNATURE NAMES ({@link PROVENANCE_SIGNATURE_PREFIX}): the project,
+ * the chat session it was issued in, the item it covers — a server-issued item
+ * id for text, reasoning and files, the tool call id for a call or result —
+ * the item's role and kind, and digests of its content (a tool result's: its
+ * call id, tool name, input and output). It verifies in that chat only, and an
+ * item id counts once per history. Content carried into another chat (a fork,
+ * an edited message, a compare column) starts that chat without it, and the
+ * browser is told so ({@link verifyClientHistory}'s `omittedReplyParts`).
+ * Signatures in the earlier form ({@link LEGACY_PROVENANCE_SIGNATURE_PREFIX})
+ * are honoured until {@link LEGACY_SIGNATURE_CUTOFF}, and only in the part of
+ * a conversation before anything signed in the current form.
  *
  * THE KEY is derived from `INSPECTOR_SERVICE_TOKEN` under its own label, so
  * every hosted replica shares it. In hosted mode verification always runs
- * ({@link historyVerificationFor}); a hosted deployment without the key can
- * verify nothing, so it shows the model none of the history's assistant
- * content rather than all of it. In local mode, where the only client is the
- * user's own browser, the history is the user's own and is used as sent:
- * nothing is signed, verified or left out. Fencing applies in both.
+ * ({@link historyVerificationFor}); a hosted deployment without the key — or a
+ * turn without a chat session — can verify nothing, so it shows the model none
+ * of the history's assistant content rather than all of it. In local mode,
+ * where the only client is the user's own browser, the history is the user's
+ * own and is used as sent: nothing is signed, verified or left out. Fencing
+ * applies in both.
  */
 import {
   createHash,
@@ -71,7 +82,19 @@ import {
   type ToolApprovalBinding,
 } from "./tool-approval-token.js";
 
-export const PROVENANCE_SIGNATURE_PREFIX = "mjpv1";
+/** The signature form this server issues. */
+export const PROVENANCE_SIGNATURE_PREFIX = "mjpv2";
+/** The earlier form: verified during the transition, never issued. */
+export const LEGACY_PROVENANCE_SIGNATURE_PREFIX = "mjpv1";
+/**
+ * The end of the transition from {@link LEGACY_PROVENANCE_SIGNATURE_PREFIX}
+ * signatures, set about 30 days after the current form was introduced
+ * (2026-09-27). Until then, a
+ * conversation started under the earlier form keeps its earlier replies in
+ * the model's context, and is saved with current signatures the next time it
+ * is continued. From then on, earlier-form signatures count as none.
+ */
+export const LEGACY_SIGNATURE_CUTOFF = Date.parse("2026-10-27T00:00:00Z");
 const PROVENANCE_KEY_LABEL = "mcpjam/history-provenance/v1";
 const FENCE_KEY_LABEL = "mcpjam/tool-output-fence/v1";
 
@@ -81,6 +104,13 @@ export const REASONING_SIGNATURE_FIELD = "reasoningSig";
 export const FILE_SIGNATURE_FIELD = "fileSig";
 export const CALL_SIGNATURE_FIELD = "callSig";
 export const RESULT_SIGNATURE_FIELD = "resultSig";
+const SIGNATURE_FIELDS = [
+  TEXT_SIGNATURE_FIELD,
+  REASONING_SIGNATURE_FIELD,
+  FILE_SIGNATURE_FIELD,
+  CALL_SIGNATURE_FIELD,
+  RESULT_SIGNATURE_FIELD,
+] as const;
 /**
  * The mark on content the server could not verify as its own. On a tool
  * part it is about the RESULT; {@link CALL_PROVENANCE_FIELD} is about the call.
@@ -115,6 +145,8 @@ export const TOOL_OUTPUT_TRUST_NOTE = [
 export interface ProvenanceContext {
   key: Buffer;
   projectId: string;
+  /** The chat session the content belongs to, as the server knows it. */
+  chatSessionId: string;
 }
 
 /**
@@ -129,28 +161,33 @@ export function resolveHistoryProvenanceKey(
 }
 
 /**
- * The signing context for one project, or null when nothing can be signed:
- * outside hosted mode, without a key, or without a project.
+ * The signing context for one chat of one project, or null when nothing can
+ * be signed: outside hosted mode, without a key, or without a project or a
+ * chat session.
  */
 export function historyProvenanceContextFor(
   projectId: string | null | undefined,
+  chatSessionId: string | null | undefined,
   key: Buffer | null = resolveHistoryProvenanceKey(),
 ): ProvenanceContext | null {
-  return key && projectId ? { key, projectId } : null;
+  return key && projectId && chatSessionId
+    ? { key, projectId, chatSessionId }
+    : null;
 }
 
 /**
  * How this deployment checks a browser-sent history:
  *
  *   - `null` in local mode: the history is used as sent;
- *   - `{ ctx }` in hosted mode, ALWAYS. `ctx` is null when there is no key or
- *     no project, and then nothing verifies, so nothing is trusted — the
- *     history is still checked, never passed through.
+ *   - `{ ctx }` in hosted mode, ALWAYS. `ctx` is null when there is no key, no
+ *     project or no chat session, and then nothing verifies, so nothing is
+ *     trusted — the history is still checked, never passed through.
  *
  * Parameters exist for tests.
  */
 export function historyVerificationFor(
   projectId: string | null | undefined,
+  chatSessionId: string | null | undefined,
   hosted: boolean = process.env.VITE_MCPJAM_HOSTED_MODE === "true",
   env: NodeJS.ProcessEnv = process.env,
 ): { ctx: ProvenanceContext | null } | null {
@@ -158,6 +195,7 @@ export function historyVerificationFor(
   return {
     ctx: historyProvenanceContextFor(
       projectId,
+      chatSessionId,
       resolveHistoryProvenanceKey(env, true),
     ),
   };
@@ -180,12 +218,93 @@ export function resolveToolOutputFenceKey(
 }
 
 // ── signatures ─────────────────────────────────────────────────────────────
+//
+// Current form, for an item with its own id (text, reasoning, file):
+//   mjpv2.<itemId>.<mac over [role, kind, project, chat, itemId, …content]>
+// and for a tool call or result, whose id is its tool call id:
+//   mjpv2.<mac over [role, kind, project, chat, toolCallId, toolName, …]>
+// Earlier form, verified only ({@link legacySignature}):
+//   mjpv1.<mac over [kind, project, …content]>
 
-function mac(key: Buffer, fields: readonly unknown[]): string {
-  const digest = createHmac("sha256", key)
-    .update(JSON.stringify([PROVENANCE_SIGNATURE_PREFIX, ...fields]))
+function hmac(key: Buffer, prefix: string, fields: readonly unknown[]): string {
+  return createHmac("sha256", key)
+    .update(JSON.stringify([prefix, ...fields]))
     .digest("base64url");
+}
+
+type ItemKind = "assistant-text" | "assistant-reasoning" | "assistant-file";
+type ToolKind = "tool-call" | "tool-result";
+
+const ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** A fresh id for one signed item. */
+function newItemId(): string {
+  return randomBytes(12).toString("base64url");
+}
+
+function itemSignature(
+  ctx: ProvenanceContext,
+  kind: ItemKind,
+  itemId: string,
+  content: readonly unknown[],
+): string {
+  const digest = hmac(ctx.key, PROVENANCE_SIGNATURE_PREFIX, [
+    "assistant",
+    kind,
+    ctx.projectId,
+    ctx.chatSessionId,
+    itemId,
+    ...content,
+  ]);
+  return `${PROVENANCE_SIGNATURE_PREFIX}.${itemId}.${digest}`;
+}
+
+function toolSignature(
+  ctx: ProvenanceContext,
+  kind: ToolKind,
+  content: readonly unknown[],
+): string {
+  const digest = hmac(ctx.key, PROVENANCE_SIGNATURE_PREFIX, [
+    kind === "tool-call" ? "assistant" : "tool",
+    kind,
+    ctx.projectId,
+    ctx.chatSessionId,
+    ...content,
+  ]);
   return `${PROVENANCE_SIGNATURE_PREFIX}.${digest}`;
+}
+
+function legacySignature(
+  ctx: ProvenanceContext,
+  kind: ItemKind | ToolKind,
+  content: readonly unknown[],
+): string {
+  return `${LEGACY_PROVENANCE_SIGNATURE_PREFIX}.${hmac(
+    ctx.key,
+    LEGACY_PROVENANCE_SIGNATURE_PREFIX,
+    [kind, ctx.projectId, ...content],
+  )}`;
+}
+
+type ParsedSignature =
+  { form: "current"; itemId: string | undefined } | { form: "legacy" };
+
+function parseSignature(signature: unknown): ParsedSignature | null {
+  if (typeof signature !== "string") return null;
+  const parts = signature.split(".");
+  if (parts[0] === LEGACY_PROVENANCE_SIGNATURE_PREFIX) {
+    return parts.length === 2 ? { form: "legacy" } : null;
+  }
+  if (parts[0] !== PROVENANCE_SIGNATURE_PREFIX) return null;
+  if (parts.length === 2) return { form: "current", itemId: undefined };
+  return parts.length === 3 && ITEM_ID_PATTERN.test(parts[1]!)
+    ? { form: "current", itemId: parts[1] }
+    : null;
+}
+
+/** Whether a value is a signature in the current form. */
+function isCurrentFormSignature(signature: unknown): boolean {
+  return parseSignature(signature)?.form === "current";
 }
 
 function sameSignature(given: unknown, expected: string | null): boolean {
@@ -193,6 +312,66 @@ function sameSignature(given: unknown, expected: string | null): boolean {
   const a = Buffer.from(given);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** How a signature is checked. */
+export interface SignatureCheckOptions {
+  /**
+   * Whether an earlier-form signature may count. {@link verifyClientHistory}
+   * decides this per message; the default is no.
+   */
+  acceptLegacy?: boolean;
+}
+
+/**
+ * Check an item signature: the current form against this chat and the item
+ * id it names, or — when allowed — the earlier form. Returns the item id a
+ * current-form signature named, so a caller can count each id once.
+ */
+function checkItemSignature(
+  ctx: ProvenanceContext,
+  kind: ItemKind,
+  content: readonly unknown[],
+  signature: unknown,
+  options: SignatureCheckOptions,
+): { ok: boolean; itemId?: string } {
+  const parsed = parseSignature(signature);
+  if (!parsed) return { ok: false };
+  if (parsed.form === "legacy") {
+    return {
+      ok:
+        options.acceptLegacy === true &&
+        sameSignature(signature, legacySignature(ctx, kind, content)),
+    };
+  }
+  if (parsed.itemId === undefined) return { ok: false };
+  return sameSignature(
+    signature,
+    itemSignature(ctx, kind, parsed.itemId, content),
+  )
+    ? { ok: true, itemId: parsed.itemId }
+    : { ok: false };
+}
+
+function checkToolSignature(
+  ctx: ProvenanceContext,
+  kind: ToolKind,
+  content: readonly unknown[] | null,
+  signature: unknown,
+  options: SignatureCheckOptions,
+): boolean {
+  const parsed = parseSignature(signature);
+  if (!parsed || !content) return false;
+  if (parsed.form === "legacy") {
+    return (
+      options.acceptLegacy === true &&
+      sameSignature(signature, legacySignature(ctx, kind, content))
+    );
+  }
+  return (
+    parsed.itemId === undefined &&
+    sameSignature(signature, toolSignature(ctx, kind, content))
+  );
 }
 
 /**
@@ -217,28 +396,41 @@ function textDigest(text: string): string {
 function signAssistantTextDigest(
   ctx: ProvenanceContext,
   digest: string,
+  itemId: string = newItemId(),
 ): string {
-  return mac(ctx.key, ["assistant-text", ctx.projectId, digest]);
+  return itemSignature(ctx, "assistant-text", itemId, [digest]);
 }
 
+/**
+ * Sign an assistant text as one item of this chat. `itemId` defaults to a
+ * fresh one; persistence passes a stable one per position.
+ */
 export function signAssistantText(
   ctx: ProvenanceContext,
   text: string,
+  itemId?: string,
 ): string {
-  return signAssistantTextDigest(ctx, textDigest(text));
+  return signAssistantTextDigest(ctx, textDigest(text), itemId);
 }
 
 export function verifyAssistantText(
   ctx: ProvenanceContext,
   text: string,
   signature: unknown,
+  options: SignatureCheckOptions = {},
 ): boolean {
-  return sameSignature(signature, signAssistantText(ctx, text));
+  return checkItemSignature(
+    ctx,
+    "assistant-text",
+    [textDigest(text)],
+    signature,
+    options,
+  ).ok;
 }
 
 /**
  * {@link textDigest} of a text part as it streams, fed one delta at a time
- * so signing every delta costs no more than signing the whole. A trailing
+ * so the digest at the end costs no second pass over the text. A trailing
  * high surrogate is held back until the next delta: hashing the halves of a
  * split pair separately would encode each as a replacement character, and
  * the digest would no longer match the text's own.
@@ -267,16 +459,24 @@ class RunningTextDigest {
 export function signAssistantReasoning(
   ctx: ProvenanceContext,
   text: string,
+  itemId: string = newItemId(),
 ): string {
-  return mac(ctx.key, ["assistant-reasoning", ctx.projectId, textDigest(text)]);
+  return itemSignature(ctx, "assistant-reasoning", itemId, [textDigest(text)]);
 }
 
 export function verifyAssistantReasoning(
   ctx: ProvenanceContext,
   text: string,
   signature: unknown,
+  options: SignatureCheckOptions = {},
 ): boolean {
-  return sameSignature(signature, signAssistantReasoning(ctx, text));
+  return checkItemSignature(
+    ctx,
+    "assistant-reasoning",
+    [textDigest(text)],
+    signature,
+    options,
+  ).ok;
 }
 
 export interface AssistantFileClaim {
@@ -284,24 +484,31 @@ export interface AssistantFileClaim {
   url: string;
 }
 
+function fileContent(file: AssistantFileClaim): unknown[] {
+  return [file.mediaType, textDigest(file.url)];
+}
+
 export function signAssistantFile(
   ctx: ProvenanceContext,
   file: AssistantFileClaim,
+  itemId: string = newItemId(),
 ): string {
-  return mac(ctx.key, [
-    "assistant-file",
-    ctx.projectId,
-    file.mediaType,
-    textDigest(file.url),
-  ]);
+  return itemSignature(ctx, "assistant-file", itemId, fileContent(file));
 }
 
 export function verifyAssistantFile(
   ctx: ProvenanceContext,
   file: AssistantFileClaim,
   signature: unknown,
+  options: SignatureCheckOptions = {},
 ): boolean {
-  return sameSignature(signature, signAssistantFile(ctx, file));
+  return checkItemSignature(
+    ctx,
+    "assistant-file",
+    fileContent(file),
+    signature,
+    options,
+  ).ok;
 }
 
 /** A tool call as the model issued it. */
@@ -311,30 +518,37 @@ export interface ToolCallClaim {
   input: unknown;
 }
 
+/** What a call signature covers, or null when the input is not JSON. */
+function toolCallContent(claim: ToolCallClaim): unknown[] | null {
+  const input = asJson(claim.input ?? {});
+  if (input === undefined) return null;
+  const inputDigest = canonicalDigest(input);
+  if (!inputDigest) return null;
+  return [claim.toolCallId, claim.toolName, inputDigest];
+}
+
 /** Null when the input cannot be encoded as JSON. */
 export function signToolCall(
   ctx: ProvenanceContext,
   claim: ToolCallClaim,
 ): string | null {
-  const input = asJson(claim.input ?? {});
-  if (input === undefined) return null;
-  const inputDigest = canonicalDigest(input);
-  if (!inputDigest) return null;
-  return mac(ctx.key, [
-    "tool-call",
-    ctx.projectId,
-    claim.toolCallId,
-    claim.toolName,
-    inputDigest,
-  ]);
+  const content = toolCallContent(claim);
+  return content ? toolSignature(ctx, "tool-call", content) : null;
 }
 
 export function verifyToolCall(
   ctx: ProvenanceContext,
   claim: ToolCallClaim,
   signature: unknown,
+  options: SignatureCheckOptions = {},
 ): boolean {
-  return sameSignature(signature, signToolCall(ctx, claim));
+  return checkToolSignature(
+    ctx,
+    "tool-call",
+    toolCallContent(claim),
+    signature,
+    options,
+  );
 }
 
 export interface ToolResultClaim {
@@ -345,33 +559,39 @@ export interface ToolResultClaim {
   output: unknown;
 }
 
-/** Null when the input or output cannot be encoded as JSON. */
-export function signToolResult(
-  ctx: ProvenanceContext,
-  claim: ToolResultClaim,
-): string | null {
+/** What a result signature covers, or null when either side is not JSON. */
+function toolResultContent(claim: ToolResultClaim): unknown[] | null {
   const input = asJson(claim.input ?? {});
   const output = asJson(claim.output);
   if (input === undefined || output === undefined) return null;
   const inputDigest = canonicalDigest(input);
   const outputDigest = canonicalDigest(output);
   if (!inputDigest || !outputDigest) return null;
-  return mac(ctx.key, [
-    "tool-result",
-    ctx.projectId,
-    claim.toolCallId,
-    claim.toolName,
-    inputDigest,
-    outputDigest,
-  ]);
+  return [claim.toolCallId, claim.toolName, inputDigest, outputDigest];
+}
+
+/** Null when the input or output cannot be encoded as JSON. */
+export function signToolResult(
+  ctx: ProvenanceContext,
+  claim: ToolResultClaim,
+): string | null {
+  const content = toolResultContent(claim);
+  return content ? toolSignature(ctx, "tool-result", content) : null;
 }
 
 export function verifyToolResult(
   ctx: ProvenanceContext,
   claim: ToolResultClaim,
   signature: unknown,
+  options: SignatureCheckOptions = {},
 ): boolean {
-  return sameSignature(signature, signToolResult(ctx, claim));
+  return checkToolSignature(
+    ctx,
+    "tool-result",
+    toolResultContent(claim),
+    signature,
+    options,
+  );
 }
 
 // ── metadata helpers ───────────────────────────────────────────────────────
@@ -484,11 +704,23 @@ export function toolCallLookupFor(
 }
 
 /**
+ * The chunk transform {@link createUiChunkProvenanceSigner} returns. One
+ * chunk in, the chunks to write in its place out: usually the chunk itself,
+ * signed or not; at the end of a stream, first the `text-end` /
+ * `reasoning-end` chunks that close and sign what was still open.
+ */
+export type UiChunkProvenanceSigner = (
+  chunk: UIMessageChunk,
+) => UIMessageChunk[];
+
+/**
  * A chunk transform that signs what the stream says the server produced:
- * each text part on every delta and at its `text-end`, reasoning at its end,
- * files, each tool call the model issues, and each tool result as it is
- * emitted. Any engine's UI stream can pass through it; everything else is
- * returned as-is.
+ * each text and reasoning part ONCE, over its final text — at its end, or,
+ * when the stream stops with it still open, on an end chunk added just
+ * before the `finish`, `abort` or `error` that stops it — files, each tool
+ * call the model issues, and each tool result as it is emitted. Deltas pass
+ * through unsigned. Any engine's UI stream can pass through it; everything
+ * else is returned as-is.
  *
  * `lookupCall` finds calls this stream did not issue — the ones the history
  * already held. One the history marks as not issued is never signed for.
@@ -496,95 +728,159 @@ export function toolCallLookupFor(
 export function createUiChunkProvenanceSigner(
   ctx: ProvenanceContext,
   lookupCall?: ToolCallLookup,
-): (chunk: UIMessageChunk) => UIMessageChunk {
+): UiChunkProvenanceSigner {
+  // Open parts, by stream id, with the latest metadata a chunk of theirs
+  // carried: the browser's part keeps that metadata, so the signature rides
+  // along with it rather than replacing it.
   const textById = new Map<
     string,
     { digest: RunningTextDigest; metadata: unknown }
   >();
-  const reasoningById = new Map<string, string>();
+  const reasoningById = new Map<string, { text: string; metadata: unknown }>();
+  // Parts this signer closed at a stop. A later chunk for one of them (an
+  // engine that keeps writing after an `error`) reopens it as a new part.
+  const closedText = new Set<string>();
+  const closedReasoning = new Set<string>();
   const callById = new Map<string, KnownToolCall>();
   const callFor = (toolCallId: string) =>
     callById.get(toolCallId) ?? lookupCall?.(toolCallId);
-  const withTextSignature = (metadata: unknown, digest: string) =>
-    withMcpjamField(
+
+  const signedTextEnd = (
+    id: string,
+    metadata: unknown,
+    digest: string,
+  ): UIMessageChunk => ({
+    type: "text-end",
+    id,
+    providerMetadata: withMcpjamField(
       metadata,
       TEXT_SIGNATURE_FIELD,
       signAssistantTextDigest(ctx, digest),
-    ) as never;
+    ) as never,
+  });
+  const signedReasoningEnd = (
+    id: string,
+    metadata: unknown,
+    text: string,
+  ): UIMessageChunk => ({
+    type: "reasoning-end",
+    id,
+    providerMetadata: withMcpjamField(
+      metadata,
+      REASONING_SIGNATURE_FIELD,
+      signAssistantReasoning(ctx, text),
+    ) as never,
+  });
+  /** End and sign every part still open: the stream is stopping. */
+  const closeOpenParts = (): UIMessageChunk[] => {
+    const ends: UIMessageChunk[] = [];
+    for (const [id, reasoning] of reasoningById) {
+      ends.push(signedReasoningEnd(id, reasoning.metadata, reasoning.text));
+      closedReasoning.add(id);
+    }
+    reasoningById.clear();
+    for (const [id, text] of textById) {
+      ends.push(signedTextEnd(id, text.metadata, text.digest.digest()));
+      closedText.add(id);
+    }
+    textById.clear();
+    return ends;
+  };
 
   return (chunk) => {
     switch (chunk.type) {
       case "reasoning-start":
-        reasoningById.set(chunk.id, "");
-        return chunk;
-      case "reasoning-delta":
-        reasoningById.set(
-          chunk.id,
-          (reasoningById.get(chunk.id) ?? "") + chunk.delta,
-        );
-        return chunk;
+        closedReasoning.delete(chunk.id);
+        reasoningById.set(chunk.id, {
+          text: "",
+          metadata: chunk.providerMetadata,
+        });
+        return [chunk];
+      case "reasoning-delta": {
+        const out: UIMessageChunk[] = [];
+        let reasoning = reasoningById.get(chunk.id);
+        if (!reasoning) {
+          reasoning = { text: "", metadata: undefined };
+          reasoningById.set(chunk.id, reasoning);
+          if (closedReasoning.delete(chunk.id)) {
+            out.push({ type: "reasoning-start", id: chunk.id });
+          }
+        }
+        reasoning.text += chunk.delta;
+        if (chunk.providerMetadata != null) {
+          reasoning.metadata = chunk.providerMetadata;
+        }
+        out.push(chunk);
+        return out;
+      }
       case "reasoning-end": {
-        const text = reasoningById.get(chunk.id);
+        const reasoning = reasoningById.get(chunk.id);
         reasoningById.delete(chunk.id);
-        if (text === undefined) return chunk;
-        return {
-          ...chunk,
-          providerMetadata: withMcpjamField(
-            chunk.providerMetadata,
-            REASONING_SIGNATURE_FIELD,
-            signAssistantReasoning(ctx, text),
-          ) as never,
-        };
+        if (reasoning === undefined) {
+          return closedReasoning.delete(chunk.id) ? [] : [chunk];
+        }
+        return [
+          signedReasoningEnd(
+            chunk.id,
+            chunk.providerMetadata ?? reasoning.metadata,
+            reasoning.text,
+          ),
+        ];
       }
       case "text-start":
+        closedText.delete(chunk.id);
         textById.set(chunk.id, {
           digest: new RunningTextDigest(),
           metadata: chunk.providerMetadata,
         });
-        return chunk;
+        return [chunk];
       case "text-delta": {
-        // Every delta, over the text so far: a stream stopped after this
-        // chunk leaves the browser holding exactly that text, signed.
+        const out: UIMessageChunk[] = [];
         let text = textById.get(chunk.id);
         if (!text) {
           text = { digest: new RunningTextDigest(), metadata: undefined };
           textById.set(chunk.id, text);
+          if (closedText.delete(chunk.id)) {
+            out.push({ type: "text-start", id: chunk.id });
+          }
         }
         text.digest.append(chunk.delta);
-        // The part keeps the latest metadata a chunk carried, so the
-        // signature rides along with that rather than replacing it.
         if (chunk.providerMetadata != null) {
           text.metadata = chunk.providerMetadata;
         }
-        return {
-          ...chunk,
-          providerMetadata: withTextSignature(
-            text.metadata,
-            text.digest.digest(),
-          ),
-        };
+        out.push(chunk);
+        return out;
       }
       case "text-end": {
         const text = textById.get(chunk.id);
         textById.delete(chunk.id);
-        if (text === undefined) return chunk;
-        return {
-          ...chunk,
-          providerMetadata: withTextSignature(
+        if (text === undefined) {
+          // Already ended, and signed, when the stream stopped.
+          return closedText.delete(chunk.id) ? [] : [chunk];
+        }
+        return [
+          signedTextEnd(
+            chunk.id,
             chunk.providerMetadata ?? text.metadata,
             text.digest.digest(),
           ),
-        };
+        ];
       }
+      case "finish":
+      case "abort":
+      case "error":
+        return [...closeOpenParts(), chunk];
       case "file":
-        return {
-          ...chunk,
-          providerMetadata: withMcpjamField(
-            chunk.providerMetadata,
-            FILE_SIGNATURE_FIELD,
-            signAssistantFile(ctx, chunk),
-          ) as never,
-        };
+        return [
+          {
+            ...chunk,
+            providerMetadata: withMcpjamField(
+              chunk.providerMetadata,
+              FILE_SIGNATURE_FIELD,
+              signAssistantFile(ctx, chunk),
+            ) as never,
+          },
+        ];
       case "tool-input-available": {
         const unverified = lookupCall?.(chunk.toolCallId)?.unverified === true;
         callById.set(chunk.toolCallId, {
@@ -592,48 +888,52 @@ export function createUiChunkProvenanceSigner(
           input: chunk.input,
           ...(unverified ? { unverified } : {}),
         });
-        if (unverified) return chunk;
+        if (unverified) return [chunk];
         const signature = signToolCall(ctx, {
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
           input: chunk.input ?? {},
         });
-        if (!signature) return chunk;
-        return {
-          ...chunk,
-          providerMetadata: withMcpjamField(
-            chunk.providerMetadata,
-            CALL_SIGNATURE_FIELD,
-            signature,
-          ) as never,
-        };
+        if (!signature) return [chunk];
+        return [
+          {
+            ...chunk,
+            providerMetadata: withMcpjamField(
+              chunk.providerMetadata,
+              CALL_SIGNATURE_FIELD,
+              signature,
+            ) as never,
+          },
+        ];
       }
       case "tool-input-error": {
         // A call refused before it ran: the refusal is its result.
-        if (lookupCall?.(chunk.toolCallId)?.unverified === true) return chunk;
+        if (lookupCall?.(chunk.toolCallId)?.unverified === true) return [chunk];
         const signature = signToolResult(ctx, {
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
           input: chunk.input ?? {},
           output: { errorText: chunk.errorText },
         });
-        if (!signature) return chunk;
-        return {
-          ...chunk,
-          providerMetadata: withMcpjamField(
-            chunk.providerMetadata,
-            RESULT_SIGNATURE_FIELD,
-            signature,
-          ) as never,
-        };
+        if (!signature) return [chunk];
+        return [
+          {
+            ...chunk,
+            providerMetadata: withMcpjamField(
+              chunk.providerMetadata,
+              RESULT_SIGNATURE_FIELD,
+              signature,
+            ) as never,
+          },
+        ];
       }
       case "tool-output-available":
       case "tool-output-error": {
         if (chunk.type === "tool-output-available" && chunk.preliminary) {
-          return chunk;
+          return [chunk];
         }
         const call = callFor(chunk.toolCallId);
-        if (!call || call.unverified) return chunk;
+        if (!call || call.unverified) return [chunk];
         const signature = signToolResult(ctx, {
           toolCallId: chunk.toolCallId,
           toolName: call.toolName,
@@ -643,18 +943,20 @@ export function createUiChunkProvenanceSigner(
               ? { errorText: chunk.errorText }
               : chunk.output,
         });
-        if (!signature) return chunk;
-        return {
-          ...chunk,
-          providerMetadata: withMcpjamField(
-            chunk.providerMetadata,
-            RESULT_SIGNATURE_FIELD,
-            signature,
-          ) as never,
-        };
+        if (!signature) return [chunk];
+        return [
+          {
+            ...chunk,
+            providerMetadata: withMcpjamField(
+              chunk.providerMetadata,
+              RESULT_SIGNATURE_FIELD,
+              signature,
+            ) as never,
+          },
+        ];
       }
       default:
-        return chunk;
+        return [chunk];
     }
   };
 }
@@ -672,6 +974,12 @@ export interface ClientHistoryReport {
   demotedSystemMessages: number;
   /** UI-context parts found in assistant messages, where only users put them. */
   removedAssistantContextParts: number;
+  /**
+   * Earlier assistant replies the model will not be shown: text, reasoning
+   * and files with content that did not verify, and tool calls the server did
+   * not issue. What the browser's "not sent to the model" notice is about.
+   */
+  omittedReplyParts: number;
 }
 
 export interface ClientHistoryVerificationOptions {
@@ -683,6 +991,8 @@ export interface ClientHistoryVerificationOptions {
   approvalBinding?: ToolApprovalBinding;
   /** The approval key; defaults to the deployment's. For tests. */
   approvalKey?: Buffer | null;
+  /** The time checked against {@link LEGACY_SIGNATURE_CUTOFF}. For tests. */
+  now?: number;
 }
 
 function isToolUiPart(part: Record<string, unknown>): boolean {
@@ -743,6 +1053,7 @@ function verifyUiToolPart(
   ctx: ProvenanceContext | null,
   part: Record<string, unknown>,
   options: ClientHistoryVerificationOptions,
+  check: SignatureCheckOptions,
 ): {
   part: Record<string, unknown>;
   callVerified: boolean;
@@ -770,7 +1081,7 @@ function verifyUiToolPart(
             : part.output,
       };
       resultVerified = toolPartSignatures(part, RESULT_SIGNATURE_FIELD).some(
-        (signature) => verifyToolResult(ctx, claim, signature),
+        (signature) => verifyToolResult(ctx, claim, signature, check),
       );
     }
     // A result signature covers the call it answers, so it proves both.
@@ -778,7 +1089,7 @@ function verifyUiToolPart(
       resultVerified ||
       (ctx !== null &&
         toolPartSignatures(part, CALL_SIGNATURE_FIELD).some((signature) =>
-          verifyToolCall(ctx, call, signature),
+          verifyToolCall(ctx, call, signature, check),
         )) ||
       approvalIssuedFor(part, call, options);
   }
@@ -805,50 +1116,123 @@ function verifyUiToolPart(
   };
 }
 
-/** Whether an assistant text, reasoning or file part verifies. */
+/** An assistant text, reasoning or file part's claim and signature. */
+function assistantPartClaim(
+  part: Record<string, unknown>,
+): { kind: ItemKind; content: unknown[]; signature: unknown } | null {
+  switch (part.type) {
+    case "text":
+    case "reasoning":
+      if (typeof part.text !== "string") return null;
+      return part.type === "text"
+        ? {
+            kind: "assistant-text",
+            content: [textDigest(part.text)],
+            signature: readMcpjamField(
+              part.providerMetadata,
+              TEXT_SIGNATURE_FIELD,
+            ),
+          }
+        : {
+            kind: "assistant-reasoning",
+            content: [textDigest(part.text)],
+            signature: readMcpjamField(
+              part.providerMetadata,
+              REASONING_SIGNATURE_FIELD,
+            ),
+          };
+    case "file":
+      if (typeof part.mediaType !== "string" || typeof part.url !== "string") {
+        return null;
+      }
+      return {
+        kind: "assistant-file",
+        content: fileContent({ mediaType: part.mediaType, url: part.url }),
+        signature: readMcpjamField(part.providerMetadata, FILE_SIGNATURE_FIELD),
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether an assistant text, reasoning or file part verifies. A current-form
+ * item id counts once: `seenItemIds` holds the ones already counted.
+ */
 function verifyAssistantPart(
   ctx: ProvenanceContext,
   part: Record<string, unknown>,
+  check: SignatureCheckOptions,
+  seenItemIds: Set<string>,
 ): boolean {
-  switch (part.type) {
-    case "text":
-      return (
-        typeof part.text === "string" &&
-        verifyAssistantText(
-          ctx,
-          part.text,
-          readMcpjamField(part.providerMetadata, TEXT_SIGNATURE_FIELD),
-        )
-      );
-    case "reasoning":
-      return (
-        typeof part.text === "string" &&
-        verifyAssistantReasoning(
-          ctx,
-          part.text,
-          readMcpjamField(part.providerMetadata, REASONING_SIGNATURE_FIELD),
-        )
-      );
-    case "file":
-      return (
-        typeof part.mediaType === "string" &&
-        typeof part.url === "string" &&
-        verifyAssistantFile(
-          ctx,
-          { mediaType: part.mediaType, url: part.url },
-          readMcpjamField(part.providerMetadata, FILE_SIGNATURE_FIELD),
-        )
-      );
-    default:
-      return false;
+  const claim = assistantPartClaim(part);
+  if (!claim) return false;
+  const result = checkItemSignature(
+    ctx,
+    claim.kind,
+    claim.content,
+    claim.signature,
+    check,
+  );
+  if (!result.ok) return false;
+  if (result.itemId === undefined) return true;
+  if (seenItemIds.has(result.itemId)) return false;
+  seenItemIds.add(result.itemId);
+  return true;
+}
+
+/** Whether a part carries content, as opposed to an empty text. */
+function hasReplyContent(part: Record<string, unknown>): boolean {
+  return (
+    part.type === "file" ||
+    (typeof part.text === "string" && part.text.trim().length > 0)
+  );
+}
+
+/** Every signature an assistant message's parts carry. */
+function signaturesOf(message: Record<string, unknown>): unknown[] {
+  if (!Array.isArray(message.parts)) return [];
+  const signatures: unknown[] = [];
+  for (const part of message.parts as unknown[]) {
+    if (!isRecord(part)) continue;
+    for (const metadata of [
+      part.providerMetadata,
+      part.callProviderMetadata,
+      part.resultProviderMetadata,
+    ]) {
+      for (const field of SIGNATURE_FIELDS) {
+        const signature = readMcpjamField(metadata, field);
+        if (signature !== undefined) signatures.push(signature);
+      }
+    }
   }
+  return signatures;
+}
+
+/**
+ * Where earlier-form signatures stop counting in this history: the first
+ * assistant message carrying any current-form signature. Everything the
+ * server signs now is in the current form, so earlier-form content can only
+ * come before it.
+ */
+function legacyBoundaryOf(messages: readonly unknown[]): number {
+  const index = messages.findIndex(
+    (message) =>
+      isRecord(message) &&
+      message.role === "assistant" &&
+      signaturesOf(message).some(isCurrentFormSignature),
+  );
+  return index < 0 ? messages.length : index;
 }
 
 /**
  * Check a browser-sent UI-message history against the server's signatures,
  * and mark what does not verify. With no signing context nothing verifies.
- * Never throws; content is never removed here — see
- * {@link presentHistoryForModel} for what the model is shown.
+ * A current-form signature verifies only for this chat, and an item id only
+ * once; an earlier-form one only before {@link LEGACY_SIGNATURE_CUTOFF} and
+ * only ahead of the first message signed in the current form. Never throws;
+ * content is never removed here — see {@link presentHistoryForModel} for what
+ * the model is shown.
  */
 export function verifyClientHistory(
   messages: readonly unknown[],
@@ -862,8 +1246,12 @@ export function verifyClientHistory(
     unverifiedToolResults: 0,
     demotedSystemMessages: 0,
     removedAssistantContextParts: 0,
+    omittedReplyParts: 0,
   };
-  for (const message of messages) {
+  const legacyAllowed = (options.now ?? Date.now()) < LEGACY_SIGNATURE_CUTOFF;
+  const legacyBoundary = legacyAllowed ? legacyBoundaryOf(messages) : 0;
+  const seenItemIds = new Set<string>();
+  for (const [index, message] of messages.entries()) {
     if (!isRecord(message)) {
       report.messages.push(message);
       continue;
@@ -884,6 +1272,9 @@ export function verifyClientHistory(
       report.messages.push(message);
       continue;
     }
+    const check: SignatureCheckOptions = {
+      acceptLegacy: index < legacyBoundary,
+    };
     const parts: unknown[] = [];
     for (const part of message.parts as unknown[]) {
       if (!isRecord(part)) {
@@ -902,8 +1293,12 @@ export function verifyClientHistory(
         part.type === "reasoning" ||
         part.type === "file"
       ) {
-        const verified = ctx !== null && verifyAssistantPart(ctx, part);
-        if (!verified) report.unverifiedTextParts += 1;
+        const verified =
+          ctx !== null && verifyAssistantPart(ctx, part, check, seenItemIds);
+        if (!verified) {
+          report.unverifiedTextParts += 1;
+          if (hasReplyContent(part)) report.omittedReplyParts += 1;
+        }
         const providerMetadata = mark(part.providerMetadata, !verified);
         const next: Record<string, unknown> = { ...part, providerMetadata };
         if (providerMetadata === undefined) delete next.providerMetadata;
@@ -911,8 +1306,11 @@ export function verifyClientHistory(
         continue;
       }
       if (isToolUiPart(part)) {
-        const tool = verifyUiToolPart(ctx, part, options);
-        if (!tool.callVerified) report.unverifiedToolCalls += 1;
+        const tool = verifyUiToolPart(ctx, part, options, check);
+        if (!tool.callVerified) {
+          report.unverifiedToolCalls += 1;
+          report.omittedReplyParts += 1;
+        }
         if (tool.resultUnverified) report.unverifiedToolResults += 1;
         parts.push(tool.part);
         continue;
@@ -935,8 +1333,9 @@ function isServerExecutedTool(tools: ToolSet, toolName: string): boolean {
 }
 
 /**
- * Sign, in the transcript about to be persisted, what is the server's own —
- * produced this turn, or verified on the way in: the assistant text, every
+ * Sign, in the transcript about to be persisted, for this chat and in the
+ * current form, what is the server's own — produced this turn, or verified on
+ * the way in: the assistant text, every
  * tool call the server issued, and the results its tools produced. Content
  * marked unverified stays unsigned, so a reopened conversation shows the
  * model the same verdict. The signature on a tool result covers the output the
@@ -986,10 +1385,10 @@ export function signHistoryForPersistence(
       : null;
   };
 
-  return messages.map((message) => {
+  return messages.map((message, messageIndex) => {
     if (message?.role === "assistant" && Array.isArray(message.content)) {
       let changed = false;
-      const content = message.content.map((part) => {
+      const content = message.content.map((part, partIndex) => {
         if (part.type === "tool-call") {
           const signature = callSignatureFor(part.toolCallId);
           if (!signature) return part;
@@ -1017,7 +1416,9 @@ export function signHistoryForPersistence(
           providerOptions: withMcpjamField(
             part.providerOptions,
             TEXT_SIGNATURE_FIELD,
-            signAssistantText(ctx, part.text),
+            // One item per position in the stored transcript, so saving the
+            // same transcript again writes the same signatures.
+            signAssistantText(ctx, part.text, `p${messageIndex}_${partIndex}`),
           ),
         } as typeof part;
       });

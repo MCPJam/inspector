@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   convertToModelMessages,
@@ -19,6 +19,7 @@ import {
   fenceToolOutput,
   historyProvenanceContextFor,
   historyVerificationFor,
+  LEGACY_SIGNATURE_CUTOFF,
   presentHistoryForModel,
   REMOVED_FENCE_MARKER,
   resolveHistoryProvenanceKey,
@@ -33,9 +34,18 @@ import {
   verifyToolResult,
   type HistoryPresentation,
   type ProvenanceContext,
+  type UiChunkProvenanceSigner,
 } from "../history-provenance";
 
-const ctx: ProvenanceContext = { key: randomBytes(32), projectId: "project_1" };
+const ctx: ProvenanceContext = {
+  key: randomBytes(32),
+  projectId: "project_1",
+  chatSessionId: "chat_1",
+};
+/** The same project and key, another chat. */
+const otherChat: ProvenanceContext = { ...ctx, chatSessionId: "chat_2" };
+/** No signing: what an unsigned stream looks like. */
+const unsignedStream: UiChunkProvenanceSigner = (chunk) => [chunk];
 const presentation: HistoryPresentation = {
   fenceKey: randomBytes(32),
   excludeUnverified: true,
@@ -72,7 +82,7 @@ async function uiMessageFrom(chunks: UIMessageChunk[]): Promise<UIMessage> {
   return JSON.parse(JSON.stringify(last));
 }
 
-const liveTurn = (sign: (chunk: UIMessageChunk) => UIMessageChunk) =>
+const liveTurn = (sign: UiChunkProvenanceSigner) =>
   [
     { type: "start" },
     { type: "start-step" },
@@ -100,7 +110,7 @@ const liveTurn = (sign: (chunk: UIMessageChunk) => UIMessageChunk) =>
     },
     { type: "finish-step" },
     { type: "finish" },
-  ].map((chunk) => sign(chunk as UIMessageChunk));
+  ].flatMap((chunk) => sign(chunk as UIMessageChunk));
 
 function partsOf(message: unknown): any[] {
   return (message as { parts: any[] }).parts;
@@ -210,22 +220,281 @@ describe("provenance signatures", () => {
         true,
       ),
     ).not.toBeNull();
-    expect(historyProvenanceContextFor("project_1", null)).toBeNull();
-    expect(historyProvenanceContextFor(undefined, ctx.key)).toBeNull();
+    expect(historyProvenanceContextFor("project_1", "chat_1", null)).toBeNull();
+    expect(
+      historyProvenanceContextFor(undefined, "chat_1", ctx.key),
+    ).toBeNull();
+    expect(historyProvenanceContextFor("project_1", undefined, ctx.key)).toBe(
+      null,
+    );
   });
 
   it("are always checked in hosted mode, key or no key, and never locally", () => {
     const env = { INSPECTOR_SERVICE_TOKEN: "service-token-with-enough-length" };
-    expect(historyVerificationFor("project_1", false, env)).toBeNull();
-    expect(historyVerificationFor("project_1", true, env)?.ctx).not.toBeNull();
-    // Hosted without a key, or without a project: checked, and nothing
-    // can verify.
-    expect(historyVerificationFor("project_1", true, {})).toEqual({
+    expect(historyVerificationFor("project_1", "chat_1", false, env)).toBe(
+      null,
+    );
+    expect(
+      historyVerificationFor("project_1", "chat_1", true, env)?.ctx,
+    ).not.toBeNull();
+    // Hosted without a key, a project or a chat: checked, and nothing can
+    // verify.
+    expect(historyVerificationFor("project_1", "chat_1", true, {})).toEqual({
       ctx: null,
     });
-    expect(historyVerificationFor(undefined, true, env)).toEqual({
+    expect(historyVerificationFor(undefined, "chat_1", true, env)).toEqual({
       ctx: null,
     });
+    expect(historyVerificationFor("project_1", undefined, true, env)).toEqual({
+      ctx: null,
+    });
+  });
+});
+
+/** An earlier-form signature, as the server issued them before the current form. */
+function legacySignature(kind: string, content: unknown[]): string {
+  const mac = createHmac("sha256", ctx.key)
+    .update(JSON.stringify(["mjpv1", kind, ctx.projectId, ...content]))
+    .digest("base64url");
+  return `mjpv1.${mac}`;
+}
+const digestOf = (text: string) =>
+  createHash("sha256").update(text).digest("base64url");
+const beforeCutoff = LEGACY_SIGNATURE_CUTOFF - 1;
+
+function userMessage(id: string, text: string) {
+  return { id, role: "user", parts: [{ type: "text", text }] };
+}
+
+describe("signatures name the chat and the item", () => {
+  it("do not verify in another chat of the same project", async () => {
+    expect(
+      verifyAssistantText(otherChat, "hello", signAssistantText(ctx, "hello")),
+    ).toBe(false);
+    const call = {
+      toolCallId: "call_1",
+      toolName: "list_issues",
+      input: { state: "open" },
+    };
+    expect(verifyToolCall(otherChat, call, signToolCall(ctx, call))).toBe(
+      false,
+    );
+    const result = { ...call, output: { ok: true } };
+    expect(
+      verifyToolResult(otherChat, result, signToolResult(ctx, result)),
+    ).toBe(false);
+
+    const message = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    expect(verifyClientHistory([message], ctx).omittedReplyParts).toBe(0);
+    const report = verifyClientHistory([message], otherChat);
+    expect(report.unverifiedTextParts).toBe(2);
+    expect(report.unverifiedToolCalls).toBe(1);
+    expect(report.omittedReplyParts).toBe(3);
+    const model = presentHistoryForModel(
+      await convertToModelMessages(report.messages as UIMessage[]),
+      tools,
+      presentation,
+    );
+    expect(JSON.stringify(model)).not.toContain("Checking your issues.");
+    expect(JSON.stringify(model)).not.toContain("2 issues");
+  });
+
+  it("count an item once per history", async () => {
+    const message = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    const copy = { ...structuredClone(message), id: "copy" };
+    const report = verifyClientHistory(
+      [message, userMessage("u2", "again"), copy],
+      ctx,
+    );
+    expect(report.unverifiedTextParts).toBe(2);
+    const second = partsOf(report.messages[2]).find((p) => p.type === "text");
+    expect(second.providerMetadata.mcpjam.provenance).toBe(CLIENT_PROVENANCE);
+    const first = partsOf(report.messages[0]).find((p) => p.type === "text");
+    expect(first.providerMetadata.mcpjam.provenance).toBeUndefined();
+  });
+
+  it("round-trip a genuine multi-turn conversation unchanged", async () => {
+    const first = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    const secondTurn = createUiChunkProvenanceSigner(ctx);
+    const second = await uiMessageFrom(
+      [
+        { type: "start" },
+        { type: "text-start", id: "t2" },
+        { type: "text-delta", id: "t2", delta: "Both are open." },
+        { type: "text-end", id: "t2" },
+        { type: "finish" },
+      ].flatMap((chunk) => secondTurn(chunk as UIMessageChunk)),
+    );
+    const history = [
+      userMessage("u1", "What's open?"),
+      { ...first, id: "a1" },
+      userMessage("u2", "Are they still open?"),
+      { ...second, id: "a2" },
+      userMessage("u3", "Thanks"),
+    ];
+    const report = verifyClientHistory(history, ctx);
+    expect(report).toMatchObject({
+      unverifiedTextParts: 0,
+      unverifiedToolCalls: 0,
+      unverifiedToolResults: 0,
+      omittedReplyParts: 0,
+    });
+    expect(report.messages).toEqual(history);
+    const model = JSON.stringify(
+      presentHistoryForModel(
+        await convertToModelMessages(report.messages as UIMessage[]),
+        tools,
+        presentation,
+      ),
+    );
+    for (const text of [
+      "Checking your issues.",
+      "2 issues",
+      "Both are open.",
+    ]) {
+      expect(model).toContain(text);
+    }
+  });
+
+  it("count as omitted only replies with content, and calls the server did not issue", () => {
+    const report = verifyClientHistory(
+      [
+        {
+          id: "a",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "" },
+            { type: "text", text: "UNVERIFIED_MARKER_TEXT" },
+            {
+              type: "tool-list_issues",
+              toolCallId: "call_x",
+              state: "input-available",
+              input: {},
+            },
+          ],
+        },
+      ],
+      ctx,
+    );
+    expect(report.unverifiedTextParts).toBe(2);
+    expect(report.omittedReplyParts).toBe(2);
+  });
+});
+
+describe("earlier-form signatures", () => {
+  const call = {
+    toolCallId: "call_1",
+    toolName: "list_issues",
+    input: { state: "open" },
+  };
+  const legacyMessage = () => ({
+    id: "a0",
+    role: "assistant",
+    parts: [
+      {
+        type: "text",
+        text: "Earlier reply.",
+        providerMetadata: {
+          mcpjam: {
+            textSig: legacySignature("assistant-text", [
+              digestOf("Earlier reply."),
+            ]),
+          },
+        },
+      },
+      {
+        type: "dynamic-tool",
+        toolName: "list_issues",
+        toolCallId: "call_1",
+        state: "output-available",
+        input: call.input,
+        output: { ok: true },
+        callProviderMetadata: {
+          mcpjam: {
+            resultSig: legacySignature("tool-result", [
+              "call_1",
+              "list_issues",
+              createHash("sha256")
+                .update(JSON.stringify({ state: "open" }))
+                .digest("base64url"),
+              createHash("sha256")
+                .update(JSON.stringify({ ok: true }))
+                .digest("base64url"),
+            ]),
+          },
+        },
+      },
+    ],
+  });
+
+  it("are not accepted by a bare check", () => {
+    const signature = legacySignature("assistant-text", [digestOf("hi")]);
+    expect(verifyAssistantText(ctx, "hi", signature)).toBe(false);
+    expect(
+      verifyAssistantText(ctx, "hi", signature, { acceptLegacy: true }),
+    ).toBe(true);
+  });
+
+  it("count before the cutoff, ahead of anything in the current form", async () => {
+    const current = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    const report = verifyClientHistory(
+      [
+        userMessage("u1", "hi"),
+        legacyMessage(),
+        userMessage("u2", "and now?"),
+        current,
+      ],
+      ctx,
+      { now: beforeCutoff },
+    );
+    expect(report).toMatchObject({
+      unverifiedTextParts: 0,
+      unverifiedToolCalls: 0,
+      unverifiedToolResults: 0,
+    });
+  });
+
+  it("do not count from the cutoff on", () => {
+    const report = verifyClientHistory([legacyMessage()], ctx, {
+      now: LEGACY_SIGNATURE_CUTOFF,
+    });
+    expect(report.unverifiedTextParts).toBe(1);
+    expect(report.unverifiedToolCalls).toBe(1);
+    expect(report.omittedReplyParts).toBe(2);
+  });
+
+  it("do not count after a message signed in the current form", async () => {
+    const current = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    const report = verifyClientHistory(
+      [current, userMessage("u2", "and now?"), legacyMessage()],
+      ctx,
+      { now: beforeCutoff },
+    );
+    expect(report.unverifiedTextParts).toBe(1);
+    expect(report.unverifiedToolCalls).toBe(1);
+  });
+
+  it("do not count in a message signed in the current form", async () => {
+    const message = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    const text = partsOf(message).find((p) => p.type === "text");
+    text.text = "Checking ";
+    text.providerMetadata.mcpjam.textSig = legacySignature("assistant-text", [
+      digestOf("Checking "),
+    ]);
+    const report = verifyClientHistory([message], ctx, { now: beforeCutoff });
+    expect(report.unverifiedTextParts).toBe(1);
   });
 });
 
@@ -251,7 +520,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
     parts.find((p) => p.toolCallId === "call_1").output = {
       content: [{ type: "text", text: "UNVERIFIED_MARKER_OUTPUT" }],
     };
-    const unsigned = await uiMessageFrom(liveTurn((chunk) => chunk));
+    const unsigned = await uiMessageFrom(liveTurn(unsignedStream));
 
     const report = verifyClientHistory([message, unsigned], ctx);
     expect(report.unverifiedTextParts).toBe(3);
@@ -290,24 +559,112 @@ describe("a live turn round-trips through the browser and verifies", () => {
     expect(call.callProviderMetadata.mcpjam.callProvenance).toBeUndefined();
   });
 
-  it("signs the text so far on every delta, so a stopped turn's text verifies", async () => {
-    const sign = createUiChunkProvenanceSigner(ctx);
-    const chunks = liveTurn(sign);
-    // What the browser holds when the stream stops after the first delta.
-    const stoppedAfter = chunks.findIndex((c) => c.type === "text-delta");
-    const message = await uiMessageFrom(chunks.slice(0, stoppedAfter + 1));
-    const text = partsOf(message).find((p) => p.type === "text");
-    expect(text.text).toBe("Checking ");
-    expect(text.state).toBe("streaming");
+  it("signs a text part once, at its end, and no delta", () => {
+    const chunks = liveTurn(createUiChunkProvenanceSigner(ctx)) as any[];
+    const deltas = chunks.filter((c) => c.type === "text-delta");
+    expect(deltas).toHaveLength(2);
+    for (const delta of deltas) {
+      expect(delta.providerMetadata?.mcpjam?.textSig).toBeUndefined();
+    }
+    const [end] = chunks.filter((c) => c.type === "text-end");
+    expect(
+      verifyAssistantText(
+        ctx,
+        "Checking your issues.",
+        end.providerMetadata.mcpjam.textSig,
+      ),
+    ).toBe(true);
+  });
 
+  it("verifies only the whole text it signed", async () => {
+    const message = await uiMessageFrom(
+      liveTurn(createUiChunkProvenanceSigner(ctx)),
+    );
+    const text = partsOf(message).find((p) => p.type === "text");
+    const signature = text.providerMetadata.mcpjam.textSig;
+    for (const part of ["C", "Checking ", "Checking your issues"]) {
+      expect(verifyAssistantText(ctx, part, signature)).toBe(false);
+    }
+    text.text = "Checking ";
     const report = verifyClientHistory([message], ctx);
-    expect(report.unverifiedTextParts).toBe(0);
+    expect(report.unverifiedTextParts).toBe(1);
     const model = presentHistoryForModel(
       await convertToModelMessages(report.messages as UIMessage[]),
       tools,
       presentation,
     );
-    expect(JSON.stringify(model)).toContain("Checking ");
+    expect(JSON.stringify(model)).not.toContain("Checking ");
+  });
+
+  it("leaves a text the browser holds mid-stream unsigned", async () => {
+    const chunks = liveTurn(createUiChunkProvenanceSigner(ctx));
+    // What the browser holds when it drops the stream after the first delta.
+    const droppedAfter = chunks.findIndex((c) => c.type === "text-delta");
+    const message = await uiMessageFrom(chunks.slice(0, droppedAfter + 1));
+    const text = partsOf(message).find((p) => p.type === "text");
+    expect(text.text).toBe("Checking ");
+    expect(text.providerMetadata?.mcpjam?.textSig).toBeUndefined();
+    expect(verifyClientHistory([message], ctx).omittedReplyParts).toBe(1);
+  });
+
+  for (const stop of [
+    { type: "abort" },
+    { type: "finish" },
+    { type: "error", errorText: "upstream failed" },
+  ]) {
+    it(`ends and signs the final text of a stream stopped by \`${stop.type}\``, async () => {
+      const sign = createUiChunkProvenanceSigner(ctx);
+      const chunks = [
+        { type: "start" },
+        { type: "reasoning-start", id: "r1" },
+        { type: "reasoning-delta", id: "r1", delta: "Thinking" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Here is " },
+        { type: "text-delta", id: "t1", delta: "the start" },
+        stop,
+      ].flatMap((chunk) => sign(chunk as UIMessageChunk)) as any[];
+      const ends = chunks.filter(
+        (c) => c.type === "text-end" || c.type === "reasoning-end",
+      );
+      expect(ends.map((c) => c.type)).toEqual(["reasoning-end", "text-end"]);
+      // The stop itself still reaches the browser, after the ends.
+      expect(chunks[chunks.length - 1]).toEqual(stop);
+
+      const message = await uiMessageFrom(chunks);
+      const report = verifyClientHistory([message], ctx);
+      expect(report.unverifiedTextParts).toBe(0);
+      const text = partsOf(message).find((p) => p.type === "text");
+      expect(text).toMatchObject({ text: "Here is the start", state: "done" });
+      const model = presentHistoryForModel(
+        await convertToModelMessages(report.messages as UIMessage[]),
+        tools,
+        presentation,
+      );
+      expect(JSON.stringify(model)).toContain("Here is the start");
+    });
+  }
+
+  it("drops an engine's own end for a part it ended at a stop, and reopens one that continues", () => {
+    const sign = createUiChunkProvenanceSigner(ctx);
+    const out = (chunk: Record<string, unknown>) =>
+      sign(chunk as UIMessageChunk) as any[];
+    out({ type: "text-start", id: "t1" });
+    out({ type: "text-delta", id: "t1", delta: "one" });
+    expect(out({ type: "error", errorText: "x" }).map((c) => c.type)).toEqual([
+      "text-end",
+      "error",
+    ]);
+    expect(out({ type: "text-end", id: "t1" })).toEqual([]);
+
+    out({ type: "text-start", id: "t2" });
+    out({ type: "text-delta", id: "t2", delta: "two" });
+    out({ type: "error", errorText: "x" });
+    const reopened = out({ type: "text-delta", id: "t2", delta: " more" });
+    expect(reopened.map((c) => c.type)).toEqual(["text-start", "text-delta"]);
+    const [end] = out({ type: "text-end", id: "t2" });
+    expect(
+      verifyAssistantText(ctx, " more", end.providerMetadata.mcpjam.textSig),
+    ).toBe(true);
   });
 
   it("signs a surrogate pair split across deltas as the whole text", () => {
@@ -318,20 +675,17 @@ describe("a live turn round-trips through the browser and verifies", () => {
       { type: "text-delta", id: "t1", delta: `ok ${pair[0]}` },
       { type: "text-delta", id: "t1", delta: `${pair[1]} done` },
       { type: "text-end", id: "t1" },
-    ].map((chunk) => sign(chunk as UIMessageChunk)) as any[];
-    const signatureOf = (chunk: any) => chunk.providerMetadata.mcpjam.textSig;
+    ].flatMap((chunk) => sign(chunk as UIMessageChunk)) as any[];
     expect(
-      verifyAssistantText(ctx, `ok ${pair[0]}`, signatureOf(chunks[1])),
-    ).toBe(true);
-    expect(
-      verifyAssistantText(ctx, `ok ${pair} done`, signatureOf(chunks[2])),
-    ).toBe(true);
-    expect(
-      verifyAssistantText(ctx, `ok ${pair} done`, signatureOf(chunks[3])),
+      verifyAssistantText(
+        ctx,
+        `ok ${pair} done`,
+        chunks[3].providerMetadata.mcpjam.textSig,
+      ),
     ).toBe(true);
   });
 
-  it("keeps a text part's provider metadata while signing its deltas", async () => {
+  it("keeps a text part's provider metadata while signing it", async () => {
     const sign = createUiChunkProvenanceSigner(ctx);
     const chunks = [
       { type: "start" },
@@ -343,7 +697,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
       { type: "text-delta", id: "t1", delta: "Done." },
       { type: "text-end", id: "t1" },
       { type: "finish" },
-    ].map((chunk) => sign(chunk as UIMessageChunk));
+    ].flatMap((chunk) => sign(chunk as UIMessageChunk));
     const text = partsOf(await uiMessageFrom(chunks)).find(
       (p) => p.type === "text",
     );
@@ -370,7 +724,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
           errorText: "server unavailable",
         },
         { type: "finish" },
-      ].map((chunk) => sign(chunk as UIMessageChunk)),
+      ].flatMap((chunk) => sign(chunk as UIMessageChunk)),
     );
     const report = verifyClientHistory([message], ctx);
     expect(report.unverifiedToolCalls).toBe(0);
@@ -395,7 +749,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
           errorText: "limit must be a number",
         },
         { type: "finish" },
-      ].map((chunk) => sign(chunk as UIMessageChunk)),
+      ].flatMap((chunk) => sign(chunk as UIMessageChunk)),
     );
     const report = verifyClientHistory([message], ctx);
     expect(report.unverifiedToolCalls).toBe(0);
@@ -413,7 +767,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
       toolCallId: "call_new",
       toolName: "list_issues",
       input: { limit: 2 },
-    } as UIMessageChunk) as any;
+    } as UIMessageChunk)[0] as any;
     expect(
       verifyToolCall(
         ctx,
@@ -431,13 +785,13 @@ describe("a live turn round-trips through the browser and verifies", () => {
       toolCallId: "call_old",
       toolName: "list_issues",
       input: { limit: 1 },
-    } as UIMessageChunk) as any;
+    } as UIMessageChunk)[0] as any;
     expect(resent.providerMetadata).toBeUndefined();
     const answer = sign({
       type: "tool-output-available",
       toolCallId: "call_old",
       output: { ok: true },
-    } as UIMessageChunk) as any;
+    } as UIMessageChunk)[0] as any;
     expect(answer.providerMetadata).toBeUndefined();
   });
 
@@ -464,7 +818,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
       type: "tool-output-available",
       toolCallId: "call_7",
       output: { ok: true },
-    } as UIMessageChunk) as any;
+    } as UIMessageChunk)[0] as any;
     expect(
       verifyToolResult(
         ctx,
@@ -491,7 +845,7 @@ describe("a live turn round-trips through the browser and verifies", () => {
           mediaType: "image/png",
         },
         { type: "finish" },
-      ].map((chunk) => sign(chunk as UIMessageChunk)),
+      ].flatMap((chunk) => sign(chunk as UIMessageChunk)),
     );
     expect(verifyClientHistory([message], ctx).unverifiedTextParts).toBe(0);
     partsOf(message)[0].url = "data:text/plain;base64,VU5WRVJJRklFRA==";
@@ -547,7 +901,7 @@ describe("verifyClientHistory", () => {
   });
 
   it("carries its marks into the model messages the engine sends", async () => {
-    const unsigned = await uiMessageFrom(liveTurn((chunk) => chunk));
+    const unsigned = await uiMessageFrom(liveTurn(unsignedStream));
     const report = verifyClientHistory([unsigned], ctx);
     const model = await convertToModelMessages(report.messages as UIMessage[]);
     const assistant = model.find((m) => m.role === "assistant") as any;
@@ -1209,6 +1563,16 @@ describe("signHistoryForPersistence", () => {
       browserCall.providerOptions.mcpjam.callSig,
     );
     expect(browserResult.providerOptions.mcpjam.resultSig).toBeUndefined();
+  });
+
+  it("writes the same signatures each time it saves, valid in this chat only", () => {
+    const first = signHistoryForPersistence(persisted(), ctx, tools) as any[];
+    const again = signHistoryForPersistence(persisted(), ctx, tools) as any[];
+    expect(again).toEqual(first);
+    const text = first[1].content[0];
+    const signature = text.providerOptions.mcpjam.textSig;
+    expect(verifyAssistantText(ctx, text.text, signature)).toBe(true);
+    expect(verifyAssistantText(otherChat, text.text, signature)).toBe(false);
   });
 
   it("signs the output a reopened conversation hydrates into", async () => {

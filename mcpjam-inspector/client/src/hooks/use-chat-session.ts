@@ -221,6 +221,8 @@ import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
+import { isHistoryNoticeDataPart } from "@/shared/history-notice";
+import { useHistoryNoticeStore } from "@/stores/history-notice-store";
 import {
   HOSTED_TASKS_VERSION,
   isTaskCreatedDataPart,
@@ -2431,6 +2433,15 @@ export function useChatSession(
               hostedHostId ?? hostedPresentationHostId ?? null,
               part.data.workdir,
             );
+        } else if (isHistoryNoticeDataPart(part)) {
+          // Earlier replies in this chat are not in the model's context this
+          // turn; the thread says so, once, inline.
+          const sessionId = chatSessionIdRef.current;
+          if (sessionId) {
+            useHistoryNoticeStore
+              .getState()
+              .noteEarlierRepliesNotSent(sessionId);
+          }
         } else if (isSandboxNoticeDataPart(part)) {
           // One-time fact about the scenario's ephemeral sandbox. Exactly-once
           // delivery is the BACKEND's job (it marks the notice consumed in the
