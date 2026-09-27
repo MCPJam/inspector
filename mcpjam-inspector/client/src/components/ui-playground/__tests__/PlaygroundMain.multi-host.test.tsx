@@ -963,7 +963,7 @@ describe("PlaygroundMain — multi-host render path", () => {
         projectId: "default",
         name: "MCPJam",
         input: expect.objectContaining({
-          modelId: "anthropic/claude-haiku-4.5",
+          modelId: "openai/gpt-5.6-luna",
         }),
       })
     );

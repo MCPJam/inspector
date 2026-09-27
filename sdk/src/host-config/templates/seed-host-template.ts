@@ -282,13 +282,14 @@ export interface SeedHostTemplateOptions {
 const DEFAULT_SEED_THEME: HostThemeMode = "dark";
 
 /**
- * Model pinned by the default ("mcpjam") template. A hosted catalog id in its
- * dotted spelling (`anthropic/claude-haiku-4.5`, not `…-4-5`), so a seeded
- * host is runnable on MCPJam-provided models without a picker round trip.
+ * Model pinned by the default ("mcpjam") template and the other emulated
+ * templates. A hosted catalog id (`openai/gpt-5.6-luna`), so a seeded host is
+ * runnable on MCPJam-provided models without a picker round trip, and a
+ * standard-tier one, so guests and free organizations can run it too.
  * Consumers that seed a default host re-export this rather than repeating the
- * literal.
+ * literal. Mirrors the backend's `marketHostCatalog/templates.ts`.
  */
-export const DEFAULT_TEMPLATE_MODEL_ID = "anthropic/claude-haiku-4.5";
+export const DEFAULT_TEMPLATE_MODEL_ID = "openai/gpt-5.6-luna";
 
 export interface HostTemplate {
   id: HostTemplateId;
@@ -377,7 +378,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "mcpjam",
     label: "MCPJam",
-    description: "SDK defaults with hosted Claude Haiku.",
+    description: "SDK defaults with hosted GPT-5.6 Luna.",
     // Explicit `hostStyle: "mcpjam"` so the template doesn't silently
     // inherit the registry default — keeps MCPJam hosts visually distinct
     // from Claude even if the default ever drifts.
@@ -537,12 +538,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "claude",
-        // Canonical id (anthropic/<slug>) so the chat-composer model
-        // picker resolves it. Bare "claude-sonnet-4-5" never matched a
-        // SUPPORTED_MODELS entry → silently fell back to default.
-        // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
-        // pick it without an Anthropic key.
-        modelId: "anthropic/claude-haiku-4.5",
+        // A canonical hosted id so the chat-composer model picker resolves
+        // it (a bare "claude-sonnet-4-5" never matched a SUPPORTED_MODELS
+        // entry and silently fell back to default). The emulated default
+        // is a standard-tier hosted model, so guests and free organizations
+        // run it without an Anthropic key.
+        modelId: DEFAULT_TEMPLATE_MODEL_ID,
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -792,12 +793,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "claude-desktop",
-        // Canonical id (anthropic/<slug>) so the chat-composer model
-        // picker resolves it. Bare "claude-sonnet-4-5" never matched a
-        // SUPPORTED_MODELS entry → silently fell back to default.
-        // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
-        // pick it without an Anthropic key.
-        modelId: "anthropic/claude-haiku-4.5",
+        // A canonical hosted id so the chat-composer model picker resolves
+        // it (a bare "claude-sonnet-4-5" never matched a SUPPORTED_MODELS
+        // entry and silently fell back to default). The emulated default
+        // is a standard-tier hosted model, so guests and free organizations
+        // run it without an Anthropic key.
+        modelId: DEFAULT_TEMPLATE_MODEL_ID,
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -1052,9 +1053,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // ships its own brand logo and a CLI spinner thinking indicator
         // instead of the claude.ai mascot.
         hostStyle: "claude-code",
-        // Same guest-allowed Anthropic model rationale as the Claude
-        // template — the real CLI's model choice never crosses the MCP
-        // wire, so this is a product default, not probe data.
+        // Stays on hosted Haiku while the emulated templates moved to
+        // DEFAULT_TEMPLATE_MODEL_ID: this template runs the real Claude Code
+        // harness, which needs an Anthropic model. The real CLI's model
+        // choice never crosses the MCP wire, so this is a product default,
+        // not probe data.
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
         requireToolApproval: false,
@@ -2552,10 +2555,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "agentcore",
         // AgentCore runs models on Amazon Bedrock (typically Claude).
         // Bedrock ids are BYOK (bare `us.anthropic.claude-*` strings that
-        // need AWS creds), so default to the guest-allowed hosted Claude
-        // analog — Haiku 4.5 — so the App Builder works without AWS
-        // credentials. Users can swap to a real Bedrock model id after.
-        modelId: "anthropic/claude-haiku-4.5",
+        // need AWS creds), so default to the emulated hosted model so the
+        // App Builder works without AWS credentials. Users can swap to a
+        // real Bedrock model id after.
+        modelId: DEFAULT_TEMPLATE_MODEL_ID,
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2676,7 +2679,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "cline",
         // The probe only identifies Cline's MCP client, not a reusable model
         // id; keep MCPJam's simulated chat runnable with a hosted model.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: DEFAULT_TEMPLATE_MODEL_ID,
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -2707,7 +2710,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "notion",
         // Notion AI is model-provider agnostic toward MCP servers; this hosted
         // default only keeps MCPJam's simulated chat runnable out-of-the-box.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: DEFAULT_TEMPLATE_MODEL_ID,
         temperature: 1.0,
         requireToolApproval: false,
       });

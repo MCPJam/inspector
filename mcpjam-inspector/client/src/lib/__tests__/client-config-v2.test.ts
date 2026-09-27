@@ -18,6 +18,7 @@ import {
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../client-config-v2";
+import { HOSTED_MODEL_IDS } from "@/shared/hosted-model-ids.generated";
 
 function makeInput(
   overrides: Partial<HostConfigInputV2> = {},
@@ -226,12 +227,11 @@ describe("DEFAULT_SEEDED_HOST_MODEL_ID", () => {
     );
   });
 
-  it("uses the hosted catalog's dotted version spelling", () => {
-    // Hosted ids spell the version with a dot (`claude-haiku-4.5`); the
-    // dashed provider-native form (`claude-haiku-4-5`) matches no hosted row.
-    expect(DEFAULT_SEEDED_HOST_MODEL_ID).toMatch(
-      /^anthropic\/claude-[a-z]+-\d+\.\d+$/,
-    );
+  it("names a hosted catalog row in its canonical spelling", () => {
+    // A provider-native spelling (`claude-haiku-4-5`, or a bare
+    // `gpt-5.6-luna`) matches no hosted row, so a seeded host would run on
+    // nothing.
+    expect(HOSTED_MODEL_IDS).toContain(DEFAULT_SEEDED_HOST_MODEL_ID);
   });
 });
 

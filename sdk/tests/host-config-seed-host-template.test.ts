@@ -41,8 +41,25 @@ describe("seedHostTemplate", () => {
     expect(seedHostTemplate(DEFAULT_HOST_TEMPLATE_ID).modelId).toBe(
       DEFAULT_TEMPLATE_MODEL_ID
     );
-    expect(DEFAULT_TEMPLATE_MODEL_ID).toMatch(
-      /^anthropic\/claude-[a-z]+-\d+\.\d+$/
+    expect(DEFAULT_TEMPLATE_MODEL_ID).toBe("openai/gpt-5.6-luna");
+  });
+
+  // The emulated templates share the default so a guest's or free
+  // organization's out-of-the-box client runs a standard-tier model; the
+  // Claude Code template runs the real harness and needs an Anthropic model.
+  it("seeds every emulated template with the default model", () => {
+    for (const id of [
+      "mcpjam",
+      "claude",
+      "claude-desktop",
+      "agentcore",
+      "cline",
+      "notion",
+    ] as const) {
+      expect(seedHostTemplate(id).modelId).toBe(DEFAULT_TEMPLATE_MODEL_ID);
+    }
+    expect(seedHostTemplate("claude-code").modelId).toBe(
+      "anthropic/claude-haiku-4.5"
     );
   });
 
@@ -99,7 +116,7 @@ describe("seedHostTemplate", () => {
   it("matches the documented model + style for the claude template", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     expect(config.hostStyle).toBe("claude");
-    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(config.modelId).toBe("openai/gpt-5.6-luna");
   });
 
   it("keeps Claude protocol and app capabilities faithful to the probe", () => {
@@ -173,7 +190,7 @@ describe("seedHostTemplate", () => {
   it("threads appVersion into the mcpjam template (and only it)", () => {
     const mcpjam = seedHostTemplate("mcpjam", { appVersion: "9.9.9" });
     const profile = mcpjam.mcpProfile as Record<string, any>;
-    expect(mcpjam.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(mcpjam.modelId).toBe("openai/gpt-5.6-luna");
     expect(profile.initialize.clientInfo.version).toBe("9.9.9");
     expect(profile.apps.uiInitialize.hostInfo.version).toBe("9.9.9");
 
