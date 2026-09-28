@@ -954,6 +954,9 @@ function errorStructuredContent(
       error: {
         code: error.code,
         message: error.message,
+        // The failing request's id, so a report of this failure can be joined
+        // to the server's logs. Only responses carry one.
+        ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(refusal ? { refusal } : {}),
       },
     };
@@ -965,8 +968,13 @@ function describeOperationError(error: unknown): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
-    const base =
+    const message =
       error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    // In the text as well as `structuredContent`, for the same reason as the
+    // retry guidance below: the text is the channel every host shows a model.
+    const base = error.requestId
+      ? `${message} (request id: ${error.requestId})`
+      : message;
     // Hosts vary in whether the model sees `structuredContent`, so the retry
     // guidance is in the text too.
     const refusal = describePlatformRefusal(error);

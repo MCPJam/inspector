@@ -539,6 +539,107 @@ describe("PlatformApiClient", () => {
     expect((error as PlatformApiError).status).toBe(502);
   });
 
+  it("carries the failing response's x-request-id on the error", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        { code: "INTERNAL_ERROR", message: "Something broke" },
+        { status: 500, headers: { "x-request-id": "req_0123456789abcdef" } }
+      )
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("INTERNAL_ERROR");
+    expect((error as PlatformApiError).requestId).toBe("req_0123456789abcdef");
+  });
+
+  it("carries the request id on envelope-less error bodies too", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("upstream exploded", {
+          status: 502,
+          headers: { "x-request-id": "3f1c1d7e-5b8a-4c7e-9d51-0f6e2a9b8c41" },
+        })
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).requestId).toBe(
+      "3f1c1d7e-5b8a-4c7e-9d51-0f6e2a9b8c41"
+    );
+  });
+
+  it("carries the request id on a non-JSON success body", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("<html>not json</html>", {
+          status: 200,
+          headers: { "x-request-id": "req_0123456789abcdef" },
+        })
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("INTERNAL_ERROR");
+    expect((error as PlatformApiError).requestId).toBe("req_0123456789abcdef");
+  });
+
+  it("carries the request id when the body read fails", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "x-request-id": "req_0123456789abcdef" }),
+        text: () => Promise.reject(new Error("connection reset")),
+      } as unknown as Response)
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("INTERNAL_ERROR");
+    expect((error as PlatformApiError).requestId).toBe("req_0123456789abcdef");
+  });
+
+  it("leaves requestId unset when the response has none", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ code: "FORBIDDEN", message: "Denied" }, { status: 403 })
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).requestId).toBeUndefined();
+  });
+
+  it("drops a request id that is not in the shape the API mints", async () => {
+    // Too short, and a value with spaces: neither is an id the API would
+    // have minted or reflected, so neither is repeated.
+    for (const header of ["abc", "not an id at all"]) {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse(
+          { code: "INTERNAL_ERROR", message: "Something broke" },
+          { status: 500, headers: { "x-request-id": header } }
+        )
+      );
+
+      const error = await makeClient(fetchMock)
+        .getMe()
+        .catch((caught: unknown) => caught);
+
+      expect((error as PlatformApiError).requestId).toBeUndefined();
+    }
+  });
+
   it("resolves empty success bodies to undefined", async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
 
@@ -604,6 +705,8 @@ describe("PlatformApiClient", () => {
     expect((error as PlatformApiError).code).toBe("NETWORK_ERROR");
     expect((error as PlatformApiError).status).toBe(0);
     expect((error as PlatformApiError).message).toContain("ENOTFOUND");
+    // Never reached a server, so there is no request id to report.
+    expect((error as PlatformApiError).requestId).toBeUndefined();
   });
 
   it("synthesizes TIMEOUT when the client-side deadline aborts the request", async () => {

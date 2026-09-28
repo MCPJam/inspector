@@ -6416,7 +6416,12 @@ export class PlatformApiClient {
         throw new PlatformApiError(
           `Failed to read the MCPJam API response (${response.status}) for ${path}`,
           "INTERNAL_ERROR",
-          { status: response.status, endpoint: path, cause: error }
+          {
+            status: response.status,
+            endpoint: path,
+            cause: error,
+            requestId: parseRequestId(response.headers.get("x-request-id")),
+          }
         );
       }
     } finally {
@@ -6444,7 +6449,12 @@ export class PlatformApiClient {
       throw new PlatformApiError(
         `The MCPJam API returned a non-JSON response (${response.status}) for ${path}`,
         "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: parseError }
+        {
+          status: response.status,
+          endpoint: path,
+          cause: parseError,
+          requestId: parseRequestId(response.headers.get("x-request-id")),
+        }
       );
     }
 
@@ -6486,6 +6496,7 @@ export class PlatformApiClient {
       retryAfter: parseRetryAfter(response.headers.get("retry-after")),
       endpoint: path,
       codeSource: sentCode !== undefined ? "envelope" : "status",
+      requestId: parseRequestId(response.headers.get("x-request-id")),
     });
   }
 }
@@ -6520,6 +6531,16 @@ function parseRetryAfter(
     return undefined;
   }
   return Math.max(0, Math.ceil((retryAt - now) / 1000));
+}
+
+// The shape the API itself mints and reflects (its request-log middleware
+// accepts nothing else). Checked here too because the id is repeated to
+// people and models and quoted in feedback reports: a value some proxy on
+// the path wrote in a different shape is dropped rather than passed on.
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+function parseRequestId(header: string | null): string | undefined {
+  return header && REQUEST_ID_PATTERN.test(header) ? header : undefined;
 }
 
 function errorMessage(error: unknown): string {
