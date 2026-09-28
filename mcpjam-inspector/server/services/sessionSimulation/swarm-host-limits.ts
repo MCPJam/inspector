@@ -13,3 +13,12 @@
  * Scenario simulations deliberately send none: they keep the backend default.
  */
 export const SWARM_HOST_MAX_OUTPUT_TOKENS = 16_384;
+
+/**
+ * Output-token ceiling for a target's SETUP turn. Setup emits tool calls
+ * (write arguments), not prose, so it needs far less room than a host turn,
+ * and a starter target's setup allowance is priced at exactly this ceiling
+ * (backend `SWARM_STARTER_SETUP_MAX_OUTPUT_TOKENS`): sending more would price
+ * the step above what its row can admit, before its first call.
+ */
+export const SWARM_SETUP_MAX_OUTPUT_TOKENS = 4_096;

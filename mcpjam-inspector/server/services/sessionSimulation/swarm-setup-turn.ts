@@ -10,7 +10,7 @@ import type { JourneyManagerFactory } from "./swarm-runner";
 import { withDeadline } from "../../utils/run-supervisor/deadline";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 import { drainAssistantTurn } from "./runner";
-import { SWARM_HOST_MAX_OUTPUT_TOKENS } from "./swarm-host-limits";
+import { SWARM_SETUP_MAX_OUTPUT_TOKENS } from "./swarm-host-limits";
 import {
   isStarterStepRejected,
   STARTER_STEP_REJECTED_ERROR_CODE,
@@ -221,7 +221,7 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
         mcpClientManager: connection.manager,
         tools,
         maxSteps: GROUNDING_LIMITS.setupSteps,
-        maxOutputTokens: SWARM_HOST_MAX_OUTPUT_TOKENS,
+        maxOutputTokens: SWARM_SETUP_MAX_OUTPUT_TOKENS,
         // A setup step names its target and no session: the backend bills it
         // to the target's starter row.
         ...(args.starterFunded && args.target.targetId
