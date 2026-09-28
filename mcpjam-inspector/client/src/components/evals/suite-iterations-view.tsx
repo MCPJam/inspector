@@ -2285,6 +2285,11 @@ export function SuiteIterationsView({
                   }
                   isGeneratingTestCases={isGeneratingTestCases}
                   onRunClick={handleRunClick}
+                  // Not gated on `hideRunActions`: Evaluate always sets it
+                  // (it hides the legacy rail's controls), and this table is
+                  // Evaluate's own.
+                  onDeleteRun={canDeleteRuns ? onDirectDeleteRun : undefined}
+                  canDeleteRun={canDeleteRun}
                   onTestCaseClick={(testCaseId) =>
                     navigation.toTestEdit(suite._id, testCaseId)
                   }

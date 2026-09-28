@@ -15,9 +15,9 @@
  *     the browser.
  */
 import {
-  CORS_ORIGINS,
   HOSTED_MODE,
   MCPJAM_HOSTED_ORIGIN,
+  WEB_ALLOWED_ORIGINS,
 } from "../../../config.js";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled.js";
 import { RECORDER_SHIM_JS } from "./recorder-shim.js";
@@ -42,6 +42,21 @@ export const SANDBOX_PROXY_LOCALHOST_PATTERNS = [
  * but may not talk to it produces a widget that renders and then silently does
  * nothing, which is the least debuggable of the possible mismatches.
  *
+ * The list is the origins THIS deployment serves the app from, and nothing
+ * else:
+ *
+ *   - a local inspector: the loopback patterns (the Vite dev server, the Hono
+ *     server and the Electron renderer), plus any origin the operator listed
+ *     in `WEB_ALLOWED_ORIGINS`;
+ *   - a hosted deploy: its own app origin (`MCPJAM_HOSTED_ORIGIN`) plus
+ *     `WEB_ALLOWED_ORIGINS`, and no loopback. A hosted app always reaches its
+ *     proxy through the deploy's configured sandbox origin, never through a
+ *     server on the viewer's machine.
+ *
+ * `WEB_ALLOWED_ORIGINS` is read directly rather than through `CORS_ORIGINS`,
+ * which falls back to a built-in default list. Those defaults exist for CORS
+ * on a developer machine, and are not origins this deployment serves.
+ *
  * `'self'` is deliberately NOT here. It belongs in `frame-ancestors` (a
  * same-origin fallback deploy is documented), but as a message-sender rule it
  * would admit `location.origin` — and once views get their own per-app
@@ -49,16 +64,39 @@ export const SANDBOX_PROXY_LOCALHOST_PATTERNS = [
  * widget content pose as the host.
  */
 export function sandboxProxyHostOriginPatterns(): string[] {
-  const patterns = new Set<string>(SANDBOX_PROXY_LOCALHOST_PATTERNS);
-  if (MCPJAM_HOSTED_ORIGIN.startsWith("https://")) {
+  const patterns = new Set<string>(
+    HOSTED_MODE ? [] : SANDBOX_PROXY_LOCALHOST_PATTERNS,
+  );
+  if (HOSTED_MODE && MCPJAM_HOSTED_ORIGIN.startsWith("https://")) {
     patterns.add(MCPJAM_HOSTED_ORIGIN);
   }
-  for (const origin of CORS_ORIGINS) {
-    if (origin.startsWith("https://")) {
+  for (const origin of WEB_ALLOWED_ORIGINS) {
+    if (isConfiguredHostOrigin(origin)) {
       patterns.add(origin);
     }
   }
   return Array.from(patterns);
+}
+
+/**
+ * A configured origin the proxy may treat as the host: `https`, or plain
+ * `http` on a loopback host. Plaintext anywhere else is left out, since any
+ * network hop could then answer as the host. Loopback `http` is kept so a
+ * hosted build run on a developer machine (`npm run dev:hosted`, which lists
+ * `http://localhost:5173`) can still render views.
+ */
+function isConfiguredHostOrigin(origin: string): boolean {
+  if (origin.startsWith("https://")) return true;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+  );
 }
 
 /**

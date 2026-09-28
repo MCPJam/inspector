@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import {
   assertOrgModelAllowed,
   buildOrgModelFromResolvedConfig,
@@ -897,6 +898,26 @@ function isCancelUnwind(
 ): boolean {
   if (isIterationBudgetAbort(error, signal)) return false;
   return signal?.aborted === true;
+}
+
+/**
+ * Did the backend say this run (or its suite) was deleted?
+ *
+ * Two shapes: the structured refusal (`reason: "eval_parent_deleted"`), which
+ * survives production's error masking, and the legacy "not found" /
+ * "unauthorized" text, which only a dev deployment shows. A masked
+ * "Server Error" matches neither, on purpose: an outage must not cancel runs.
+ */
+export function isRunDeletedError(error: unknown): boolean {
+  if (
+    error instanceof ConvexError &&
+    (error.data as { reason?: unknown } | undefined)?.reason ===
+      "eval_parent_deleted"
+  ) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("not found") || message.includes("unauthorized");
 }
 
 const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
@@ -4166,36 +4187,60 @@ export const runEvalSuiteWithAiSdk = async ({
     const createCancellationChecker = async () => {
       if (runId === null) return; // Quick runs can't be cancelled
 
+      const stopForRunState = (currentRun: any) => {
+        if (currentRun?.status === "cancelled") {
+          abortRun(RUN_CANCELLED_ERROR);
+          throw RUN_CANCELLED_ERROR;
+        }
+        if (currentRun?.status === "timed_out") {
+          const stop = runTimeoutError(budgets.runTimeoutMs);
+          abortRun(stop);
+          throw stop;
+        }
+      };
+      const stopIfDeleted = (error: unknown) => {
+        if (isRunDeletedError(error)) {
+          abortRun(RUN_CANCELLED_ERROR);
+          throw RUN_CANCELLED_ERROR;
+        }
+      };
+
       while (!stopControls) {
         await delay(EVAL_CANCEL_POLL_MS);
         if (stopControls) return;
+        // An iteration write already learned the run or its suite is gone.
+        if (recorder?.isRunDeleted?.()) {
+          abortRun(RUN_CANCELLED_ERROR);
+          throw RUN_CANCELLED_ERROR;
+        }
         try {
-          const currentRun = await convexClient.query(
-            "testSuites:getTestSuiteRun" as any,
-            { runId },
+          stopForRunState(
+            await convexClient.query("testSuites:getTestSuiteRun" as any, {
+              runId,
+            }),
           );
-          if (currentRun?.status === "cancelled") {
-            abortRun(RUN_CANCELLED_ERROR);
-            throw RUN_CANCELLED_ERROR;
-          }
-          if (currentRun?.status === "timed_out") {
-            const stop = runTimeoutError(budgets.runTimeoutMs);
-            abortRun(stop);
-            throw stop;
-          }
         } catch (error) {
           if (isEvalRunStoppedError(error)) {
             throw error;
           }
-          // If run not found, it was deleted - treat as cancelled
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          if (
-            errorMessage.includes("not found") ||
-            errorMessage.includes("unauthorized")
-          ) {
-            abortRun(RUN_CANCELLED_ERROR);
-            throw RUN_CANCELLED_ERROR;
+          stopIfDeleted(error);
+          // Production masks a missing run as a bare "Server Error", which
+          // must never cancel a run on its own (an outage looks the same).
+          // Ask once more naming the suite: a backend that can tell a
+          // purged run from a stranger's answers that readably. An older
+          // backend rejects the extra argument; that failure is ignored.
+          try {
+            stopForRunState(
+              await convexClient.query("testSuites:getTestSuiteRun" as any, {
+                runId,
+                suiteId,
+              }),
+            );
+          } catch (retryError) {
+            if (isEvalRunStoppedError(retryError)) {
+              throw retryError;
+            }
+            stopIfDeleted(retryError);
           }
         }
       }
