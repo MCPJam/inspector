@@ -154,6 +154,11 @@ jobs:
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
 
+      - name: Build Inspector adapter dependencies
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
+
       - name: Full turn
         working-directory: mcpjam-inspector
         env:
@@ -334,6 +339,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
+
+      - name: Build Inspector adapter dependencies
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
 
       - name: Full turn
         working-directory: mcpjam-inspector
