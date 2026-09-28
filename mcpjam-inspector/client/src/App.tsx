@@ -2844,37 +2844,6 @@ export default function App() {
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
-  // A guest whose row vanished was most likely promoted in another tab; a
-  // reload picks up the shared AuthKit session. Once per tab to avoid loops.
-  const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
-    try {
-      return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
-    } catch {
-      return true;
-    }
-  });
-  const shouldReloadForMissingGuest =
-    !isHostedChatRoute &&
-    isAuthenticated &&
-    !workOsUser &&
-    !isWorkOsLoading &&
-    currentUser === null &&
-    !isEnsuringUser &&
-    !isSignOutInProgress() &&
-    !guestReloadUsed;
-  useEffect(() => {
-    try {
-      if (shouldReloadForMissingGuest) {
-        sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
-        window.location.reload();
-      } else if (currentUser) {
-        sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
-      }
-    } catch {
-      // Without storage there is no loop guard: show the setup error instead.
-      setGuestReloadUsed(true);
-    }
-  }, [shouldReloadForMissingGuest, currentUser]);
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -3153,6 +3122,51 @@ export default function App() {
     isMcpOAuthCallback &&
     getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
+  // A guest whose row vanished was most likely promoted in another tab; a
+  // reload picks up the shared AuthKit session. Once per page load to avoid
+  // loops, and never on a one-shot callback URL.
+  const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
+    try {
+      return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
+    } catch {
+      return true;
+    }
+  });
+  const shouldReloadForMissingGuest =
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    !isMcpOAuthCallback &&
+    isAuthenticated &&
+    !workOsUser &&
+    !isWorkOsLoading &&
+    currentUser === null &&
+    isUserReady &&
+    !guestReloadUsed;
+  const hasCurrentUser = currentUser != null;
+  useEffect(() => {
+    if (!shouldReloadForMissingGuest) {
+      if (hasCurrentUser && guestReloadUsed) {
+        try {
+          sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
+        } catch {
+          // Nothing to re-arm without storage.
+        }
+        setGuestReloadUsed(false);
+      }
+      return;
+    }
+    try {
+      sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
+      window.location.reload();
+    } catch {
+      // Without storage there is no loop guard: show the setup error instead.
+      setGuestReloadUsed(true);
+      return;
+    }
+    // A cancelled unload leaves the page alive: fall back to the setup error.
+    const fallback = window.setTimeout(() => setGuestReloadUsed(true), 5_000);
+    return () => window.clearTimeout(fallback);
+  }, [shouldReloadForMissingGuest, hasCurrentUser, guestReloadUsed]);
 
   useEffect(() => {
     if (!isOAuthCallback) {
