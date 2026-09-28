@@ -3514,6 +3514,7 @@ describe("useServerState OAuth callback failures", () => {
   });
 
   it("can force onboarding OAuth without replacing the default account", async () => {
+    const { deleteServer } = await import("@/state/mcp-api");
     listOAuthConnectionsMock.mockResolvedValue({
       connections: [{ connectionId: "default-account", isDefault: true }],
       shared: false,
@@ -3529,6 +3530,8 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(listOAuthConnectionsMock).not.toHaveBeenCalled();
     expect(initiateOAuthMock).toHaveBeenCalled();
+    expect(clearOAuthDataMock).not.toHaveBeenCalled();
+    expect(deleteServer).not.toHaveBeenCalled();
   });
 
   it("keeps saved registry OAuth settings when forcing a fresh reconnect", async () => {
