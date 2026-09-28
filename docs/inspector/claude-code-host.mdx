@@ -260,11 +260,11 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 
 | Condition | What you see |
 |---|---|
-| The local runtime is not installed | The Native option is offered but not selectable, with an Install step in the authorization sheet. |
+| The local runtime is not yet installed | A **Set up** button appears in the composer. Click it to install and authorize without losing your draft. |
 | The runtime on disk does not match what this Inspector expects | Refused — reinstall it. MCPJam will not launch a runtime it cannot verify. |
 | Your platform cannot prove whole-tree cleanup | Native is not offered, and says why: MCPJam could not guarantee that stopping a session stops everything it started. |
-| The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
-| Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
+| Authorization cannot be renewed (account change, revocation, or eligibility check failure) | Refused — a failed eligibility check does not silently fall back to cloud. Use **Retry** in the composer notice or re-add the client. |
+| Guest or shared scenario session | Native is not offered; the turn runs hosted. |
 | The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
 | The environment selects a brokered secret | Refused before the turn starts — brokered secrets require cloud execution. Switch to a cloud run or change the secret's delivery to materialized. |
 
