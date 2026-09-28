@@ -76,6 +76,7 @@ import {
   buildLocalEvalRunReport,
   type LocalEvalRunMetadata,
 } from "./report.js";
+import { addServerConfigSecrets, createSecretScrubber } from "./secrets.js";
 import {
   createLocalToolPolicyGate,
   type LocalToolPolicyGate,
@@ -263,6 +264,16 @@ async function executeSuiteFile(
   // Steps 1–3. Throws before anything starts.
   const plan = preflightSuiteFile(sourceText, options);
 
+  // Every secret value this run was handed, scrubbed from everything it
+  // returns or throws — see `./secrets.ts`.
+  const secrets = createSecretScrubber();
+  for (const key of Object.values(options.inference?.providerKeys ?? {})) {
+    secrets.add(key);
+  }
+  for (const binding of Object.values(plan.bindings)) {
+    addServerConfigSecrets(secrets, binding.config);
+  }
+
   const warnings = [...plan.warnings];
   let observerFailed = false;
   const progress = (event: SuiteFileRunProgressEvent) => {
@@ -314,6 +325,22 @@ async function executeSuiteFile(
     } catch (error) {
       if (runController.signal.aborted) throw cancelledError("setup");
       throw error;
+    }
+    if (credentials.mcpjam) {
+      // Every bearer the platform callback hands out is a known secret from
+      // then on; the scope and every model share this one wrapped callback.
+      const readAuth = credentials.mcpjam.getAuth;
+      credentials = {
+        ...credentials,
+        mcpjam: {
+          ...credentials.mcpjam,
+          getAuth: async () => {
+            const token = await readAuth();
+            secrets.add(token);
+            return token;
+          },
+        },
+      };
     }
 
     manager = runtime.createClientManager
@@ -580,26 +607,35 @@ async function executeSuiteFile(
     }
   }
   if (failure !== undefined) {
-    if (failure instanceof SuiteFileRunError) throw failure;
+    if (failure instanceof SuiteFileRunError) {
+      throw new SuiteFileRunError({
+        code: failure.code,
+        phase: failure.phase,
+        category: failure.category,
+        message: secrets.scrub(failure.message),
+        details: secrets.scrubDeep(failure.details),
+      });
+    }
     if (runController.signal.aborted) throw cancelledError("setup");
     throw new SuiteFileRunError({
       code: "SETUP_FAILED",
       phase: "setup",
       category: "setup",
-      message: `Local run setup failed: ${messageOf(failure)}`,
-      cause: failure,
+      message: secrets.scrub(`Local run setup failed: ${messageOf(failure)}`),
     });
   }
 
   // ── 7. aggregate and report ────────────────────────────────────────────────
-  return finalize({
-    plan,
-    executed: executed!,
-    snapshot,
-    warnings,
-    startedAt,
-    now,
-  });
+  return secrets.scrubDeep(
+    finalize({
+      plan,
+      executed: executed!,
+      snapshot,
+      warnings,
+      startedAt,
+      now,
+    })
+  );
 }
 
 async function executeCases(args: {

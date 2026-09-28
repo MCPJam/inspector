@@ -234,3 +234,35 @@ describe("the local report", () => {
     expect(renderStructuredRunHtml(hosted)).not.toContain("Local run");
   });
 });
+
+describe("value-based scrubbing", () => {
+  it("scrubs a provider key quoted in a shape no pattern recognizes", async () => {
+    const result = await run(() => ({
+      error: new Error(`invalid x-api-key ${PROVIDER_KEY} for this org`),
+    }));
+    const text = JSON.stringify(result);
+    expect(text).not.toContain(PROVIDER_KEY);
+    expect(text).toContain("[REDACTED]");
+  });
+
+  it("scrubs server credentials from refusals", async () => {
+    const { run: runner } = createSuiteFileRunner({
+      createLanguageModel: (model) => scriptedModel(model, reads) as never,
+    });
+    const error = await runner(SUITE, {
+      servers: {
+        notes: {
+          config: {
+            url: "http://127.0.0.1:9/mcp?token=srv_token_123456",
+            requestInit: { headers: { "x-server-secret": "hdr_secret_abcdef" } },
+          },
+        },
+      },
+      inference: { mode: "byok", providerKeys: { anthropic: PROVIDER_KEY } },
+      setupTimeoutMs: 2000,
+    }).catch((caught: Error) => caught);
+    const text = `${error.message} ${JSON.stringify((error as { details?: unknown }).details)}`;
+    expect(text).not.toContain("srv_token_123456");
+    expect(text).not.toContain("hdr_secret_abcdef");
+  });
+});
