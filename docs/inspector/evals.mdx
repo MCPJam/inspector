@@ -617,7 +617,7 @@ Click a **test case name** to open its definition — the user prompt, checks, a
 
 For CI-managed (SDK) suites, clicking a test name still opens the definition in read-only mode — configuration edits remain locked, but you can inspect the prompt and checks.
 
-- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row. When execution provenance is recorded, the row also shows a **Ran on \<model\> via \<rail/connection\>** line with harness version, effort, temperature, and max output. A deviation banner appears when the actual execution differed from the configured settings. Rows recorded before provenance was introduced show nothing.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
