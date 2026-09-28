@@ -95,10 +95,10 @@ describe("summarizePredicate", () => {
     expect(summarizePredicate({ type: "noToolErrors" })).toBe("no tool errors");
   });
 
-  it("summarizes toolArgumentsMatch by matching calls, not all calls", () => {
+  it("summarizes toolInputMatches by matching calls, not all calls", () => {
     expect(
       summarizePredicate({
-        type: "toolArgumentsMatch",
+        type: "toolInputMatches",
         toolName: "create_view",
         patterns: ["Idea", "Build"],
         flags: "i",
@@ -108,17 +108,48 @@ describe("summarizePredicate", () => {
     );
     expect(
       summarizePredicate({
-        type: "toolArgumentsMatch",
+        type: "toolInputMatches",
         toolName: "create_view",
         patterns: ["secret"],
+        path: "/elements",
         min: 0,
         max: 0,
       }),
-    ).toBe("no matching call to create_view whose arguments match /secret/");
+    ).toBe(
+      'no matching call to create_view whose "elements" argument matches /secret/',
+    );
     expect(
       summarizePredicate({
-        type: "toolArgumentsMatch",
+        type: "toolInputMatches",
         toolName: "create_view",
+      } as unknown as Predicate),
+    ).toBe("");
+  });
+
+  it("summarizes toolResultMatches by matching results, not all results", () => {
+    expect(
+      summarizePredicate({
+        type: "toolResultMatches",
+        patterns: ["open"],
+      }),
+    ).toBe(
+      "at least 1 matching result(s) from any tool whose content matches /open/",
+    );
+    expect(
+      summarizePredicate({
+        type: "toolResultMatches",
+        toolName: "search",
+        patterns: ["secret"],
+        path: "/status",
+        min: 0,
+        max: 0,
+      }),
+    ).toBe(
+      'no matching result from search whose "status" field matches /secret/',
+    );
+    expect(
+      summarizePredicate({
+        type: "toolResultMatches",
       } as unknown as Predicate),
     ).toBe("");
   });

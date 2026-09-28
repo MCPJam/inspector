@@ -62,13 +62,13 @@ describe("observation kinds", () => {
   });
 });
 
-describe("toolArgumentsMatch", () => {
+describe("toolInputMatches", () => {
   it("seeds one empty pattern and writes no defaults", () => {
     // The predicate is the criterion's identity: a blank that wrote `min: 1`
     // or a flag would mint a different id from the same check authored
     // anywhere that omits them.
-    expect(blankPredicate("toolArgumentsMatch")).toEqual({
-      type: "toolArgumentsMatch",
+    expect(blankPredicate("toolInputMatches")).toEqual({
+      type: "toolInputMatches",
       toolName: "",
       patterns: [""],
     });
@@ -78,7 +78,7 @@ describe("toolArgumentsMatch", () => {
     const format = (over: object) =>
       formatCriterion({
         predicate: {
-          type: "toolArgumentsMatch",
+          type: "toolInputMatches",
           toolName: "create_view",
           patterns: ["Idea", "Build", "Ship"],
           ...over,
@@ -87,8 +87,12 @@ describe("toolArgumentsMatch", () => {
     expect(format({ flags: "i" })).toBe(
       "At least 1 matching call(s) to create_view whose arguments match all of /Idea/i, /Build/i, /Ship/i",
     );
-    expect(format({ patterns: ["Idea"], argument: "elements" })).toBe(
+    // The key the pointer names, never the pointer.
+    expect(format({ patterns: ["Idea"], path: "/elements" })).toBe(
       'At least 1 matching call(s) to create_view whose "elements" argument matches /Idea/',
+    );
+    expect(format({ patterns: ["Idea"], path: "/a~1b~0c" })).toBe(
+      'At least 1 matching call(s) to create_view whose "a/b~c" argument matches /Idea/',
     );
     expect(format({ min: 2, max: 2 })).toMatch(/^Exactly 2 matching call/);
     // `0/0` is "no call matches", never "never called".
@@ -102,8 +106,56 @@ describe("toolArgumentsMatch", () => {
   it("falls back to the kind label for a row missing its patterns", () => {
     expect(
       formatCriterion({
-        predicate: { type: "toolArgumentsMatch", toolName: "x" } as never,
+        predicate: { type: "toolInputMatches", toolName: "x" } as never,
       }),
-    ).toBe("Tool arguments match pattern(s) (x)");
+    ).toBe("Tool input matches pattern(s) (x)");
+  });
+});
+
+describe("toolResultMatches", () => {
+  it("seeds one empty pattern, no tool and no defaults", () => {
+    // No `toolName` is "every tool's results", the editor's "Any tool".
+    expect(blankPredicate("toolResultMatches")).toEqual({
+      type: "toolResultMatches",
+      patterns: [""],
+    });
+  });
+
+  it("formats a counting-exact sentence over results", () => {
+    const format = (over: object) =>
+      formatCriterion({
+        predicate: {
+          type: "toolResultMatches",
+          patterns: ["ISS-\\d+", "open"],
+          ...over,
+        } as never,
+      });
+    expect(format({})).toBe(
+      "At least 1 matching result(s) from any tool whose content matches all of /ISS-\\d+/, /open/",
+    );
+    expect(
+      format({ toolName: "search", patterns: ["open"], path: "/status" }),
+    ).toBe(
+      'At least 1 matching result(s) from search whose "status" field matches /open/',
+    );
+    // `0/0` is "no result matches", never "returned nothing".
+    const none = format({ patterns: ["secret"], min: 0, max: 0 });
+    expect(none).toBe(
+      "No matching result from any tool whose content matches /secret/",
+    );
+    expect(none).not.toMatch(/nothing|never/i);
+  });
+
+  it("falls back to the kind label for a row missing its patterns", () => {
+    expect(
+      formatCriterion({
+        predicate: { type: "toolResultMatches" } as never,
+      }),
+    ).toBe("Tool output matches pattern(s)");
+    expect(
+      formatCriterion({
+        predicate: { type: "toolResultMatches", toolName: "x" } as never,
+      }),
+    ).toBe("Tool output matches pattern(s) (x)");
   });
 });

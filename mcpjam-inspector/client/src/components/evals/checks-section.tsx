@@ -51,14 +51,18 @@ import type {
   CasePredicates,
 } from "@/shared/eval-matching";
 import {
-  MAX_TOOL_ARGUMENT_NAME_CHARS,
-  MAX_TOOL_ARGUMENT_PATTERN_CHARS,
-  MAX_TOOL_ARGUMENT_PATTERNS,
+  MATCH_PATTERN_FLAGS,
+  matchBoundsError,
+  matchPathError,
+  matchPathFromKey,
+  matchPatternError,
+  MAX_MATCH_PATH_CHARS,
+  MAX_MATCH_PATTERN_CHARS,
+  MAX_MATCH_PATTERNS,
+  parseMatchPath,
   predicateSchema,
-  TOOL_ARGUMENT_PATTERN_FLAGS,
-  toolArgumentPatternError,
-  toolArgumentsMatchBoundsError,
-  type ToolArgumentPatternFlags,
+  type MatchPatternFlags,
+  type MatchUnit,
 } from "@mcpjam/sdk/predicates";
 import { OverrideBadge } from "./override-badge";
 import { cn } from "@/lib/utils";
@@ -104,6 +108,12 @@ export interface ChecksSectionProps {
   availableTools?: string[];
   /** Per-tool input-schema properties, for the argument-name dropdown. */
   toolArgSchemas?: ToolArgSchemas;
+  /**
+   * Per-tool output-schema properties, for the output pattern check's field
+   * picker. Only tools that declare an output schema appear; the rest get
+   * free text.
+   */
+  toolOutputSchemas?: ToolArgSchemas;
   /** Header label override. */
   title?: string;
   /** Subtitle/explainer. */
@@ -199,9 +209,11 @@ const FIELD_OWNED_PATHS: ReadonlySet<string> = new Set([
   "beforeToolName",
   "needle",
   "pattern",
-  // `toolArgumentsMatch`: one issue path covers every pattern row, so the
-  // rows say which one is wrong; the count fields word their own bounds.
+  // `toolInputMatches` / `toolResultMatches`: one issue path covers every
+  // pattern row, so the rows say which one is wrong; the count fields word
+  // their own bounds, and the path field its own pointer.
   "patterns",
+  "path",
   "min",
   "max",
 ]);
@@ -222,6 +234,7 @@ export function ChecksSection({
   onChange,
   availableTools,
   toolArgSchemas,
+  toolOutputSchemas,
   title = "Default checks",
   description,
   emptyStateText,
@@ -335,6 +348,7 @@ export function ChecksSection({
                   }
                   availableTools={availableTools}
                   toolArgSchemas={toolArgSchemas}
+                  toolOutputSchemas={toolOutputSchemas}
                   readOnly={
                     readOnly ||
                     (globalGatesMenu && isScenarioPredicateKind(predicate.type))
@@ -436,6 +450,8 @@ export interface CheckRowProps {
    */
   widgetToolNames?: string[];
   toolArgSchemas?: ToolArgSchemas;
+  /** @see ChecksSectionProps.toolOutputSchemas */
+  toolOutputSchemas?: ToolArgSchemas;
   readOnly?: boolean;
   /** Strip outer card chrome + kind header when nested in a step or the scorer table. */
   embedded?: boolean;
@@ -456,6 +472,7 @@ export function CheckRow({
   availableTools,
   widgetToolNames,
   toolArgSchemas,
+  toolOutputSchemas,
   readOnly = false,
   embedded = false,
   legacyScenarioGate = false,
@@ -557,6 +574,7 @@ export function CheckRow({
               availableTools={availableTools}
               widgetToolNames={widgetToolNames}
               toolArgSchemas={toolArgSchemas}
+              toolOutputSchemas={toolOutputSchemas}
               readOnly={readOnly}
               compactGlobalGate={globalGate}
             />
@@ -701,6 +719,7 @@ function CheckFields({
   availableTools,
   widgetToolNames,
   toolArgSchemas,
+  toolOutputSchemas,
   readOnly,
   compactGlobalGate = false,
 }: {
@@ -709,6 +728,7 @@ function CheckFields({
   availableTools?: string[];
   widgetToolNames?: string[];
   toolArgSchemas?: ToolArgSchemas;
+  toolOutputSchemas?: ToolArgSchemas;
   readOnly: boolean;
   compactGlobalGate?: boolean;
 }) {
@@ -1021,13 +1041,18 @@ function CheckFields({
           readOnly={readOnly}
         />
       );
-    case "toolArgumentsMatch":
+    case "toolInputMatches":
+    case "toolResultMatches":
       return (
-        <ToolArgumentsMatchFields
+        <PatternMatchFields
           predicate={predicate}
           onChange={onChange}
           availableTools={availableTools}
-          toolArgSchemas={toolArgSchemas}
+          pathSchemas={
+            predicate.type === "toolInputMatches"
+              ? toolArgSchemas
+              : toolOutputSchemas
+          }
           readOnly={readOnly}
         />
       );
@@ -1889,9 +1914,9 @@ function ResponseMatchesFields({
   );
 }
 
-type ToolArgumentsMatchPredicate = Extract<
+type PatternMatchPredicate = Extract<
   Predicate,
-  { type: "toolArgumentsMatch" }
+  { type: "toolInputMatches" | "toolResultMatches" }
 >;
 
 /** The flag letters, in the one order the wire accepts. */
@@ -1905,19 +1930,48 @@ type PatternFlagLetter = (typeof PATTERN_FLAG_LETTERS)[number];
  */
 function patternFlagsOf(
   letters: ReadonlySet<PatternFlagLetter>,
-): ToolArgumentPatternFlags | undefined {
+): MatchPatternFlags | undefined {
   const spelled = PATTERN_FLAG_LETTERS.filter((l) => letters.has(l)).join("");
-  return TOOL_ARGUMENT_PATTERN_FLAGS.find((flags) => flags === spelled);
+  return MATCH_PATTERN_FLAGS.find((flags) => flags === spelled);
 }
+
+/**
+ * The words that differ between the two pattern checks. Everything else —
+ * the pattern list, the flags, the bounds rule — is one control, and the unit
+ * (`"call"` or `"result"`) fills in the rest.
+ */
+const PATTERN_MATCH_COPY: Record<
+  MatchUnit,
+  {
+    pathLabel: string;
+    whole: string;
+    placeholders: readonly [string, string];
+    /** What `0/0` does NOT mean, after "not that". */
+    notZero: string;
+  }
+> = {
+  call: {
+    pathLabel: "Argument",
+    whole: "Whole input",
+    placeholders: ["e.g. Idea", "e.g. Build|Ship"],
+    notZero: "the tool was never called",
+  },
+  result: {
+    pathLabel: "Field",
+    whole: "Whole output",
+    placeholders: ["e.g. ISS-\\d+", "e.g. open|closed"],
+    notZero: "the tool returned nothing",
+  },
+};
 
 /**
  * A re2js compile error in words an author can act on. re2js is linear-time,
  * so it has no lookaround and no backreferences — the two JavaScript idioms
  * someone is most likely to type, and the two its own message names worst.
  */
-function patternErrorCopy(error: string): string {
+function patternErrorCopy(error: string, unit: MatchUnit): string {
   if (/`\(\?<?[=!]/.test(error)) {
-    return "Lookahead and lookbehind aren't supported. To require two things in the same call, add another pattern.";
+    return `Lookahead and lookbehind aren't supported. To require two things in the same ${unit}, add another pattern.`;
   }
   if (/invalid escape sequence: `\\[1-9]/.test(error)) {
     return "Backreferences like \\1 aren't supported.";
@@ -1933,56 +1987,102 @@ function patternRowError(
   pattern: string,
   compileError: string | undefined,
   emptyError: string | null,
+  unit: MatchUnit,
 ): string | null {
-  if (compileError !== undefined) return patternErrorCopy(compileError);
-  if (pattern.length > MAX_TOOL_ARGUMENT_PATTERN_CHARS) {
-    return `At most ${MAX_TOOL_ARGUMENT_PATTERN_CHARS} characters`;
+  if (compileError !== undefined) return patternErrorCopy(compileError, unit);
+  if (pattern.length > MAX_MATCH_PATTERN_CHARS) {
+    return `At most ${MAX_MATCH_PATTERN_CHARS} characters`;
   }
   return pattern === "" ? emptyError : null;
 }
 
-/** Which top-level key the patterns read, or the whole arguments object. */
-function ToolArgumentField({
-  value,
+/**
+ * Why a stored `path` cannot be saved, in words about the KEY the author sees.
+ *
+ * A typed key always becomes a well-formed pointer — `matchPathFromKey`
+ * escapes every `/` and `~` — so the one fault typing can reach is length,
+ * where each escape counts twice. Anything else is a row another writer
+ * stored, and `matchPathError` says what is wrong with it as it stands.
+ */
+function matchPathErrorCopy(path: string): string | null {
+  const error = matchPathError(path);
+  if (error === undefined) return null;
+  if (path.length > MAX_MATCH_PATH_CHARS) {
+    const most = MAX_MATCH_PATH_CHARS - 1;
+    return `At most ${most} characters; a "/" or "~" in the name counts as two.`;
+  }
+  return error;
+}
+
+/**
+ * Which top-level key the patterns read, or the whole input or output.
+ *
+ * The author picks or types the KEY and sees the key; the predicate stores
+ * the one-key JSON Pointer `matchPathFromKey` spells for it (`elements` →
+ * `/elements`, `a/b` → `/a~1b`). The pointer is a storage detail: nobody
+ * should need to know that a `/` inside a key is written `~1`.
+ */
+function MatchPathField({
+  path,
   onChange,
-  argNames,
+  keys,
+  label,
+  wholeLabel,
   readOnly,
 }: {
-  value: string | undefined;
+  path: string | undefined;
   onChange: (next: string | undefined) => void;
-  /** Keys from the chosen tool's input schema; empty means free text. */
-  argNames: string[];
+  /** Keys from the chosen tool's schema; empty means free text. */
+  keys: string[];
+  label: string;
+  wholeLabel: string;
   readOnly: boolean;
 }) {
   const id = useId();
+  const errorId = `${id}-error`;
+  const parsed = path === undefined ? undefined : parseMatchPath(path);
+  // A stored pointer that does not parse is shown as stored, beside why,
+  // rather than decoded into a key it does not name.
+  const shown =
+    parsed === undefined ? undefined : parsed.ok ? parsed.key : path;
+  const error = path === undefined ? null : matchPathErrorCopy(path);
+  const setKey = (key: string | undefined) =>
+    onChange(
+      key === undefined || key === "" ? undefined : matchPathFromKey(key),
+    );
   // Same encoding as `ResultToolFilterField`: the sentinel is unprefixed, so
-  // no argument name — not even one spelled "whole" — can collide with it.
+  // no key — not even one spelled "whole" — can collide with it.
   const WHOLE = "whole";
-  const encode = (name: string) => `arg:${name}`;
+  const encode = (key: string) => `key:${key}`;
   const decode = (option: string) =>
-    option === WHOLE ? undefined : option.slice("arg:".length);
+    option === WHOLE ? undefined : option.slice("key:".length);
   // A saved key the schema no longer lists stays selectable, or the trigger
   // would show nothing for a check that still reads it.
   const names =
-    value !== undefined && !argNames.includes(value)
-      ? [value, ...argNames]
-      : argNames;
+    shown !== undefined && !keys.includes(shown) ? [shown, ...keys] : keys;
+  const usePicker = keys.length > 0 && !readOnly && parsed?.ok !== false;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Argument
+        {label}
       </Label>
-      {argNames.length > 0 && !readOnly ? (
+      {usePicker ? (
         <Select
-          value={value === undefined ? WHOLE : encode(value)}
-          onValueChange={(next) => onChange(decode(next))}
+          value={shown === undefined ? WHOLE : encode(shown)}
+          onValueChange={(next) => setKey(decode(next))}
         >
-          <SelectTrigger id={id} className="h-8 text-xs" aria-label="Argument">
+          <SelectTrigger
+            id={id}
+            className="h-8 text-xs"
+            aria-label={label}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={WHOLE} className="text-xs">
-              Whole arguments
+              {wholeLabel}
             </SelectItem>
             {names.map((name) => (
               <SelectItem
@@ -1998,45 +2098,58 @@ function ToolArgumentField({
       ) : (
         <Input
           id={id}
-          value={value ?? ""}
-          aria-label="Argument"
-          maxLength={MAX_TOOL_ARGUMENT_NAME_CHARS}
-          onChange={(e) =>
-            onChange(e.target.value === "" ? undefined : e.target.value)
-          }
-          placeholder="Whole arguments"
+          value={shown ?? ""}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          maxLength={MAX_MATCH_PATH_CHARS - 1}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder={wholeLabel}
           className="h-8 font-mono text-xs"
           disabled={readOnly}
         />
       )}
+      {error ? (
+        <p id={errorId} className="text-[11px] text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 /**
- * `toolArgumentsMatch`: what went INTO a call, checked with patterns.
+ * `toolInputMatches` and `toolResultMatches`: what went INTO a call, or what
+ * came back in a result, checked with patterns. One editor, because the two
+ * share every rule but their unit — a call, or a result — and their tool
+ * field: input names the tool it reads, output may read any tool's results.
  *
- * The everyday fields are the tool, the argument, the pattern list and Ignore
+ * The everyday fields are the tool, the path, the pattern list and Ignore
  * case; the other two flags and the count sit behind "More options", because
- * the default — at least one call matches every pattern — is what almost
- * every author means.
+ * the default — at least one call (or result) matches every pattern — is what
+ * almost every author means.
  *
  * Every edit goes through `update`, which DROPS an optional field the author
  * emptied rather than writing its default: the predicate is the criterion's
  * identity, so `min: 1` beside an omitted `min` would be two ids for one
  * check.
  */
-export function ToolArgumentsMatchFields({
+export function PatternMatchFields({
   predicate,
   onChange,
   availableTools,
-  toolArgSchemas,
+  pathSchemas,
   readOnly,
 }: {
-  predicate: ToolArgumentsMatchPredicate;
+  predicate: PatternMatchPredicate;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
-  toolArgSchemas?: ToolArgSchemas;
+  /**
+   * Per-tool schema `properties` for the path picker: the input schema's for
+   * `toolInputMatches`, the declared output schema's for `toolResultMatches`.
+   * A tool missing here, or no tool at all, gets free text.
+   */
+  pathSchemas?: ToolArgSchemas;
   readOnly: boolean;
 }) {
   const patternsLabelId = useId();
@@ -2046,6 +2159,9 @@ export function ToolArgumentsMatchFields({
   const dotAllId = useId();
   const minId = useId();
   const maxId = useId();
+  const unit: MatchUnit =
+    predicate.type === "toolInputMatches" ? "call" : "result";
+  const copy = PATTERN_MATCH_COPY[unit];
   const patterns = predicate.patterns;
   const flags = predicate.flags;
   const letters = new Set(
@@ -2059,12 +2175,12 @@ export function ToolArgumentsMatchFields({
       predicate.max !== undefined,
   );
 
-  const update = (patch: Partial<ToolArgumentsMatchPredicate>) => {
-    const next = { ...predicate, ...patch };
-    for (const key of ["flags", "argument", "min", "max"] as const) {
+  const update = (patch: Partial<PatternMatchPredicate>) => {
+    const next: Record<string, unknown> = { ...predicate, ...patch };
+    for (const key of ["toolName", "flags", "path", "min", "max"]) {
       if (next[key] === undefined) delete next[key];
     }
-    onChange(next);
+    onChange(next as Predicate);
   };
   const setFlag = (letter: PatternFlagLetter, on: boolean) => {
     const next = new Set(letters);
@@ -2080,12 +2196,30 @@ export function ToolArgumentsMatchFields({
     update(key === "min" ? { min: n } : { max: n });
   };
 
+  const parsedPath =
+    predicate.path === undefined ? undefined : parseMatchPath(predicate.path);
+  const pathKey = parsedPath?.ok ? parsedPath.key : undefined;
+  const setTool = (toolName: string | undefined) => {
+    // A key the new tool's schema does not declare would leave every unit
+    // "missing" it; a tool with no known schema, or any tool, keeps the key.
+    const known = toolName ? pathSchemas?.[toolName] : undefined;
+    const keep =
+      predicate.path === undefined ||
+      !known ||
+      (pathKey !== undefined &&
+        Object.prototype.hasOwnProperty.call(known, pathKey));
+    update({ toolName, path: keep ? predicate.path : undefined });
+  };
+  const pathKeys = Object.keys(
+    (predicate.toolName ? pathSchemas?.[predicate.toolName] : undefined) ?? {},
+  );
+
   // Compiled live, with the flags the evaluator will use: the same call the
   // schema makes, so a row this marks valid is one Save accepts. The schema
   // refuses the predicate too, which is what blocks Save; registering the
   // draft keeps a caller that listens only to `onDraftValidityChange` honest.
   const compileErrors = patterns.map((pattern) =>
-    pattern ? toolArgumentPatternError(pattern, flags) : undefined,
+    pattern ? matchPatternError(pattern, flags) : undefined,
   );
   useInvalidDraftRegistration(
     !readOnly && compileErrors.some((error) => error !== undefined),
@@ -2100,42 +2234,43 @@ export function ToolArgumentsMatchFields({
   // Bounds are worded here, beside the inputs, rather than in the row-level
   // line: the schema only reaches its bounds rule once every other field
   // parses, and "at least 0 on its own" deserves saying while it is typed.
-  const bounds = toolArgumentsMatchBoundsError(predicate.min, predicate.max);
+  const bounds = matchBoundsError(predicate.min, predicate.max, unit);
   const countFallback = "Enter a whole number, 0 or more";
   const minIssue = useFieldValidation("min", countFallback).error;
   const maxIssue = useFieldValidation("max", countFallback).error;
   let countError = minIssue ?? maxIssue;
   if (bounds?.path === "min") {
-    countError =
-      '"At least 0" needs an "at most" too: on its own it passes every transcript.';
+    countError = `"At least 0" needs an "at most" too: on its own it passes every transcript. Set "at most" to 0 for "no ${unit} matches".`;
   } else if (bounds) {
     const floor = predicate.min ?? "1 when left empty";
     countError = `"At most" can't be below "at least" (${floor}).`;
   }
 
-  const argNames = Object.keys(toolArgSchemas?.[predicate.toolName] ?? {});
-
   return (
     <div className="space-y-3">
-      <ToolNameField
-        value={predicate.toolName}
-        onChange={(toolName) => {
-          // A key the new tool's schema does not declare would leave every
-          // call "missing" it; a tool with no known schema keeps the key.
-          const known = toolArgSchemas?.[toolName];
-          const keep =
-            predicate.argument === undefined ||
-            !known ||
-            Object.prototype.hasOwnProperty.call(known, predicate.argument);
-          update({ toolName, argument: keep ? predicate.argument : undefined });
-        }}
-        availableTools={availableTools}
-        readOnly={readOnly}
-      />
-      <ToolArgumentField
-        value={predicate.argument}
-        onChange={(argument) => update({ argument })}
-        argNames={argNames}
+      {unit === "call" ? (
+        <ToolNameField
+          value={predicate.toolName ?? ""}
+          onChange={setTool}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : (
+        <ResultToolFilterField
+          label="Tool"
+          anyLabel="Any tool"
+          value={predicate.toolName}
+          onChange={setTool}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      )}
+      <MatchPathField
+        path={predicate.path}
+        onChange={(path) => update({ path })}
+        keys={pathKeys}
+        label={copy.pathLabel}
+        wholeLabel={copy.whole}
         readOnly={readOnly}
       />
       <div className="space-y-1.5">
@@ -2143,7 +2278,7 @@ export function ToolArgumentsMatchFields({
           Patterns
         </Label>
         <p className="text-[11px] text-muted-foreground">
-          A call passes only if it matches every pattern. Use{" "}
+          A {unit} passes only if it matches every pattern. Use{" "}
           <code className="font-mono">A|B</code> for either.
         </p>
         <ul aria-labelledby={patternsLabelId} className="space-y-1.5">
@@ -2153,6 +2288,7 @@ export function ToolArgumentsMatchFields({
               pattern,
               compileErrors[index],
               emptyError,
+              unit,
             );
             return (
               // Index keys are safe: a row holds no state of its own, so a
@@ -2165,13 +2301,13 @@ export function ToolArgumentsMatchFields({
                     aria-label={`Pattern ${index + 1}`}
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? `${rowId}-error` : undefined}
-                    maxLength={MAX_TOOL_ARGUMENT_PATTERN_CHARS}
+                    maxLength={MAX_MATCH_PATTERN_CHARS}
                     onChange={(e) => {
                       markTouched();
                       setPattern(index, e.target.value);
                     }}
                     onBlur={markTouched}
-                    placeholder={index === 0 ? "e.g. Idea" : "e.g. Build|Ship"}
+                    placeholder={copy.placeholders[index === 0 ? 0 : 1]}
                     className="h-8 font-mono text-xs"
                     disabled={readOnly}
                   />
@@ -2205,9 +2341,9 @@ export function ToolArgumentsMatchFields({
             );
           })}
         </ul>
-        {patterns.length > MAX_TOOL_ARGUMENT_PATTERNS ? (
+        {patterns.length > MAX_MATCH_PATTERNS ? (
           <p className="text-[11px] text-destructive">
-            At most {MAX_TOOL_ARGUMENT_PATTERNS} patterns.
+            At most {MAX_MATCH_PATTERNS} patterns.
           </p>
         ) : null}
         {readOnly ? null : (
@@ -2217,7 +2353,7 @@ export function ToolArgumentsMatchFields({
             size="sm"
             className="h-7 gap-1 text-xs"
             onClick={() => update({ patterns: [...patterns, ""] })}
-            disabled={patterns.length >= MAX_TOOL_ARGUMENT_PATTERNS}
+            disabled={patterns.length >= MAX_MATCH_PATTERNS}
           >
             <Plus className="h-3.5 w-3.5" />
             Add pattern
@@ -2271,7 +2407,7 @@ export function ToolArgumentsMatchFields({
           </div>
           <fieldset className="space-y-1.5">
             <legend className="text-[11px] font-medium text-foreground">
-              Matching calls
+              Matching {unit}s
             </legend>
             <div className="flex flex-wrap items-center gap-2">
               <Label htmlFor={minId} className="text-[11px]">
@@ -2306,9 +2442,9 @@ export function ToolArgumentsMatchFields({
               />
             </div>
             <p>
-              Counts only calls that match every pattern, not all calls. At
-              least 0 and at most 0 means no call matches &mdash; not that the
-              tool was never called.
+              Counts only {unit}s that match every pattern, not all {unit}s. At
+              least 0 and at most 0 means no {unit} matches &mdash; not that{" "}
+              {copy.notZero}.
             </p>
             {countError ? (
               <p role="alert" className="text-destructive">
@@ -2442,6 +2578,7 @@ function ResultToolFilterField({
   availableTools,
   readOnly,
   label = "Limit to tool (optional)",
+  anyLabel = "All tools",
 }: {
   value: string | undefined;
   onChange: (next: string | undefined) => void;
@@ -2453,6 +2590,8 @@ function ResultToolFilterField({
    * reader, which is the whole of the ordering rule's UI.
    */
   label?: string;
+  /** The no-filter choice, e.g. "Any tool" where one matching result is enough. */
+  anyLabel?: string;
 }) {
   const id = useId();
   // The all-tools option and a real tool name live in ONE value space, so the
@@ -2480,7 +2619,7 @@ function ResultToolFilterField({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL} className="text-xs">
-              All tools
+              {anyLabel}
             </SelectItem>
             {availableTools!.map((t) => (
               <SelectItem key={t} value={encode(t)} className="text-xs">
@@ -2497,7 +2636,7 @@ function ResultToolFilterField({
           onChange={(e) =>
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
-          placeholder="All tools"
+          placeholder={anyLabel}
           className="h-8 text-xs"
           disabled={readOnly}
         />

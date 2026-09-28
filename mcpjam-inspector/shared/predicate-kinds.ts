@@ -4,10 +4,11 @@
 
 import type { Predicate } from "@/shared/eval-matching";
 import {
-  describeToolArgumentsMatchExpectation,
+  describeMatchExpectation,
   isObservationPredicateKind,
   isTurnScopablePredicateKind,
   OBSERVATION_PREDICATE_KINDS,
+  parseMatchPath,
   TURN_SCOPABLE_PREDICATE_KINDS,
 } from "@mcpjam/sdk/predicates";
 
@@ -79,6 +80,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   // ── Response: what the server answered with ─────────────────────────────
   toolLatencyUnder: "Tool call under N ms",
   toolResultContains: "Tool result contains…",
+  toolResultMatches: "Tool output matches pattern(s)",
   toolResultMatchesSchema: "Tool result matches schema…",
   toolResultSizeUnder: "Tool result under N bytes",
   // Labels say what was SEEN. None of the observations below may name what it
@@ -89,7 +91,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   fullPageHasContinuation: "Full pages carry continuation metadata",
   // ── Tool call: was the call itself well formed ──────────────────────────
   argumentsMatchToolSchema: "Arguments match the tool's schema",
-  toolArgumentsMatch: "Tool arguments match pattern(s)",
+  toolInputMatches: "Tool input matches pattern(s)",
   noRepeatedIdenticalCall: "No identical call repeated back-to-back",
   // ── Selection: which tools the run reached ──────────────────────────────
   toolCallCountUnder: "Fewer than N tool calls",
@@ -149,11 +151,12 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "toolLatencyUnder",
   "toolResultSizeUnder",
   "toolResultContains",
+  "toolResultMatches",
   "toolResultMatchesSchema",
   "toolErrorNamesInput",
   "fullPageHasContinuation",
   "argumentsMatchToolSchema",
-  "toolArgumentsMatch",
+  "toolInputMatches",
   "noRepeatedIdenticalCall",
   "toolCallCountUnder",
   "toolCalledBefore",
@@ -308,6 +311,11 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "toolLatencyUnder", ms: 3000 };
     case "toolResultContains":
       return { type: "toolResultContains", needle: "" };
+    // No `toolName`: omitted means every tool's results, and the editor's
+    // "Any tool" is that omission. Defaults stay unwritten, for the reason
+    // given at `toolInputMatches` below.
+    case "toolResultMatches":
+      return { type: "toolResultMatches", patterns: [""] };
     case "toolResultMatchesSchema":
       return {
         type: "toolResultMatchesSchema",
@@ -329,8 +337,8 @@ export function blankPredicate(kind: PredicateKind): Predicate {
     // unwritten rather than seeded with their defaults: the predicate is the
     // criterion's identity, so a blank that wrote `min: 1` would mint a
     // different id from the same check authored anywhere that omits it.
-    case "toolArgumentsMatch":
-      return { type: "toolArgumentsMatch", toolName: "", patterns: [""] };
+    case "toolInputMatches":
+      return { type: "toolInputMatches", toolName: "", patterns: [""] };
     case "toolCallCountUnder":
       return { type: "toolCallCountUnder", count: 10 };
     case "toolCalledBefore":
@@ -456,8 +464,9 @@ export function formatCriterion(
       return predicate.toolName && predicate.beforeToolName
         ? `${predicate.toolName} called before ${predicate.beforeToolName}`
         : base;
-    case "toolArgumentsMatch": {
-      const sentence = describeToolArgumentsMatch(predicate);
+    case "toolInputMatches":
+    case "toolResultMatches": {
+      const sentence = describePatternMatch(predicate);
       if (sentence) return sentence[0]!.toUpperCase() + sentence.slice(1);
       return predicate.toolName ? `${base} (${predicate.toolName})` : base;
     }
@@ -473,32 +482,59 @@ function shownPattern(pattern: string, flags: string): string {
 }
 
 /**
- * A `toolArgumentsMatch` check in one counting-exact sentence, or `undefined`
- * when a stored row lost the fields it needs.
+ * A `toolInputMatches` or `toolResultMatches` check in one counting-exact
+ * sentence, or `undefined` when a stored row lost the fields it needs.
  *
  * It always says "matching", and says what a match is: `min`/`max` count the
- * calls whose arguments match EVERY pattern, never all calls. "No matching
- * call" is the `0/0` spelling — a reader who took it for "never called" would
- * read a pass beside a transcript full of calls as a contradiction.
+ * calls (or results) that match EVERY pattern, never all of them. "No
+ * matching call" is the `0/0` spelling — a reader who took it for "never
+ * called" would read a pass beside a transcript full of calls as a
+ * contradiction. A `path` shows as the key it names, never as the pointer.
  */
-export function describeToolArgumentsMatch(
-  predicate: Extract<Predicate, { type: "toolArgumentsMatch" }>,
+export function describePatternMatch(
+  predicate: Extract<
+    Predicate,
+    { type: "toolInputMatches" | "toolResultMatches" }
+  >,
 ): string | undefined {
   const { toolName, patterns } = predicate;
-  if (!toolName || !Array.isArray(patterns) || patterns.length === 0) {
-    return undefined;
-  }
+  const isInput = predicate.type === "toolInputMatches";
+  if (isInput && !toolName) return undefined;
+  if (!Array.isArray(patterns) || patterns.length === 0) return undefined;
   const flags = typeof predicate.flags === "string" ? predicate.flags : "";
   const shown = patterns.map((p) => shownPattern(String(p), flags)).join(", ");
   const all = patterns.length === 1 ? "" : "all of ";
-  const subject = predicate.argument
-    ? `whose "${predicate.argument}" argument matches ${all}`
-    : `whose arguments match ${all}`;
-  const expectation = describeToolArgumentsMatchExpectation({
-    min: typeof predicate.min === "number" ? predicate.min : 1,
-    max: typeof predicate.max === "number" ? predicate.max : undefined,
-  });
-  return `${expectation} to ${toolName} ${subject}${shown}`;
+  const key = pathKey(predicate.path);
+  const expectation = describeMatchExpectation(
+    {
+      min: typeof predicate.min === "number" ? predicate.min : 1,
+      max: typeof predicate.max === "number" ? predicate.max : undefined,
+    },
+    isInput ? "call" : "result",
+  );
+  if (isInput) {
+    const subject =
+      key === undefined
+        ? `whose arguments match ${all}`
+        : `whose "${key}" argument matches ${all}`;
+    return `${expectation} to ${toolName} ${subject}${shown}`;
+  }
+  const subject =
+    key === undefined
+      ? `whose content matches ${all}`
+      : `whose "${key}" field matches ${all}`;
+  return `${expectation} from ${toolName || "any tool"} ${subject}${shown}`;
+}
+
+/**
+ * The key a stored `path` names, for display: `"/elements"` reads as
+ * `elements`. A row whose pointer does not parse shows it as stored rather
+ * than hiding that it reads anything.
+ */
+function pathKey(path: unknown): string | undefined {
+  if (typeof path !== "string") return undefined;
+  const parsed = parseMatchPath(path);
+  return parsed.ok ? parsed.key : path;
 }
 
 export function filterKindsForMenu(

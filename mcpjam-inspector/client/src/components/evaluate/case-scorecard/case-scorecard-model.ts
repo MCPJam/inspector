@@ -402,13 +402,16 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
  * Whether this check needs a tool call, so a negative case cannot hold beside
  * it.
  *
- * `toolArgumentsMatch` decides by its count, not its kind: `min` (default 1)
- * counts MATCHING calls, so `min: 0, max: 0` — "no call matches" — holds on a
- * transcript with no calls at all. The SDK refuses the same pairing on the
- * same rule.
+ * The two pattern checks decide by their count, not their kind: `min`
+ * (default 1) counts MATCHING calls or results, and a result needs a call, so
+ * `min: 0, max: 0` — "none matches" — holds on a transcript with no calls at
+ * all. The SDK refuses the same pairing on the same rule.
  */
 function contradictsNegativeCase(predicate: Predicate): boolean {
-  if (predicate.type === "toolArgumentsMatch") {
+  if (
+    predicate.type === "toolInputMatches" ||
+    predicate.type === "toolResultMatches"
+  ) {
     return (predicate.min ?? 1) >= 1;
   }
   return NEGATIVE_CONTRADICTING_KINDS.has(predicate.type as PredicateKind);
@@ -460,6 +463,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   noEndingQuestion: "Catch an answer that ends by asking",
   // What the server sent back, and what it cost to read.
   toolResultContains: "Check what a tool returned",
+  toolResultMatches: "Check what the tool returned",
   toolResultMatchesSchema: "Check the shape of what a tool returned",
   toolResultSizeUnder: "Track a tool's payload growing",
   toolLatencyUnder: "Track a tool getting slower",
@@ -470,7 +474,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   toolCalledBefore: "Require this tool before that one",
   noRepeatedIdenticalCall: "Catch the same call being made twice over",
   argumentsMatchToolSchema: "Catch arguments the tool's own schema rejects",
-  toolArgumentsMatch: "Check what the tool was sent",
+  toolInputMatches: "Check what the tool was sent",
   noDeprecatedToolCalled: "Catch a tool the server calls deprecated",
   noDestructiveToolCalled: "Catch a tool the server marks destructive",
 };

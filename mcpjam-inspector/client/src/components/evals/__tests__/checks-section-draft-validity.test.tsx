@@ -332,20 +332,17 @@ describe("ChecksSection raw-JSON draft validity", () => {
     expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("reports a toolArgumentsMatch pattern re2js cannot compile", () => {
+  it.each([
+    { type: "toolInputMatches", toolName: "search", patterns: ["ok"] },
+    { type: "toolResultMatches", patterns: ["ok"] },
+  ])("reports a $type pattern re2js cannot compile", (initial) => {
     // Unlike a JSON draft, the pattern IS written through — the schema
     // refuses the predicate — and it is reported here too, so a caller that
     // listens only to this sees it.
     const onDraftValidityChange = vi.fn();
     render(
       <Harness
-        initial={[
-          {
-            type: "toolArgumentsMatch",
-            toolName: "search",
-            patterns: ["ok"],
-          } as Predicate,
-        ]}
+        initial={[initial as Predicate]}
         onDraftValidityChange={onDraftValidityChange}
       />,
     );

@@ -235,30 +235,26 @@ describe("CheckRow untouched state", () => {
     expect(screen.getByText("Enter a tool name")).toBeInTheDocument();
   });
 
-  it("words a pattern list's issues on its rows, not the row-level line", () => {
-    render(
-      <Harness
-        initial={[
-          {
-            type: "toolArgumentsMatch",
-            toolName: "",
-            patterns: [""],
-          } as Predicate,
-        ]}
-      />,
-    );
-    // Neutral until touched, like every other blank field.
-    expect(screen.queryByText("Enter a pattern")).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
+  it.each([
+    { type: "toolInputMatches", toolName: "", patterns: [""] },
+    { type: "toolResultMatches", patterns: [""] },
+  ])(
+    "words a $type pattern list's issues on its rows, not the row-level line",
+    (initial) => {
+      render(<Harness initial={[initial as Predicate]} />);
+      // Neutral until touched, like every other blank field.
+      expect(screen.queryByText("Enter a pattern")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
 
-    fireEvent.blur(screen.getByLabelText("Pattern 1"));
-    expect(screen.getByText("Enter a pattern")).toBeInTheDocument();
-    expect(screen.getByLabelText("Pattern 1")).toHaveAttribute(
-      "aria-invalid",
-      "true",
-    );
-    // Zod's `patterns.0` wording would be a second, vaguer copy of it.
-    expect(screen.queryByText(ZOD_WORDING)).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
+      fireEvent.blur(screen.getByLabelText("Pattern 1"));
+      expect(screen.getByText("Enter a pattern")).toBeInTheDocument();
+      expect(screen.getByLabelText("Pattern 1")).toHaveAttribute(
+        "aria-invalid",
+        "true",
+      );
+      // Zod's `patterns.0` wording would be a second, vaguer copy of it.
+      expect(screen.queryByText(ZOD_WORDING)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
 });
