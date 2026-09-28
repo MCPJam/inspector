@@ -57,6 +57,12 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  negotiatedVocabulary,
+  projectNounValue,
+  storageNounValue,
+  type ApiVocabulary,
+} from "./api-vocabulary.js";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -142,7 +148,10 @@ type BackfillJobRow = {
   finishedAt?: number;
 };
 
-function toTraceDestinationDto(row: TraceDestinationRow) {
+function toTraceDestinationDto(
+  row: TraceDestinationRow,
+  vocabulary: ApiVocabulary,
+) {
   return {
     id: row.id,
     organizationId: row.organizationId,
@@ -153,7 +162,9 @@ function toTraceDestinationDto(row: TraceDestinationRow) {
     /** NAMES ONLY. The values are write-only; see the module header. */
     headerNames: row.headerNames,
     resourceAttributes: row.resourceAttributes,
-    sourceTypes: row.sourceTypes,
+    sourceTypes: row.sourceTypes.map((value) =>
+      projectNounValue(value, vocabulary),
+    ),
     includeContent: row.includeContent,
     compression: row.compression,
     /** `null` means every project in the organization, present and future. */
@@ -230,10 +241,29 @@ const resourceAttributesSchema = z.record(
   z.string().max(512),
 );
 
+/**
+ * The source types a destination streams.
+ *
+ * BOTH spellings of the renamed one are accepted at all times, rather than
+ * only under `x-mcpjam-api-vocabulary: 2`. This is the one place in the
+ * program where that is right: a destination's `sourceTypes` is STORED
+ * configuration, not a per-request projection, so the negotiated vocabulary of
+ * the request that wrote it is a fact about that request and not about the
+ * row. A caller must be able to write `study` and read it back whatever header
+ * the two calls carried — the storage fold below is what makes that true, and
+ * the response projection is what decides which spelling it comes back as.
+ */
 const sourceTypesSchema = z
-  .array(z.enum(["eval", "scenario", "swarm", "direct"]))
+  .array(z.enum(["eval", "scenario", "study", "swarm", "direct"]))
   .min(1)
   .max(4);
+
+/** Every requested source type in the spelling the backend stores. */
+function storedSourceTypes<T extends readonly string[] | undefined>(
+  requested: T,
+): string[] | undefined {
+  return requested?.map((value) => storageNounValue(value, 2));
+}
 
 const compressionSchema = z.enum(["gzip", "none"]);
 
@@ -398,6 +428,7 @@ async function assertDestinationInOrg(
 traceDestinations.get(
   "/organizations/:organizationId/trace-destinations",
   async (c) => {
+    const vocabulary = negotiatedVocabulary(c);
     const organizationId = c.req.param("organizationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     let rows: TraceDestinationRow[];
@@ -411,7 +442,10 @@ traceDestinations.get(
       // whether they may see it, so a refusal here is a scoping answer.
       throw translateReadError(error, true);
     }
-    return v1PageJson(c, rows.map(toTraceDestinationDto));
+    return v1PageJson(
+      c,
+      rows.map((row) => toTraceDestinationDto(row, vocabulary)),
+    );
   },
 );
 
@@ -424,6 +458,7 @@ traceDestinations.get(
 traceDestinations.get(
   "/organizations/:organizationId/trace-destinations/:destinationId",
   async (c) => {
+    const vocabulary = negotiatedVocabulary(c);
     const client = createConvexClient(await getConvexBearerForRequest(c));
     // `true`, like the list route and every write preflight: this read
     // DECIDES whether the caller may see an id they supplied, so a refusal it
@@ -436,7 +471,7 @@ traceDestinations.get(
       c.req.param("organizationId"),
       true,
     );
-    return v1Resource(c, toTraceDestinationDto(row));
+    return v1Resource(c, toTraceDestinationDto(row, vocabulary));
   },
 );
 
@@ -448,6 +483,7 @@ traceDestinations.get(
 traceDestinations.post(
   "/organizations/:organizationId/trace-destinations",
   async (c) => {
+    const vocabulary = negotiatedVocabulary(c);
     const organizationId = c.req.param("organizationId");
     const body = await parseBody(c, createSchema);
     const client = createConvexClient(await getConvexBearerForRequest(c));
@@ -458,14 +494,21 @@ traceDestinations.post(
       // is the one hop the header values make.
       destinationId = (await client.action(
         "traceDestinations:createDestination" as never,
-        { organizationId, ...body } as never,
+        {
+          organizationId,
+          ...body,
+          // Stored under its stored name whichever spelling was written.
+          ...(body.sourceTypes
+            ? { sourceTypes: storedSourceTypes(body.sourceTypes) }
+            : {}),
+        } as never,
       )) as string;
     } catch (error) {
       throw translateConvexWriteError(error, { resource: "Trace destination" });
     }
 
     const row = await readDestination(client, destinationId, organizationId);
-    return v1Resource(c, toTraceDestinationDto(row), 201);
+    return v1Resource(c, toTraceDestinationDto(row, vocabulary), 201);
   },
 );
 
@@ -477,6 +520,7 @@ traceDestinations.post(
 traceDestinations.patch(
   "/organizations/:organizationId/trace-destinations/:destinationId",
   async (c) => {
+    const vocabulary = negotiatedVocabulary(c);
     const destinationId = c.req.param("destinationId");
     const body = await parseBody(c, updateSchema);
     const client = createConvexClient(await getConvexBearerForRequest(c));
@@ -497,6 +541,9 @@ traceDestinations.patch(
         {
           destinationId,
           ...body,
+          ...(body.sourceTypes
+            ? { sourceTypes: storedSourceTypes(body.sourceTypes) }
+            : {}),
         } as never,
       );
     } catch (error) {
@@ -508,7 +555,7 @@ traceDestinations.patch(
       destinationId,
       c.req.param("organizationId"),
     );
-    return v1Resource(c, toTraceDestinationDto(row));
+    return v1Resource(c, toTraceDestinationDto(row, vocabulary));
   },
 );
 
@@ -579,6 +626,7 @@ traceDestinations.post(
 traceDestinations.post(
   "/organizations/:organizationId/trace-destinations/:destinationId/pause",
   async (c) => {
+    const vocabulary = negotiatedVocabulary(c);
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     // Before the write, for the reason the update route states.
@@ -604,7 +652,7 @@ traceDestinations.post(
       destinationId,
       c.req.param("organizationId"),
     );
-    return v1Resource(c, toTraceDestinationDto(row));
+    return v1Resource(c, toTraceDestinationDto(row, vocabulary));
   },
 );
 
@@ -617,6 +665,7 @@ traceDestinations.post(
 traceDestinations.post(
   "/organizations/:organizationId/trace-destinations/:destinationId/resume",
   async (c) => {
+    const vocabulary = negotiatedVocabulary(c);
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     // Before the write, for the reason the update route states.
@@ -642,7 +691,7 @@ traceDestinations.post(
       c.req.param("organizationId"),
     );
     return v1Resource(c, {
-      ...toTraceDestinationDto(row),
+      ...toTraceDestinationDto(row, vocabulary),
       pausedSince: result?.pausedSince ?? null,
     });
   },

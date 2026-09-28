@@ -1,3 +1,4 @@
+import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 
@@ -286,6 +287,32 @@ export type RequestEventMap = {
     secretCount: number;
     isScenarioSession: boolean;
   };
+  /**
+   * Built-in tool ids a chat request asked for that the turn did not get
+   * (MJ-008): unknown ids, ids outside the host or project configuration, and
+   * workspace operations the caller's project role does not allow.
+   *
+   * `toolIds` holds catalog names only. An unknown id is free text from the
+   * request body, so it is counted in `unknownCount` and never echoed.
+   */
+  "chat.builtin_tools.withheld": {
+    toolIds: string[];
+    unknownCount: number;
+    reasons: string[];
+    targetKind: "adhoc" | "host" | "environment" | "scenario";
+  };
+  /**
+   * A Playground chat turn on a harness host is running a model the harness
+   * × model evidence table has not verified for the harness's runtime version
+   * (`shared/harness-model-support.ts`). Chat runs it (evals and swarms refuse
+   * it); this makes "which unverified pairs are people actually running" a
+   * query rather than a grep.
+   */
+  "chat.harness_model_unverified": {
+    harness: string;
+    modelId: string;
+    reason: string;
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"
@@ -366,6 +393,15 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // Saved browser profile download (routes/web/browser-profile-download.ts,
+  // MJ-005): the archive could not be served. `stage` is the hop that failed,
+  // `lookup` (the backend's owner check) or `archive` (reading the archive).
+  // `statusCode` is the upstream answer, when there was one.
+  "browser_profile.download.failed": {
+    stage: "lookup" | "archive";
+    statusCode?: number;
+    errorMessage?: string;
+  };
   // Swarm AI generation (routes/web/swarm-generate.ts): the backend
   // /swarms/* endpoint answered with a server error. The upstream message is
   // deliberately NOT forwarded to the caller (it carries the deployment URL),
@@ -378,7 +414,59 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
   };
+  // Sign-out session revocation (routes/web/auth-session.ts, MJ-011): the
+  // backend did not acknowledge a durable record of the revocation in time.
+  // This replica already refuses the session; `status` says whether retries
+  // were scheduled ("pending") or could not be ("failed"). The sign-out itself
+  // still completed.
+  "auth.session.revoke_incomplete": {
+    reason: "failed" | "timeout";
+    status: "pending" | "failed";
+  };
   "route.operation.failed": RouteOperationFailedFields;
+  /**
+   * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS
+   * key's id, never its value.
+   *
+   * WorkOS rejected `expires_at` when a key was created, so the key was minted
+   * without it. It still expires: the org binding carries the same instant
+   * and the bearer middleware enforces it. Any row here means WorkOS-native
+   * expiry is not in effect for new keys.
+   */
+  "apikey.expiry.workos_refused": { statusCode: number };
+  /**
+   * The backend capped an organization's key inventory, so the page listed
+   * only part of it (and says so to the admin).
+   */
+  "apikey.inventory.truncated": { listed: number };
+  /**
+   * An owner or admin revoked a key bound to their organization, from the
+   * organization inventory or by key id (`DELETE /api/web/api-keys/:id`).
+   * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
+   * the key is gone at WorkOS but its org binding was not removed, so the
+   * backend has not written the revoke's audit row either. The binding is
+   * inert, and revoking the same key id again removes it and writes the row.
+   */
+  "apikey.admin_revoke.completed": {
+    workosKeyId: string;
+    alreadyRevoked: boolean;
+    bindingCleanupFailed: boolean;
+    /**
+     * Tries at removing the binding, at most 3: a transport failure or a
+     * backend 5xx is retried. When `bindingCleanupFailed`, the event also
+     * carries the last cause and is reported to Sentry.
+     */
+    bindingCleanupAttempts: number;
+    bindingStatus?: number;
+  };
+  /**
+   * No authorization decision could be had for an admin revoke (backend
+   * unreachable, or one without the route yet), so nothing was revoked.
+   */
+  "apikey.admin_revoke.unavailable": {
+    workosKeyId: string;
+    errorMessage: string;
+  };
 };
 
 export type SystemEventMap = {
@@ -452,6 +540,7 @@ export type SystemEventMap = {
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
+  "launch.engagement": LaunchEngagement;
   "relay.stats": {
     requests: number;
     res2xx: number;
@@ -464,6 +553,8 @@ export type SystemEventMap = {
     upstreamErrors: number;
     bodyLimitRejects: number;
     rateLimitRejects: number;
+    projectRejects: number;
+    busyRejects: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

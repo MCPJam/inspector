@@ -1,25 +1,15 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
+import { isCreditExhaustion } from "@/shared/credit-exhaustion";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
-
-// Bounded for the same reason as the SDK describer's copy of this phrase:
-// `[\w\s-]` matches "mcpjam" too, so unbounded it backtracks quadratically on a
-// wire message of repeated "mcpjam" that never reaches "model limit".
-const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]{0,40}model limit/i;
-const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
-const MCPJAM_USER_RATE_LIMIT_CODE = "user_rate_limit";
-const MCPJAM_LIMIT_CODES = new Set([
-  MCPJAM_RATE_LIMIT_CODE,
-  MCPJAM_USER_RATE_LIMIT_CODE,
-]);
 
 /**
  * The organization's admin-set spend budget is exhausted for the current
  * billing window — emitted by the backend's `/stream` precheck and mirrored
  * by `ORGANIZATION_SPEND_BUDGET_REACHED` on the eval-launch mutations.
  *
- * Deliberately NOT a member of {@link MCPJAM_LIMIT_CODES}: that set is what
+ * Excluded by the shared credit classifier: credit exhaustion is what
  * opens the top-up dialog, and buying credits does not clear a budget. The
  * only fix is an owner or admin raising the cap, so this code carves itself
  * OUT of the model-limit classification and gets its own banner copy.
@@ -28,7 +18,10 @@ export const SPEND_BUDGET_REACHED_CODE = "spend_budget_reached";
 
 /** True when this error is the org spend budget refusing, not the wallet. */
 export function isSpendBudgetReachedCode(code: string | undefined): boolean {
-  return code === SPEND_BUDGET_REACHED_CODE;
+  return (
+    code === SPEND_BUDGET_REACHED_CODE ||
+    code === "ORGANIZATION_SPEND_BUDGET_REACHED"
+  );
 }
 
 /**
@@ -38,9 +31,6 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
   "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
-const MCPJAM_RATE_LIMIT_CODE_PATTERN =
-  /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
-
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a
@@ -48,8 +38,17 @@ export type MCPJamLimitKind = "total" | "concurrency";
  * in one case and up to a billing period in the other. */
 export type MCPJamLimitPeriod = "daily" | "monthly";
 
+/** The bucket is not empty, only smaller than this request's worst-case
+ * estimate — sent with `refusalReason: "insufficient_for_request"`. */
+export type MCPJamCreditShortfall = {
+  creditsRemaining: number;
+  creditsRequired: number;
+};
+
 type MCPJamLimitErrorInput = {
   code?: string;
+  /** Stable run identity, shared by live streams and persisted failure updates. */
+  runId?: string;
   message?: string | null;
   details?: unknown;
   organizationId?: string;
@@ -126,94 +125,26 @@ const collectStringValues = (
   return strings;
 };
 
-const findMCPJamRateLimitCode = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): string | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-
-  if (
-    "code" in value &&
-    typeof (value as { code?: unknown }).code === "string" &&
-    MCPJAM_LIMIT_CODES.has((value as { code: string }).code)
-  ) {
-    return (value as { code: string }).code;
-  }
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    const code = findMCPJamRateLimitCode(item, seen);
-    if (code) return code;
-  }
-
-  return undefined;
-};
-
 /**
- * The spend-budget code, wherever it is nested.
+ * Ask MCPJam's refusals, which are about MCPJAM's budget, not the customer's.
  *
- * The top-level `code` is not the only place it arrives: a refusal can reach
- * the client with the code inside `details`, or inside a JSON-encoded
- * `message`. Missing it there is not a cosmetic slip — the deep scan below
- * would then classify the same refusal as a wallet limit and open the top-up
- * dialog, selling credits to an organization that set its own ceiling and
- * cannot spend its way past it.
+ * `platform_capacity` is MCPJam's own daily budget for the feature;
+ * `agent_turn_limit` is a per-user COUNT; `agent_billing_rejected` means the
+ * claim did not hold at all. None of them is a wallet the caller can top up,
+ * and all three arrive on a surface the product tells people is free — so
+ * opening the credits dialog for one would sell credits against a refusal
+ * buying credits cannot lift.
+ *
+ * The SCREENING now lives in `shared/credit-exhaustion.ts`, which excludes
+ * these three alongside the other account-state refusals and walks nesting
+ * itself. This set remains because the refusal COPY below still needs to know
+ * which codes are the agent's.
  */
-const isInlineAccountRefusal = (code: unknown): boolean =>
-  code === "platform_free_budget_exhausted" || code === "account_suspended" || isSpendBudgetReachedCode(typeof code === "string" ? code : undefined);
-
-const hasNestedSpendBudgetCode = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): boolean => {
-  if (!value || typeof value !== "object") return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-
-  if (isInlineAccountRefusal(getStringProperty(value, "code"))) return true;
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    // A STRING LEAF CAN BE JSON. Servers routinely nest an encoded error
-    // inside `details` or a `message` field, and stopping at the string is
-    // how the budget code hides from this walk — leaving the deep scan below
-    // to read the same payload's rate-limit text and open the top-up dialog.
-    if (typeof item === "string") {
-      if (isInlineAccountRefusal(item)) return true;
-      for (const parsed of collectJsonCandidates(item)) {
-        if (hasNestedSpendBudgetCode(parsed, seen)) return true;
-      }
-      continue;
-    }
-    if (hasNestedSpendBudgetCode(item, seen)) return true;
-  }
-
-  return false;
-};
-
-const findMCPJamLimitKind = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): MCPJamLimitKind | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-
-  const limitKind = getStringProperty(value, "limitKind");
-  if (limitKind === "total" || limitKind === "concurrency") {
-    return limitKind;
-  }
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    const nestedLimitKind = findMCPJamLimitKind(item, seen);
-    if (nestedLimitKind) return nestedLimitKind;
-  }
-
-  return undefined;
-};
+const AGENT_REFUSAL_CODES = new Set([
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+]);
 
 const findStringPropertyDeep = (
   value: unknown,
@@ -257,6 +188,48 @@ const findMCPJamLimitOrganizationId = (
   return undefined;
 };
 
+const findShortfallDeep = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): MCPJamCreditShortfall | undefined => {
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+
+  const item = value as Record<string, unknown>;
+  const { creditsRemaining, creditsRequired } = item;
+  if (
+    item.refusalReason === "insufficient_for_request" &&
+    typeof creditsRemaining === "number" &&
+    Number.isSafeInteger(creditsRemaining) &&
+    creditsRemaining > 0 &&
+    typeof creditsRequired === "number" &&
+    Number.isSafeInteger(creditsRequired) &&
+    creditsRequired > creditsRemaining
+  ) {
+    return { creditsRemaining, creditsRequired };
+  }
+
+  for (const nested of Object.values(item)) {
+    const found = findShortfallDeep(nested, seen);
+    if (found) return found;
+  }
+  return undefined;
+};
+
+const findMCPJamCreditShortfall = (
+  args: MCPJamLimitErrorInput,
+): MCPJamCreditShortfall | undefined => {
+  for (const value of [args.details, args.message]) {
+    const candidates =
+      typeof value === "string" ? collectJsonCandidates(value) : [value];
+    for (const candidate of candidates) {
+      const shortfall = findShortfallDeep(candidate);
+      if (shortfall) return shortfall;
+    }
+  }
+  return undefined;
+};
+
 /**
  * Read the period off the SDK catalog rather than a second regex here. The
  * error card already classifies this exact message through `describeError`, so
@@ -273,74 +246,8 @@ const findMCPJamLimitPeriod = (
   return undefined;
 };
 
-const isMCPJamLimitString = (value: string): boolean =>
-  MCPJAM_MODEL_LIMIT_PATTERN.test(value) ||
-  MCPJAM_RATE_LIMIT_CODE_PATTERN.test(value);
-
 export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
-  // Single source of truth for the concurrency carve-out: a transient
-  // throttle resolves in seconds and is owned by the inline retry banner,
-  // never the modal. Downstream consumers don't need to re-check.
-  if (args.limitKind === "concurrency") return false;
-
-  // Same shape of carve-out for the org spend budget: it is a refusal the
-  // user cannot buy their way out of, so it must never reach the top-up
-  // modal. Checked before the deep scans below so a budget payload that
-  // happens to embed a rate-limit string still classifies as a budget —
-  // and checked at EVERY nesting level, because the code arrives inside
-  // `details` or a JSON-encoded `message` as readily as at the top.
-  if (isInlineAccountRefusal(args.code)) return false;
-  for (const value of [args.message, args.details]) {
-    if (typeof value === "string") {
-      if (isInlineAccountRefusal(value)) return false;
-      for (const parsed of collectJsonCandidates(value)) {
-        if (hasNestedSpendBudgetCode(parsed)) return false;
-      }
-      continue;
-    }
-    if (hasNestedSpendBudgetCode(value)) return false;
-  }
-
-  if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
-  if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;
-
-  const valuesToInspect = [args.message, args.details];
-  for (const value of valuesToInspect) {
-    if (typeof value === "string") {
-      for (const parsed of collectJsonCandidates(value)) {
-        const code = findMCPJamRateLimitCode(parsed);
-        const limitKind = findMCPJamLimitKind(parsed);
-        const hasLimitString = collectStringValues(parsed).some((item) =>
-          isMCPJamLimitString(item),
-        );
-        if (
-          limitKind === "concurrency" &&
-          (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
-        ) {
-          return false;
-        }
-        if (code || hasLimitString) return true;
-      }
-
-      if (isMCPJamLimitString(value)) return true;
-      continue;
-    }
-
-    const code = findMCPJamRateLimitCode(value);
-    const limitKind = findMCPJamLimitKind(value);
-    const hasLimitString = collectStringValues(value).some((item) =>
-      isMCPJamLimitString(item),
-    );
-    if (
-      limitKind === "concurrency" &&
-      (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
-    ) {
-      return false;
-    }
-    if (code || hasLimitString) return true;
-  }
-
-  return false;
+  return isCreditExhaustion(args);
 }
 
 const hasFrontierSignInCode = (
@@ -355,7 +262,8 @@ const hasFrontierSignInCode = (
   if (!value || typeof value !== "object" || seen.has(value)) return false;
   seen.add(value);
 
-  if (getStringProperty(value, "code") === "guest_model_not_allowed") return true;
+  if (getStringProperty(value, "code") === "guest_model_not_allowed")
+    return true;
   return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
 };
 
@@ -374,11 +282,14 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   }
   if (!isMCPJamModelLimitError(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
+  const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
+    ...(args.runId ? { runId: args.runId } : {}),
     limitKind: args.limitKind,
     organizationId: findMCPJamLimitOrganizationId(args),
     ...(args.surface ? { surface: args.surface } : {}),
     ...(period ? { period } : {}),
+    ...(shortfall ? { shortfall } : {}),
   });
   return true;
 }
@@ -386,8 +297,12 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
 const MCPJAM_LIMIT_SLUGS = new Set([
   "provider/mcpjam_limit_daily",
   "provider/mcpjam_limit_monthly",
+  "provider/mcpjam_limit_insufficient",
   "provider/mcpjam_limit",
 ]);
+
+const MCPJAM_HOLDS_COMMITTED_MESSAGE =
+  "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.";
 
 /**
  * One plain sentence for a limit refusal, for surfaces that print an error
@@ -395,11 +310,161 @@ const MCPJAM_LIMIT_SLUGS = new Set([
  * carries the actions; without this those surfaces echo the raw JSON body the
  * backend refused with, which reads as a crash. `null` for anything that
  * isn't a limit error, so callers keep their own message.
+ *
+ * A `holds_committed` refusal gets its own line: no dialog opens for it, and
+ * the fix is to retry in a moment, not to buy anything.
  */
+/**
+ * The 503 a refused platform hold answers when MCPJam's own guard failed
+ * closed, as opposed to its budget being spent. Nothing lifts it at midnight,
+ * so it must not be shown as a daily limit.
+ */
+const AGENT_UNAVAILABLE_CODES = new Set([
+  "platform_generation_unavailable",
+  "agent_billing_rejected",
+]);
+
+/** Every code, at any nesting depth, that a refusal body carries. */
+const collectCodes = (
+  value: unknown,
+  out: Set<string>,
+  seen = new WeakSet<object>(),
+): void => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      collectCodes(parsed, out, seen);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  const code = getStringProperty(value, "code");
+  if (code) out.add(code);
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    collectCodes(item, out, seen);
+  }
+};
+
+/**
+ * The backend answers BOTH agent count caps with `code: "agent_turn_limit"`
+ * and tells them apart with `gatedBy`: `"user"` is the 150-a-day window,
+ * `"burst"` is the 6-a-minute one. They want opposite advice — one resets at
+ * midnight, the other in seconds — so reading only the code told a user who
+ * had paused for ten seconds to come back tomorrow.
+ */
+const findGatedBy = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): string | undefined => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findGatedBy(parsed, seen);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  return findStringPropertyDeep(value, "gatedBy", seen);
+};
+
+const findRetryAfterMs = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): number | undefined => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findRetryAfterMs(parsed, seen);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+  const direct = (value as Record<string, unknown>).retryAfterMs;
+  if (typeof direct === "number" && Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    const nested = findRetryAfterMs(item, seen);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+};
+
+/**
+ * `gatedBy` as a bare substring, for a body that never parses.
+ *
+ * The AI SDK folds a pre-stream refusal into `new Error(await res.text())` and
+ * a proxy can mangle that text, which is why the code scan below is a substring
+ * scan too. Matched as a quoted key/value pair rather than the bare word
+ * "burst", which is common enough in prose to be worth not guessing at.
+ */
+const BURST_GATED_BY_PATTERN = /"gatedBy"\s*:\s*"burst"/;
+
+const describeBurstRetry = (retryAfterMs: number | undefined): string => {
+  if (retryAfterMs === undefined) {
+    return "Too many Ask MCPJam turns in a row. Try again in a moment.";
+  }
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
+};
+
+/**
+ * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
+ * something else.
+ *
+ * The agent is free, so none of these is a wallet the reader can top up, and
+ * the raw body they arrive as reads as a crash. The two sentences say the only
+ * two things worth saying: come back after the reset, or this is ours and it is
+ * temporary.
+ */
+export function describeAgentRefusalMessage(
+  message: string | null | undefined,
+): string | null {
+  if (!message) return null;
+  const codes = new Set<string>();
+  collectCodes(message, codes);
+  // Unconditional, not a fallback for an unparseable body. `collectCodes` only
+  // records a `code` PROPERTY, so a refusal nested as plain text under some
+  // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —
+  // leaves a non-empty set that does not contain the code that actually
+  // matters, and gating the scan on `size === 0` would skip it and print the
+  // raw body. These codes are distinctive enough (none is an English word)
+  // that scanning always costs nothing.
+  for (const code of [...AGENT_REFUSAL_CODES, ...AGENT_UNAVAILABLE_CODES]) {
+    if (message.includes(code)) codes.add(code);
+  }
+  for (const code of AGENT_UNAVAILABLE_CODES) {
+    if (codes.has(code)) return "Ask MCPJam is temporarily unavailable.";
+  }
+  if (codes.has("agent_turn_limit")) {
+    // Only the DAILY cap resets at midnight. A burst throttle is seconds away,
+    // and telling that user to come back tomorrow is both wrong and the reason
+    // they would stop trying.
+    const gatedBy = findGatedBy(message);
+    if (gatedBy === "burst" || BURST_GATED_BY_PATTERN.test(message)) {
+      return describeBurstRetry(findRetryAfterMs(message));
+    }
+  }
+  if (codes.has("platform_capacity") || codes.has("agent_turn_limit")) {
+    return "Ask MCPJam has reached today's limit. It resets at 00:00 UTC.";
+  }
+  return null;
+}
+
 export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {
-  if (!message || !isMCPJamModelLimitError({ message })) return null;
+  if (!message) return null;
+  if (
+    collectJsonCandidates(message).some(
+      (parsed) =>
+        findStringPropertyDeep(parsed, "refusalReason") === "holds_committed",
+    )
+  ) {
+    return MCPJAM_HOLDS_COMMITTED_MESSAGE;
+  }
+  if (!isMCPJamModelLimitError({ message })) return null;
   const described = describeError(message);
   const entry = MCPJAM_LIMIT_SLUGS.has(described.slug)
     ? described

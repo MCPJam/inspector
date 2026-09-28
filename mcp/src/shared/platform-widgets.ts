@@ -7,9 +7,9 @@
  * safe to import from the Vite-bundled widget.
  */
 import type {
-  GetScenarioResult,
+  GetStudyResult,
   GetEvalRunResult,
-  ListScenariosResult,
+  ListStudiesResult,
   ListEvalRunIterationsResult,
   ListEvalSuiteRunsResult,
   ListEvalSuitesResult,
@@ -22,8 +22,11 @@ export type PlatformWidgetPayloadMap = {
   eval_suite_runs: ListEvalSuiteRunsResult;
   eval_run: GetEvalRunResult;
   eval_run_iterations: ListEvalRunIterationsResult;
-  scenarios: ListScenariosResult;
-  scenario: GetScenarioResult;
+  // The VIEW KEYS stay as they are. They address a bundled HTML resource
+  // (`ui://mcpjam/scenarios.html`), which is worker-internal and never on the
+  // public API — only the payloads they carry were renamed.
+  scenarios: ListStudiesResult;
+  scenario: GetStudyResult;
 };
 
 export type PlatformWidgetView = keyof PlatformWidgetPayloadMap;
@@ -34,6 +37,19 @@ export type PlatformWidgetView = keyof PlatformWidgetPayloadMap;
  * v2 worker no longer depends on, and from `@mcpjam/sdk/browser`, which is a
  * heavy barrel. Byte-identical to both.
  */
+/**
+ * TEMPORARY KILL SWITCH for the MCP Apps widgets.
+ *
+ * Off while the widget surface gets another pass. Every widget-backed tool
+ * registers as a PLAIN tool: no `_meta.ui`, no `ui://` resource, and no
+ * `widget:` tag on its payload, so hosts render the tool's ordinary content
+ * and nothing points at a bundle we are not ready to show. The view map, the
+ * resource URIs, the payload guards and the bundle itself all stay in place
+ * and stay tested — flipping this back to `true` re-enables all seven views
+ * at once, with no other edit.
+ */
+export const PLATFORM_WIDGETS_ENABLED = false;
+
 export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 export const RESOURCE_URI_META_KEY = "ui/resourceUri";
 
@@ -78,8 +94,10 @@ const WIDGET_PAYLOAD_GUARDS: Record<
     isRecord(payload.project) && Array.isArray(payload.items),
   scenarios: (payload) =>
     isRecord(payload.project) && Array.isArray(payload.items),
-  scenario: (payload) =>
-    isRecord(payload.project) && isRecord(payload.scenario),
+  // `study`, not `scenario`: the VIEW KEY stays (it addresses a bundled HTML
+  // resource) but the payload it carries is now `GetStudyResult`, whose
+  // members are `project` and `study`.
+  scenario: (payload) => isRecord(payload.project) && isRecord(payload.study),
 };
 
 /**

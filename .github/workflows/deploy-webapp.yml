@@ -150,7 +150,7 @@ jobs:
       # published to npm rather than the pre-bump one.
       - name: Download release patch
         if: ${{ inputs.apply_release_patch == true || inputs.apply_release_patch == 'true' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-plan
           path: .release-plan

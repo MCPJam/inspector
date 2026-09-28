@@ -431,11 +431,11 @@ describe("clampNarration", () => {
 });
 
 describe("deriveHonestyFootnotes", () => {
-  it("marks a legacy wave (no signals or no durable group id) as rubric-only", () => {
+  it("marks a legacy swarm run (no signals or no durable group id) as rubric-only", () => {
     expect(
       deriveHonestyFootnotes({ signals: null, hasGroupId: false }),
     ).toEqual([
-      "Evaluator findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only: deterministic signals unavailable for this swarm run",
     ]);
     expect(
       deriveHonestyFootnotes({ signals: signals(), hasGroupId: false })[0],
@@ -451,12 +451,14 @@ describe("deriveHonestyFootnotes", () => {
       }),
       hasGroupId: true,
     });
-    expect(notes).toContain("Session scan hit its cap — counts cover a subset");
     expect(notes).toContain(
-      "Most sessions are unanalyzed — treat counts as partial",
+      "Session scan hit its cap, so counts cover a subset",
     );
     expect(notes).toContain(
-      "This swarm is still running — findings may change",
+      "Most sessions are unanalyzed, so treat counts as partial",
+    );
+    expect(notes).toContain(
+      "This swarm is still running, so findings may change",
     );
 
     const partialJudge = deriveHonestyFootnotes({

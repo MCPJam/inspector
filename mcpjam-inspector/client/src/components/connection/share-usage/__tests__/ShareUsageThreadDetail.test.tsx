@@ -30,6 +30,11 @@ const {
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
     runAttemptStatus: undefined as unknown,
+    runAttemptErrorCode: undefined as unknown,
+    runAttemptErrorMessage: undefined as unknown,
+    messageCount: 2,
+    messagesBlobUrl: "https://storage.example.com/thread.json",
+    analysisPhase: undefined as string | undefined,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -62,7 +67,13 @@ const {
 // the panel's own suite cannot check, since it is handed the id directly.
 vi.mock("convex/react", () => ({
   useAction: () => mockRequestJudge,
+  useMutation: () => vi.fn().mockResolvedValue({ queued: true }),
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
+}));
+
+// Analyze now is offered to members only; the check is a Convex query.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -78,7 +89,10 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
       runAttemptStatus: mockThreadState.runAttemptStatus,
-      messagesBlobUrl: "https://storage.example.com/thread.json",
+      runAttemptErrorCode: mockThreadState.runAttemptErrorCode,
+      runAttemptErrorMessage: mockThreadState.runAttemptErrorMessage,
+      analysisPhase: mockThreadState.analysisPhase,
+      messagesBlobUrl: mockThreadState.messagesBlobUrl,
       modelId: "openai/gpt-oss-120b",
       recordedContext: {
         toolSnapshots: [
@@ -93,7 +107,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
         ],
       },
       visitorDisplayName: "Marcelo Jimenez",
-      messageCount: 2,
+      messageCount: mockThreadState.messageCount,
       startedAt: Date.now() - 1000,
       lastActivityAt: Date.now(),
     },
@@ -240,6 +254,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     mockHostConfigState.config = { hostStyle: "claude" };
     global.fetch = vi.fn().mockResolvedValue({
@@ -268,6 +283,92 @@ describe("ShareUsageThreadDetail", () => {
     global.fetch = originalFetch;
   });
 
+  it("fetches the transcript once per transcript, not once per link to it", async () => {
+    // Artifact links expire and are re-minted with a new expiry for the same
+    // object. A renewed link is not new content: refetching would swap the
+    // viewer (and its live widgets) for the loading state for nothing.
+    const signedLink = (storageId: string, expiresAt: number) => {
+      const body = btoa(
+        JSON.stringify({ v: 1, s: storageId, k: "json", e: expiresAt }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+    };
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    try {
+      mockThreadState.messagesBlobUrl = signedLink(
+        "kg-transcript",
+        1_800_000_000,
+      );
+      const { rerender } = render(
+        <ShareUsageThreadDetail threadId="thread-1" />,
+      );
+      await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      mockThreadState.messagesBlobUrl = signedLink(
+        "kg-transcript",
+        1_800_003_600,
+      );
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      mockThreadState.messagesBlobUrl = signedLink("kg-next", 1_800_003_600);
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    } finally {
+      mockThreadState.messagesBlobUrl =
+        "https://storage.example.com/thread.json";
+    }
+  });
+
+  it("retries a failed transcript load when a renewed link arrives", async () => {
+    // The flip side of fetching once per transcript: a load that FAILED (an
+    // expired link nothing renewed in time, a transient 5xx) must be retried
+    // by the next link to the same transcript, not stay failed until reload.
+    const signedLink = (expiresAt: number) => {
+      const body = btoa(
+        JSON.stringify({ v: 1, s: "kg-retry", k: "json", e: expiresAt }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+    };
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    } as Response);
+    try {
+      mockThreadState.messagesBlobUrl = signedLink(1_800_000_000);
+      const { rerender } = render(
+        <ShareUsageThreadDetail threadId="thread-1" />,
+      );
+      expect(
+        await screen.findByText("Failed to fetch messages: 503"),
+      ).toBeInTheDocument();
+
+      mockThreadState.messagesBlobUrl = signedLink(1_800_003_600);
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(
+        screen.queryByText("Failed to fetch messages: 503"),
+      ).not.toBeInTheDocument();
+    } finally {
+      mockThreadState.messagesBlobUrl =
+        "https://storage.example.com/thread.json";
+      consoleError.mockRestore();
+    }
+  });
+
   it("keeps the configured transcript after a ratings failure and retries on session change", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockScoreState.error = true;
@@ -290,6 +391,24 @@ describe("ShareUsageThreadDetail", () => {
     expect(mockTraceViewer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+  });
+
+  it("offers Analyze now in the header of a User Testing session still waiting on its pass", async () => {
+    mockThreadState.analysisPhase = "owed";
+    const { rerender } = render(
+      <ShareUsageThreadDetail threadId="thread-1" />,
+    );
+    expect(
+      await screen.findByTestId("share-usage-analyze-now"),
+    ).toHaveTextContent("Analyze now");
+    // Final: nothing Analyze now could change, so no button.
+    mockThreadState.analysisPhase = "final";
+    rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("share-usage-analyze-now"),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("links a direct session to its Playground conversation", async () => {
@@ -826,6 +945,7 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     // The transcript must load: the Trace tab only exists once the detail is
     // past its loader.
@@ -951,6 +1071,7 @@ describe("ShareUsageThreadDetail — session identity header", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     mockHostConfigState.config = null;
     mockCopyToClipboard.mockResolvedValue(true);
@@ -1014,5 +1135,95 @@ describe("ShareUsageThreadDetail — session identity header", () => {
         "https://app.test/swarms/session-doc-1",
       ),
     );
+  });
+});
+
+/**
+ * #5188: a swarm session refused before it recorded a message. The pane used
+ * to hedge "May not have run" under a judge that tried to grade it, with the
+ * only explanation worded around promoting it to a test case.
+ */
+describe("ShareUsageThreadDetail — a swarm session that never ran", () => {
+  const PROMOTE = { projectId: "proj-1", canPromote: true };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockThreadState.sourceType = "swarm";
+    mockThreadState.synthetic = true;
+    mockThreadState.goalScore = undefined;
+    mockThreadState.messageCount = 0;
+    mockThreadState.runAttemptStatus = "failed";
+    mockThreadState.runAttemptErrorCode = "session_failed";
+    mockThreadState.runAttemptErrorMessage =
+      "Persona turn failed: 400 invalid identity";
+    mockTurnTracesState.traces = [];
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    } as Response);
+    mockAdaptTraceToUiMessages.mockReturnValue({
+      messages: [],
+      toolRenderOverrides: {},
+    });
+  });
+
+  afterEach(() => {
+    mockThreadState.sourceType = "scenario";
+    mockThreadState.synthetic = false;
+    mockThreadState.messageCount = 2;
+    mockThreadState.runAttemptStatus = undefined;
+    mockThreadState.runAttemptErrorCode = undefined;
+    mockThreadState.runAttemptErrorMessage = undefined;
+  });
+
+  it("says it never ran, and why, instead of guessing", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+    expect(
+      await screen.findByTestId("swarm-session-not-run"),
+    ).toHaveTextContent("This session didn't run");
+    expect(
+      screen.getByTestId("swarm-session-not-run-reason"),
+    ).toHaveTextContent(/invalid identity/i);
+    expect(screen.queryByText("May not have run.")).not.toBeInTheDocument();
+    // There is no conversation to promote, so the promote refusal has
+    // nothing to explain.
+    expect(
+      screen.queryByTestId("share-usage-empty-promote-blocked"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not ask the judge to grade a session that never ran", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await screen.findByTestId("swarm-session-not-run");
+    expect(mockRequestJudge).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Not ready to judge/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the attempt status when no reason was recorded", async () => {
+    // An older backend sends no error fields at all.
+    mockThreadState.runAttemptStatus = "rate_limited";
+    mockThreadState.runAttemptErrorCode = undefined;
+    mockThreadState.runAttemptErrorMessage = undefined;
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    expect(
+      await screen.findByTestId("swarm-session-not-run-reason"),
+    ).toHaveTextContent(/A rate limit stopped its attempt/);
+  });
+
+  it("keeps the empty-transcript state for a session that did record messages", async () => {
+    // Its attempt failed, but not before the conversation started: the
+    // transcript is missing, not the session.
+    mockThreadState.messageCount = 2;
+    render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+    expect(
+      await screen.findByTestId("share-usage-empty-promote-blocked"),
+    ).toHaveTextContent(/did not finish/i);
+    expect(
+      screen.queryByTestId("swarm-session-not-run"),
+    ).not.toBeInTheDocument();
   });
 });

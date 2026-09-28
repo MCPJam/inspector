@@ -104,7 +104,7 @@ export interface ScenarioFindingsModel extends SwarmFindingsModel {
  * sentiment only when the user SAID they were quitting; it is never inferred
  * from a session that simply stops.
  */
-const SENTIMENT_TITLE: Record<SessionSentiment, string> = {
+export const SENTIMENT_TITLE: Record<SessionSentiment, string> = {
   gave_up: "Gave up",
   frustrated: "Frustrated users",
   neutral: "Neutral users",
@@ -113,7 +113,7 @@ const SENTIMENT_TITLE: Record<SessionSentiment, string> = {
 };
 
 /** Worst first, so the strip opens on the sessions worth reading. */
-const SENTIMENT_ORDER: readonly SessionSentiment[] = [
+export const SENTIMENT_ORDER: readonly SessionSentiment[] = [
   "gave_up",
   "frustrated",
   "neutral",
@@ -291,13 +291,13 @@ export function deriveScenarioFindingsFootnotes(
 ): string[] {
   const notes: string[] = [];
   if (model.coverage.truncated) {
-    notes.push("Session scan hit its cap — counts cover a subset");
+    notes.push("Session scan hit its cap, so counts cover a subset");
   }
   if (model.unanalyzedCount > 0) {
     notes.push(
       `${model.unanalyzedCount} session${
         model.unanalyzedCount === 1 ? "" : "s"
-      } not analyzed yet — in no persona above`,
+      } not analyzed yet and in no persona above`,
     );
   }
   return notes;

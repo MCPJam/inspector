@@ -1,9 +1,11 @@
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
+import { DetailBackLink } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
@@ -44,6 +46,7 @@ import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/scenario-server-op
 import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { useScenarioTurnRating } from "@/hooks/useScenarioTurnRating";
 import { HostedTurnRating } from "@/components/hosted/hosted-turn-rating";
+import { useScenarioServerReachability } from "@/hooks/hosted/use-scenario-server-reachability";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -59,6 +62,7 @@ import { WebManagedServersProvider } from "@/contexts/web-managed-servers-contex
 import { ScenarioHostOnboardingOverlays } from "@/components/hosted/ScenarioHostOnboardingOverlays";
 import { ScenarioRecordingDeclinedPanel } from "@/components/hosted/ScenarioRecordingConsentDialog";
 import { ScenarioTaskChecklist } from "@/components/hosted/ScenarioTaskChecklist";
+import { ScenarioUnreachableServersBanner } from "@/components/hosted/ScenarioUnreachableServersBanner";
 import { useScenarioHostIntroGate } from "@/components/hosted/useScenarioHostIntroGate";
 import {
   getScenarioHostLabel,
@@ -215,9 +219,9 @@ function getScenarioDisplayError(
   if (error.code === "SCENARIO_SIGN_IN_REQUIRED" || error.status === 401) {
     return {
       kind: "sign_in_required",
-      title: "Sign in to preview this scenario",
+      title: "Sign in to preview this study",
       message:
-        "Sign in or create an account to preview and test this scenario.",
+        "Sign in or create an account to preview and test this study.",
     };
   }
   const normalizedMessage = error.message.toLowerCase();
@@ -335,7 +339,7 @@ async function redeemScenarioToken(
     if (!bearer)
       throw createScenarioRouteError(
         401,
-        "Sign in to preview this scenario",
+        "Sign in to preview this study",
         "SCENARIO_SIGN_IN_REQUIRED",
       );
     init.headers = {
@@ -649,25 +653,111 @@ export function ScenarioChatPage({
       isAuthenticated,
     });
 
+  // Only servers the OAuth machinery never touches. Every `useOAuth` row —
+  // including a discover-mode one, which the mirror also reports as true — is
+  // the gate's: it verifies them against this same /validate endpoint, and a
+  // row that is merely waiting for consent, or that answers 401 until it gets
+  // it, is not an unreachable server. Probing those here would double-connect
+  // and mislabel them.
+  const reachabilityCandidates = useMemo(
+    () => sessionServersActive.filter((server) => !server.useOAuth),
+    [sessionServersActive]
+  );
+
+  const reachabilityCandidateIds = useMemo(
+    () => new Set(reachabilityCandidates.map((server) => server.serverId)),
+    [reachabilityCandidates]
+  );
+
+  // Scoped to the scenario, not to `accessVersion`: a re-redeem mid-session
+  // bumps the version without changing which servers this tester is exercising,
+  // and re-probing there would shut the composer again on every recovery.
+  const reachabilityByServerId = useScenarioServerReachability(
+    reachabilityCandidates,
+    !!session,
+    session?.scenarioId ?? null
+  );
+
   const scenarioServerConfigs = useMemo(() => {
     if (!session) return {};
 
     return Object.fromEntries(
-      sessionServersActive.map((server) => [
-        server.serverName,
-        {
-          name: server.serverName,
-          config: {
-            url: "https://scenario-chat.invalid",
-          } as any,
-          lastConnectionTime: new Date(),
-          connectionStatus: "connected",
-          retryCount: 0,
-          enabled: true,
-        } satisfies ServerWithName,
-      ]),
+      sessionServersActive.map((server) => {
+        // Reported: a scenario whose only server never connected ran a full
+        // session with a green dot next to it. This map drives the composer's
+        // server list, so a server that did not answer must not claim it did —
+        // including on the renders before its probe has even registered, which
+        // is why a candidate with no entry yet reads as still connecting.
+        // Servers owned by the OAuth gate are never probed and keep the
+        // optimistic status the gate's own flow depends on.
+        const reachability =
+          reachabilityByServerId[server.serverId] ??
+          (reachabilityCandidateIds.has(server.serverId)
+            ? "checking"
+            : undefined);
+        const connectionStatus =
+          reachability === "unreachable"
+            ? "failed"
+            : reachability === "checking"
+              ? "connecting"
+              : "connected";
+
+        return [
+          server.serverName,
+          {
+            name: server.serverName,
+            config: {
+              url: "https://scenario-chat.invalid",
+            } as any,
+            lastConnectionTime: new Date(),
+            connectionStatus,
+            retryCount: 0,
+            enabled: true,
+          } satisfies ServerWithName,
+        ];
+      }),
     );
-  }, [session, sessionServersActive]);
+  }, [
+    session,
+    sessionServersActive,
+    reachabilityByServerId,
+    reachabilityCandidateIds,
+  ]);
+
+  const reachableSessionServerIds = useMemo(
+    () =>
+      sessionServersActive
+        .filter(
+          (server) => reachabilityByServerId[server.serverId] !== "unreachable"
+        )
+        .map((server) => server.serverId),
+    [sessionServersActive, reachabilityByServerId]
+  );
+
+  const unreachableServerNames = useMemo(
+    () =>
+      sessionServersActive
+        .filter(
+          (server) => reachabilityByServerId[server.serverId] === "unreachable"
+        )
+        .map((server) => server.serverName),
+    [sessionServersActive, reachabilityByServerId]
+  );
+
+  // Sending before the probes answer is the silent failure in a new outfit: a
+  // server still being checked is withheld from the turn, so the model would
+  // answer with none of the tools the tester was sent here to exercise. A
+  // candidate with no entry has not been probed yet either — the hook records
+  // "checking" from an effect, so the first render after a session resolves has
+  // an empty map and would otherwise open the composer on unprobed servers.
+  const isCheckingServerReachability = useMemo(
+    () =>
+      reachabilityCandidates.some(
+        (server) =>
+          (reachabilityByServerId[server.serverId] ?? "checking") === "checking"
+      ),
+    [reachabilityCandidates, reachabilityByServerId]
+  );
 
   const hostedServerIdsByName = useMemo(() => {
     if (!session) return {};
@@ -718,7 +808,7 @@ export function ScenarioChatPage({
           setRouteError(
             createScenarioRouteError(
               401,
-              "Sign in to preview this scenario",
+              "Sign in to preview this study",
               "SCENARIO_SIGN_IN_REQUIRED",
             ),
           );
@@ -767,7 +857,7 @@ export function ScenarioChatPage({
                 500,
                 error instanceof Error
                   ? error.message
-                  : "Unable to open this scenario.",
+                  : "Unable to open this study.",
               );
           const displayError = getScenarioDisplayError(nextError);
 
@@ -894,7 +984,7 @@ export function ScenarioChatPage({
                 0,
                 error instanceof Error
                   ? error.message
-                  : "Unable to refresh scenario access.",
+                  : "Unable to refresh study access.",
               );
           const detail = {
             status: routeError.status,
@@ -991,7 +1081,7 @@ export function ScenarioChatPage({
       handleHostedAccessRevoked({
         status: 401,
         code: "SCENARIO_SIGN_IN_REQUIRED",
-        message: "Sign in to preview this scenario",
+        message: "Sign in to preview this study",
       });
     useFrontierSignInDialogStore.getState().setOverride(override);
     return () => {
@@ -1134,8 +1224,11 @@ export function ScenarioChatPage({
     const returnTo = rememberReturnPath() ?? window.location.origin;
     clearCurrentSession(sessionRef.current?.scenarioId);
     setSession(null);
-    void signOut({ returnTo });
-  }, [rememberReturnPath, clearCurrentSession, signOut]);
+    // Revoke the session being left before WorkOS forgets it; bounded, never
+    // rejects. See `revoke-session`.
+    const leave = () => void signOut({ returnTo });
+    void startSessionRevocation(getAccessToken).then(leave, leave);
+  }, [rememberReturnPath, clearCurrentSession, signOut, getAccessToken]);
 
   const handleOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
@@ -1295,22 +1388,28 @@ export function ScenarioChatPage({
 
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ScenarioUnreachableServersBanner serverNames={unreachableServerNames} />
         <ChatTabV2
           connectedOrConnectingServerConfigs={scenarioServerConfigs}
           selectedServerNames={sessionServersActive.map(
             (server) => server.serverName,
           )}
+          // No `showContextPopover`: the token/cost ring is a developer's
+          // gauge, and here it showed outside testers their session's cost.
           minimalMode
-          showContextPopover
           reasoningDisplayMode="hidden"
           hostedContext={{
             scenarioId: session.scenarioId,
             accessVersion: session.accessVersion,
             scenarioSurface: session.surface ?? "share_link",
             projectId: session.payload.projectId,
-            selectedServerIds: sessionServersActive.map(
-              (server) => server.serverId,
-            ),
+            // `hostedContext.selectedServerIds` wins over the status-filtered
+            // names inside ChatTabV2, so a server proven unreachable has to be
+            // dropped HERE or the turn still ships it. Sending it anyway costs
+            // the whole turn: one server that fails `listTools` rejects the
+            // Promise.all behind the tool set. The tester already has the
+            // banner saying why it's missing.
+            selectedServerIds: reachableSessionServerIds,
             requestRefreshAccessVersion,
             refreshAccessSession,
             onAccessRevoked: handleHostedAccessRevoked,
@@ -1332,8 +1431,14 @@ export function ScenarioChatPage({
               ),
           }}
           onOAuthRequired={handleOAuthRequired}
-          scenarioComposerBlocked={introGate.composerBlocked}
-          scenarioComposerBlockedReason="Get started or authorize to send messages…"
+          scenarioComposerBlocked={
+            introGate.composerBlocked || isCheckingServerReachability
+          }
+          scenarioComposerBlockedReason={
+            introGate.composerBlocked
+              ? "Get started or authorize to send messages…"
+              : "Connecting to this session's tools…"
+          }
           scenarioOptionalInventory={scenarioOptionalInventory}
           onEnableScenarioOptionalServer={handleEnableScenarioOptionalServer}
           renderAssistantTurnActions={
@@ -1401,6 +1506,25 @@ export function ScenarioChatPage({
                             the scenario's internal name is the author's
                             label for it and means nothing to them. */}
                         <div className="flex min-w-0 flex-1 items-center gap-2">
+                          {/* Leaving goes on the LEFT, with the arrow — where
+                              every other back control in the app sits (the
+                              study's own "← User Testing"). On the right it
+                              read as one more thing to do in the session,
+                              beside Copy link and What to try. Preview only:
+                              a share-link tester has no study to go back to. */}
+                          {sessionForCurrentLink && isPreviewSurface ? (
+                            <>
+                              <DetailBackLink
+                                label="Back to study"
+                                onBack={handleReturnToStudy}
+                                testId="scenario-preview-back-to-study"
+                              />
+                              <div
+                                aria-hidden
+                                className="mx-1 h-5 w-px shrink-0 bg-border"
+                              />
+                            </>
+                          ) : null}
                           {sessionForCurrentLink ? (
                             <>
                               <img
@@ -1418,7 +1542,7 @@ export function ScenarioChatPage({
                                   would have no heading at all while the
                                   redeem is in flight. Name the shell for a
                                   screen reader without naming a vendor. */}
-                              <h1 className="sr-only">Loading scenario</h1>
+                              <h1 className="sr-only">Loading study</h1>
                               {/* Placeholder rather than the default host's
                                   mark: painting one brand and swapping to
                                   another once the redeem lands reads as a
@@ -1445,17 +1569,6 @@ export function ScenarioChatPage({
                           />
                         </button>
                         <div className="flex flex-1 items-center justify-end gap-1.5">
-                          {sessionForCurrentLink && isPreviewSurface ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-muted-foreground"
-                              onClick={handleReturnToStudy}
-                              data-testid="scenario-preview-back-to-study"
-                            >
-                              Back to study
-                            </Button>
-                          ) : null}
                           {session && shareableToken ? (
                             <Button
                               variant="ghost"

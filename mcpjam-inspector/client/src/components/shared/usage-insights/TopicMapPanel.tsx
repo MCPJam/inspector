@@ -1385,8 +1385,9 @@ export function TopicMapPanel({
             <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
           </div>
           {/* No voluntary rebuild here (#5277): before the first map read
-              there is no analysis state to retry from, and the one place to
-              ask for a re-analysis is the freshness chip's popover. */}
+              there is no analysis state to retry from. Analysis runs on its
+              own as sessions settle, and Analyze now lives in the Session
+              flow's status panel, where the reason it would help is shown. */}
         </div>
       </div>
     );
@@ -1514,8 +1515,8 @@ export function TopicMapPanel({
               </TooltipContent>
             </Tooltip>
             {/* Recovery only (#5277): the header keeps a retry for a failed
-                analysis. The voluntary Re-analyze lives in the freshness
-                chip's popover. */}
+                analysis. Analysis otherwise runs on its own as sessions
+                settle. */}
             {analysisFailed ? (
               <Tooltip delayDuration={200}>
                 <TooltipTrigger asChild>

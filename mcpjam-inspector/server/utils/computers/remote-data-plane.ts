@@ -36,6 +36,7 @@ import {
 } from "./run-command.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
+  computerUnavailableError,
   getConvexHttpUrl,
   isComputersDataPlaneConfigured,
 } from "./control-plane-client.js";
@@ -236,14 +237,26 @@ export async function execViaRemoteDataPlane(args: {
   }
 
   if (!response.ok) {
-    // webError envelope: { code, message, … }.
-    const message =
-      payload &&
-      typeof payload === "object" &&
-      typeof (payload as { message?: unknown }).message === "string"
-        ? (payload as { message: string }).message
-        : `remote exec failed (${response.status})`;
-    return { error: `Computer unavailable: ${message}` };
+    // webError envelope: { code, message, … }. Answered by status and code;
+    // the remote's message is logged, not relayed.
+    const envelope =
+      payload && typeof payload === "object"
+        ? (payload as { code?: unknown; message?: unknown })
+        : undefined;
+    return {
+      error: computerUnavailableError(
+        {
+          status: response.status,
+          ...(typeof envelope?.code === "string"
+            ? { code: envelope.code }
+            : {}),
+          ...(typeof envelope?.message === "string"
+            ? { error: envelope.message }
+            : {}),
+        },
+        "remote data plane exec",
+      ),
+    };
   }
 
   if (isExecResult(payload)) return payload;

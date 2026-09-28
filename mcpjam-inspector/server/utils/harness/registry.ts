@@ -24,6 +24,11 @@ import type {
 import { asSchema } from "ai";
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import {
+  harnessModelSupport,
+  harnessPinnedVersion,
+  type HarnessModelSupportVerdict,
+} from "@/shared/harness-model-support";
+import {
   HARNESS_MCP_DELIVERY,
   type HarnessMcpDelivery,
 } from "@/shared/harness-mcp-delivery";
@@ -368,11 +373,19 @@ type HarnessRuntimeAdapterBase = {
   /** Map a host model id to the harness's native model id/alias, if it needs
    *  one. Undefined ⇒ let the harness use its default. */
   toNativeModel?(modelId: string): string | undefined;
-  /** Can this runtime actually run the given host model? Claude Code runs any
-   *  Anthropic model the CLI accepts (true); Codex only the gpt-5 family it maps.
-   *  The preflight rejects unsupported models rather than letting the runtime
-   *  silently fall back to its own default. */
-  supportsModel(modelId: string): boolean;
+  /** The runtime CLI version this adapter pins (`HARNESS_PINNED_VERSIONS`),
+   *  or undefined when the adapter does not pin one (Cursor). The model-support
+   *  evidence is evaluated against it. */
+  pinnedRuntimeVersion: string | undefined;
+  /** The evidence-table verdict for the given CANONICAL host model at this
+   *  adapter's pinned runtime version — see `shared/harness-model-support.ts`.
+   *  `supported` / `unsupported` / `unknown`, with the reason and the row. */
+  modelSupport(modelId: string): HarnessModelSupportVerdict;
+  /** Can this runtime run the given host model? True only for a `supported`
+   *  verdict, or an `unknown` one when the caller passes `allowUnknown`
+   *  (Playground chat). The preflight rejects the rest rather than letting the
+   *  runtime silently fall back to its own default. */
+  supportsModel(modelId: string, opts?: { allowUnknown?: boolean }): boolean;
   /** Map a runtime tool name back to MCPJam tool identity. Claude Code namespaces
    *  MCP tools `mcp__<server>__<tool>`; other harnesses differ, so this is
    *  per-adapter rather than pinned to Claude's scheme. */
@@ -633,7 +646,12 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *
  *  Claude Code puts its own native id on the wire (`haiku`, `claude-sonnet-4-5`,
  *  a dated snapshot); the Gateway wants `anthropic/claude-<family>-<major>.<minor>`.
- *  `settings.modelOverrides` bridges that.
+ *  `settings.modelOverrides` bridges that. An Anthropic id OUTSIDE
+ *  haiku/sonnet/opus (the evidence table's `unknown` row, which Playground chat
+ *  may run with a warning) reaches the bridge as its own slug
+ *  (`claude-fable-5`, see `toClaudeCodeModel`) and is overridden to the
+ *  provider-qualified Gateway id verbatim (`anthropic/claude-fable-5`) — so the
+ *  model on the wire is the model that was asked for, never the CLI default.
  *
  *  The companion `CLAUDE_CODE_EFFORT_LEVEL` write this group used to carry is
  *  GONE from the patch: stable exposes a first-class `env` option on
@@ -653,11 +671,16 @@ function gatewayModelOverrideSettingsFor(model) {
   } else {
     if (!model.startsWith("claude-")) return undefined;
     const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-    if (!match) return undefined;
-    const [, family, major, minor] = match;
-    overrides = {
-      [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-    };
+    if (match) {
+      const [, family, major, minor] = match;
+      overrides = {
+        [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
+      };
+    } else if (/^claude-[a-z0-9.-]+$/.test(model)) {
+      overrides = { [model]: \`anthropic/\${model}\` };
+    } else {
+      return undefined;
+    }
   }
   return { modelOverrides: overrides };
 }`;
@@ -745,11 +768,16 @@ const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOve
     } else {
       if (!model.startsWith("claude-")) return undefined;
       const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-      if (!match) return undefined;
-      const [, family, major, minor] = match;
-      overrides = {
-        [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-      };
+      if (match) {
+        const [, family, major, minor] = match;
+        overrides = {
+          [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
+        };
+      } else if (/^claude-[a-z0-9.-]+$/.test(model)) {
+        overrides = { [model]: \`anthropic/\${model}\` };
+      } else {
+        return undefined;
+      }
     }
     return { modelOverrides: overrides };
   }
@@ -1054,63 +1082,74 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   ) {
     return withoutProvider;
   }
+  // Another Anthropic model (the evidence table's `unknown` row: no native id
+  // verified). Playground chat may still run it with a warning, and then the
+  // honest attempt is the model's own id — passing nothing would let the CLI
+  // silently run its DEFAULT model under this model's name. Evals and swarms
+  // never get here: they refuse an unverified pair before the turn starts.
+  if (m.startsWith("anthropic/") && /^claude-[a-z0-9.-]+$/.test(withoutProvider)) {
+    return withoutProvider;
+  }
   return undefined;
 }
 
 /**
- * Model LINES the pinned Codex CLI resolves but equips with NO tools.
+ * Model support is no longer decided here. Which models each harness can run
+ * is an evidence table keyed by the runtime VERSION
+ * (`shared/harness-model-support-evidence.json`, read through
+ * `shared/harness-model-support.ts`), and every adapter asks it at its pinned
+ * CLI version — see {@link modelSupportFor}.
  *
- * Not a guess and not a forward guard — a measurement. Driving the pinned
- * binary through every gpt-5-family id in MCPJam's hosted catalog
- * (`.spike-codex-appserver`, gate P5) produced:
- *
- *   gpt-5, -chat, -codex, -mini, -nano, -pro ......... 10 tools
- *   gpt-5.1-*, gpt-5.3-* ............................. 10 tools
- *   gpt-5.2-*, gpt-5.4-*, gpt-5.5-* .................. 11 tools
- *   gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra ......... 0 TOOLS
- *
- * The 5.6 line is the dangerous case precisely because the CLI KNOWS it: there
- * is no "unknown model" warning to notice, the turn completes, and the model
- * simply never gets a tool. The user sees a Codex host answer from chat alone
- * and has no way to tell it never had the ability to act. All three are already
- * in the hosted catalog, so this is a live defect, not a hypothetical.
- *
- * A LINE prefix rather than exact ids, because the failure is a property of the
- * model line and OpenAI ships new members of a line (`-luna`, `-sol`, `-terra`)
- * without our involvement.
- *
- * VERSION-KEYED to the pinned Codex CLI. Re-measure on a version bump
- * (`node probe/run-gates.mjs --gate P5`) and move a line out of this list only
- * with the matrix to show for it.
+ * The Codex tool-less gate that used to live here (`gpt-5.6*` refused because
+ * the pinned 0.149.x CLI resolves the line but equips it with NO tools —
+ * measured by `.spike-codex-appserver` gate P5, re-run with
+ * `node probe/run-gates.mjs --gate P5` on a version bump) is now the table's
+ * `codex <=0.149.x` row, with the measurement as its evidence. A newer CLI
+ * reads that pair as `unknown` until someone measures it, instead of silently
+ * inheriting the old verdict.
  */
-const CODEX_TOOL_LESS_MODEL_LINES = ["gpt-5.6"] as const;
 
 /** Map a host model id to a Codex-native OpenAI model. ALLOWLIST, not a blanket
  *  `openai/` strip: only the gpt-5 family (what Codex CLI runs) passes through;
  *  anything else ⇒ undefined so Codex uses its own pinned default rather than
- *  being forced onto a model it can't run.
- *
- *  The tool-less lines above are refused on top of that, which is what turns a
- *  silent chat-only turn into a `model-unsupported` pre-flight refusal the user
- *  can act on.
- *
- *  Why a line DENYLIST inside the family allowlist rather than an exact-id
- *  allowlist: the hosted catalog is dynamic (the backend can add models with no
- *  inspector deploy — see `hosted-model-catalog.ts`), so an exact list would
- *  refuse newly hosted models that work perfectly well, trading a silent-bad
- *  turn for a loud-wrong refusal on the common path. The denylist targets
- *  exactly the measured failure and nothing else. */
+ *  being forced onto a model it can't run. Whether a mapped model is actually
+ *  RUN is the evidence table's call ({@link modelSupportFor}), so a line the
+ *  pinned CLI runs without tools is refused by the preflight, not dropped
+ *  here. */
 function toCodexModel(modelId: string): string | undefined {
   if (!modelId.toLowerCase().startsWith("openai/")) return undefined;
   const slug = modelId.slice("openai/".length);
   if (!/^gpt-5/i.test(slug)) return undefined;
-  const lower = slug.toLowerCase();
-  // Exact id or a `<line>-<variant>` member of it. Guarded on the separator so
-  // a future `gpt-5.60` line is NOT swallowed by the `gpt-5.6` entry.
-  const toolLess = CODEX_TOOL_LESS_MODEL_LINES.some(
-    (line) => lower === line || lower.startsWith(`${line}-`),
-  );
-  return toolLess ? undefined : slug;
+  return slug;
+}
+
+/** The evidence-table verdict for `modelId` on `harnessId` at its pinned
+ *  runtime version. One helper so every adapter (both Codex transports
+ *  included) reads the same table the same way. */
+function modelSupportFor(
+  harnessId: HarnessId,
+): (modelId: string) => HarnessModelSupportVerdict {
+  return (modelId) =>
+    harnessModelSupport({
+      harnessId,
+      runtimeVersion: harnessPinnedVersion(harnessId),
+      modelId,
+    });
+}
+
+/** `supportsModel` derived from the verdict: `supported`, or `unknown` when
+ *  the caller explicitly allows an unverified pair (Playground chat). */
+function supportsModelFor(
+  harnessId: HarnessId,
+): (modelId: string, opts?: { allowUnknown?: boolean }) => boolean {
+  const support = modelSupportFor(harnessId);
+  return (modelId, opts) => {
+    const { status } = support(modelId);
+    return (
+      status === "supported" ||
+      (status === "unknown" && opts?.allowUnknown === true)
+    );
+  };
 }
 
 /** Convert a built-in tool's input schema to JSON Schema, or omit on failure.
@@ -1247,9 +1286,12 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createClaudeCode()),
   toNativeModel: toClaudeCodeModel,
-  // The CLI runs any Anthropic model we map into its native id shape; other
-  // providers are left to the runtime default rather than blocked in preflight.
-  supportsModel: () => true,
+  // Which models the pinned CLI runs is the evidence table's call, at the
+  // pinned version: haiku/sonnet/opus supported, other Anthropic ids unknown,
+  // everything else unsupported.
+  pinnedRuntimeVersion: harnessPinnedVersion("claude-code"),
+  modelSupport: modelSupportFor("claude-code"),
+  supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
   async deliverMcpServers({ writeTextFile, sessionWorkDir, mcpJson }) {
     // Write the host's MCP servers into the session workdir before Claude Code
@@ -1358,9 +1400,13 @@ const codexExecAdapter: HarnessRuntimeAdapter = {
   fileChangeToolName: "fileChange",
   listBuiltinTools: memoizedBuiltinTools(() => createCodex()),
   toNativeModel: toCodexModel,
-  // Codex only runs the gpt-5 family it maps; anything else would silently fall
-  // back to Codex's default model, so the preflight rejects it.
-  supportsModel: (modelId) => toCodexModel(modelId) !== undefined,
+  // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
+  // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
+  // default model (or run without tools), so the preflight rejects it. Both
+  // transports pin the same CLI, so the app-server arm inherits these.
+  pinnedRuntimeVersion: harnessPinnedVersion("codex"),
+  modelSupport: modelSupportFor("codex"),
+  supportsModel: supportsModelFor("codex"),
   // SAME scheme as Claude Code, deliberately: the projected host tools are named
   // `mcp__<sanitizedServer>__<tool>` (see `host-executed-mcp-tools.ts`), so a
   // relayed call attributes back to its serverId exactly as a native Claude Code
@@ -1560,11 +1606,15 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // (a plan-gated model does not error; it answers "Upgrade your plan to
   // continue" in a normal end_turn, which the turn runner detects separately).
   toNativeModel: () => undefined,
-  // Never consulted: `runHarnessTurn` and the preflight skip every model gate
-  // for an external-account harness, because the model MCPJam knows about is
-  // not the model that runs. Declared `true` so the shape is satisfied without
-  // implying a check happened.
-  supportsModel: () => true,
+  // Never consulted by the gates: `runHarnessTurn` and the preflight skip every
+  // model gate for an external-account harness, because the model MCPJam knows
+  // about is not the model that runs (the sentinel rule replaces them). Read
+  // from the same table anyway — it says `cursor/auto` only — so a picker that
+  // asks gets the same answer. The CLI version is not pinned (see
+  // `runtimeVersionCommand`), and every Cursor row is version-independent.
+  pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
+  modelSupport: modelSupportFor("cursor"),
+  supportsModel: supportsModelFor("cursor"),
   // Name-only attribution, for the result parts that arrive without an input.
   // Cursor's stream name is an opaque `acp_tool_<id>`, so this can only ever
   // return it verbatim with no serverId — which is the correct answer for a

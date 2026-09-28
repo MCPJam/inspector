@@ -238,6 +238,24 @@ export type EvalSuiteConfigTest = {
   importRunDecision?: EvalImportRunDecision;
 };
 
+export type EvalSuiteEnvironmentTarget = {
+  environmentId: string;
+  name?: string;
+  hostId?: string;
+  hostName: string | null;
+  /** Stored model override; absent ⇒ the client's own model. */
+  modelId?: string;
+  serverAttachmentId?: string;
+  /** The server group's live server names. */
+  serverNames: string[];
+  /** Pinned plugin versions, which contribute more servers at launch. */
+  pluginVersionCount: number;
+  /** The sandbox image the environment pins, if any. */
+  computerEnvironmentId?: string;
+  /** Set when the environment is archived or gone: it cannot launch. */
+  unavailable?: "archived" | "missing";
+};
+
 export type EvalSuite = {
   _id: string;
   createdBy: string;
@@ -395,6 +413,15 @@ export type EvalSuite = {
    */
   environmentIds?: string[];
   /**
+   * An environment suite's TARGETS, from the backend's read: each
+   * environment's client, model and server group, with the group's live
+   * server names. Display readers derive "the suite's servers" from these —
+   * never from the legacy fields an environment suite does not read — and
+   * keep them distinct: their union is not the configuration of any one
+   * environment. Absent on a legacy suite and on an older backend.
+   */
+  environmentTargets?: EvalSuiteEnvironmentTarget[];
+  /**
    * Epoch ms of the schedule's next due firing, or absent when nothing is due.
    * Denormalized on the suite by the scheduler; never computed client-side.
    */
@@ -426,6 +453,8 @@ export type EvalServerAttachment = {
   name: string;
   serverIds: string[];
   resolvedServerNames: string[];
+  /** A live suite, journey, or environment still uses it; delete would fail. */
+  inUse?: boolean;
 };
 
 export type EvalCase = {
@@ -634,6 +663,14 @@ export type EvalIteration = {
    * an em dash rather than a currency amount.
    */
   usage?: EvalIterationUsage;
+  /**
+   * What this iteration actually ran on (backend `lib/executionRecord.ts`):
+   * resolved model, rail and connection, harness runtime, effective settings,
+   * routing attempts and any deviation. Absent on rows recorded before the
+   * record existed — render "not recorded", never a guess. Read it through
+   * `readExecutionRecord` (the `ExecutionProvenance` component does).
+   */
+  execution?: unknown;
   error?: string;
   errorDetails?: string;
   resultSource?: "reported" | "derived";
@@ -788,6 +825,42 @@ export type EvalRunVerdictSummary = {
   } & Record<string, unknown>;
 } & Record<string, unknown>;
 
+/** Mirrors backend `convex/lib/evalRunMetrics.ts` (`testSuiteRun.metrics`). */
+export type EvalRunMetrics = {
+  version: 1;
+  computedAt?: number;
+  sourceMaxUpdatedAt?: number;
+  iterationCount: number;
+  results: {
+    passed: number;
+    failed: number;
+    timedOut: number;
+    cancelled: number;
+    pending: number;
+    setupFailed: number;
+    skipped: number;
+    /** Completed without a stored verdict; only the browser can grade these. */
+    unscored: number;
+  };
+  completedCount: number;
+  latencyP50Ms?: number;
+  latencyP95Ms?: number;
+  tokensTotal?: number;
+  tokensMeasuredIterations: number;
+  toolCallsTotal?: number;
+  toolCallsMeasuredIterations: number;
+  costUsd?: number;
+  costedIterations: number;
+  hasRunnerReportedCost: boolean;
+  models: Array<{
+    model: string;
+    total: number;
+    passed: number;
+    failed: number;
+    timedOut: number;
+  }>;
+};
+
 export type EvalSuiteRunSummary = {
   total: number;
   passed: number;
@@ -935,6 +1008,13 @@ export type EvalSuiteRun = {
     | "cancelled"
     | "timed_out";
   summary?: EvalSuiteRunSummary;
+  /**
+   * Server-stored per-run rollup (tokens, latency, cost, models, result
+   * counts), written when the run goes terminal. Absent on runs that finished
+   * before the rollup existed and on runs still in flight — readers fold the
+   * run's own iterations instead (see `run-metrics.ts`).
+   */
+  metrics?: EvalRunMetrics;
   passCriteria?: {
     minimumPassRate: number;
   };

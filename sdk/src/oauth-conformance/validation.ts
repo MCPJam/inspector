@@ -119,7 +119,9 @@ export function normalizeOAuthConformanceConfig(
     allowPrivateNetwork: config.allowPrivateNetwork ?? false,
     stepTimeout: config.stepTimeout ?? 30_000,
     verification: {
-      listTools: config.verification?.listTools ?? !!config.verification?.callTool,
+      profile: config.verification?.profile,
+      listTools:
+        config.verification?.listTools ?? !!config.verification?.callTool,
       callTool: config.verification?.callTool,
       timeout: config.verification?.timeout ?? 30_000,
     },

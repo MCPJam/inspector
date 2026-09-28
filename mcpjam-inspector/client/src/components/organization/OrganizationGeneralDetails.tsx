@@ -63,7 +63,7 @@ export function OrganizationGeneralDetails({
           <div>
             <h2 className="text-sm font-semibold">Organization logo</h2>
             <p className="text-xs text-foreground">
-              Choose an image under 5 MB.
+              PNG, JPEG, GIF, or WebP, up to 5 MB.
             </p>
           </div>
           {canEdit && (

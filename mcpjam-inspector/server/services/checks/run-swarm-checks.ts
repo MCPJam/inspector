@@ -14,8 +14,7 @@
  *      instead of carrying no stamp, which downstream reads as "this run had
  *      no rubric" and would silently shrink every denominator.
  *   2. EVALUATE — the same `evaluatePredicates` the eval runner calls, over a
- *      transcript built the same way `run-predicates-on-chat-session.ts`
- *      builds one.
+ *      transcript built from the stored envelope.
  *   3. COMPLETE or FAIL — verdicts correlated back to `criterionId`
  *      positionally, which is sound here and only here: `entries.map(…)` and
  *      the result array come from a single call with order preserved by
@@ -35,7 +34,7 @@ import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
 import {
   extractToolCallsFromEnvelopeMessages,
   type ChatSessionEnvelope,
-} from "./run-predicates-on-chat-session.js";
+} from "./chat-session-envelope.js";
 import {
   claimSwarmChecks,
   completeSwarmChecks,

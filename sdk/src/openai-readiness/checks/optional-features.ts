@@ -39,6 +39,7 @@ export interface OpenAIOptionalFeatureEvidence {
   clientIdMetadataDocuments?: boolean;
   /** Whether the plugin implements a checkout flow. */
   checkout?: boolean;
+  profileIdentification?: boolean;
 }
 
 export interface OpenAIOptionalFeatureOutput {
@@ -56,6 +57,17 @@ interface BadgeSpec {
 }
 
 const BADGES: BadgeSpec[] = [
+  {
+    id: "openai.feature.profile-identification",
+    title: "Authenticated profile identification",
+    page: "build/auth",
+    section: "§Support multiple accounts",
+    read: (evidence) => evidence.profileIdentification,
+    detail: (state) =>
+      state === "supported"
+        ? "Exactly one authenticated profile tool is designated."
+        : "No unique profile tool is designated; multiple accounts are still supported.",
+  },
   {
     id: "openai.feature.imported-skills",
     title: "Skills imported from the MCP server",
@@ -107,7 +119,7 @@ const BADGES: BadgeSpec[] = [
 
 export function runOpenAIOptionalFeatureChecks(
   evidence: OpenAIOptionalFeatureEvidence,
-  stamp: OpenAICheckStamp,
+  stamp: OpenAICheckStamp
 ): OpenAIOptionalFeatureOutput {
   const findings: OpenAIReadinessFinding[] = [];
   const badges: OpenAICapabilityBadge[] = [];
@@ -118,8 +130,8 @@ export function runOpenAIOptionalFeatureChecks(
       observed === undefined
         ? "not-evaluated"
         : observed
-          ? "supported"
-          : "unsupported";
+        ? "supported"
+        : "unsupported";
 
     badges.push({
       id: spec.id,
@@ -151,8 +163,8 @@ export function runOpenAIOptionalFeatureChecks(
         { state },
         state === "not-evaluated"
           ? "This run did not look for this capability."
-          : spec.detail(state),
-      ),
+          : spec.detail(state)
+      )
     );
   }
 

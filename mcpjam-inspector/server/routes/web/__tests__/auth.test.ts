@@ -280,7 +280,7 @@ describe("toHttpConfig — plugin stdio in the caller's computer", () => {
   it("still refuses a stdio server with no plugin runtime", async () => {
     const { toHttpConfig } = await import("../auth.js");
     expect(() => toHttpConfig(STDIO_ROW, 1000)).toThrowError(
-      /requires the local runtime/
+      /npx @mcpjam\/inspector@latest/
     );
   });
 
@@ -292,7 +292,7 @@ describe("toHttpConfig — plugin stdio in the caller's computer", () => {
       toHttpConfig(STDIO_ROW, 1000, "stored-oauth-token", undefined, undefined, {
         supportedProtocolVersions: ["2025-06-18"],
       })
-    ).toThrowError(/requires the local runtime/);
+    ).toThrowError(/npx @mcpjam\/inspector@latest/);
   });
 
   it("points at the shim and presents its bearer when a runtime exists", async () => {

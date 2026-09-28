@@ -28,6 +28,8 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
   const actual =
@@ -76,6 +78,7 @@ vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 vi.mock("../suite-header", () => ({

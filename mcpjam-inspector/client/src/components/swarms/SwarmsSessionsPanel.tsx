@@ -101,6 +101,13 @@ export function SwarmsSessionsPanel({
       : new Set(journeyRunIds);
   }, [journeyRunIds]);
 
+  // The metric strip needs the same wave as an array, and a fresh one each
+  // render would resubscribe the query on every keystroke elsewhere.
+  const metricRunIds = useMemo(
+    () => (runIdSet ? [...runIdSet] : undefined),
+    [runIdSet],
+  );
+
   // Host / run-id filters — client-side over the loaded pages (there is no
   // per-host backend query; the persona filter stays server-side as before).
   // Remaining pages keep arriving as each one lands.
@@ -277,18 +284,13 @@ export function SwarmsSessionsPanel({
       className="flex h-full min-h-0 flex-col"
       data-testid="swarms-sessions-panel"
     >
-      {/* Project / persona Sessions only. The strip queries
-          `getSwarmSessionMetrics` without `journeyRunIds`, so on a run it
-          would report the whole project (e.g. "653 sessions in scope")
-          next to a five-session list. */}
-      {runIdSet ? null : (
-        <ErrorBoundary fallback={null}>
-          <SwarmSessionsMetricStrip
-            projectId={projectId}
-            personaRefId={personaRefId}
-          />
-        </ErrorBoundary>
-      )}
+      <ErrorBoundary fallback={null}>
+        <SwarmSessionsMetricStrip
+          projectId={projectId}
+          personaRefId={personaRefId}
+          journeyRunIds={metricRunIds}
+        />
+      </ErrorBoundary>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">

@@ -15,6 +15,12 @@
 import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  API_VOCABULARY_HEADER,
+  UNKNOWN_API_VOCABULARY_MESSAGE,
+  apiVocabularyOf,
+  hasUnknownApiVocabulary,
+} from "./api-vocabulary.js";
 
 export const PROXY_TIMEOUT_MS = 15_000;
 
@@ -22,7 +28,7 @@ export const PROXY_TIMEOUT_MS = 15_000;
 export function forwardQueryParams(
   c: Context,
   target: URL,
-  names: readonly string[]
+  names: readonly string[],
 ): void {
   for (const name of names) {
     const value = c.req.query(name);
@@ -44,14 +50,14 @@ export async function fetchConvexV1Read(
   c: Context,
   convexPath: string,
   configure?: (target: URL) => void,
-  options: { public?: boolean } = {}
+  options: { public?: boolean; negotiatesVocabulary?: boolean } = {},
 ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
   const bearer = options.public
@@ -59,6 +65,25 @@ export async function fetchConvexV1Read(
     : await getConvexBearerForRequest(c);
   const target = new URL(convexPath, convexUrl);
   configure?.(target);
+
+  // The noun-value vocabulary is NEGOTIATED UPSTREAM for these reads: the
+  // bodies are Convex's DTOs, passed through verbatim, so Convex is the only
+  // layer that can project them. Refusing an unknown value here first means
+  // the caller gets this surface's own error envelope rather than one relayed
+  // from a service it never addressed.
+  let vocabularyHeader: string | undefined;
+  if (options.negotiatesVocabulary) {
+    if (hasUnknownApiVocabulary(c)) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        UNKNOWN_API_VOCABULARY_MESSAGE,
+      );
+    }
+    // Reads the header AND appends `Vary` — on this response, not just the
+    // upstream's, because this is the response a cache in front of us sees.
+    vocabularyHeader = String(apiVocabularyOf(c));
+  }
 
   // The abort deadline must cover the WHOLE exchange: `fetch` resolves on
   // headers, so clearing the timer there would leave a stalled response
@@ -70,7 +95,12 @@ export async function fetchConvexV1Read(
   try {
     response = await fetch(target, {
       method: "GET",
-      headers: bearer ? { Authorization: `Bearer ${bearer}` } : undefined,
+      headers: {
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        ...(vocabularyHeader
+          ? { [API_VOCABULARY_HEADER]: vocabularyHeader }
+          : {}),
+      },
       signal: controller.signal,
     });
     try {
@@ -82,7 +112,7 @@ export async function fetchConvexV1Read(
       throw new WebRouteError(
         502,
         ErrorCode.SERVER_UNREACHABLE,
-        `Catalog service returned a non-JSON response (${response.status})`
+        `Catalog service returned a non-JSON response (${response.status})`,
       );
     }
   } catch (error) {
@@ -93,7 +123,7 @@ export async function fetchConvexV1Read(
       isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `Catalog read timed out after ${PROXY_TIMEOUT_MS}ms`
-        : "Failed to reach the catalog service"
+        : "Failed to reach the catalog service",
     );
   } finally {
     clearTimeout(timeoutId);
@@ -107,6 +137,7 @@ export async function fetchConvexV1Read(
     "x-mcpjam-export-complete",
     "access-control-expose-headers",
     "link",
+    "vary",
   ] as const) {
     const value = response.headers.get(name);
     if (value) headers[name] = value;
@@ -118,13 +149,13 @@ export async function proxyConvexV1Read(
   c: Context,
   convexPath: string,
   configure?: (target: URL) => void,
-  options?: { public?: boolean }
+  options?: { public?: boolean; negotiatesVocabulary?: boolean },
 ): Promise<Response> {
   const { status, body, headers } = await fetchConvexV1Read(
     c,
     convexPath,
     configure,
-    options
+    options,
   );
   for (const [name, value] of Object.entries(headers)) c.header(name, value);
   // Same envelope on both surfaces — pass status and body through verbatim.

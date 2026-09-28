@@ -5,6 +5,7 @@ import {
   runCompareLaneKey,
 } from "../run-compare-lanes-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+import { metricsByRunFromIterations } from "../../evals/run-metrics";
 
 function makeRun(
   overrides: Partial<EvalSuiteRun> & { _id: string },
@@ -77,7 +78,7 @@ function build(
   return buildRunCompareLanes({
     currentRun: options.currentRun ?? runs[0],
     runs,
-    iterations,
+    metricsByRun: metricsByRunFromIterations(iterations),
     hostNamesById: new Map<string, string | null>(),
     passThreshold: options.passThreshold ?? null,
   });

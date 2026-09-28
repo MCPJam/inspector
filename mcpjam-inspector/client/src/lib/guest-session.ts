@@ -12,6 +12,11 @@
  * transient failures do not strand old guests on a new identity.
  */
 
+import {
+  sanitizeGuestSessionFailureDetails,
+  type GuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
+
 
 declare global {
   interface Window {
@@ -226,9 +231,27 @@ function deleteLegacyToken(): void {
 }
 
 class GuestSessionRequestError extends Error {
-  constructor(message: string) {
+  /**
+   * The HTTP status when the server answered with a non-ok response. Absent
+   * for a network error or an unreadable body — that absence is the signal
+   * that the request never got a real answer from the server.
+   */
+  readonly status?: number;
+  /**
+   * Why the server could not get a session from ITS upstream, from the 503
+   * body. On a self-hosted install that 503 is made on the user's machine, so
+   * this is the only place the cause shows up.
+   */
+  readonly upstreamFailure?: GuestSessionFailureDetails;
+  constructor(
+    message: string,
+    status?: number,
+    upstreamFailure?: GuestSessionFailureDetails,
+  ) {
     super(message);
     this.name = "GuestSessionRequestError";
+    this.status = status;
+    this.upstreamFailure = upstreamFailure;
   }
 }
 
@@ -240,6 +263,48 @@ export class GuestSessionRefusedError extends GuestSessionRequestError {
     this.name = "GuestSessionRefusedError";
     this.retryAfterMs = retryAfterMs;
   }
+}
+
+// This fetch has no timeout, so reading a stalled error body without a bound
+// would hang the retry ladder behind a report that only wants a reason.
+const UPSTREAM_FAILURE_READ_TIMEOUT_MS = 1000;
+
+async function readUpstreamFailure(
+  response: Response,
+): Promise<GuestSessionFailureDetails | undefined> {
+  if (typeof response.json !== "function") return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body: unknown = await Promise.race([
+      response.json(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(
+          () => resolve(undefined),
+          UPSTREAM_FAILURE_READ_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return sanitizeGuestSessionFailureDetails(
+      (body as { details?: unknown } | null | undefined)?.details,
+    );
+  } catch {
+    return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// e.g. " (timeout)", " (network ENOTFOUND)", " (upstream_status 522)".
+function describeUpstreamFailure(
+  failure: GuestSessionFailureDetails | undefined,
+): string {
+  if (!failure) return "";
+  const extra =
+    failure.networkCode ??
+    (failure.upstreamStatus !== undefined
+      ? String(failure.upstreamStatus)
+      : undefined);
+  return ` (${failure.reason}${extra ? ` ${extra}` : ""})`;
 }
 
 function parseRetryAfterMs(raw: string | null | undefined): number {
@@ -292,8 +357,11 @@ async function requestGuestSession(
   }
 
   if (!response.ok) {
+    const upstreamFailure = await readUpstreamFailure(response);
     throw new GuestSessionRequestError(
-      `guest-session request failed: ${response.status} ${response.statusText}`,
+      `guest-session request failed: ${response.status} ${response.statusText}${describeUpstreamFailure(upstreamFailure)}`,
+      response.status,
+      upstreamFailure,
     );
   }
 
@@ -323,8 +391,12 @@ async function requestGuestSession(
  * Get or create a guest session. Returns a cached session if one is in
  * memory and not within the expiry buffer; otherwise issues a single
  * `lookup_or_create` request and dedupes concurrent callers.
+ *
+ * Returns null on a refusal (429) or a definitive miss, and THROWS the real
+ * cause on any other failure. Only the auth retry ladder calls this, so it can
+ * report why a mint failed; everyone else uses `getOrCreateGuestSession`.
  */
-export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
+export async function getOrCreateGuestSessionOrThrow(): Promise<GuestSession | null> {
   if (cachedSession && cachedSession.expiresAt - EXPIRY_BUFFER_MS > Date.now()) {
     return cachedSession;
   }
@@ -360,7 +432,7 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
         return null;
       }
       console.error("Failed to create guest session:", error);
-      return null;
+      throw error;
     } finally {
       if (inFlightRequest === currentInFlight) {
         inFlightRequest = null;
@@ -368,8 +440,26 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
     }
   })();
   inFlightRequest = currentInFlight;
+  // A later caller may join this promise after it rejected, or none may join
+  // at all. Mark it handled now so a shared failure never surfaces as an
+  // unhandled rejection.
+  void currentInFlight.catch(() => {});
 
   return inFlightRequest;
+}
+
+/**
+ * Same as `getOrCreateGuestSessionOrThrow`, but returns null on every failure.
+ * Most callers only need "token or no token" and do not catch.
+ */
+export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
+  try {
+    // `return await`, not `return`: a bare returned promise would skip this
+    // catch and leak the rejection to callers that do not expect one.
+    return await getOrCreateGuestSessionOrThrow();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -551,8 +641,12 @@ export async function getGuestPromotionProof(): Promise<string | null> {
  * Force-refresh the guest bearer token. Drops the in-memory cache and
  * fetches a new JWT bound to the cookie-backed guest. Deduplicates
  * concurrent force-refresh calls.
+ *
+ * THROWS the real cause on failure. Only the auth retry ladder calls this, so
+ * it can report why a refresh failed; everyone else uses
+ * `forceRefreshGuestSession`.
  */
-export async function forceRefreshGuestSession(): Promise<string | null> {
+export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> {
   if (forceRefreshInFlight) {
     const session = await forceRefreshInFlight;
     return session?.token ?? null;
@@ -577,14 +671,29 @@ export async function forceRefreshGuestSession(): Promise<string | null> {
       return session;
     } catch (error) {
       console.error("Failed to refresh guest session:", error);
-      return null;
+      throw error;
     }
   })();
+  // See getOrCreateGuestSessionOrThrow: a later caller may join this promise
+  // after it rejected, so mark it handled now.
+  void forceRefreshInFlight.catch(() => {});
 
   try {
     const session = await forceRefreshInFlight;
     return session?.token ?? null;
   } finally {
     forceRefreshInFlight = null;
+  }
+}
+
+/**
+ * Same as `forceRefreshGuestSessionOrThrow`, but returns null on every
+ * failure.
+ */
+export async function forceRefreshGuestSession(): Promise<string | null> {
+  try {
+    return await forceRefreshGuestSessionOrThrow();
+  } catch {
+    return null;
   }
 }

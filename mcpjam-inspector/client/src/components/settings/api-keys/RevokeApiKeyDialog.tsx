@@ -17,6 +17,12 @@ export interface RevokeApiKeyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   keyName: string;
+  /**
+   * Who the key belongs to, when the person revoking is not its owner (an
+   * organization admin). Named in the warning so an admin knows whose
+   * integration is about to stop.
+   */
+  ownerLabel?: string;
   isRevoking: boolean;
   onConfirm: () => Promise<void>;
 }
@@ -30,6 +36,7 @@ export function RevokeApiKeyDialog({
   open,
   onOpenChange,
   keyName,
+  ownerLabel,
   isRevoking,
   onConfirm,
 }: RevokeApiKeyDialogProps) {
@@ -74,6 +81,15 @@ export function RevokeApiKeyDialog({
                 will be revoked immediately. Any client still using it will
                 start receiving 401 errors.
               </p>
+              {ownerLabel ? (
+                <p>
+                  It belongs to{" "}
+                  <span className="font-medium text-foreground">
+                    {ownerLabel}
+                  </span>
+                  . Anything they run with it will need a new key.
+                </p>
+              ) : null}
               <p>You cannot undo this.</p>
             </div>
           </DialogDescription>

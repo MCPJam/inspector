@@ -19,7 +19,7 @@ import {
  */
 export function usePreviewedHostId(
   projectId: string | null,
-): readonly [string | null, (next: string | null) => void] {
+): readonly [string | null, (next: string | null) => void, boolean] {
   // The stored value is kept together with the project it was READ FOR, and
   // the returned id is derived by comparing that against the current project.
   // Repairing the mismatch in the effect instead would leave one committed
@@ -48,6 +48,7 @@ export function usePreviewedHostId(
   // Null until the new project's own value has loaded — never the old one.
   const hostId =
     scoped.projectId === (projectId ?? null) ? scoped.hostId : null;
+  const isHydrated = scoped.projectId === (projectId ?? null);
 
   const setHostId = useCallback(
     (next: string | null) => {
@@ -57,5 +58,5 @@ export function usePreviewedHostId(
     [projectId],
   );
 
-  return [hostId, setHostId] as const;
+  return [hostId, setHostId, isHydrated] as const;
 }

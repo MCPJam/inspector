@@ -47,9 +47,18 @@ declare module "hono" {
      * - `"discord_service"` — the Discord bot's `dsc_…` credential, resolving
      *   to a linked user by the same rule as `slack_service`.
      * - `"guest"` — a VALIDATED guest JWT. `guestId` is set alongside.
-     * - `"unverified_passthrough"` — a bearer that LOOKED like a WorkOS AuthKit
-     *   JWT and was let through unverified, on the expectation that Convex
-     *   checks it downstream. Not an authenticated caller. See
+     * - `"authkit_jwt"` — a WorkOS AuthKit access token VERIFIED at the
+     *   gateway (signature, issuer, audience = our client id, expiry).
+     *   `workosUserId` (the `sub`) and `workosSessionId` (the `sid`) are set
+     *   alongside. A session known to be revoked never gets this label — it
+     *   is refused with 401 `SESSION_REVOKED` (MJ-011). Convex checks
+     *   revocation for every bearer forwarded to it; a route that does not
+     *   forward the bearer relies on `requireVerifiedAuth`, which also
+     *   requires the revoked-session list to be current.
+     * - `"unverified_passthrough"` — a bearer the gateway could not or did not
+     *   verify (not an AuthKit token, an AuthKit token for another audience,
+     *   or AuthKit's keys were unreachable), let through on the expectation
+     *   that Convex checks it downstream. Not an authenticated caller. See
      *   `middleware/require-verified-auth.ts`.
      * - Absent — no bearer at all, or one this middleware did not classify.
      *
@@ -83,16 +92,26 @@ declare module "hono" {
       | "teams_service"
       // A validated guest JWT. `guestId` is set alongside.
       | "guest"
-      // ASSERTED, NOT VERIFIED. The bearer looked like a WorkOS AuthKit JWT
-      // and `bearerAuthMiddleware` let it through without checking the
-      // signature, because the routes it normally fronts forward the bearer to
-      // Convex, which does check it. A route that does NOT forward the bearer
-      // must not trust this — see `middleware/require-verified-auth.ts`.
+      // A WorkOS AuthKit access token whose signature, issuer, audience and
+      // expiry `bearerAuthMiddleware` verified. `workosUserId` and
+      // `workosSessionId` are set alongside.
+      | "authkit_jwt"
+      // ASSERTED, NOT VERIFIED. A bearer `bearerAuthMiddleware` let through
+      // without verifying it, because the routes it normally fronts forward
+      // the bearer to Convex, which does check it. A route that does NOT
+      // forward the bearer must not trust this — see
+      // `middleware/require-verified-auth.ts`.
       | "unverified_passthrough";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */
     workosUserId?: string;
+    /**
+     * The AuthKit session (`sid` claim) of a gateway-verified `authkit_jwt`
+     * bearer, when the token carries one. What revocation is keyed on
+     * (`services/revoked-session-cache.ts`).
+     */
+    workosSessionId?: string;
     /** Resolved MCPJam user `_id` (Convex). Set with `authMethod`. */
     mcpjamUserId?: string;
     /**

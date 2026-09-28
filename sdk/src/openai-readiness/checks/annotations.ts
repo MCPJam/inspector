@@ -133,7 +133,7 @@ const ALL: OpenAICheckDefinition[] = [
  * the single most obvious case, never matched. Splitting the name into words
  * first is both correct and readable.
  */
-const MUTATING_VERBS = new Set([
+export const MUTATING_VERBS = new Set([
   "delete",
   "remove",
   "destroy",
@@ -170,19 +170,19 @@ function leadingVerb(name: string): string {
   );
 }
 
-function looksMutating(name: string): boolean {
+export function looksMutating(name: string): boolean {
   return MUTATING_VERBS.has(leadingVerb(name));
 }
 
 /** Tool names carrying a destructive or open-world annotation. */
 export function annotatedToolNames(
-  tools: readonly OpenAIToolEvidence[],
+  tools: readonly OpenAIToolEvidence[]
 ): string[] {
   return tools
     .filter(
       (tool) =>
         tool.annotations?.destructiveHint === true ||
-        tool.annotations?.openWorldHint === true,
+        tool.annotations?.openWorldHint === true
     )
     .map((tool) => tool.name)
     .sort();
@@ -213,7 +213,7 @@ export interface OpenAIToolListingCompleteness {
 export function runOpenAIAnnotationChecks(
   tools: readonly OpenAIToolEvidence[] | undefined,
   stamp: OpenAICheckStamp,
-  listing?: OpenAIToolListingCompleteness,
+  listing?: OpenAIToolListingCompleteness
 ): OpenAIReadinessFinding[] {
   if (!tools) {
     // THE DIAL'S OWN REASON, when there is one. A `tools/list` that could not
@@ -229,8 +229,8 @@ export function runOpenAIAnnotationChecks(
         definition,
         stamp,
         reason,
-        missingInput(OPENAI_READINESS_INPUTS.toolListing),
-      ),
+        missingInput(OPENAI_READINESS_INPUTS.toolListing)
+      )
     );
   }
 
@@ -251,8 +251,8 @@ export function runOpenAIAnnotationChecks(
         `${why}, so a requirement about every tool cannot be graded`,
         missingInput(OPENAI_READINESS_INPUTS.toolListing, {
           toolsRead: tools.length,
-        }),
-      ),
+        })
+      )
     );
   }
 
@@ -260,7 +260,7 @@ export function runOpenAIAnnotationChecks(
     // A server with no tools is a real shape — a skills-only plugin's server,
     // or one that only serves resources — and it is not a coverage gap.
     return ALL.map((definition) =>
-      notApplicable(definition, stamp, "the server advertises no tools"),
+      notApplicable(definition, stamp, "the server advertises no tools")
     );
   }
 
@@ -270,7 +270,7 @@ export function runOpenAIAnnotationChecks(
     .map((tool) => ({
       name: tool.name,
       missing: OPENAI_REQUIRED_TOOL_ANNOTATIONS.filter(
-        (hint) => typeof tool.annotations?.[hint] !== "boolean",
+        (hint) => typeof tool.annotations?.[hint] !== "boolean"
       ),
     }))
     .filter((entry) => entry.missing.length > 0);
@@ -283,12 +283,12 @@ export function runOpenAIAnnotationChecks(
           stamp,
           // An unannotated tool is unreviewable, not assumed safe.
           `Declare ${OPENAI_REQUIRED_TOOL_ANNOTATIONS.join(
-            ", ",
+            ", "
           )} on every tool; these are missing hints: ${missingHints
             .map((entry) => `${entry.name} (${entry.missing.join(", ")})`)
             .join("; ")}.`,
-          { missing: missingHints },
-        ),
+          { missing: missingHints }
+        )
   );
 
   const undescribed = tools
@@ -301,10 +301,10 @@ export function runOpenAIAnnotationChecks(
           DESCRIPTIONS_PRESENT,
           stamp,
           `Describe every tool; these have no description: ${undescribed.join(
-            ", ",
+            ", "
           )}.`,
-          { undescribed },
-        ),
+          { undescribed }
+        )
   );
 
   const overLong = tools
@@ -321,8 +321,8 @@ export function runOpenAIAnnotationChecks(
           `Shorten these tool names to ${
             OPENAI_FIELD_LIMITS.toolNameMaxLength
           } characters or fewer: ${overLong.join(", ")}.`,
-          { overLong },
-        ),
+          { overLong }
+        )
   );
 
   const badSchemas = tools
@@ -330,7 +330,7 @@ export function runOpenAIAnnotationChecks(
       (tool) =>
         typeof tool.inputSchema !== "object" ||
         tool.inputSchema === null ||
-        Array.isArray(tool.inputSchema),
+        Array.isArray(tool.inputSchema)
     )
     .map((tool) => tool.name);
   findings.push(
@@ -340,17 +340,17 @@ export function runOpenAIAnnotationChecks(
           SCHEMAS_VALID,
           stamp,
           `Give every tool a JSON Schema object as its input schema; these do not have one: ${badSchemas.join(
-            ", ",
+            ", "
           )}.`,
-          { badSchemas },
-        ),
+          { badSchemas }
+        )
   );
 
   // ------------------------------------------------------------- the heuristic
   const suspicious = tools
     .filter(
       (tool) =>
-        tool.annotations?.readOnlyHint === true && looksMutating(tool.name),
+        tool.annotations?.readOnlyHint === true && looksMutating(tool.name)
     )
     .map((tool) => tool.name);
   findings.push(
@@ -363,9 +363,9 @@ export function runOpenAIAnnotationChecks(
       suspicious.length === 0
         ? "No tool name contradicts its annotations, as far as a name can show."
         : `These tools are annotated read-only and named as though they change something: ${suspicious.join(
-            ", ",
-          )}. A name is not a specification — worth a look, not a verdict.`,
-    ),
+            ", "
+          )}. A name is not a specification — worth a look, not a verdict.`
+    )
   );
 
   // ------------------------------------------------- per-tool security schemes
@@ -379,8 +379,8 @@ export function runOpenAIAnnotationChecks(
           PER_TOOL_SECURITY,
           stamp,
           { tools: tools.length },
-          "No tool declares its own security scheme. That is correct when every tool needs the same access, and worth revisiting when they do not.",
-        ),
+          "No tool declares its own security scheme. That is correct when every tool needs the same access, and worth revisiting when they do not."
+        )
   );
 
   return findings;

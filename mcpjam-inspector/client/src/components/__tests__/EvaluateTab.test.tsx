@@ -144,7 +144,10 @@ vi.mock("@/lib/eval-route-url", () => ({
   useEvaluateRouteFromUrl: () => mocks.route.current,
 }));
 
-vi.mock("../evals/helpers", () => ({
+vi.mock("../evals/helpers", async (importOriginal) => ({
+  // The generation-target helpers are pure and read the suite passed in;
+  // the real ones keep a legacy suite (no environmentIds) on its old path.
+  ...(await importOriginal<typeof import("../evals/helpers")>()),
   aggregateSuite: () => null,
   // EvaluateTab's `generateState` memo and the agent bridge's generate handler
   // call this to compute the effective server set. Configurable so the
@@ -345,6 +348,54 @@ function withCiOwnedSuiteA() {
       });
       const sortedSuites = state.sortedSuites.map((entry) =>
         entry.suite._id === "suite-a" ? ciOwned : entry,
+      );
+      const selectedSuiteEntry =
+        sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
+        null;
+      return {
+        ...state,
+        suiteOverview: sortedSuites,
+        sortedSuites,
+        selectedSuiteEntry,
+        selectedSuite: selectedSuiteEntry?.suite ?? null,
+      };
+    },
+  );
+}
+
+/** Make "Suite suite-a" an environment suite whose environments differ. */
+function withMixedEnvironmentSuiteA() {
+  mocks.useEvalQueries.mockImplementation(
+    ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+      const state = makeQueryState(selectedSuiteId);
+      const base = makeSuiteEntry([], "suite-a");
+      const mixed = {
+        ...base,
+        suite: {
+          ...base.suite,
+          environmentIds: ["env-a", "env-b"],
+          environmentTargets: [
+            {
+              environmentId: "env-a",
+              hostName: "Claude",
+              modelId: "opus",
+              serverAttachmentId: "group-1",
+              serverNames: ["billing"],
+              pluginVersionCount: 0,
+            },
+            {
+              environmentId: "env-b",
+              hostName: "Cursor",
+              modelId: "sonnet",
+              serverAttachmentId: "group-2",
+              serverNames: ["search"],
+              pluginVersionCount: 0,
+            },
+          ],
+        },
+      };
+      const sortedSuites = state.sortedSuites.map((entry) =>
+        entry.suite._id === "suite-a" ? mixed : entry,
       );
       const selectedSuiteEntry =
         sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
@@ -868,6 +919,97 @@ describe("EvaluateTab", () => {
     });
   });
 
+  it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
+    // "Promote to test case" into a NEW suite runs as an action; its result
+    // can arrive before the overview subscription's update, so the page
+    // mounts on an overview that does not list the suite yet — while the
+    // suite's own query is still in flight.
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId: "new-suite",
+      testId: "case-1",
+    } as any;
+    let caughtUp = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (caughtUp) {
+          const created = makeSuiteEntry([], "new-suite");
+          const sortedSuites = [...state.sortedSuites, created];
+          const selectedSuiteEntry =
+            selectedSuiteId === "new-suite" ? created : null;
+          return {
+            ...state,
+            suiteOverview: sortedSuites,
+            sortedSuites,
+            selectedSuiteEntry,
+            selectedSuite: selectedSuiteEntry?.suite ?? null,
+            suiteDetails: selectedSuiteEntry
+              ? { testCases: [], iterations: [] }
+              : undefined,
+            isSuiteDetailsLoading: false,
+          };
+        }
+        return {
+          ...state,
+          // The stale overview: no "new-suite". Its own query has not
+          // answered yet.
+          isSuiteDetailsLoading: selectedSuiteId === "new-suite",
+        };
+      },
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    // The suite's query answers in the same transition that brings the
+    // overview up to date.
+    caughtUp = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+  });
+
+  it("bounces a missing suite once its own query answers empty", async () => {
+    // The real shape of a deleted (or unauthorized) suite: its query is in
+    // flight first, then `listTestCases` answers []. The existing "invalid
+    // suite routes" spec starts at the answer; this one walks through the
+    // wait, so a guard that also held on an empty answer would fail here
+    // instead of stranding the user on a spinner.
+    mocks.route.current = { type: "suite-overview", suiteId: "gone-suite" };
+    let answered = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+        ...makeQueryState(selectedSuiteId),
+        suiteDetails:
+          answered && selectedSuiteId
+            ? { testCases: [], iterations: [] }
+            : undefined,
+        isSuiteDetailsLoading: !answered && selectedSuiteId === "gone-suite",
+      }),
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    answered = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    await waitFor(() =>
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+        { type: "list" },
+        { replace: true },
+      ),
+    );
+  });
+
   it("passes eval iteration limit disabled state into the suite view", () => {
     mocks.evalIterationQuota = {
       used: 25,
@@ -1128,6 +1270,47 @@ describe("EvaluateTab", () => {
       });
     });
 
+    it("generateEvalTests asks a mixed environment suite which environment to use", async () => {
+      withMixedEnvironmentSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: {
+          code: "invalid_request",
+          message: expect.stringMatching(/Claude · opus, Cursor · sonnet/),
+        },
+      });
+      expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    it("generateEvalTests generates for the named environment, not the legacy servers", async () => {
+      withMixedEnvironmentSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a", environment: "cursor · sonnet" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "generation_started", suiteId: "suite-a" },
+      });
+      await waitFor(() => {
+        expect(mocks.handleGenerateTests).toHaveBeenCalledWith(
+          "suite-a",
+          [],
+          expect.objectContaining({ environmentId: "env-b" }),
+        );
+      });
+    });
+
     it("generateEvalTests rejects a suite with no servers attached", async () => {
       render(<EvaluateTab projectId="ws-1" />);
 
@@ -1146,15 +1329,15 @@ describe("EvaluateTab", () => {
     /*
      * AN AGENT COMMAND IS A SECOND DOOR INTO THE SAME MUTATIONS.
      *
-     * The CI-owned lock lives in the rendered controls — withheld callbacks, a
-     * disabled fieldset, a withdrawn Delete. An agent command passes none of
-     * them: it resolves a suite by name and calls the handler directly. So a
-     * lock that only hides affordances leaves `case.create` and `suite.delete`
-     * — both in the platform's locked set — reachable, and the agent gets a
-     * `409` it can do nothing with.
+     * The CI-owned lock lives in the rendered controls — withheld callbacks and
+     * a disabled fieldset. An agent command passes none of them: it resolves a
+     * suite by name and calls the handler directly. So a lock that only hides
+     * affordances leaves `case.create` — in the platform's locked set —
+     * reachable, and the agent gets a `409` it can do nothing with.
      *
-     * `resolveSuiteEntry` now takes a REQUIRED intent, so a command added later
-     * cannot compile without deciding which of these two groups it is in.
+     * `resolveSuiteEntry` takes a REQUIRED intent, so a command added later
+     * cannot compile without deciding which of the two groups it is in:
+     * `"edit_config"` writes what CI owns, `"lifecycle"` does not.
      */
     it("generateEvalTests refuses a CI-owned suite instead of earning a 409", async () => {
       mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
@@ -1173,7 +1356,10 @@ describe("EvaluateTab", () => {
       expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
     });
 
-    it("deleteEvalSuite refuses a CI-owned suite instead of earning a 409", async () => {
+    it("deleteEvalSuite deletes a CI-owned suite — removing a row is not editing it", async () => {
+      // The other side of the same rule. Generation above writes cases the
+      // next sync owns; deleting writes nothing CI owns, and it is the only
+      // cleanup a suite minted by `createEvalRunReporter()` has (issue #5381).
       withCiOwnedSuiteA();
       render(<EvaluateTab projectId="ws-1" />);
 
@@ -1182,12 +1368,11 @@ describe("EvaluateTab", () => {
         payload: { suite: "Suite suite-a" },
       });
 
-      expect(response).toMatchObject({
-        status: "error",
-        error: { code: "invalid_request" },
-      });
-      expect(mocks.setSuiteToDelete).not.toHaveBeenCalled();
-      expect(mocks.confirmDelete).not.toHaveBeenCalled();
+      expect(response).toMatchObject({ status: "success" });
+      expect(mocks.setSuiteToDelete).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-a" }),
+      );
+      expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
     });
 
     it("still runs a CI-owned suite — the lock is on edits, not on the suite", async () => {
@@ -1200,8 +1385,9 @@ describe("EvaluateTab", () => {
         payload: { suite: "Suite suite-a" },
       });
 
-      // The guard against over-refusing, and the reason the two above mean
-      // something: `"read"` is not a weaker check, it is a different question.
+      // The guard against over-refusing, and the reason the refusal above
+      // means something: `"lifecycle"` is not a weaker check, it is a
+      // different question.
       expect(response).toMatchObject({ status: "success" });
     });
 

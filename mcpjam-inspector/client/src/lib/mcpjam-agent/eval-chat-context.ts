@@ -10,7 +10,8 @@ export function evalChatSuiteContext(
   suite: EvalSuite,
   cases: EvalCase[],
   runs: EvalSuiteRun[],
-  iterations: EvalIteration[],
+  /** The iterations themselves, or just their count when they are not loaded. */
+  iterations: readonly EvalIteration[] | number,
 ) {
   return {
     suite: {
@@ -46,7 +47,8 @@ export function evalChatSuiteContext(
         effectiveModelId: run.effectiveModelId,
         createdAt: run.createdAt,
       })),
-    iterationCount: iterations.length,
+    iterationCount:
+      typeof iterations === "number" ? iterations : iterations.length,
     note: "Run traces, tool outputs, and snapshots are omitted. Open a case to read and edit its complete steps; generation discovers live server tools separately.",
   };
 }

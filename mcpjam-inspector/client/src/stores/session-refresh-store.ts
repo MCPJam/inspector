@@ -23,6 +23,10 @@ interface SessionRefreshState {
    * `client.setAuth` and re-authenticates in place — no page reload.
    */
   retryNonce: number;
+  /** Hold readiness-gated reads while Convex is dropping its socket identity. */
+  queriesPaused: boolean;
+  pauseQueries: () => void;
+  resumeQueries: () => void;
   notifyFailure: (kind: SessionRefreshFailureKind) => void;
   retry: () => void;
   clear: () => void;
@@ -33,6 +37,9 @@ export const useSessionRefreshStore = create<SessionRefreshState>(
     status: "idle",
     kind: null,
     retryNonce: 0,
+    queriesPaused: false,
+    pauseQueries: () => set({ queriesPaused: true }),
+    resumeQueries: () => set({ queriesPaused: false }),
     notifyFailure: (kind) => {
       // A sign-out in flight produces this failure on purpose: the session was
       // just revoked, and the refresh timer is reporting the revocation we

@@ -381,7 +381,12 @@ export interface CancelEvalRunInspectorCommand {
 export interface GenerateEvalTestsInspectorCommand {
   id: string;
   type: "generateEvalTests";
-  payload: { suite: string };
+  /**
+   * `environment` (id or name) picks which of an environment suite's
+   * environments to generate for; required when they connect different
+   * servers and the person has not picked one.
+   */
+  payload: { suite: string; environment?: string };
   timeoutMs?: number;
 }
 

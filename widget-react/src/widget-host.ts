@@ -738,6 +738,19 @@ export interface WidgetHostServices {
     input: RequestInfo | URL,
     init?: RequestInit
   ) => Promise<Response>;
+  /**
+   * Fetch a persisted artifact (cached widget HTML) by URL. Hosts that serve
+   * artifacts through short-lived links bind this to a fetch that renews an
+   * expired link. Optional: the renderer falls back to the global `fetch`.
+   */
+  fetchArtifact?: (url: string) => Promise<Response>;
+  /**
+   * What a cached artifact URL points at. A host whose artifact links are
+   * re-minted over time (a new expiry, the same object) returns a key that
+   * ignores the expiry, so a re-minted link does not reload a widget whose
+   * bytes did not change. Optional: the URL itself is the key.
+   */
+  artifactCacheKey?: (url: string) => string;
 }
 
 // --- The seam ----------------------------------------------------------------

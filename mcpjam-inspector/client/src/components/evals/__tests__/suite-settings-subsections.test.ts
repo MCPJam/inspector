@@ -45,7 +45,12 @@ describe("getSubsectionsForGroup", () => {
   });
 
   it("routes old judge anchors to the stage checks", () => {
-    for (const key of ["judge", "judgeRubric", "judgeGroundedness"] as const) {
+    for (const key of [
+      "judge",
+      "judgeRubric",
+      "judgeGroundedness",
+      "judgeRubricChecks",
+    ] as const) {
       expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
         "checks",
       );

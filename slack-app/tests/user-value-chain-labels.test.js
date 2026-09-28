@@ -102,6 +102,7 @@ test('every registered vocabulary has decided whether it is forked', () => {
     'swarmFindingCoverageNotes',
     'swarmFindingDispositions',
     'swarmFindingScopeLevels',
+    'swarmFindingSignals',
     'swarmFindingSummaryKinds',
     'verdictDecisionReasons',
   ]);

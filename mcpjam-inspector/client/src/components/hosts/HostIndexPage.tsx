@@ -41,7 +41,7 @@ export function HostIndexPage({
       const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent user testing scenarios/evals first`,
+          `${msg} — use force delete or remove dependent user testing studies/evals first`,
         );
       } else {
         toast.error(msg);

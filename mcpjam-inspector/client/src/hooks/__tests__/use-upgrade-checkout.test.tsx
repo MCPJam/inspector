@@ -376,8 +376,8 @@ describe("useUpgradeCheckout", () => {
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_interval_selected",
       expect.objectContaining({
-        billing_interval: "monthly",
         organization_id: "org-1",
+        billing_interval: "monthly",
       }),
     );
   });
@@ -443,3 +443,12 @@ it.each(["not-self-serve", "wrong-plan", "unpriced"])(
     expect(result.current.teamName).toBe("Team");
   },
 );
+
+it("exposes eligible catalog credit allowances for the upgrade benefit", () => {
+  const catalog = planCatalog(["monthly"]);
+  const credits = { model: "monthly_ledger", perSeat: 7500 };
+  billingState.planCatalog = { ...catalog, plans: { team: { ...catalog.plans.team, includedCredits: credits, topUp: { eligible: true } } } };
+  const { result } = renderHook(() => useUpgradeCheckout({ organizationId: "org", origin: "credits", limitKind: "credits" }));
+  expect(result.current.creditUpgradePlans).toHaveLength(1);
+  expect(result.current.creditUpgradePlans[0].includedCredits).toEqual(credits);
+});

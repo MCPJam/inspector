@@ -58,6 +58,37 @@ describe("EvalsHeader", () => {
     expect(setup).not.toHaveBeenCalled();
   });
 
+  it("keeps the case trail when suite evaluators open from a case", () => {
+    const toCase = vi.fn();
+    const toCaseEvaluators = vi.fn();
+    render(
+      <EvalsHeader
+        parentCrumb={{ label: "Amazon", onClick: vi.fn() }}
+        detailCrumb={[
+          { label: "Test Case Evaluators", onClick: toCaseEvaluators },
+          { label: "Test Suite Evaluators" },
+        ]}
+        onCurrentCrumbClick={toCase}
+      >
+        Case 1 — Search coffee
+      </EvalsHeader>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Case 1 — Search coffee" }),
+    );
+    expect(toCase).toHaveBeenCalledOnce();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test Case Evaluators" }),
+    );
+    expect(toCaseEvaluators).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("link", {
+        name: "Test Suite Evaluators",
+        current: "page",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("links back to the case from the Test Case Evaluators breadcrumb", () => {
     const back = vi.fn();
     render(

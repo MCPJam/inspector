@@ -34,6 +34,8 @@ import {
   environmentServerIds,
   environmentServerNames,
   resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
 
@@ -210,6 +212,7 @@ export async function executeClaimedRun(
           const resolved = await resolveEnvironmentForLaunch(
             createConvexClient(bearer),
             {
+              serverSource: EVAL_LAUNCH_SERVER_SOURCE,
               projectId: claimed.projectId!,
               environmentId: claimed.environmentId!,
             },
@@ -270,7 +273,7 @@ export async function executeClaimedRun(
       await reportComplete({
         triggerId: claimed.triggerId,
         ok: false,
-        failureReason: classifyFailure(error),
+        failureReason: classifyFailure(translateEnvironmentResolveError(error)),
       });
       return;
     }
@@ -316,7 +319,7 @@ export async function executeClaimedRun(
     await reportComplete({
       triggerId: claimed.triggerId,
       ok: false,
-      failureReason: classifyFailure(error),
+      failureReason: classifyFailure(translateEnvironmentResolveError(error)),
     });
   } finally {
     if (manager) {

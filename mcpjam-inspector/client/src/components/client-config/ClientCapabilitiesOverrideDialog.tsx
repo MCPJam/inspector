@@ -71,12 +71,20 @@ export function ClientCapabilitiesOverrideDialog({
     try {
       const parsed = JSON.parse(value || "{}");
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setError("Value must be a JSON object");
+        setError(
+          'Enter a JSON object enclosed in { }, such as {"key": "value"}.',
+        );
         return;
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid JSON");
+      setError(
+        err instanceof SyntaxError
+          ? "This is not valid JSON. Check the quotes, commas and brackets, then try again."
+          : err instanceof Error
+            ? err.message
+            : "The JSON could not be read. Check its format and try again.",
+      );
     }
   }, []);
 
@@ -86,13 +94,21 @@ export function ClientCapabilitiesOverrideDialog({
     try {
       const parsed = JSON.parse(text || "{}") as Record<string, unknown>;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setError("Value must be a JSON object");
+        setError(
+          'Enter a JSON object enclosed in { }, such as {"key": "value"}.',
+        );
         return;
       }
       onSave(parsed);
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid JSON");
+      setError(
+        err instanceof SyntaxError
+          ? "This is not valid JSON. Check the quotes, commas and brackets, then try again."
+          : err instanceof Error
+            ? err.message
+            : "The JSON could not be read. Check its format and try again.",
+      );
     }
   }, [text, onSave, onOpenChange]);
 

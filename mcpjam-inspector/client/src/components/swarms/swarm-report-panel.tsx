@@ -1,22 +1,11 @@
 import type { JourneySessionRow } from "@/lib/swarm-api";
-import type { SwarmReport, SwarmSessionVerdict } from "@mcpjam/sdk/contract";
+import type { SwarmReport } from "@mcpjam/sdk/contract";
 import { USER_VALUE_STAGE_LABELS } from "@mcpjam/sdk/contract";
 import {
   observationLabel,
   lifecycleChip,
   runVerdictBadge,
-  verdictBadge,
 } from "./swarm-verdict-presentation";
-export function SwarmGoalResult({
-  verdict,
-}: {
-  verdict?: SwarmSessionVerdict;
-}) {
-  const badge = verdictBadge(verdict);
-  return (
-    <span className={`text-xs ${badge.tone}`}>Goal result: {badge.label}</span>
-  );
-}
 export function SwarmReportPanel({
   report,
   title,

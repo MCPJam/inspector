@@ -31,11 +31,11 @@ function formatScenariosPerProjectLabel(
   value: number | null | undefined,
 ): string {
   if (value == null) {
-    return "unlimited user testing scenarios per project";
+    return "unlimited user testing studies per project";
   }
 
   return `${value} user testing ${
-    value === 1 ? "scenario" : "scenarios"
+    value === 1 ? "study" : "studies"
   } per project`;
 }
 

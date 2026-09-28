@@ -48,6 +48,7 @@ describe("HTTP connect failures keep their provenance", () => {
     );
 
     expect(describeError(error).slug).toBe("transport/econnrefused");
+    expect((error as Error).message).toContain("Check that it's running");
   }, 20000);
 
   it("preserves both transport failures on the combined connect error", async () => {
@@ -65,19 +66,16 @@ describe("HTTP connect failures keep their provenance", () => {
     // `disableSseFallback` rethrows from its own branch — a second throw site
     // that has to carry the cause too.
     //
-    // Documented limit: this path CANNOT reach `transport/econnrefused`. The
-    // upstream era-negotiation probe (@modelcontextprotocol/client) wraps the
-    // failure in an `SdkError` that neither keeps undici's `cause` nor repeats
-    // the errno in its message, so the errno is destroyed before MCPJam sees
-    // it. `transport/fetch_failed` is the honest answer here; recovering more
-    // requires an upstream change.
+    // The message helper unwraps the negotiation error's data.cause and
+    // recovers the errno even when the describer's ordinary cause walk cannot.
     const error = (await captureConnectError("dead-declared", {
       url: deadUrl,
       disableSseFallback: true,
     }).catch((e) => e)) as Error;
 
     expect(error.cause).toBeDefined();
-    expect(describeError(error).slug).toBe("transport/fetch_failed");
+    expect(describeError(error).slug).toBe("transport/econnrefused");
+    expect(error.message).toContain("Check that it's running");
   }, 20000);
 });
 
@@ -195,4 +193,38 @@ describe("errno recovered from message text", () => {
 
     expect(describeError(error).slug).toBe("transport/fetch_failed");
   });
+});
+
+
+describe("HTTP 404 connection guidance", () => {
+  let server: Server;
+  let url: string;
+
+  beforeAll(async () => {
+    server = createServer((_req, res) => {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("Not found");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing port");
+    url = `http://127.0.0.1:${address.port}/mcp`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve()),
+    );
+  });
+
+  it.each([false, true])("explains a real 404 (disableSseFallback=%s)", async (disableSseFallback) => {
+    const manager = new MCPClientManager({});
+    try {
+      await expect(manager.connectToServer("missing", { url, disableSseFallback })).rejects.toThrow(
+        `Server returned HTTP 404 at ${url}. Check the MCP endpoint and server logs.`,
+      );
+    } finally {
+      await manager.disconnectAllServers();
+    }
+  }, 20000);
 });

@@ -100,3 +100,127 @@ export function brokenWire(): SwarmJourneyFindings {
     findings: [mechanism, report],
   });
 }
+
+export const WIRE_SECOND_RUN_ID = "run-export";
+export const WIRE_SECOND_GOAL = {
+  runId: WIRE_SECOND_RUN_ID,
+  journeyRefId: "journey-export",
+  title: "Export the quarterly ledger for the finance team",
+};
+export const WIRE_TRUNCATION_PHRASE =
+  "The reply stopped before it was finished.";
+export const WIRE_TRUNCATION_FIX = "Raise the reply limit.";
+export const WIRE_ACCOUNT =
+  "She asked for the diagram and the reply stopped partway. Nothing was drawn.";
+
+/**
+ * The staging wave that started all this: two goals, the same cause, and the
+ * reply cut off in both. Long titles on purpose — the legacy composer cut goal
+ * titles to four words, which is most of why the card said nothing useful.
+ */
+export function truncatedWire(
+  over: {
+    signalRows?: boolean;
+    mechanismRows?: boolean;
+    verification?: SwarmJourneyFindings["verification"];
+  } = {},
+): SwarmJourneyFindings {
+  const published = publishedWire();
+  const base: SwarmJourneyFinding = {
+    id: "x",
+    basis: "verifiedMechanism",
+    scopeLevel: "goal",
+    persona: WIRE_PERSONA,
+    goal: WIRE_GOAL,
+    target: { kind: "host", id: "host-1", label: "Claude", modelId: null },
+    population: { count: 1, total: 2, unit: "sessions" },
+    sessionIds: ["session-1"],
+    citations: ["session-1/signal:outputTruncated:1"],
+    verdictSeen: "failed",
+    chainStage: "response",
+    chainStageState: "failed",
+    chainStageBasis: "derived",
+    disposition: "blockedByResponse",
+    tone: "fail",
+    coverageNotes: [],
+    outcomePhrase: "could not finish the reply",
+    mechanismPhrase: WIRE_TRUNCATION_PHRASE,
+    fixPhrase: WIRE_TRUNCATION_FIX,
+    reportExcerpt: null,
+    // ONE cause, fanned into a row per goal — the client rejoins them by this.
+    mechanismId: "mechanism-truncation",
+  };
+  const mechanismRows: SwarmJourneyFinding[] = [
+    { ...base, id: "mech-a" },
+    {
+      ...base,
+      id: "mech-b",
+      goal: WIRE_SECOND_GOAL,
+      sessionIds: ["session-2"],
+      citations: ["session-2/signal:outputTruncated:0"],
+    },
+  ];
+  const reports: SwarmJourneyFinding[] = mechanismRows.map((row, index) => ({
+    ...row,
+    id: `report-${index}`,
+    basis: "sessionReport",
+    scopeLevel: "session",
+    chainStage: null,
+    chainStageState: null,
+    chainStageBasis: "unmeasured",
+    disposition: "notMeasured",
+    tone: "muted",
+    outcomePhrase: null,
+    mechanismPhrase: null,
+    fixPhrase: null,
+    mechanismId: null,
+    reportExcerpt: {
+      actual: "The assistant's reply stopped at its output limit.",
+      account: WIRE_ACCOUNT,
+      citations: [`${row.sessionIds[0]}/m:0`],
+    },
+  }));
+  const signalRows: SwarmJourneyFinding[] = mechanismRows.map((row, index) => ({
+    ...row,
+    id: `signal-${index}`,
+    basis: "populationFact",
+    signal: "outputTruncated",
+    // A recorded fact never colours a stage the chain measured.
+    chainStageState: null,
+    chainStageBasis: "reported",
+    outcomePhrase: "Reply cut off before finishing",
+    mechanismPhrase: null,
+    fixPhrase: null,
+    mechanismId: null,
+    citations: [],
+    reportExcerpt: null,
+  }));
+  return swarmJourneyFindingsSchema.parse({
+    ...published,
+    summaryKind: "broken",
+    population: {
+      configured: 5,
+      started: 5,
+      read: 4,
+      unread: 1,
+      withdrawn: 0,
+      limited: 0,
+      graded: 0,
+    },
+    coverageNotes: [],
+    personas: [
+      {
+        persona: WIRE_PERSONA,
+        disposition: "blockedByResponse",
+        tone: "fail",
+        goalRunIds: [WIRE_RUN_ID, WIRE_SECOND_RUN_ID],
+      },
+    ],
+    findings: [
+      ...(over.mechanismRows === false ? [] : mechanismRows),
+      ...reports,
+      ...(over.signalRows === false ? [] : signalRows),
+    ],
+    ...(over.verification ? { verification: over.verification } : {}),
+  });
+}

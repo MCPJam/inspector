@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_TEMPLATE_MODEL_ID,
+  DEFAULT_HOST_TEMPLATE_ID,
+  seedHostTemplate,
+} from "@mcpjam/sdk/host-config/templates";
+import {
+  DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
   hostCapabilitiesOverrideToMatrix,
@@ -209,6 +215,23 @@ describe("hostConfigInputsEqual", () => {
       embeddedResources: { blob: { image: false } },
       linkedResources: { blob: { image: true } },
     });
+  });
+});
+
+describe("DEFAULT_SEEDED_HOST_MODEL_ID", () => {
+  it("is the SDK default template's model, not a second literal", () => {
+    expect(DEFAULT_SEEDED_HOST_MODEL_ID).toBe(DEFAULT_TEMPLATE_MODEL_ID);
+    expect(seedHostTemplate(DEFAULT_HOST_TEMPLATE_ID).modelId).toBe(
+      DEFAULT_SEEDED_HOST_MODEL_ID,
+    );
+  });
+
+  it("uses the hosted catalog's dotted version spelling", () => {
+    // Hosted ids spell the version with a dot (`claude-haiku-4.5`); the
+    // dashed provider-native form (`claude-haiku-4-5`) matches no hosted row.
+    expect(DEFAULT_SEEDED_HOST_MODEL_ID).toMatch(
+      /^anthropic\/claude-[a-z]+-\d+\.\d+$/,
+    );
   });
 });
 

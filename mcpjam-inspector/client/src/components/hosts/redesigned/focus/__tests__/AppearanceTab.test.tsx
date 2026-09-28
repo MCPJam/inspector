@@ -42,11 +42,11 @@ describe("AppearanceTab", () => {
     ).toBeNull();
     // Dots is the default indicator kind.
     expect(
-      screen.getByRole("group", { name: /indicator kind/i }),
+      screen.getByRole("radiogroup", { name: /indicator kind/i }),
     ).toBeInTheDocument();
     // Color + count controls are present (the dots branch).
     expect(screen.getByLabelText(/dot color/i)).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /dot count/i })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /dot count/i })).toBeInTheDocument();
   });
 
   it("editing the logo URL stores it on chatUiOverride.logoSrc", () => {

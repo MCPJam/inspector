@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -26,7 +27,7 @@ import {
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
-import { shouldQueryProjectId } from "./useProjects";
+import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -51,10 +52,10 @@ interface ActiveOrganizationSelection {
 }
 
 function resolveFallbackOrganizationId(
-  organizations: ReadonlyArray<{ _id: string; myRole?: string }>
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
 ) {
   const firstOwnedOrganization = organizations.find(
-    (organization) => organization.myRole === "owner"
+    (organization) => organization.myRole === "owner",
   );
 
   return firstOwnedOrganization?._id ?? organizations[0]?._id;
@@ -71,7 +72,10 @@ function hasHostedOAuthCallbackParams(): boolean {
   // misread as an in-flight MCP OAuth callback, resurfacing a stale
   // "Finishing OAuth sign-in for X…" gate from leftover localStorage markers.
   const pathname = window.location.pathname;
-  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+  if (
+    pathname !== "/oauth/callback" &&
+    !pathname.startsWith("/oauth/callback/")
+  ) {
     return false;
   }
   const params = new URLSearchParams(window.location.search);
@@ -157,13 +161,12 @@ function isHistoryRestore(event: PageTransitionEvent): boolean {
   if (event.persisted) return true;
 
   const navigationEntry = performance.getEntriesByType?.("navigation").at(0) as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   return navigationEntry?.type === "back_forward";
 }
 
 export function buildDisconnectedRuntimeServers(
-  servers: Record<string, ServerWithName> | undefined
+  servers: Record<string, ServerWithName> | undefined,
 ): Record<string, ServerWithName> {
   return Object.fromEntries(
     Object.entries(servers ?? {}).map(([serverName, server]) => [
@@ -172,12 +175,13 @@ export function buildDisconnectedRuntimeServers(
         ...server,
         connectionStatus: "disconnected",
       } satisfies ServerWithName,
-    ])
+    ]),
   );
 }
 
 export function useAppState({
   currentUserId,
+  isWorkOsLoading = false,
   currentActorKey,
   routeOrganizationId,
   hasOrganizations,
@@ -186,6 +190,7 @@ export function useAppState({
   requestSignIn,
 }: {
   currentUserId: string | null;
+  isWorkOsLoading?: boolean;
   /**
    * Stable identifier for the active actor — `currentUserId` for signed-in
    * users, the guest cookie's `guestId` for guests. Used to scope per-actor
@@ -197,8 +202,21 @@ export function useAppState({
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
-  requestSignIn?: () => void | Promise<void>;
+  requestSignIn?: (returnPath?: string) => void | Promise<void>;
 }) {
+  useEffect(() => {
+    if (!window.electronAPI?.diagnostics) return;
+    const report = () =>
+      recordDesktopActivity({
+        kind: "auth",
+        phase: "state",
+        auth: isWorkOsLoading ? "loading" : currentUserId ? "signed_in" : "guest",
+        version: __APP_VERSION__,
+      });
+    report();
+    const timer = setInterval(report, 15_000);
+    return () => clearInterval(timer);
+  }, [currentUserId, isWorkOsLoading]);
   const isUserReady = useDbUserReady();
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -225,12 +243,12 @@ export function useAppState({
   const isStoredActiveOrganizationValid =
     !!storedActiveOrganizationId &&
     validOrganizations.some(
-      (organization) => organization._id === storedActiveOrganizationId
+      (organization) => organization._id === storedActiveOrganizationId,
     );
   const isRouteOrganizationValid =
     !!routeOrganizationId &&
     validOrganizations.some(
-      (organization) => organization._id === routeOrganizationId
+      (organization) => organization._id === routeOrganizationId,
     );
   const fallbackActiveOrganizationId =
     hasHydratedStoredActiveOrganization &&
@@ -242,13 +260,13 @@ export function useAppState({
   const isPendingOAuthMarkerOrgValid =
     !!pendingOAuthMarkerOrgId &&
     validOrganizations.some(
-      (organization) => organization._id === pendingOAuthMarkerOrgId
+      (organization) => organization._id === pendingOAuthMarkerOrgId,
     );
   const activeOrganizationId = isPendingOAuthMarkerOrgValid
     ? pendingOAuthMarkerOrgId
     : isStoredActiveOrganizationValid
-    ? storedActiveOrganizationId
-    : fallbackActiveOrganizationId;
+      ? storedActiveOrganizationId
+      : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
       setActiveOrganizationSelection({
@@ -256,7 +274,7 @@ export function useAppState({
         userId: currentUserId,
       });
     },
-    [currentUserId]
+    [currentUserId],
   );
 
   useEffect(() => {
@@ -286,7 +304,7 @@ export function useAppState({
 
     writeStoredActiveOrganizationId(
       currentUserId,
-      activeOrganizationSelection.organizationId
+      activeOrganizationSelection.organizationId,
     );
   }, [
     activeOrganizationSelection,
@@ -420,7 +438,7 @@ export function useAppState({
         current?.serverName === pendingDashboardOAuth.serverName &&
         current.startedAt === pendingDashboardOAuth.startedAt
           ? null
-          : current
+          : current,
       );
     }, PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS - elapsedMs);
 
@@ -471,7 +489,7 @@ export function useAppState({
     hasOrganizations,
     isLoadingOrganizations,
     validOrganizationIds: validOrganizations.map(
-      (organization) => organization._id
+      (organization) => organization._id,
     ),
     activeOrganizationId,
     routeOrganizationId,
@@ -505,9 +523,10 @@ export function useAppState({
   // top-bar preview and the Chat tab's HostPicker. Picking a host anywhere
   // in the product points every MCP `initialize` and widget `ui/initialize`
   // at the same `HostConfigDtoV2`.
-  const [activeHostId, setActiveHostId] = usePreviewedHostId(
-    activeSharedProjectId ?? null,
-  );
+  const [activeHostId, setActiveHostId, isActiveHostSelectionHydrated] =
+    usePreviewedHostId(
+      activeSharedProjectId ?? null,
+    );
   const { host: selectedHost } = useHost({
     isAuthenticated,
     hostId: activeHostId,
@@ -517,13 +536,23 @@ export function useAppState({
     projectDefaultHostConfig: activeProjectDefaultHostConfig ?? null,
   });
 
+  const oauthMemberships = useProjectQueries({ isAuthenticated });
+  const oauthProjectIds = useMemo(
+    () =>
+      oauthMemberships.allProjects === undefined
+        ? undefined
+        : new Set(oauthMemberships.allProjects.map((project) => project._id)),
+    [oauthMemberships.allProjects],
+  );
   const serverState = useServerState({
     appState,
     dispatch,
     isLoading,
     isAuthenticated,
     hasSignedInUser: currentUserId != null,
-    isAuthLoading,
+    currentUserId,
+    oauthProjectIds,
+    isAuthLoading: isAuthLoading || isWorkOsLoading,
     isLoadingProjects: projectState.isLoadingProjects,
     useLocalFallback: projectState.useLocalFallback,
     activeOrganizationId,
@@ -592,6 +621,19 @@ export function useAppState({
       return;
     }
 
+    // A local/desktop guest becomes Convex-authenticated before its stable
+    // guest actor and project finish hydrating. Treating those temporary
+    // null/"none" values as a real scope makes the next render look like a
+    // scope switch and disconnects the server that startup is restoring.
+    if (
+      !currentActorKey ||
+      !hasHydratedStoredActiveOrganization ||
+      isLoadingOrganizations ||
+      projectState.isLoadingProjects
+    ) {
+      return;
+    }
+
     const nextScope = {
       actorKey: currentActorKey,
       organizationId: activeOrganizationId,
@@ -624,7 +666,10 @@ export function useAppState({
     disconnectRuntimeServersForScopeReset,
     dispatch,
     effectiveActiveProjectId,
+    hasHydratedStoredActiveOrganization,
     isAuthenticated,
+    isLoadingOrganizations,
+    projectState.isLoadingProjects,
     useLocalFallback,
   ]);
 
@@ -637,7 +682,7 @@ export function useAppState({
        * project: X" is telling the user something they can already read — on
        * every cold open of a shared link, every Back, every tab.
        */
-      options?: { silent?: boolean }
+      options?: { silent?: boolean },
     ) => {
       const newProject = effectiveProjects[projectId];
       if (!newProject) {
@@ -679,7 +724,7 @@ export function useAppState({
       useLocalFallback,
       dispatch,
       setConvexActiveProjectId,
-    ]
+    ],
   );
 
   const handleLeaveProject = useCallback(
@@ -691,10 +736,10 @@ export function useAppState({
       }
 
       const otherProjectIds = Object.keys(effectiveProjects).filter(
-        (id) => id !== projectId
+        (id) => id !== projectId,
       );
       const defaultProject = otherProjectIds.find(
-        (id) => effectiveProjects[id].isDefault
+        (id) => effectiveProjects[id].isDefault,
       );
       const targetProjectId = defaultProject || otherProjectIds[0];
 
@@ -726,13 +771,13 @@ export function useAppState({
       useLocalFallback,
       dispatch,
       setConvexActiveProjectId,
-    ]
+    ],
   );
 
   const clearLocalFallbackProjectSelection = useCallback(
     (deletedOrganizationId: string, fallbackOrganizationId?: string) => {
       const remainingEntries = Object.entries(appState.projects).filter(
-        ([, project]) => project.organizationId !== deletedOrganizationId
+        ([, project]) => project.organizationId !== deletedOrganizationId,
       );
       const nextProjects =
         remainingEntries.length > 0
@@ -743,7 +788,7 @@ export function useAppState({
             })();
       const preferredProjectForFallbackOrg = fallbackOrganizationId
         ? Object.values(nextProjects).find(
-            (project) => project.organizationId === fallbackOrganizationId
+            (project) => project.organizationId === fallbackOrganizationId,
           )
         : undefined;
       const nextActiveProject =
@@ -760,12 +805,12 @@ export function useAppState({
             deletedOrganizationId,
             fallbackOrganizationId,
             projectCount: Object.keys(nextProjects).length,
-          }
+          },
         );
         return;
       }
       const nextServers = buildDisconnectedRuntimeServers(
-        nextActiveProject?.servers
+        nextActiveProject?.servers,
       );
 
       dispatch({
@@ -780,7 +825,7 @@ export function useAppState({
         },
       });
     },
-    [appState, dispatch]
+    [appState, dispatch],
   );
 
   const isCloudSyncActive =
@@ -846,6 +891,7 @@ export function useAppState({
     // HostPicker and the global top-bar preview.
     activeHost,
     activeHostId,
+    isActiveHostSelectionHydrated,
     setActiveHostId,
     // Back-compat: `activeMcpProfile` was the per-call alias for
     // `activeHost?.mcpProfile`. Surfaces that still destructure it keep
@@ -878,6 +924,7 @@ export function useAppState({
     persistRuntimeServerToProjectIfNeeded:
       serverState.persistRuntimeServerToProjectIfNeeded,
     ensureHostedServerIdsForNames: serverState.ensureHostedServerIdsForNames,
+    isConnectionPreflightPending: serverState.isConnectionPreflightPending,
 
     handleSwitchProject,
     handleCreateProject: projectState.handleCreateProject,

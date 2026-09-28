@@ -1,3 +1,4 @@
+import { listBaseServers } from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
 import "../../types/hono";
 import {
@@ -152,8 +153,7 @@ function logTunnelRequest(
 }
 
 function normalizeServerId(clientManager: any, serverId: string): string {
-  const availableServers = clientManager
-    .listServers()
+  const availableServers = listBaseServers(clientManager)
     // `getClient()` is legacy-only. Use `getManagedClient()` so stateless
     // preview connections show up in the available-servers list.
     .filter((id: string) => Boolean(clientManager.getManagedClient(id)));

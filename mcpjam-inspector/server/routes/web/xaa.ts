@@ -1,5 +1,6 @@
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import {
   authorizeXaaOrgIssuer,
   fetchServerClientSecret,
@@ -20,7 +21,13 @@ export function createXaaWebRouter() {
     issuerBasePath: "/api/web",
     httpsOnlyProxy: true,
     trustForwardedHeaders: true,
-    protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
+    // MJ-012: this router is mounted on the root app beside `/api/web`, not
+    // under it, so the web router's passthrough limiter never sees it.
+    protectedMiddlewares: [
+      bearerAuthMiddleware,
+      guestRateLimitMiddleware,
+      passthroughRateLimitMiddleware,
+    ],
     resolveServerSecret: (args) => fetchServerClientSecret(args),
     // Org-scoped issuer minting (/o/:orgId/...) is hosted-only: membership is
     // enforced by Convex with the caller's bearer.

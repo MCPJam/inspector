@@ -17,6 +17,7 @@ import {
   getChatHistoryDetail,
   type ChatHistoryDetailResponse,
 } from "@/lib/apis/web/chat-history-api";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 const TTL_MS = 30_000;
 
@@ -66,7 +67,7 @@ export function getCachedBlobJson(url: string): Promise<unknown> {
   const hit = blobCache.get(url);
   if (hit) return hit.promise;
 
-  const promise = fetch(url).then((response) => {
+  const promise = fetchArtifact(url).then((response) => {
     if (!response.ok) {
       throw new Error(`Failed to fetch chat transcript (${response.status})`);
     }

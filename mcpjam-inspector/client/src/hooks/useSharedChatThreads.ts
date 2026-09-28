@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import type {
   EvalTraceBrowserInteractionStepView,
@@ -108,6 +109,22 @@ export interface SharedChatThread {
   sentimentClusterLabel?: string;
   /** Multi-label trajectory tags, derived from the transcript (no model call). */
   behaviorTags?: string[];
+  /**
+   * Where this session's insight analysis stands, from `getSession` only.
+   * `owed`: nothing has run yet, the automatic pass is still coming.
+   * `provisional`: analyzed before the outcome could be asserted; the outcome
+   * follows once the session has been quiet for 30 minutes. Both are what
+   * Analyze now changes. Absent from older backends.
+   */
+  analysisPhase?:
+    | "owed"
+    | "analyzing"
+    | "deferred"
+    | "provisional"
+    | "final"
+    | "failed"
+    | "guest"
+    | "none";
   /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
   pathKey?: string;
   /**
@@ -194,6 +211,21 @@ export interface SharedChatThread {
     | "rate_limited"
     | null;
   /**
+   * WHY that attempt ended where it did, from the same row (detail query
+   * only). A session refused before it said anything has no transcript to
+   * explain itself, so this is the only record of the refusal. `undefined` on
+   * a backend that predates the field; `null` when none was recorded.
+   */
+  runAttemptErrorCode?: string | null;
+  runAttemptErrorMessage?: string | null;
+  /**
+   * Swarm list rows only: the session's attempt ended without recording a
+   * single message, so it never ran (`swarmSessionNeverRan`). Resolved from the
+   * row's verdict when the list is built; absent everywhere else, where
+   * `runAttemptStatus` answers the same question.
+   */
+  neverRan?: boolean;
+  /**
    * The session's derived user-value chain (`chatSessions.stageDerivation`).
    *
    * Absent on every session written before D8 and on any the analyzer has not
@@ -278,15 +310,16 @@ export function useSharedChatThread({
   threadId: string | null;
   includeRecordedContext?: boolean;
 }) {
-  const thread = useQuery(
-    "chatSessions:getSession" as any,
+  // Carries the transcript's short-lived artifact link.
+  const thread = useArtifactQuery<SharedChatThread | null>(
+    "chatSessions:getSession",
     threadId
-      ? ({
+      ? {
           sessionId: threadId,
           ...(includeRecordedContext ? { includeRecordedContext: true } : {}),
-        } as any)
+        }
       : "skip",
-  ) as SharedChatThread | null | undefined;
+  );
 
   return { thread };
 }
@@ -296,10 +329,10 @@ export function useSharedChatWidgetSnapshots({
 }: {
   threadId: string | null;
 }) {
-  const snapshots = useQuery(
-    "chatSessions:getWidgetSnapshots" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
-  ) as SharedChatWidgetSnapshot[] | undefined;
+  const snapshots = useArtifactQuery<SharedChatWidgetSnapshot[]>(
+    "chatSessions:getWidgetSnapshots",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { snapshots };
 }
@@ -328,10 +361,10 @@ export function useSharedChatTurnTraces({
 }: {
   threadId: string | null;
 }) {
-  const traces = useQuery(
-    "chatSessions:getSessionTurnTraces" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
-  ) as SharedChatTurnTrace[] | undefined;
+  const traces = useArtifactQuery<SharedChatTurnTrace[]>(
+    "chatSessions:getSessionTurnTraces",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { traces };
 }
@@ -391,10 +424,10 @@ export function useSessionBrowserArtifacts({
 }: {
   threadId: string | null;
 }) {
-  const artifacts = useQuery(
-    "chatSessions:getBrowserArtifacts" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
-  ) as SessionBrowserArtifacts | undefined;
+  const artifacts = useArtifactQuery<SessionBrowserArtifacts>(
+    "chatSessions:getBrowserArtifacts",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { artifacts };
 }

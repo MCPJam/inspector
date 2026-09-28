@@ -62,22 +62,14 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     });
   });
 
-  it("times out hung hosted validation requests", async () => {
+  it("does not consume the connection timeout while validation is queued", async () => {
     vi.useFakeTimers();
-    validateHostedServerMock.mockReturnValueOnce(new Promise(() => {}));
-
-    const resultPromise = testConnection(
-      {} as MCPServerConfig,
-      "server-timeout"
-    );
-
-    await vi.advanceTimersByTimeAsync(20_000);
-
-    await expect(resultPromise).resolves.toEqual({
-      success: false,
-      error:
-        "Connection attempt timed out after 20 seconds. The server may not exist or is not responding.",
-    });
+    let finish!: (value: unknown) => void;
+    validateHostedServerMock.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const resultPromise = testConnection({} as MCPServerConfig, "server-timeout");
+    await vi.advanceTimersByTimeAsync(30_000);
+    finish({ success: true });
+    await expect(resultPromise).resolves.toEqual({ success: true });
   });
 
   it("passes through successful hosted validation and OAuth token extraction", async () => {

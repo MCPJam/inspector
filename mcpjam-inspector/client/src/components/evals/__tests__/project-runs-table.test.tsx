@@ -98,7 +98,7 @@ function makeRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
     runNumber: 1,
     status: "completed",
     result: "passed",
-    summary: { total: 4, passed: 3, failed: 1, passRate: 75 },
+    summary: { total: 4, passed: 3, failed: 1, passRate: 0.75 },
     source: "sdk",
     ciMetadata: null,
     createdBy: "user_1",
@@ -254,6 +254,30 @@ describe("ProjectRunsTable", () => {
     expect(table.getByText("Results")).toBeTruthy();
     expect(table.queryByText("Pass rate")).not.toBeNull();
     expect(table.queryByText("Accuracy")).not.toBeNull();
+  });
+
+  // `summary.passRate` is a 0-1 fraction by contract. Rounding it unscaled
+  // printed every run as 0% or 1%, and a perfect run as 1%.
+  it("renders the stored pass rate fraction as a percentage", () => {
+    setRows([
+      makeRow({
+        _id: "run_partial",
+        summary: { total: 3, passed: 2, failed: 1, passRate: 0.6667 },
+      }),
+      makeRow({
+        _id: "run_perfect",
+        summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
+      }),
+    ]);
+
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    expect(inTable().getByText("(2/3)").closest("td")).toHaveTextContent(
+      /^67% \(2\/3\)/,
+    );
+    expect(inTable().getByText("(3/3)").closest("td")).toHaveTextContent(
+      /^100% \(3\/3\)/,
+    );
   });
 
   it("filters loaded origins without changing the feed", async () => {

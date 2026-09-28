@@ -49,12 +49,14 @@ describe("Default checks navigation and page", () => {
       screen.queryByText("Configure test case evaluators"),
     ).not.toBeInTheDocument();
     expect(container.querySelectorAll("[data-stage-group]").length).toBe(6);
-    // Runner-measured stages are rows without an On box: nothing to author.
-    for (const stage of ["connection", "discovery"]) {
+    // Runner checks are rows without an On box: nothing to author, and no
+    // role to claim — they wear a Built-in badge.
+    for (const stage of ["connection", "discovery", "call", "response"]) {
       const observed = container.querySelector(
         `[data-stage-group="${stage}"] [data-scorer-row="observed"]`,
       );
-      expect(observed?.textContent, stage).toContain("Required");
+      expect(observed?.textContent, stage).toContain("Built-in");
+      expect(observed?.textContent, stage).not.toContain("Required");
       expect(
         observed?.querySelector('[role="checkbox"]'),
         stage,
@@ -93,5 +95,34 @@ describe("Default checks navigation and page", () => {
     expect(
       screen.queryByRole("button", { name: "Back to case" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("the case's checks page", () => {
+  it("describes the match rows with the case's own options, not the defaults", () => {
+    // A case graded with strict order and no extra calls must not read
+    // "Any order" / "unlimited" here just because the defaults do.
+    const { container } = render(
+      <CaseChecksPage
+        title="Example"
+        suitePredicates={[]}
+        matchOptions={{
+          toolCallOrder: "strict",
+          maxExtraToolCalls: 0,
+          argumentMatching: "exact",
+        }}
+        onChecksChange={vi.fn()}
+        judgeSkipped={false}
+        onJudgeSkippedChange={vi.fn()}
+      />,
+    );
+    const matchRows = Array.from(
+      container.querySelectorAll('[data-scorer-row="match"]'),
+    ).map((row) => row.textContent ?? "");
+    expect(matchRows).toEqual([
+      expect.stringContaining("Tool call order (Strict order)"),
+      expect.stringContaining("Extra tool calls (at most 0)"),
+      expect.stringContaining("Arguments (Exact)"),
+    ]);
   });
 });

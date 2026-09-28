@@ -10,11 +10,7 @@ import {
   assembleSwarmReport,
   deriveSwarmSessionVerdict,
 } from "@mcpjam/sdk/contract";
-import {
-  SwarmGoalResult,
-  SwarmReportPanel,
-  SwarmSessionReport,
-} from "../swarm-report-panel";
+import { SwarmReportPanel, SwarmSessionReport } from "../swarm-report-panel";
 import { lifecycleChip, verdictBadge } from "../swarm-verdict-presentation";
 const verdict = (passed: boolean) =>
   deriveSwarmSessionVerdict({
@@ -35,8 +31,7 @@ describe("swarm reporting presentation", () => {
   it("renders a passed goal independently from interrupted execution", () => {
     const v = verdict(true);
     expect(lifecycleChip(v.lifecycle).label).toBe("Broke");
-    render(<SwarmGoalResult verdict={v} />);
-    expect(screen.getByText("Goal result: Passed")).toBeInTheDocument();
+    expect(verdictBadge(v).label).toBe("Passed");
   });
   it("shows execution coverage without claiming an ungraded run never ran", () => {
     const report = assembleSwarmReport({

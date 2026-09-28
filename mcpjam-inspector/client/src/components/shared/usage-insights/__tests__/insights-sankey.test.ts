@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   SANKEY_OTHER,
   SANKEY_UNLABELED,
+  SANKEY_UNANSWERED,
   STAGE_ORDER,
   isDiscordantLink,
   layoutSankey,
+  linksBetweenDisplayedStages,
   parseNodeId,
   selectionForLink,
   selectionForNode,
@@ -60,6 +62,14 @@ describe("stageValueLabel", () => {
     expect(stageValueLabel(node("outcome", SANKEY_UNLABELED, 3))).toBe(
       "Not analyzed",
     );
+  });
+
+  it("does not call an unanswered question a finished no while analysis is running", () => {
+    const unanswered = node("question:q1", SANKEY_UNANSWERED, 2, {
+      label: "Not answered",
+    });
+    expect(stageValueLabel(unanswered)).toBe("Not answered");
+    expect(stageValueLabel(unanswered, true)).toBe("Analyzing…");
   });
 });
 
@@ -223,6 +233,59 @@ describe("layoutSankey", () => {
       const index = ["goal", "behavior", "outcome", "sentiment"].indexOf(stage);
       expect(inStage.every((n) => n.x === laid.columnX[index])).toBe(true);
     }
+  });
+
+  it("recounts a ribbon for every pair of columns that sit side by side", () => {
+    const laid = layoutSankey(sankey, 400, 200, columnX, [
+      "sentiment",
+      "goal",
+      "behavior",
+      "outcome",
+    ]);
+    const pairs = laid.links.map(
+      (link) => `${link.source.stage}->${link.target.stage}`,
+    );
+    expect(pairs).toContain("sentiment->goal");
+    expect(pairs).toContain("goal->behavior");
+    expect(pairs).toContain("behavior->outcome");
+    expect(pairs).not.toContain("outcome->sentiment");
+    const sentimentToGoal = laid.links
+      .filter(
+        (link) =>
+          link.source.stage === "sentiment" && link.target.stage === "goal",
+      )
+      .reduce((sum, link) => sum + link.count, 0);
+    expect(sentimentToGoal).toBe(10);
+    for (const link of laid.links) {
+      expect(link.source.x).toBeLessThan(link.target.x);
+    }
+  });
+
+  it("keeps the stored neighbor counts when the columns are still in catalog order", () => {
+    expect(linksBetweenDisplayedStages(sankey, STAGE_ORDER)).toEqual(
+      expect.arrayContaining([
+        { source: "goal:g1", target: "behavior:b1", count: 6 },
+        { source: "goal:g2", target: "behavior:b1", count: 4 },
+        { source: "behavior:b1", target: "outcome:o1", count: 10 },
+        { source: "outcome:o1", target: "sentiment:s1", count: 10 },
+      ]),
+    );
+  });
+
+  it("keeps a swapped pair and draws it toward the column on the right", () => {
+    const laid = layoutSankey(sankey, 400, 200, columnX, [
+      "goal",
+      "behavior",
+      "sentiment",
+      "outcome",
+    ]);
+    const flipped = laid.links.find(
+      (link) =>
+        link.source.stage === "sentiment" && link.target.stage === "outcome",
+    );
+    expect(flipped).toBeTruthy();
+    expect(flipped!.source.x).toBeLessThan(flipped!.target.x);
+    expect(flipped!.count).toBe(10);
   });
 
   it("drops a link whose endpoint is not drawn", () => {

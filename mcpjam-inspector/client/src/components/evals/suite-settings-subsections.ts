@@ -116,16 +116,16 @@ export function subsectionForSettingKey(
   }
   if (
     groupId === "grading" &&
-    (key === "passOrFail" ||
-      key === "checks" ||
-      key === "matchOptions" ||
-      key === "assertionBacktest")
+    (key === "passOrFail" || key === "checks" || key === "matchOptions")
   ) {
     return subsections.find((sub) => sub.target.type === "passOrFailChecks");
   }
   if (
     groupId === "grading" &&
-    (key === "judge" || key === "judgeRubric" || key === "judgeGroundedness")
+    (key === "judge" ||
+      key === "judgeRubric" ||
+      key === "judgeGroundedness" ||
+      key === "judgeRubricChecks")
   ) {
     return subsections.find((sub) => sub.id === "checks");
   }

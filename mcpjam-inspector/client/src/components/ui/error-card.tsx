@@ -22,6 +22,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
+import { withTechnicalDetails } from "@/lib/error-technical-details";
 
 const DOCS_BASE_URL = "https://docs.mcpjam.com";
 
@@ -49,6 +50,13 @@ export type ErrorCardProps = {
   action?: { label: string; onClick: () => void };
   variant?: "inline" | "banner" | "toast";
   /**
+   * `row` is the server-card density: one line the height of the support
+   * pill, with the diagnostic rows behind the clickable title. `card` is the
+   * diagnostic report. A primary `action` also selects `row` — the action
+   * is the thing to do, and the rest is secondary.
+   */
+  density?: "card" | "row";
+  /**
    * Uncontrolled initial state for the details disclosure. Ignored when
    * `open` is provided (controlled mode).
    */
@@ -72,6 +80,9 @@ export type ErrorCardProps = {
 };
 
 function resolveNormalized(input: unknown): NormalizedError {
+  // A caller that already holds a normalized block is passing the server's
+  // own account of the failure. Nothing local to add, and no thrown value to
+  // read a stack off.
   if (isNormalizedError(input)) return input;
   // Re-validate the WebApiError-attached block with the same shape guard
   // before trusting it. `webPost` populates `WebApiError.normalized` from
@@ -79,9 +90,16 @@ function resolveNormalized(input: unknown): NormalizedError {
   // payload (older server, future schema drift, proxy mangling) would
   // otherwise crash the render at `docsAnchor.startsWith` / `severity`.
   if (input instanceof WebApiError && isNormalizedError(input.normalized)) {
-    return input.normalized;
+    // The request id is read off the response HEADER, so a server-built
+    // block never carries it — and for a hosted 5xx it is the only
+    // diagnostic there is. This is the one place both halves are in scope.
+    // …but NOT its stack. `WebApiError` is constructed in `webPost`, so its
+    // stack points at our own fetch helper rather than at whatever failed on
+    // the server — signal-shaped noise that a user would copy into a support
+    // ticket. The request id is the diagnostic on this path.
+    return withTechnicalDetails(input.normalized, input, { stack: false });
   }
-  return describeError(input);
+  return withTechnicalDetails(describeError(input), input);
 }
 
 /**
@@ -174,6 +192,18 @@ function copyText(normalized: NormalizedError): string {
   if (normalized.cause) {
     lines.push(`Cause: ${normalized.cause.name}: ${normalized.cause.message}`);
   }
+  // The technical block goes last: it is the longest and the least readable,
+  // and a human skimming a pasted report wants the prose first. Every field
+  // here was redacted by the describer before it reached the card.
+  if (normalized.errorType) {
+    lines.push(`Type: ${normalized.errorType}`);
+  }
+  if (normalized.requestId) {
+    lines.push(`Request ID: ${normalized.requestId}`);
+  }
+  if (normalized.stack) {
+    lines.push("", "Stack trace:", normalized.stack);
+  }
   return lines.join("\n");
 }
 
@@ -189,14 +219,13 @@ function copyText(normalized: NormalizedError): string {
  * down or the port is wrong is exactly what its catalog entry spells out and
  * a generic "check your configuration" would erase.
  *
- * `user_server` and `user_config` share one badge on purpose. The distinction
- * matters to capture policy, not to the person reading the card — both mean
- * "waiting on MCPJam will not fix this".
+ * Only `mcpjam` origin gets a badge. User-side failures (`user_server`,
+ * `user_config`) stay quiet — a "not our outage" chip reads as defensive
+ * and the catalog one-liner already says what happened.
  *
- * Returns `null` — no badge at all — for two distinct cases that both mean
- * "no claim to make": an `ambiguous` origin, and an origin that is missing
- * entirely (a normalized payload from an older server, which crosses the wire
- * without the field). Guessing in either case is worse than staying quiet.
+ * Returns `null` for user-side origins, `ambiguous`, and a missing origin
+ * (a normalized payload from an older server, which crosses the wire
+ * without the field). Guessing in those cases is worse than staying quiet.
  */
 function originBadge(
   normalized: NormalizedError,
@@ -207,10 +236,9 @@ function originBadge(
   switch (originOf(normalized)) {
     case "user_server":
     case "user_config":
-      return {
-        label: "Not an MCPJam outage",
-        className: "border-border bg-muted/60 text-muted-foreground",
-      };
+      // Never show a "not our outage" chip. The catalog one-liner already
+      // says what happened; a disclaimer next to it reads as defensive.
+      return null;
     case "mcpjam":
       return {
         label: "MCPJam issue",
@@ -317,6 +345,7 @@ export function ErrorCard({
   onDismiss,
   action,
   variant = "inline",
+  density = "card",
   defaultOpen = false,
   open,
   onOpenChange,
@@ -335,6 +364,12 @@ export function ErrorCard({
     if (!isControlled) setUncontrolledOpen(next);
     onOpenChange?.(next);
   };
+  // Nested inside the details panel rather than promoted to the card face:
+  // "Show details" is the answer to "what went wrong", and a stack is the
+  // answer to "what do I send support". Collapsing the second inside the
+  // first keeps the diagnostic report readable for the people who only
+  // needed the first.
+  const [techOpen, setTechOpen] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
@@ -370,8 +405,246 @@ export function ErrorCard({
    * separator and a link — so the link comes out to the action row instead
    * and the disclosure is not offered at all.
    */
+  // `errorType` alone does not earn a disclosure: "Type: Error" tells a reader
+  // nothing they cannot see from the card itself.
+  const hasTechnical = Boolean(normalized.stack || normalized.requestId);
   const hasDetail =
-    causes.length > 0 || steps.length > 0 || showRaw || Boolean(normalized.cause);
+    causes.length > 0 ||
+    steps.length > 0 ||
+    showRaw ||
+    Boolean(normalized.cause) ||
+    hasTechnical;
+  /**
+   * `row` (or a primary `action`) is one line the height of the server
+   * card's support pill: a clickable title and the click. Badge,
+   * one-liner, Copy, and evidence wait behind the title. `card` stays a
+   * diagnostic report.
+   */
+  const compact = density === "row" || Boolean(action);
+  const showDetailsPanel = isOpen && (hasDetail || compact);
+
+  const detailsPanel = showDetailsPanel ? (
+    <div
+      className={
+        compact
+          ? "mt-2 space-y-3 rounded-md border border-border bg-muted/40 p-3 dark:bg-muted/20"
+          : "mt-3 space-y-3 border-t border-border pt-3"
+      }
+    >
+      {compact && badge ? (
+        <span
+          data-testid="error-card-origin-badge"
+          className={cn(
+            "inline-flex rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+            badge.className,
+          )}
+        >
+          {badge.label}
+        </span>
+      ) : null}
+      {compact ? (
+        <div className="leading-relaxed text-muted-foreground">
+          {normalized.oneLine}
+        </div>
+      ) : null}
+      {compact && badge?.note ? (
+        <div className="leading-relaxed text-muted-foreground">
+          {badge.note}
+        </div>
+      ) : null}
+      {causes.length > 0 ? (
+        <div>
+          {/* A list means the wire genuinely doesn't settle which one
+              it was; a single entry means we know. Saying "likely"
+              over a cause we're certain of reads as the product not
+              knowing its own state. Not "Cause": that heading is
+              taken below by the nested exception, and one panel
+              cannot use it for two different things. */}
+          <SectionLabel>
+            {causes.length === 1 ? "Why this happened" : "Likely causes"}
+          </SectionLabel>
+          <SectionBody items={causes} />
+        </div>
+      ) : null}
+      {steps.length > 0 ? (
+        <div>
+          <SectionLabel>Next steps</SectionLabel>
+          <SectionBody items={steps} />
+        </div>
+      ) : null}
+      {showRaw ? (
+        <div>
+          <SectionLabel>Raw error</SectionLabel>
+          <MonoBlock>
+            {normalized.rawMessage}
+            {normalized.rawCode !== undefined ? (
+              <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+                {normalized.rawCode}
+              </span>
+            ) : null}
+          </MonoBlock>
+        </div>
+      ) : null}
+      {normalized.cause ? (
+        <div>
+          <SectionLabel>Cause</SectionLabel>
+          <MonoBlock>
+            {normalized.cause.name}: {normalized.cause.message}
+          </MonoBlock>
+        </div>
+      ) : null}
+      {hasTechnical ? (
+        <div>
+          <button
+            type="button"
+            onClick={() => setTechOpen((open) => !open)}
+            aria-expanded={techOpen}
+            data-testid="error-card-technical-toggle"
+            className="inline-flex items-center gap-1 rounded text-[10px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {techOpen ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+            Technical details
+          </button>
+          {techOpen ? (
+            <div
+              data-testid="error-card-technical-panel"
+              className="mt-1.5 space-y-2"
+            >
+              {normalized.errorType ? (
+                <div>
+                  <SectionLabel>Type</SectionLabel>
+                  <MonoBlock>{normalized.errorType}</MonoBlock>
+                </div>
+              ) : null}
+              {normalized.requestId ? (
+                <div>
+                  <SectionLabel>Request ID</SectionLabel>
+                  <MonoBlock>{normalized.requestId}</MonoBlock>
+                </div>
+              ) : null}
+              {normalized.stack ? (
+                <div>
+                  <SectionLabel>Stack trace</SectionLabel>
+                  <MonoBlock>{normalized.stack}</MonoBlock>
+                </div>
+              ) : (
+                /* Said out loud rather than left blank. A server error has no
+                   stack here by design — the backend attaches its cause
+                   non-enumerably so it never reaches a JSON body — and an
+                   empty panel reads as a broken card rather than an
+                   intentional absence. */
+                <div className="leading-relaxed text-muted-foreground">
+                  No stack trace was reported for this error.
+                  {normalized.requestId
+                    ? " Quote the request ID above when you contact support."
+                    : ""}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-0.5">
+        <a
+          href={docsHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Learn more
+        </a>
+        {compact ? (
+          <button
+            type="button"
+            onClick={handleCopy}
+            data-testid="error-card-copy"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {copyState === "copied" ? (
+              <Check className="h-3 w-3" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+            {copyState === "copied"
+              ? "Copied"
+              : copyState === "failed"
+                ? "Copy failed"
+                : "Copy"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  if (compact) {
+    return (
+      <div
+        role="alert"
+        data-compact=""
+        onPointerDown={(event) => event.stopPropagation()}
+        className={cn("text-xs select-text nodrag nopan", className)}
+      >
+        <div className="flex h-6.5 items-center gap-2">
+          {/* The title is the disclosure: no separate glyph to hunt for at
+              the far edge of the card. */}
+          <button
+            type="button"
+            onClick={handleToggle}
+            aria-expanded={isOpen}
+            data-testid="error-card-details"
+            className="-mx-1.5 flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-chrome-hover"
+          >
+            <Icon
+              className={cn("h-3.5 w-3.5 shrink-0", styles.iconClass)}
+            />
+            <span className="min-w-0 truncate font-medium leading-none text-foreground">
+              {displayTitle(normalized)}
+            </span>
+          </button>
+          {action ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={action.onClick}
+              data-testid="error-card-action"
+              className="h-5 shrink-0 gap-1 px-2 text-[11px]"
+            >
+              {action.label}
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          ) : null}
+          {onRetry ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onRetry}
+              className="h-5 shrink-0 gap-1 px-2 text-[11px]"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </Button>
+          ) : null}
+          {onDismiss ? (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss"
+              className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-chrome-hover hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          ) : null}
+        </div>
+        {detailsPanel}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -438,22 +711,10 @@ export function ErrorCard({
               behind the disclosure would undo that. "Learn more" is reading,
               not repair, so it sits in the panel with the rest of the detail. */}
           <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-            {action ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={action.onClick}
-                data-testid="error-card-action"
-              >
-                {action.label}
-                <ArrowRight className="h-3 w-3" />
-              </Button>
-            ) : null}
             {onRetry ? (
               <Button
                 type="button"
-                variant={action ? "ghost" : "secondary"}
+                variant="secondary"
                 size="sm"
                 onClick={onRetry}
               >
@@ -505,65 +766,7 @@ export function ErrorCard({
             </button>
           </div>
 
-          {isOpen && hasDetail ? (
-            <div className="mt-3 space-y-3 border-t border-border pt-3">
-              {causes.length > 0 ? (
-                <div>
-                  {/* A list means the wire genuinely doesn't settle which one
-                      it was; a single entry means we know. Saying "likely"
-                      over a cause we're certain of reads as the product not
-                      knowing its own state. Not "Cause": that heading is
-                      taken below by the nested exception, and one panel
-                      cannot use it for two different things. */}
-                  <SectionLabel>
-                    {causes.length === 1
-                      ? "Why this happened"
-                      : "Likely causes"}
-                  </SectionLabel>
-                  <SectionBody items={causes} />
-                </div>
-              ) : null}
-              {steps.length > 0 ? (
-                <div>
-                  <SectionLabel>Next steps</SectionLabel>
-                  <SectionBody items={steps} />
-                </div>
-              ) : null}
-              {showRaw ? (
-                <div>
-                  <SectionLabel>Raw error</SectionLabel>
-                  <MonoBlock>
-                    {normalized.rawMessage}
-                    {normalized.rawCode !== undefined ? (
-                      <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-                        {normalized.rawCode}
-                      </span>
-                    ) : null}
-                  </MonoBlock>
-                </div>
-              ) : null}
-              {normalized.cause ? (
-                <div>
-                  <SectionLabel>Cause</SectionLabel>
-                  <MonoBlock>
-                    {normalized.cause.name}: {normalized.cause.message}
-                  </MonoBlock>
-                </div>
-              ) : null}
-
-              <div className="pt-0.5">
-                <a
-                  href={docsHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Learn more
-                </a>
-              </div>
-            </div>
-          ) : null}
+          {detailsPanel}
         </div>
       </div>
     </div>

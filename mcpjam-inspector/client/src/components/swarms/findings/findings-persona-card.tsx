@@ -103,7 +103,7 @@ export function FindingsPersonaCard({
                   <ChevronDown
                     className={cn(
                       "size-4 text-muted-foreground transition-transform",
-                      expanded && "rotate-180"
+                      expanded && "rotate-180",
                     )}
                   />
                 </span>

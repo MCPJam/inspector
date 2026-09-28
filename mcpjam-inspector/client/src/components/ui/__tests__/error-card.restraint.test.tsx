@@ -103,4 +103,20 @@ describe("ErrorCard restraint", () => {
     expect(screen.getByRole("alert").className).not.toContain("destructive");
     expect(container.querySelector(".text-destructive")).toBeNull();
   });
+
+  /**
+   * The deliberate other half of the restraint rule. A raw client-side `Error`
+   * DOES carry a stack worth reporting — it points at our own code, which is
+   * where the failure is — so the disclosure is offered here even though every
+   * case above passes a pre-normalized block and cannot see this path.
+   */
+  it("offers technical details for a raw client-side error", () => {
+    const error = new Error("Client rendering failed");
+    error.stack = "Error: Client rendering failed\n    at renderView (app.ts:3:4)";
+    render(<ErrorCard error={error} />);
+    openDetails();
+    fireEvent.click(screen.getByTestId("error-card-technical-toggle"));
+
+    expect(screen.getByText(/at renderView/)).toBeTruthy();
+  });
 });

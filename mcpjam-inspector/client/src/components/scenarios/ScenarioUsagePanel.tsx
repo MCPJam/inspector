@@ -10,6 +10,7 @@ import {
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 import {
   compareThreadsForUsageList,
+  threadFeedbackBucket,
   threadMatchesFilterState,
   EMPTY_USAGE_FILTER,
 } from "@/hooks/scenario-usage-filters";
@@ -26,11 +27,20 @@ import {
 } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { sessionCountLabel } from "@/components/connection/share-usage/session-list-format";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
+import {
+  buildEvaluatePath,
+  buildUserTestingScenarioPath,
+  navigateApp,
+} from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ScenarioSessionsMetricStrip } from "@/components/scenarios/scenario-sessions-metric-strip";
+import {
+  SENTIMENT_ORDER,
+  SENTIMENT_TITLE,
+} from "@/components/scenarios/findings/scenario-findings-derivation";
+import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
 
 interface ScenarioUsagePanelProps {
   scenario: ScenarioSettings;
@@ -68,13 +78,53 @@ const SESSIONS_TRAFFIC_FILTER = withHideSynthetic(EMPTY_USAGE_FILTER);
  */
 type RatingFilterValue = "all" | "low" | "neutral" | "high" | "none";
 
-const RATING_FILTER_LABELS: Record<RatingFilterValue, string> = {
-  all: "All ratings",
-  low: "Low (≤2)",
-  neutral: "Neutral (3)",
-  high: "High (≥4)",
-  none: "No feedback",
+type RatingFilterOption = { value: RatingFilterValue; label: string };
+
+/**
+ * The options, in menu order, for the widget this study asks testers to use.
+ *
+ * Thumbs reuse the SAME buckets rather than a filter of their own: the backend
+ * scores a thumbs-down as 1 (negative) and a thumbs-up as 5 (positive), so
+ * "Thumbs down" is `low` and "Thumbs up" is `high`. What changes is only what
+ * the menu may offer — a thumbs study cannot produce a neutral turn, and
+ * star-count labels on it describe a scale its testers never saw.
+ */
+const RATING_FILTER_OPTIONS: Record<
+  "stars" | "thumbs",
+  readonly RatingFilterOption[]
+> = {
+  stars: [
+    { value: "all", label: "All ratings" },
+    { value: "low", label: "Low (≤2)" },
+    { value: "neutral", label: "Neutral (3)" },
+    { value: "high", label: "High (≥4)" },
+    { value: "none", label: "No feedback" },
+  ],
+  thumbs: [
+    { value: "all", label: "All ratings" },
+    { value: "high", label: "Thumbs up" },
+    { value: "low", label: "Thumbs down" },
+    { value: "none", label: "No feedback" },
+  ],
 };
+
+/**
+ * The Personas filter: a User Testing persona is the session's SENTIMENT, the
+ * same closed five-value verdict Findings builds its persona tabs from, under
+ * the same titles and in the same worst-first order — so "Frustrated users"
+ * here is exactly the tab of that name there. An unanalyzed session has no
+ * sentiment and so matches no persona; it shows under "All personas" only.
+ */
+type PersonaFilterValue = "all" | SessionSentiment;
+
+/**
+ * The filter pills' trigger. `data-[size=default]:h-7` and not just `h-7`: the
+ * design-system trigger sets its height through that same variant, which
+ * out-ranks a bare `h-7` and rendered the pill at 36px — filling the bar edge
+ * to edge instead of sitting inside it as the frame draws.
+ */
+const FILTER_TRIGGER_CLASS =
+  "h-7 data-[size=default]:h-7 w-auto min-w-0 gap-1.5 px-2.5 py-0 text-xs";
 
 /**
  * Fold the rating selection into a base filter.
@@ -114,6 +164,21 @@ function buildRatingFilter(
   };
 }
 
+/** Add the persona pick to a filter, as a `sentiment` dimension chip. */
+function withPersonaFilter<T extends typeof SESSIONS_TRAFFIC_FILTER>(
+  persona: PersonaFilterValue,
+  filter: T,
+): T {
+  if (persona === "all") return filter;
+  return {
+    ...filter,
+    chips: [
+      ...filter.chips,
+      { kind: "dimension" as const, key: "sentiment" as const, value: persona },
+    ],
+  };
+}
+
 export function ScenarioUsagePanel({
   scenario,
   initialThreadId,
@@ -141,15 +206,73 @@ export function ScenarioUsagePanel({
     [scenario.scenarioId],
   );
 
-  const [ratingFilter, setRatingFilter] = useState<RatingFilterValue>("all");
+  // Absent ⇒ stars, matching the backend normalizer and the Settings toggle.
+  const ratingStyle =
+    scenario.chatUi?.surfaces?.perTurnFeedback?.style === "thumbs"
+      ? "thumbs"
+      : "stars";
+  /**
+   * Whether this study holds 3-star sessions. A study can switch from stars
+   * to thumbs after sessions exist, and those keep their neutral rating —
+   * which the thumbs menu alone would leave with no way to filter for.
+   * Sticky once seen (per study): the list below is filtered by the very
+   * menu this feeds, so re-deriving it would drop the option the moment
+   * another bucket is picked. Read from the loaded page, so a neutral
+   * session older than that page does not by itself surface the option.
+   */
+  const [neutralHistory, setNeutralHistory] = useState<{
+    scenarioId: string;
+    seen: boolean;
+  }>({ scenarioId: scenario.scenarioId, seen: false });
+  const hasNeutralHistory =
+    neutralHistory.scenarioId === scenario.scenarioId && neutralHistory.seen;
+  const ratingOptions = useMemo(() => {
+    const base = RATING_FILTER_OPTIONS[ratingStyle];
+    if (ratingStyle !== "thumbs" || !hasNeutralHistory) return base;
+    // Before "No feedback", which stays last in both menus.
+    return [
+      ...base.slice(0, -1),
+      { value: "neutral" as const, label: "Neutral (3 stars)" },
+      ...base.slice(-1),
+    ];
+  }, [ratingStyle, hasNeutralHistory]);
+  /**
+   * Where "Promote to test case" lands from User Testing: the SUITE, with its
+   * case list, rather than the new case's editor that the other promote
+   * surfaces open. Deliberately User Testing only — Swarms, chat history and
+   * the per-turn action keep the shared destination.
+   */
+  const landOnPromotedSuite = useCallback(
+    ({ suiteId }: { suiteId: string }) => {
+      navigateApp(buildEvaluatePath({ type: "suite-overview", suiteId }));
+    },
+    [],
+  );
+
+  const [ratingChoice, setRatingFilter] = useState<RatingFilterValue>("all");
+  // A choice the current style does not offer (the style changed under an
+  // open filter — "Neutral" on a study now rated by thumbs) reads as "all"
+  // rather than filtering by a bucket the menu can no longer show or clear.
+  const ratingFilter = ratingOptions.some((o) => o.value === ratingChoice)
+    ? ratingChoice
+    : "all";
+  const [personaFilter, setPersonaFilter] = useState<PersonaFilterValue>("all");
   const sessionsFilter = useMemo(
-    () => buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
-    [ratingFilter],
+    () =>
+      withPersonaFilter(
+        personaFilter,
+        buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
+      ),
+    [ratingFilter, personaFilter],
   );
   // The user-visible half of the filter, for the list's empty-state copy.
   const ratingOnlyFilter = useMemo(
-    () => buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
-    [ratingFilter],
+    () =>
+      withPersonaFilter(
+        personaFilter,
+        buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
+      ),
+    [ratingFilter, personaFilter],
   );
 
   const { threads } = useUsageInsights({
@@ -167,6 +290,12 @@ export function ScenarioUsagePanel({
   // inside its index walk (which is what makes the filter reach past the
   // 100-row page); re-checking here catches a live update that arrives after
   // the page was built — a session whose rating changes under an open filter.
+  useEffect(() => {
+    if (hasNeutralHistory) return;
+    if (!threads?.some((t) => threadFeedbackBucket(t) === "neutral")) return;
+    setNeutralHistory({ scenarioId: scenario.scenarioId, seen: true });
+  }, [threads, hasNeutralHistory, scenario.scenarioId]);
+
   const sortedThreads = useMemo(() => {
     if (!threads) return undefined;
     return threads
@@ -238,6 +367,34 @@ export function ScenarioUsagePanel({
                 })}
               >
                 <Select
+                  value={personaFilter}
+                  onValueChange={(value) =>
+                    setPersonaFilter(value as PersonaFilterValue)
+                  }
+                >
+                  <SelectTrigger
+                    data-testid="scenario-sessions-persona-filter"
+                    className={FILTER_TRIGGER_CLASS}
+                    aria-label="Filter sessions by persona"
+                  >
+                    {/* The frame names the FILTER while nothing is picked,
+                        and the pick once something is. */}
+                    <SelectValue>
+                      {personaFilter === "all"
+                        ? "Personas"
+                        : SENTIMENT_TITLE[personaFilter]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All personas</SelectItem>
+                    {SENTIMENT_ORDER.map((sentiment) => (
+                      <SelectItem key={sentiment} value={sentiment}>
+                        {SENTIMENT_TITLE[sentiment]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
                   value={ratingFilter}
                   onValueChange={(value) =>
                     setRatingFilter(value as RatingFilterValue)
@@ -245,17 +402,20 @@ export function ScenarioUsagePanel({
                 >
                   <SelectTrigger
                     data-testid="scenario-sessions-rating-filter"
-                    className="h-7 w-auto min-w-0 gap-1.5 px-2.5 text-xs"
+                    className={FILTER_TRIGGER_CLASS}
                     aria-label="Filter sessions by rating"
                   >
-                    <SelectValue placeholder="Ratings" />
+                    <SelectValue>
+                      {ratingFilter === "all"
+                        ? "Ratings"
+                        : ratingOptions.find((o) => o.value === ratingFilter)
+                            ?.label}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {(
-                      Object.keys(RATING_FILTER_LABELS) as RatingFilterValue[]
-                    ).map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {RATING_FILTER_LABELS[value]}
+                    {ratingOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -289,7 +449,11 @@ export function ScenarioUsagePanel({
                   )}`}
                   promote={
                     scenario.projectId
-                      ? { projectId: scenario.projectId, canPromote }
+                      ? {
+                          projectId: scenario.projectId,
+                          canPromote,
+                          onImported: landOnPromotedSuite,
+                        }
                       : undefined
                   }
                   // Reported here: scrolling a tester's session felt like

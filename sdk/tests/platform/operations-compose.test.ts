@@ -624,11 +624,12 @@ describe("compose server selectors", () => {
   it("composes on `compose.client` exactly as on `compose.host`", async () => {
     const { client, fetchMock } = makeClient();
     await runEvalSuiteOperation.execute(
-      { suite: "Smoke", compose: { client: "Claude Code", hostServers: true } },
+      { suite: "Smoke", compose: { client: "Claude Code", serverGroup: "group-pinned" } },
       { client },
     );
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
     });
   });
 
@@ -641,7 +642,7 @@ describe("compose server selectors", () => {
           compose: {
             client: "Claude Code",
             host: "Claude Code",
-            hostServers: true,
+            serverGroup: "group-pinned",
           },
         },
         { client },
@@ -655,7 +656,7 @@ describe("compose server selectors", () => {
     const { client, fetchMock } = makeClient();
     const error = await runEvalSuiteOperation
       .execute(
-        { suite: "Smoke", compose: { hostServers: true } },
+        { suite: "Smoke", compose: { serverGroup: "group-pinned" } },
         { client },
       )
       .catch((caught: unknown) => caught);
@@ -665,17 +666,24 @@ describe("compose server selectors", () => {
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
   });
 
-  it("follows the host's live list only when asked out loud", async () => {
+  it("rejects hostServers with the flags that replace it", async () => {
+    // Eval runs take their servers from a server group alone, so following the
+    // client's list could only compose an environment the backend refuses to
+    // launch. Rejected before anything is resolved or created.
     const { client, fetchMock } = makeClient();
-    await runEvalSuiteOperation.execute(
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true } },
-      { client },
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", compose: { host: "Claude Code", hostServers: true } },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain(
+      "`hostServers` is no longer supported",
     );
-    // Opting in composes as before — no group is pinned, so the runner resolves
-    // servers from the host.
-    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
-      hostId: "host-claude",
-    });
+    expect(String((error as Error).message)).toContain("`serverGroup`");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+    expect(bodyOf(fetchMock, /server-attachments$/)).toBeUndefined();
+    expect(bodyOf(fetchMock, /eval-runs$/)).toBeUndefined();
   });
 
   it("refuses a single case run that names no servers", async () => {
@@ -705,7 +713,7 @@ describe("compose server selectors", () => {
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
   });
 
-  it("refuses following the host and pinning at once", async () => {
+  it("rejects hostServers even alongside a pin", async () => {
     const { client, fetchMock } = makeClient();
     const error = await runEvalSuiteOperation
       .execute(
@@ -720,7 +728,9 @@ describe("compose server selectors", () => {
         { client },
       )
       .catch((caught: unknown) => caught);
-    expect(String((error as Error).message)).toContain("cannot be combined");
+    expect(String((error as Error).message)).toContain(
+      "`hostServers` is no longer supported",
+    );
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
   });
 
@@ -779,13 +789,14 @@ describe("run_eval_suite compose", () => {
     const result = await runEvalSuiteOperation.execute(
       {
         suite: "Smoke",
-        compose: { host: "Claude Code", hostServers: true, computer: "default" },
+        compose: { host: "Claude Code", serverGroup: "group-pinned", computer: "default" },
       },
       { client },
     );
 
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       sandboxImageId: "img-default",
     });
     expect(
@@ -805,7 +816,7 @@ describe("run_eval_suite compose", () => {
     const result = await runEvalSuiteOperation.execute(
       {
         suite: "Smoke",
-        compose: { host: "Claude Code", hostServers: true, saveTargets: true },
+        compose: { host: "Claude Code", serverGroup: "group-pinned", saveTargets: true },
       },
       { client },
     );
@@ -826,7 +837,7 @@ describe("run_eval_suite compose", () => {
     const { client, fetchMock } = makeClient({ launchFails: true });
     const error = await runEvalSuiteOperation
       .execute(
-        { suite: "Smoke", compose: { host: "Claude Code", hostServers: true } },
+        { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" } },
         { client },
       )
       .catch((caught: unknown) => caught);
@@ -853,7 +864,7 @@ describe("run_eval_suite compose", () => {
         suite: "Smoke",
         compose: {
           host: "Claude Code",
-          hostServers: true,
+          serverGroup: "group-pinned",
           models: [
             "anthropic/claude-haiku-4.5",
             "google/gemini-2.5-flash",
@@ -946,7 +957,7 @@ describe("run_eval_suite compose", () => {
     // break every composed run against an older deployment.
     const { client, fetchMock } = makeClient({ modelOverrides: false });
     await runEvalSuiteOperation.execute(
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true } },
+      { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" } },
       { client },
     );
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeDefined();
@@ -955,7 +966,7 @@ describe("run_eval_suite compose", () => {
   it("falls back to attach for a single cell on an old backend", async () => {
     const { client, fetchMock } = makeClient({ ephemeralLaunch: false });
     await runEvalSuiteOperation.execute(
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true } },
+      { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" } },
       { client },
     );
     expect(
@@ -978,7 +989,7 @@ describe("run_eval_suite compose", () => {
       .execute(
         {
           suite: "Smoke",
-          compose: { host: "Claude Code", hostServers: true },
+          compose: { host: "Claude Code", serverGroup: "group-pinned" },
           cases: ["no such case"],
         },
         { client },
@@ -998,10 +1009,10 @@ describe("run_eval_suite compose", () => {
     // not use the result.
     const { client, fetchMock } = makeClient();
     for (const input of [
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true }, environment: "e" },
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true }, host: "ChatGPT" },
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true }, servers: ["s"] },
-      { suite: "Smoke", compose: { host: "Claude Code", hostServers: true }, allAttached: true },
+      { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" }, environment: "e" },
+      { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" }, host: "ChatGPT" },
+      { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" }, servers: ["s"] },
+      { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "group-pinned" }, allAttached: true },
     ]) {
       const error = await runEvalSuiteOperation
         .execute(input, { client })
@@ -1020,12 +1031,13 @@ describe("run_eval_case compose", () => {
       {
         suite: "Smoke",
         case: "echo works",
-        compose: { host: "Claude Code", hostServers: true, model: "anthropic/claude-haiku-4.5" },
+        compose: { host: "Claude Code", serverGroup: "group-pinned", model: "anthropic/claude-haiku-4.5" },
       },
       { client },
     );
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       modelId: "anthropic/claude-haiku-4.5",
     });
     expect(bodyOf(fetchMock, /\/eval-runs$/)).toEqual({
@@ -1111,7 +1123,7 @@ describe("compose skill selection", () => {
       suite: "Smoke",
       compose: {
         host: "Claude Code",
-        hostServers: true,
+        serverGroup: "group-pinned",
         skills: {
           mode: "explicit",
           skillIds: ["skill-a", "skill-b"],
@@ -1123,6 +1135,7 @@ describe("compose skill selection", () => {
 
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       skillSelection: {
         mode: "explicit",
         skillIds: ["skill-a", "skill-b"],
@@ -1217,7 +1230,7 @@ describe("compose secret grants", () => {
       suite: "Smoke",
       compose: {
         host: "Claude Code",
-        hostServers: true,
+        serverGroup: "group-pinned",
         secrets: GRANT,
       },
     });
@@ -1225,6 +1238,7 @@ describe("compose secret grants", () => {
 
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       secretSelection: GRANT,
     });
   });
@@ -1236,7 +1250,7 @@ describe("compose secret grants", () => {
       case: "echo works",
       compose: {
         host: "Claude Code",
-        hostServers: true,
+        serverGroup: "group-pinned",
         secrets: GRANT,
       },
     });
@@ -1244,6 +1258,7 @@ describe("compose secret grants", () => {
 
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       secretSelection: GRANT,
     });
   });
@@ -1273,7 +1288,7 @@ describe("compose secret grants", () => {
       suite: "Smoke",
       compose: {
         host: "Claude Code",
-        hostServers: true,
+        serverGroup: "group-pinned",
         secrets: { mode: "explicit", secretIds: [] },
       },
     });
@@ -1334,7 +1349,7 @@ describe("compose secret grants — deployment skew", () => {
       suite: "Smoke",
       compose: {
         host: "Claude Code",
-        hostServers: true,
+        serverGroup: "group-pinned",
         secrets: GRANT,
       },
     });
@@ -1360,7 +1375,7 @@ describe("compose secret grants — deployment skew", () => {
       case: "echo works",
       compose: {
         host: "Claude Code",
-        hostServers: true,
+        serverGroup: "group-pinned",
         secrets: GRANT,
       },
     });
@@ -1379,7 +1394,7 @@ describe("compose secret grants — deployment skew", () => {
     await runEvalSuiteOperation.execute(
       runEvalSuiteOperation.inputSchema.parse({
         suite: "Smoke",
-        compose: { host: "Claude Code", hostServers: true, secrets: GRANT },
+        compose: { host: "Claude Code", serverGroup: "group-pinned", secrets: GRANT },
       }),
       { client: withGrant.client },
     );
@@ -1388,7 +1403,7 @@ describe("compose secret grants — deployment skew", () => {
     await runEvalSuiteOperation.execute(
       runEvalSuiteOperation.inputSchema.parse({
         suite: "Smoke",
-        compose: { host: "Claude Code", hostServers: true },
+        compose: { host: "Claude Code", serverGroup: "group-pinned" },
       }),
       { client: withoutGrant.client },
     );
@@ -1411,7 +1426,7 @@ describe("compose secret grants — deployment skew", () => {
     await runEvalSuiteOperation.execute(
       runEvalSuiteOperation.inputSchema.parse({
         suite: "Smoke",
-        compose: { host: "Claude Code", hostServers: true },
+        compose: { host: "Claude Code", serverGroup: "group-pinned" },
       }),
       { client },
     );

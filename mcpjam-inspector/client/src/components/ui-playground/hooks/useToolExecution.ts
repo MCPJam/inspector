@@ -342,7 +342,7 @@ export function useToolExecution({
       if (!effectiveToolName) {
         return {
           ok: false,
-          error: "A tool selection is required.",
+          error: "Select a tool to run.",
         };
       }
 
@@ -367,7 +367,7 @@ export function useToolExecution({
       if (!effectiveServerName) {
         return {
           ok: false,
-          error: "A connected server and tool selection are required.",
+          error: "Connect to a server, then select a tool to run.",
         };
       }
 

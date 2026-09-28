@@ -28,7 +28,7 @@ export interface PlanLimitDialogViewProps {
    */
   showRequest?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
-  organizationId?: string | null;
+  organizationId: string;
   organizationName: string;
   origin: UpgradeOrigin;
   limitKind: string;
@@ -140,11 +140,11 @@ export function PlanLimitDialogView({
         {showRequestPath ? (
           <RequestUpgradeButton
             recipients={requestRecipients}
+            organizationId={organizationId}
             organizationName={organizationName}
             teamName={teamName}
             origin={origin}
             limitKind={limitKind}
-            organizationId={organizationId}
           />
         ) : null}
       </DialogContent>

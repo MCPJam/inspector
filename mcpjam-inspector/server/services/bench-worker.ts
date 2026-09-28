@@ -1482,8 +1482,15 @@ async function defaultRunEvalCell(
       // child ends up filed under the wrong benchmark.
       source: "benchmark",
       benchmarkRunId: job.benchmarkRunId,
-      ...(cell.environmentId ? { environmentId: cell.environmentId } : {}),
-      ...(cell.namedHostId ? { namedHostId: cell.namedHostId } : {}),
+      // An environment cell runs through the environment core. The exam
+      // suite does not run environments, so the launch is ephemeral: the
+      // backend resolves the cell's environment without attaching it. The
+      // host pin is only the fallback for a backend that sends none.
+      ...(cell.environmentId
+        ? { environmentId: cell.environmentId, ephemeralEnvironment: true }
+        : cell.namedHostId
+          ? { namedHostId: cell.namedHostId }
+          : {}),
       // The CELL's pinned repetition count, not the suite's `runs` default.
       // The scorer's `minimumRepetitionsPerRequiredCell` is a publication
       // floor, so a cell declared at 3 that runs once is not merely thinner
@@ -1638,7 +1645,15 @@ async function defaultRunConformanceChild(
   const result = await executePersistedConformanceRun({
     convexToken: job.runnerBearer,
     projectId: job.projectId,
-    server: { url: spec.serverUrl } as never,
+    // The benchmarked connector's URL comes off a saved server row, so it is
+    // somebody else's choice of target. The protocol, apps and tasks suites
+    // all dial through this transport — the same guard the hosted conformance
+    // routes use — rather than a bare `{ url }` the suites would have taken to
+    // the global fetch, redirects and all.
+    server: {
+      url: spec.serverUrl,
+      baseFetch: createConformanceFetch("MCP server"),
+    },
     suites: spec.suites,
     source: "benchmark",
     target: {
@@ -1662,6 +1677,9 @@ async function defaultRunConformanceChild(
   });
   return { runId: result.runId };
 }
+
+export const defaultRunConformanceChildForTests = () =>
+  defaultRunConformanceChild;
 
 export type RunAuthProbeArgs = {
   job: ClaimedBenchmarkJob;

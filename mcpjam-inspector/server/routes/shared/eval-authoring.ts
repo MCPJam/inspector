@@ -21,6 +21,8 @@ import {
 } from "../v1/evals.js";
 import {
   resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
   environmentServerIds,
   environmentServerNames,
 } from "../../services/environments/resolve.js";
@@ -141,8 +143,11 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
       });
       const environment = environmentId
         ? await resolveEnvironmentForLaunch(convex, {
+            serverSource: EVAL_LAUNCH_SERVER_SOURCE,
             projectId: input.projectId,
             environmentId,
+          }).catch((error) => {
+            throw translateEnvironmentResolveError(error);
           })
         : undefined;
       const selection = environment

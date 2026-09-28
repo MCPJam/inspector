@@ -72,7 +72,16 @@ describe("CaseScorecard", () => {
     ).map((node) => node.getAttribute("data-stage-group"));
     // Response sits between them under analyzer 11: `noToolErrors` grades the
     // answer coming back, not whether the person got what they asked for.
-    expect(groups).toEqual(["selection", "response", "userValue"]);
+    // Every other stage the runner measures leads with its built-in runner
+    // check; `firstToolWas` expects a call, so Tool call is among them.
+    expect(groups).toEqual([
+      "connection",
+      "discovery",
+      "selection",
+      "call",
+      "response",
+      "userValue",
+    ]);
     expect(screen.getByText("Selection")).toBeInTheDocument();
     expect(
       screen.getByText("Did the model choose the right tool for the request?"),
@@ -81,18 +90,70 @@ describe("CaseScorecard", () => {
 
   it("says who wrote each scorer", () => {
     renderCard();
-    expect(rowFor("First tool called was… get_me")).toHaveAttribute(
+    expect(rowFor("Require this tool to be reached first")).toHaveAttribute(
       "data-provenance",
       "step",
     );
-    expect(rowFor("Final message non-empty")).toHaveAttribute(
+    expect(rowFor("Catch an empty answer")).toHaveAttribute(
       "data-provenance",
       "case",
     );
-    expect(rowFor("Token budget under 4000")).toHaveAttribute(
+    expect(rowFor("Track increases in token usage")).toHaveAttribute(
       "data-provenance",
       "suite",
     );
+  });
+
+  it("shows each runner check as a locked Built-in row, not an evaluator", () => {
+    renderCard();
+    const builtins = rows().filter(
+      (row) => row.getAttribute("data-provenance") === "builtin",
+    );
+    expect(builtins.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Successful connection"),
+      expect.stringContaining("Tools listed"),
+      expect.stringContaining("Tool call completed"),
+      expect.stringContaining("Result returned to the model"),
+    ]);
+    for (const row of builtins) {
+      expect(within(row).getByText("Built-in")).toBeInTheDocument();
+      // No role to author, nothing to edit or remove.
+      expect(within(row).queryByText("Required")).not.toBeInTheDocument();
+      expect(within(row).queryByText("Advisory")).not.toBeInTheDocument();
+      expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+      expect(row.textContent).not.toMatch(/assertion/i);
+    }
+  });
+
+  it("shows the route's arguments as their own locked row at Tool call", () => {
+    const { container } = renderCard({
+      input: {
+        ...baseInput,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "Who am I signed in as?" },
+          {
+            id: "t1",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "get_me",
+              args: { args: {} },
+            },
+          },
+        ],
+        toolsChoice: "tools",
+      },
+    });
+    const call = container.querySelector(
+      '[data-stage-group="call"]',
+    ) as HTMLElement;
+    const row = within(call)
+      .getAllByTestId("case-scorecard-row")
+      .find((r) => r.textContent?.includes("Arguments match"));
+    expect(row).toHaveAttribute("data-provenance", "route");
+    expect(within(row!).queryByRole("button")).not.toBeInTheDocument();
+    // One route question on the page, at Selection.
+    expect(screen.getAllByTestId("case-route-row")).toHaveLength(1);
   });
 
   it("never shows a wire enum", () => {
@@ -104,7 +165,7 @@ describe("CaseScorecard", () => {
 
   it("sends an inherited scorer to the suite instead of editing it here", () => {
     const { onOpenSuiteSettings } = renderCard();
-    const suite = rowFor("Token budget under 4000");
+    const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).queryByRole("button", { name: /^Remove/ }),
     ).not.toBeInTheDocument();
@@ -149,7 +210,7 @@ describe("CaseScorecard — the left rail", () => {
     expect(
       within(step).getAllByTestId("scorecard-row-marker")[0],
     ).toHaveAttribute("title", "Step 3 — graded when the run reaches it");
-    const suite = rowFor("Token budget under 4000");
+    const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).getAllByTestId("scorecard-row-marker")[0],
     ).toHaveAttribute("title", "Graded once, over the finished transcript");
@@ -197,12 +258,12 @@ describe("CaseScorecard — roles", () => {
         },
       },
     });
-    expect(rowFor("Final message non-empty")).toHaveAttribute(
+    expect(rowFor("Catch an empty answer")).toHaveAttribute(
       "data-role",
       "advisory",
     );
     expect(
-      within(rowFor("Final message non-empty")).getByText("Advisory"),
+      within(rowFor("Catch an empty answer")).getByText("Advisory"),
     ).toBeInTheDocument();
   });
 
@@ -242,7 +303,7 @@ describe("CaseScorecard — roles", () => {
         },
       },
     });
-    const row = rowFor("Final message does not end with a question");
+    const row = rowFor("Catch an answer that ends by asking");
     const group = within(row).getByRole("group", { name: "Assertion role" });
     expect(
       within(group).queryByRole("button", { name: "Required" }),

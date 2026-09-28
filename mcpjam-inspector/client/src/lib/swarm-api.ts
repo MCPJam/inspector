@@ -15,9 +15,11 @@ import type {
   JourneyRunVerdictSummary,
   SwarmReport,
 } from "@mcpjam/sdk/contract";
+import { swarmSessionNeverRan } from "@mcpjam/sdk/contract";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
+import { SIGN_IN_REQUIRED_CODE } from "@/lib/sign-in-required";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
@@ -33,6 +35,12 @@ export const SWARM_QUERIES = {
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   /** Single run by id — prefer this over paging `listJourneyRuns` when the id is known. */
   getJourneyRun: "journeyRuns:getJourneyRun",
+  /**
+   * Why a wave's sessions never ran, from the attempts that refused them
+   * (#5188). The findings wire counts those sessions; only the attempt rows
+   * know the reason. See {@link RunLaunchFailures}.
+   */
+  listRunLaunchFailures: "journeyRuns:listRunLaunchFailures",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
   /** Flat Sessions-tab default: all swarm sessions in the project. */
   listSessionsByProject: "journeyRuns:listSessionsByProject",
@@ -129,7 +137,10 @@ export type JourneyRunStatus =
   | "rate_limited"
   // Display-only, derived from the `error` marker. See above.
   | "canceled"
-  | "stale";
+  | "stale"
+  // Display-only: `running` with the report's `undecidedReason` at
+  // `gradingPending` — execution is over, the grades are not in yet.
+  | "grading";
 
 export interface JourneyRunSummary {
   total: number;
@@ -219,6 +230,32 @@ export interface JourneyRunAttempt {
   /** Human string; historical rows may still hold a raw provider payload, so
    * render through `humanizeSwarmAttemptError`. */
   errorMessage: string | null;
+  /**
+   * The session's execution record — what the target model actually ran on
+   * (backend `lib/executionRecord.ts`). Absent on sessions recorded before
+   * it existed. Read through `readExecutionRecord`, never trusted raw.
+   */
+  execution?: unknown;
+}
+
+/**
+ * Why one run's sessions never ran — `journeyRuns:listRunLaunchFailures`,
+ * mirrored by hand from the backend `RunLaunchFailures`. Only runs with at
+ * least one session that never ran are returned.
+ */
+export interface RunLaunchFailures {
+  runId: string;
+  /** Sessions whose attempt ended without recording a single message. */
+  sessionsNotRun: number;
+  /** Every attempt the run planned. */
+  sessionsTotal: number;
+  /** Distinct (code, message) reasons, most common first, at most three. */
+  reasons: Array<{
+    errorCode: string | null;
+    /** Render through `humanizeSwarmAttemptError`, like the attempt row. */
+    errorMessage: string | null;
+    count: number;
+  }>;
 }
 
 export interface JourneyRun {
@@ -704,6 +741,18 @@ export function journeySessionRowToThread(
     // having no stamp at all and classifies it `ungraded`.
     criteria: row.criteria,
     goalScore: row.goalScore,
+    // A session refused before it said anything has no preview, so without
+    // this its row reads like any other. Unknown stays unknown: without a
+    // verdict, or without a message count to read, there is no claim to make,
+    // and an absent count must not be read as zero messages.
+    ...(row.verdict && typeof row.messageCount === "number"
+      ? {
+          neverRan: swarmSessionNeverRan(
+            row.verdict.lifecycle,
+            row.messageCount,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -1037,6 +1086,15 @@ export class SwarmGenerateError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
+  /**
+   * The refusal envelope the route sent, when it had one. A sign-in refusal is
+   * read off `details.code` by `signInRemedyMessage` — deliberately NOT a
+   * `signInRequired` boolean on this class, which would be a second place the
+   * same refusal is recognised, one of which a consumer could read alone and
+   * be wrong. `code` is the route's HTTP-shaped one and says nothing about who
+   * is asking: a 403 here can also mean "not a member of this project", which
+   * signing in does not fix.
+   */
   constructor(
     status: number,
     message: string,
@@ -1090,6 +1148,14 @@ async function postGenerate<T>(
       body?.details && typeof body.details === "object"
         ? (body.details as Record<string, unknown>)
         : undefined;
+    // The backend's own code. The proxy forwards its whole refusal envelope as
+    // `details` (`upstreamRefusalRouteError`), so the backend's `code` lives
+    // there; the response's TOP-LEVEL `code` is the proxy's HTTP-shaped one —
+    // `FORBIDDEN` for every 403, whatever caused it — and "not a member of
+    // this project" is a 403 that signing in does not fix.
+    const signInRequired =
+      typeof details?.code === "string" &&
+      details.code.toLowerCase() === SIGN_IN_REQUIRED_CODE.toLowerCase();
     // Raise the top-up dialog HERE, where the body still carries the route's
     // `code`. `SwarmGenerateError` keeps only status + message, so by the time
     // the create flow catches this the limit is no longer identifiable — and
@@ -1104,6 +1170,25 @@ async function postGenerate<T>(
     // that suppresses the card — `normalized` exists to feed that same card.
     if (limitDialogRaised) {
       throw new SwarmGenerateError(response.status, message, true);
+    }
+    // BEFORE the `normalized` branch. `handleRoute` runs every route error
+    // through `mapRuntimeError`, which backfills `normalized`, so on the real
+    // proxy response `normalized` is ALWAYS present — a sign-in check placed
+    // below it never ran at all, which is how a guest ended up with the generic
+    // error card instead of the Sign in control.
+    //
+    // A consumer is no longer at that branch's mercy: `signInRemedyMessage`
+    // reads the envelope off either class. The order still decides which
+    // affordance this refusal arrives dressed as, and `normalized` exists to
+    // feed the card this one does not want.
+    if (signInRequired) {
+      throw new SwarmGenerateError(
+        response.status,
+        message,
+        false,
+        code ?? undefined,
+        details,
+      );
     }
     if (normalized) {
       throw new WebApiError(

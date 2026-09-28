@@ -15,6 +15,12 @@ const flagState = vi.hoisted(() => ({
   environments: true,
 }));
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => flagState.skills,
 }));
@@ -59,6 +65,10 @@ vi.mock("convex/react", () => ({
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
+}));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 vi.mock("@/components/project-environments/environment-picker", () => ({
   EnvironmentPicker: ({
@@ -451,6 +461,15 @@ describe("SwarmTargetComposer — the block's way out", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
     expect(navigateAppMock).toHaveBeenCalledWith("/servers");
+  });
+
+  it("opens New Client from Add clients instead of leaving to the clients page", () => {
+    navigateAppMock.mockClear();
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("button", { name: "Add clients" }));
+    expect(navigateAppMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
   });
 });
 

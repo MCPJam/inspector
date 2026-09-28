@@ -72,7 +72,11 @@ describe("peekPendingTopup / clearPendingTopup", () => {
   });
 
   it("returns a freshly stashed entry without removing it", () => {
-    stashPendingTopup({ chatSessionId: "chat-1", message: "hi" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "hi",
+      organizationId: "org-1",
+    });
     const first = peekPendingTopup();
     expect(first).not.toBeNull();
     expect(first?.chatSessionId).toBe("chat-1");
@@ -87,7 +91,11 @@ describe("peekPendingTopup / clearPendingTopup", () => {
   it("returns null and clears the entry when expired (>10 min old)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-30T12:00:00Z"));
-    stashPendingTopup({ chatSessionId: "chat-1", message: "hi" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "hi",
+      organizationId: "org-1",
+    });
 
     // Jump 11 minutes ahead — past the 10-min TTL.
     vi.setSystemTime(new Date("2026-04-30T12:11:00Z"));
@@ -113,7 +121,11 @@ describe("peekPendingTopup / clearPendingTopup", () => {
   });
 
   it("clearPendingTopup removes a valid entry", () => {
-    stashPendingTopup({ chatSessionId: "chat-1", message: "hi" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "hi",
+      organizationId: "org-1",
+    });
     expect(peekPendingTopup()).not.toBeNull();
     clearPendingTopup();
     expect(peekPendingTopup()).toBeNull();
@@ -121,11 +133,23 @@ describe("peekPendingTopup / clearPendingTopup", () => {
   });
 
   it("does not stash when chatSessionId or message is empty", () => {
-    stashPendingTopup({ chatSessionId: "", message: "hi" });
+    stashPendingTopup({
+      chatSessionId: "",
+      message: "hi",
+      organizationId: "org-1",
+    });
     expect(peekPendingTopup()).toBeNull();
-    stashPendingTopup({ chatSessionId: "chat-1", message: "" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "",
+      organizationId: "org-1",
+    });
     expect(peekPendingTopup()).toBeNull();
-    stashPendingTopup({ chatSessionId: "", message: "" });
+    stashPendingTopup({
+      chatSessionId: "",
+      message: "",
+      organizationId: "org-1",
+    });
     expect(peekPendingTopup()).toBeNull();
   });
 });

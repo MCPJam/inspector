@@ -40,7 +40,10 @@ describe('buildProposalBlocks', () => {
   });
 
   it('caps the rendered set and says how many were held back', () => {
-    const many = Array.from({ length: 9 }, (_, index) => ({ ...PROPOSAL, actionId: `act_${index}` }));
+    const many = Array.from({ length: 9 }, (_, index) => ({
+      ...PROPOSAL,
+      actionId: `act_${index}`,
+    }));
     const blocks = buildProposalBlocks(many);
     assert.strictEqual(blocks.length, 6);
     assert.match(/** @type {any} */ (blocks[5]).elements[0].text, /4 more/);
@@ -88,7 +91,11 @@ describe('buildProposalBlocks', () => {
 
   it('warns about RECURRING cost for a spend-severity action', () => {
     const blocks = buildProposalBlocks([
-      { ...PROPOSAL, operation: 'set_eval_suite_schedule', confirmSeverity: 'spend' },
+      {
+        ...PROPOSAL,
+        operation: 'set_eval_suite_schedule',
+        confirmSeverity: 'spend',
+      },
     ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.match(text, /RECURRING/);
@@ -112,7 +119,13 @@ describe('buildProposalBlocks', () => {
     // Capping before escaping bounds the wrong string: 215 ampersands pass a
     // 215-character cap and arrive as 1,075 characters, which fails the block
     // and takes the whole message down with it.
-    const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: 'external', description: '&'.repeat(500) }]);
+    const blocks = buildProposalBlocks([
+      {
+        ...PROPOSAL,
+        confirmSeverity: 'external',
+        description: '&'.repeat(500),
+      },
+    ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.ok(text.length <= 300, `confirm text was ${text.length} chars`);
     // Every ampersand present is a COMPLETE entity — the cut never lands
@@ -123,7 +136,11 @@ describe('buildProposalBlocks', () => {
 
   it('escapes a hostile description inside the confirm dialog too', () => {
     const blocks = buildProposalBlocks([
-      { ...PROPOSAL, confirmSeverity: 'external', description: 'Call <!channel> on x' },
+      {
+        ...PROPOSAL,
+        confirmSeverity: 'external',
+        description: 'Call <!channel> on x',
+      },
     ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.ok(!text.includes('<!channel>'));
@@ -158,7 +175,11 @@ describe('buildProposalBlocks', () => {
     // Disabling a schedule STOPS spending. The default copy asserts the
     // opposite, so `none` has to say so rather than be left absent.
     const blocks = buildProposalBlocks([
-      { ...PROPOSAL, operation: 'set_eval_suite_schedule', confirmSeverity: 'none' },
+      {
+        ...PROPOSAL,
+        operation: 'set_eval_suite_schedule',
+        confirmSeverity: 'none',
+      },
     ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.match(text, /does not use any quota/);
@@ -189,9 +210,22 @@ describe('buildProposalBlocks', () => {
 });
 
 describe('rendersRunProposalFor', () => {
-  const suite = { type: 'eval_suite', id: 'ts_1', name: 'Smoke', url: 'https://app/x' };
-  const run = { actionId: 'run', operation: 'run_eval_suite', description: 'Run eval suite ts_1' };
-  const other = (index) => ({ actionId: `a${index}`, operation: 'cancel_eval_run', description: 'x' });
+  const suite = {
+    type: 'eval_suite',
+    id: 'ts_1',
+    name: 'Smoke',
+    url: 'https://app/x',
+  };
+  const run = {
+    actionId: 'run',
+    operation: 'run_eval_suite',
+    description: 'Run eval suite ts_1',
+  };
+  const other = (index) => ({
+    actionId: `a${index}`,
+    operation: 'cancel_eval_run',
+    description: 'x',
+  });
 
   it('suppresses on a TARGETLESS run proposal — the older-server fallback', () => {
     // Match-unknown must strip: two buttons for one billed run is the
@@ -204,7 +238,10 @@ describe('rendersRunProposalFor', () => {
     // "Make a suite for X and rerun smoke": smoke's proposal renders its own
     // button; X keeps the legacy accessory — stripping it would leave X with
     // NO run affordance at all.
-    const targeted = { ...run, target: { type: 'eval_suite', selector: 'ts_other' } };
+    const targeted = {
+      ...run,
+      target: { type: 'eval_suite', selector: 'ts_other' },
+    };
     assert.strictEqual(rendersRunProposalFor([targeted], suite), false);
     assert.strictEqual(
       rendersRunProposalFor([{ ...run, target: { type: 'eval_suite', selector: 'ts_1' } }], suite),
@@ -213,7 +250,10 @@ describe('rendersRunProposalFor', () => {
   });
 
   it('matches a name selector case-insensitively — models propose by name', () => {
-    const byName = { ...run, target: { type: 'eval_suite', selector: 'smoke' } };
+    const byName = {
+      ...run,
+      target: { type: 'eval_suite', selector: 'smoke' },
+    };
     assert.strictEqual(rendersRunProposalFor([byName], suite), true);
     assert.strictEqual(rendersRunProposalFor([byName], { ...suite, name: 'Checkout' }), false);
   });
@@ -257,7 +297,11 @@ describe('announcementFor', () => {
 
   it('prefers the SERVER-built resource link over anything assembled here', () => {
     const text = announcementFor(
-      { operation: 'run_eval_suite', kind: 'start', resource: { url: 'https://app/x' } },
+      {
+        operation: 'run_eval_suite',
+        kind: 'start',
+        resource: { url: 'https://app/x' },
+      },
       'U1',
     );
     assert.match(text, /<https:\/\/app\/x\|follow it here>/);
@@ -311,7 +355,13 @@ describe('handleProposalButton', () => {
     globalThis.fetch = mock.fn(async (url, init) => {
       const path = String(url);
       if (path.endsWith('/slack/thread-bindings/get')) {
-        return json({ binding: { projectId: 'p1', organizationId: 'o1', initiatorSlackUserId: 'U_OTHER' } });
+        return json({
+          binding: {
+            projectId: 'p1',
+            organizationId: 'o1',
+            initiatorSlackUserId: 'U_OTHER',
+          },
+        });
       }
       if (path.includes('/proposed-actions/')) {
         state.executeCalls.push({
@@ -327,7 +377,10 @@ describe('handleProposalButton', () => {
   }
 
   function json(body, status = 200) {
-    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   function clickArgs(overrides = {}) {
@@ -379,7 +432,13 @@ describe('handleProposalButton', () => {
   });
 
   it('tells the loser of a double-click without implying a failure', async () => {
-    stub({ executeStatus: 409, executeBody: { code: 'CONFLICT', message: 'That action is already running.' } });
+    stub({
+      executeStatus: 409,
+      executeBody: {
+        code: 'CONFLICT',
+        message: 'That action is already running.',
+      },
+    });
     const { args, ephemeral, posted } = clickArgs();
     await handleProposalButton(/** @type {any} */ (args));
 
@@ -396,7 +455,11 @@ describe('handleProposalButton', () => {
         status: 'succeeded',
         operation: 'run_eval_suite',
         kind: 'start',
-        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        resource: {
+          type: 'eval_run',
+          id: 'run_1',
+          url: 'https://app/evals/x/runs/run_1',
+        },
         result: {},
       },
     });
@@ -408,31 +471,49 @@ describe('handleProposalButton', () => {
     assert.match(posted[0].text, /<@U_CLICKER>/);
   });
 
-  it('starts a LIVE swarm message when the approval produced a journey run', async () => {
-    // Same recognition rule as eval runs — the server-sent resource TYPE —
-    // but a different watcher: journey status vocabulary and verdicts differ,
-    // and routing them into the eval watcher misreports rate-limited fan-outs.
-    stub({
-      executeBody: {
-        status: 'succeeded',
-        operation: 'launch_journey_run',
-        kind: 'start',
-        resource: { type: 'journey_run', id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
-        result: {},
-      },
+  // Both permalink spellings, because this app deploys from its own workflow
+  // and cannot see which vocabulary the API is emitting. An unrecognised type
+  // falls through to the plain acknowledgement — the run still starts, but
+  // nobody gets the live surface, which is the failure this pins against.
+  for (const [label, type] of [
+    ['a goal run', 'goal_run'],
+    ['a pre-rename journey run', 'journey_run'],
+  ]) {
+    it(`starts a LIVE swarm message when the approval produced ${label}`, async () => {
+      // Same recognition rule as eval runs — the server-sent resource TYPE —
+      // but a different watcher: goal status vocabulary and verdicts differ,
+      // and routing them into the eval watcher misreports rate-limited fan-outs.
+      stub({
+        executeBody: {
+          status: 'succeeded',
+          operation: 'launch_goal_run',
+          kind: 'start',
+          resource: {
+            type,
+            id: 'jr_1',
+            url: 'https://app/swarms/jr_1?project=p1',
+          },
+          result: {},
+        },
+      });
+      const { args, posted } = clickArgs();
+      await handleProposalButton(/** @type {any} */ (args));
+      assert.strictEqual(posted.length, 1);
+      assert.match(posted[0].text, /swarm running…/);
+      assert.match(posted[0].text, /watch it here/);
+      assert.match(posted[0].text, /<@U_CLICKER>/);
+      assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
     });
-    const { args, posted } = clickArgs();
-    await handleProposalButton(/** @type {any} */ (args));
-    assert.strictEqual(posted.length, 1);
-    assert.match(posted[0].text, /swarm running…/);
-    assert.match(posted[0].text, /watch it here/);
-    assert.match(posted[0].text, /<@U_CLICKER>/);
-    assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
-  });
+  }
 
   it('posts a plain announcement when the approval produced no run', async () => {
     stub({
-      executeBody: { status: 'succeeded', operation: 'cancel_eval_run', kind: 'cancel', result: {} },
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        kind: 'cancel',
+        result: {},
+      },
     });
     const { args, posted } = clickArgs();
     await handleProposalButton(/** @type {any} */ (args));

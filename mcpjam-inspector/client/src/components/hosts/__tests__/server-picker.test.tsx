@@ -1243,6 +1243,8 @@ describe("ServerPicker — a catalog query that never runs", () => {
     expect(
       await screen.findByText("No servers in this project yet."),
     ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+    expect(mockState.navigate).toHaveBeenCalledWith("/servers");
   });
 
   it("still says loading while the query really is in flight", async () => {

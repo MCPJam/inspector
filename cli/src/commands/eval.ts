@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Command } from "commander";
 import {
@@ -17,6 +17,7 @@ import {
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalCaseOperation,
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
@@ -185,6 +186,11 @@ import {
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
+import {
+  formatRecordedExecutionDisclosure,
+  writeIterationProvenance,
+  type IterationProvenanceInput,
+} from "../lib/eval-provenance.js";
 import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
@@ -355,7 +361,6 @@ function composeField(options: {
     serverGroup?: string;
     server?: string;
     servers?: string[];
-    hostServers?: boolean;
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
@@ -412,20 +417,23 @@ function composeField(options: {
       "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID."
     );
   }
+  // `--compose-host-servers` used to run against the client's current server
+  // list. Eval runs take their servers from a server group alone now, so the
+  // flag could only compose an environment with no servers, which the backend
+  // refuses to launch. Refused here with the flags that replace it.
+  if (options.composeHostServers === true) {
+    throw usageError(
+      "--compose-host-servers is no longer supported: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Use --compose-server <name> or --compose-server-group <id> instead."
+    );
+  }
   const pinsServers =
     options.composeServerGroup !== undefined ||
     (options.composeServer?.length ?? 0) > 0;
-  if (options.composeHostServers === true && pinsServers) {
+  // The server is what the suite is testing, so a composed run has to name it
+  // as a server group.
+  if (!pinsServers) {
     throw usageError(
-      "--compose-host-servers runs against the client's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
-    );
-  }
-  // The server is what the suite is testing, so a composed run has to name it.
-  // Left implicit, the run reads the client's list at execution time and a
-  // later edit to that shared client silently repoints the eval.
-  if (!pinsServers && options.composeHostServers !== true) {
-    throw usageError(
-      `${clientFlag} needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the client points at right now — which changes when the client is edited — pass --compose-host-servers.`
+      `${clientFlag} needs to know which servers to test: add --compose-server <name> (or --compose-server-group <id>).`
     );
   }
   return {
@@ -434,7 +442,6 @@ function composeField(options: {
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
-      ...(options.composeHostServers === true ? { hostServers: true } : {}),
       ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
       ...(options.withClientDefault === true
@@ -644,6 +651,11 @@ function writeRunDisclosure(
             })`
           : model.tenantEgress;
         lines.push(`  Model: ${model.modelId} — ${destination}`);
+        // What the run's own execution records say, when the disclosure was
+        // read off them (same facts as the inspector tooltip). Absent on a
+        // pre-run disclosure and on older backends: nothing is printed.
+        const recorded = formatRecordedExecutionDisclosure(model);
+        if (recorded) lines.push(`    ${recorded}`);
       }
     } else if (execution.modelsUnresolved) {
       lines.push(
@@ -676,6 +688,29 @@ function writeRunDisclosure(
         ? ""
         : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
   );
+  // A separate question from at-rest redaction. Older backends omit it, and
+  // then nothing is printed rather than a guess.
+  const providerRetention = disclosure.capture.redaction.providerRetention;
+  if (providerRetention) {
+    // Read off the flags themselves, never inferred from the field existing:
+    // a backend that relaxed either one must not still print "required".
+    const noTraining =
+      providerRetention.openrouter.data_collection === "deny" &&
+      providerRetention.gateway.disallowPromptTraining;
+    const policy = providerRetention.zeroDataRetention
+      ? noTraining
+        ? "zero data retention and no training required"
+        : "zero data retention required, training NOT restricted"
+      : noTraining
+      ? "no training required, zero data retention NOT required"
+      : "zero data retention and training NOT restricted";
+    lines.push(
+      `  Analysis providers: ${policy} on platform-key analysis calls` +
+        (providerRetention.notAppliedTo.length > 0
+          ? ` — NOT applied to: ${providerRetention.notAppliedTo.join("; ")}`
+          : "")
+    );
+  }
   lines.push(
     `  Export defaults: ${
       disclosure.capture.exportDefaults.includeContent
@@ -3537,7 +3572,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--compose-host-servers",
-      "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group."
     )
     .option(
       "--compose-skill <id...>",
@@ -3964,11 +3999,45 @@ export function registerEvalCommands(program: Command): void {
               // stderr message. The caller cannot find, resume, or cancel the
               // runs it just paid for. The shared exit path below raises the
               // same failure after the receipt is on stdout.
+              // What each iteration actually ran on, printed after the
+              // receipt. Human mode only — the JSON document stays one
+              // document — so it costs one iteration walk per run only where
+              // a person is reading. A failed walk is reported in the block,
+              // never thrown: it must not cost the caller the receipt.
+              const provenance: IterationProvenanceInput[] =
+                globalOptions.format === "human"
+                  ? await Promise.all(
+                      runs.map(async (run) => {
+                        try {
+                          const iterations = await fetchAllIterations(
+                            client,
+                            signal,
+                            result.project.id,
+                            run.id
+                          );
+                          return {
+                            runId: run.id,
+                            iterations: iterations.items,
+                          };
+                        } catch (error) {
+                          return {
+                            runId: run.id,
+                            iterations: [],
+                            error:
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                          };
+                        }
+                      })
+                    )
+                  : [];
               return {
                 runs,
                 waitErrors,
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
+                provenance,
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
               };
             }
@@ -4032,6 +4101,16 @@ export function registerEvalCommands(program: Command): void {
               waitErrors,
               reportInputs,
               iterationErrorCodes,
+              // Free: the walk the report already paid for.
+              provenance: reportInputs.map(
+                (input): IterationProvenanceInput => ({
+                  runId: input.run.id,
+                  iterations: input.iterations,
+                  ...(input.iterationError !== undefined
+                    ? { error: input.iterationError }
+                    : {}),
+                })
+              ),
               ...(decisionSummary ? { decisionSummary } : {}),
             };
           },
@@ -4113,6 +4192,13 @@ export function registerEvalCommands(program: Command): void {
         }
         if (reporter && report) {
           writeReporterResult(reporter, report);
+          // Stdout is the reporter's single document; the provenance block
+          // goes to stderr, the same rule the pre-run disclosure follows.
+          writeIterationProvenance(
+            globalOptions.format,
+            completion.provenance,
+            process.stderr
+          );
         } else {
           writeResult(
             {
@@ -4139,6 +4225,11 @@ export function registerEvalCommands(program: Command): void {
           writeEvalDecisionSummary(
             globalOptions.format,
             completion.decisionSummary,
+            process.stdout
+          );
+          writeIterationProvenance(
+            globalOptions.format,
+            completion.provenance,
             process.stdout
           );
         }
@@ -6014,7 +6105,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--compose-host-servers",
-      "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group."
     )
     .option(
       "--compose-skill <id...>",
@@ -6239,6 +6330,96 @@ export function registerEvalCommands(program: Command): void {
             : {}),
         });
         await executeOp(generateEvalCasesOperation, input, options, command);
+      }
+    );
+
+  cases
+    .command("import")
+    .description(
+      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite"
+    )
+    .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+    .option("--project <id-or-name>", PROJECT_OPT)
+    .option("--file <path>", 'Document to import ("-" reads stdin)')
+    .option("--content <text>", "Document text, instead of --file")
+    .option(
+      "--file-name <name>",
+      "Name recorded on each case's source (default: --file's basename)"
+    )
+    .option(
+      "--server <id-or-name...>",
+      "Servers to discover tools from (default: suite's)"
+    )
+    .option(
+      "--environment <id-or-name>",
+      "Discover tools from this attached environment's server set"
+    )
+    .option("--case-model <id...>", "Execution model(s) for the imported cases")
+    .option(
+      "--duplicate-policy <block|warn|create_anyway>",
+      "What to do with a case that already exists (default block)"
+    )
+    .option(
+      "--override-reason <text>",
+      "Why importing a duplicate is intended (required by warn / create_anyway)"
+    )
+    .option(
+      "--idempotency-key <key>",
+      "Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again"
+    )
+    .action(
+      async (
+        options: PlatformOptions & {
+          project?: string;
+          suite: string;
+          file?: string;
+          content?: string;
+          fileName?: string;
+          server?: string[];
+          environment?: string;
+          caseModel?: string[];
+          duplicatePolicy?: string;
+          overrideReason?: string;
+          idempotencyKey?: string;
+        },
+        command
+      ) => {
+        if (!options.file === !options.content)
+          throw usageError(
+            "Pass exactly one of --file or --content.",
+            options.file
+              ? { source: "Both were given." }
+              : { source: "Neither was given." }
+          );
+        const content = options.file
+          ? readFileOrStdin(options.file, "document")
+          : options.content!;
+        const fileName =
+          options.fileName ??
+          (options.file && options.file !== "-"
+            ? basename(options.file)
+            : undefined);
+        const input = validateOpInput(importEvalCasesOperation, {
+          project: options.project,
+          suite: options.suite,
+          content,
+          ...(fileName ? { fileName } : {}),
+          ...(options.server ? { servers: options.server } : {}),
+          ...(options.environment ? { environment: options.environment } : {}),
+          ...(options.caseModel
+            ? { caseModels: options.caseModel.map((model) => ({ model })) }
+            : {}),
+          ...(options.duplicatePolicy
+            ? { duplicatePolicy: options.duplicatePolicy }
+            : {}),
+          ...(options.overrideReason
+            ? { overrideReason: options.overrideReason }
+            : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+        });
+        await executeOp(importEvalCasesOperation, input, options, command);
       }
     );
 }

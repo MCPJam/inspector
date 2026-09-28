@@ -100,10 +100,21 @@ export function isRubricValid(rubric: EvalJudgeRubric | undefined): boolean {
   return rubric === undefined || judgeRubricSchema.safeParse(rubric).success;
 }
 
+/**
+ * Shown under the criteria when the deployment grades each criterion as its
+ * own rubric-check row. A criterion's wording and id ARE that row's identity,
+ * so an edit starts a new row — honest, since it is a different question, but
+ * it reads as churn against a baseline unless someone says so up front.
+ */
+export const RUBRIC_CHECK_ROW_IDENTITY_HINT =
+  "Each criterion is also graded on its own as a rubric check. Editing a criterion's wording or id starts a new rubric-check row, so baseline comparisons show it as removed and added.";
+
 export function JudgeRubricEditor({
   value,
   onChange,
   disabled = false,
+  criteriaOnly = false,
+  rowIdentityHint,
 }: {
   value: EvalJudgeRubric | undefined;
   /**
@@ -114,6 +125,13 @@ export function JudgeRubricEditor({
    */
   onChange: (next: EvalJudgeRubric | undefined) => void;
   disabled?: boolean;
+  /**
+   * Render only the criteria list, for a host that owns the instructions
+   * field itself (the suite's grading-instructions editor).
+   */
+  criteriaOnly?: boolean;
+  /** A sentence shown under the criteria, when there are any. */
+  rowIdentityHint?: string;
 }) {
   const fieldId = useId();
   const criteria = value?.criteria ?? [];
@@ -145,34 +163,37 @@ export function JudgeRubricEditor({
 
   return (
     <div className="space-y-2">
-      <label
-        className="block space-y-1 text-xs"
-        htmlFor={`${fieldId}-instructions`}
-      >
-        <span>Grading instructions (optional)</span>
-        <textarea
-          id={`${fieldId}-instructions`}
-          className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground"
-          rows={3}
-          value={value?.instructions ?? ""}
-          disabled={disabled}
-          maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
-          placeholder="For example: check that the answer cites the source of each claim."
-          onChange={(event) => {
-            const instructions = event.target.value;
-            onChange(
-              instructions.trim()
-                ? { ...value, instructions }
-                : criteria.length
-                ? { criteria }
-                : undefined,
-            );
-          }}
-        />
-        <span className="block text-muted-foreground">
-          Additional guidance for judging the case’s task and expected outcome.
-        </span>
-      </label>
+      {criteriaOnly ? null : (
+        <label
+          className="block space-y-1 text-xs"
+          htmlFor={`${fieldId}-instructions`}
+        >
+          <span>Grading instructions (optional)</span>
+          <textarea
+            id={`${fieldId}-instructions`}
+            className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground"
+            rows={3}
+            value={value?.instructions ?? ""}
+            disabled={disabled}
+            maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
+            placeholder="For example: check that the answer cites the source of each claim."
+            onChange={(event) => {
+              const instructions = event.target.value;
+              onChange(
+                instructions.trim()
+                  ? { ...value, instructions }
+                  : criteria.length
+                  ? { criteria }
+                  : undefined,
+              );
+            }}
+          />
+          <span className="block text-muted-foreground">
+            Additional guidance for judging the case’s task and expected
+            outcome.
+          </span>
+        </label>
+      )}
       {criteria.length === 0 ? (
         <p className="text-[11px] text-muted-foreground/60">
           The judge uses each case’s task and expected outcome. Add structured
@@ -332,6 +353,14 @@ export function JudgeRubricEditor({
           {atCap ? " — at the limit" : ""}
         </span>
       </div>
+      {rowIdentityHint && criteria.length > 0 ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-rubric-row-identity-hint
+        >
+          {rowIdentityHint}
+        </p>
+      ) : null}
     </div>
   );
 }

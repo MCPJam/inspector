@@ -40,14 +40,14 @@ export function GenericBootstrapError() {
           style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
         />
         <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-          Authentication Error
+          MCPJam couldn't start
         </h1>
         <p style={{ marginBottom: "0.25rem" }}>
-          Failed to establish secure session.
+          Your session could not be started.
         </p>
         <p style={{ color: "#666", fontSize: "0.875rem" }}>
-          This is usually temporary. Retry below, and check the console if it
-          persists.
+          Reload MCPJam to try again. If it still won't open, check your
+          connection and try again.
         </p>
         <button
           onClick={() => location.reload()}
@@ -63,7 +63,7 @@ export function GenericBootstrapError() {
             fontWeight: 500,
           }}
         >
-          Restart App
+          Reload MCPJam
         </button>
       </div>
     </div>

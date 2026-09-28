@@ -1296,3 +1296,149 @@ describe("OAuthConformanceTest", () => {
     expect(result.summary).not.toContain("request_resource_metadata");
   });
 });
+
+describe("OAuth profile conformance", () => {
+  it.each([
+    [{ id: "opaque" }, { id: "opaque" }, { id: "opaque" }, true, true],
+    [{ id: " " }, { id: " " }, { id: " " }, true, false],
+    [
+      { id: "opaque", extra: true },
+      { id: "opaque" },
+      { id: "opaque" },
+      true,
+      false,
+    ],
+    [{ id: "A" }, { id: "B" }, { id: "A" }, true, false],
+    [{ id: "A" }, { id: "A" }, { id: "B" }, true, false],
+    [{ id: "A" }, { id: "A" }, { id: "A" }, false, true],
+  ])(
+    "verifies profile shape, stability and refresh (enabled=%s)",
+    async (first, second, refreshed, enabled, expectedPass) => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const resourceMetadataUrl =
+        "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+      const authServerUrl = "https://auth.example.com";
+
+      const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+        const url = String(input);
+        const headers = new Headers(init?.headers);
+
+        if (url === serverUrl && !headers.get("Authorization")) {
+          return new Response(null, {
+            status: 401,
+            headers: {
+              "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+            },
+          });
+        }
+
+        if (url === resourceMetadataUrl) {
+          return jsonResponse({
+            resource: serverUrl,
+            authorization_servers: [authServerUrl],
+            scopes_supported: ["openid", "mcp"],
+          });
+        }
+
+        if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+          return jsonResponse({
+            issuer: authServerUrl,
+            authorization_endpoint: `${authServerUrl}/authorize`,
+            token_endpoint: `${authServerUrl}/token`,
+            registration_endpoint: `${authServerUrl}/register`,
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code", "refresh_token"],
+            code_challenge_methods_supported: ["S256"],
+            client_id_metadata_document_supported: true,
+          });
+        }
+
+        if (url === DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL) {
+          return jsonResponse({
+            client_id: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+            client_name: "MCPJam SDK OAuth Conformance",
+            redirect_uris: ["http://127.0.0.1:3333/callback"],
+          });
+        }
+
+        if (url === `${authServerUrl}/token`) {
+          return jsonResponse({
+            access_token: "verify-access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (
+          url === serverUrl &&
+          headers.get("Authorization") === "Bearer verify-access-token"
+        ) {
+          return createMcpInitializeResponse("2025-11-25");
+        }
+
+        return jsonResponse({ error: "not found" }, 404);
+      }) as typeof fetch;
+
+      const executeTool = jest
+        .fn()
+        .mockResolvedValueOnce({ structuredContent: first })
+        .mockResolvedValueOnce({ structuredContent: second })
+        .mockResolvedValue({ structuredContent: refreshed });
+      const mockManager = {
+        listTools: jest
+          .fn()
+          .mockResolvedValue({
+            tools: [
+              {
+                name: "whoami",
+                _meta: { "openai/profile": true },
+                inputSchema: { type: "object", properties: {} },
+              },
+            ],
+          }),
+        executeTool,
+      };
+      const spy = jest
+        .spyOn(operations, "withEphemeralClient")
+        .mockImplementation(async (_config, fn) =>
+          fn(mockManager as any, "verify")
+        );
+      try {
+        const test = new OAuthConformanceTest(
+          {
+            serverUrl,
+            protocolVersion: "2025-11-25",
+            registrationStrategy: "cimd",
+            auth: { mode: "headless" },
+            fetchFn,
+            verification: {
+              listTools: true,
+              profile: { enabled: enabled as boolean },
+            },
+          },
+          {
+            completeHeadlessAuthorization: jest.fn(async () => ({
+              code: "auth-code",
+            })),
+          }
+        );
+        const result = await test.run();
+        expect(result.passed).toBe(expectedPass);
+        if (!enabled) expect(executeTool).not.toHaveBeenCalled();
+        else
+          expect(
+            result.steps.some((step) => step.step === "verify_profile_shape")
+          ).toBe(true);
+        if (enabled && expectedPass)
+          expect(
+            result.steps.find(
+              (step) => step.step === "verify_profile_stable_after_refresh"
+            )?.status
+          ).toBe("passed");
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  );
+});

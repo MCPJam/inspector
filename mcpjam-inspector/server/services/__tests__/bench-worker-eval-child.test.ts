@@ -100,9 +100,27 @@ describe("defaultRunEvalCell", () => {
     expect(request.projectId).toBe("proj-1");
     expect(request.serverIds).toEqual(["srv-1"]);
     expect(request.suiteRerun).toBe(true);
+    // The cell runs its environment, ephemerally (the exam suite runs none),
+    // and the host pin is not sent beside it.
     expect(request.environmentId).toBe("env-sonnet");
-    expect(request.namedHostId).toBe("host-emulated");
+    expect(request.ephemeralEnvironment).toBe(true);
+    expect(request).not.toHaveProperty("namedHostId");
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the host pin when the backend composed no environment", async () => {
+    const entry = { ...ENTRY, environmentId: undefined };
+    await defaultRunEvalCellForTests()({
+      job: JOB,
+      entry,
+      cell: resolveEvalCellSpec(JOB, entry),
+      grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+      ledger: createBenchmarkArtifactLedger(),
+    });
+    const request = prepareEvalRun.mock.calls[0][1] as Record<string, unknown>;
+    expect(request.namedHostId).toBe("host-emulated");
+    expect(request).not.toHaveProperty("environmentId");
+    expect(request).not.toHaveProperty("ephemeralEnvironment");
   });
 
   it("runs the child as the run's scoped bearer, not the inspector", async () => {

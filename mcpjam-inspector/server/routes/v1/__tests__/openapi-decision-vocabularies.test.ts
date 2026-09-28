@@ -95,6 +95,11 @@ const SITES = [
   },
   {
     schema: "SwarmJourneyFinding",
+    path: ["signal"],
+    vocabulary: "swarmFindingSignals",
+  },
+  {
+    schema: "SwarmJourneyFinding",
     path: ["coverageNotes", "items"],
     vocabulary: "swarmFindingCoverageNotes",
   },

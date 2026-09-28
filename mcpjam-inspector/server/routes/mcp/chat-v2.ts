@@ -1,3 +1,6 @@
+import { modelWorkloadFor } from "../../utils/model-workload.js";
+import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
 import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
@@ -46,6 +49,7 @@ import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
+import { getRequestLogger } from "../../utils/request-logger";
 import {
   HOSTED_MODE,
   LOCAL_HARNESS_ENABLED,
@@ -335,6 +339,12 @@ function buildLocalScopeStepUpResume(input: {
         claimed.toolName
       ];
       if (
+        (claimed.connectionId &&
+          toolConnectionAttribution(
+            originalTool,
+            claimed.input,
+            claimed.toolCallId,
+          )?.connectionId !== claimed.connectionId) ||
         !originalTool ||
         typeof originalTool.execute !== "function" ||
         (typeof originalTool._serverId === "string" &&
@@ -1350,7 +1360,20 @@ chatV2.post("/", async (c) => {
           readXaaEnterprisePolicy(
             (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
           ).kind !== "off",
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.mcp.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         return c.json(
           {
@@ -1911,6 +1934,17 @@ chatV2.post("/", async (c) => {
         : undefined;
     };
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
+    if (
+      (body.messages?.length ?? 0) <= 1 &&
+      builtInAuthHeader &&
+      typeof body.projectId === "string"
+    )
+      void refreshConnectionProfiles(
+        mcpClientManager,
+        builtInAuthHeader.replace(/^Bearer\s+/i, ""),
+        body.projectId,
+      );
+
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
       body.projectId ?? "",
@@ -1939,6 +1973,11 @@ chatV2.post("/", async (c) => {
       );
       const event = createLocalScopeStepUpContinuation({
         bindingKey: scopeStepUpBindingKey,
+        connectionId: toolConnectionAttribution(
+          preparedTools[toolName],
+          toolInput,
+          info.toolCallId,
+        )?.connectionId,
         serverId: info.serverId,
         ...(resourceUrl ? { resourceUrl } : {}),
         toolCallId: info.toolCallId,
@@ -2194,7 +2233,12 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace: withPageToolsAtTurn(turnTrace),
+                turnTrace: withPageToolsAtTurn({
+                  ...turnTrace,
+                  ...(prepared.connectionsAtTurn
+                    ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                    : {}),
+                }),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -2249,6 +2293,13 @@ chatV2.post("/", async (c) => {
                 accessVersion: bodyAccessVersion,
                 serverIds: hostConfigServerIds,
               },
+              {
+                modelWorkload: modelWorkloadFor({
+                  sourceType: chatSessionSourceType,
+                  tools: allTools,
+                  messages: modelMessages,
+                }),
+              },
             )
           : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
@@ -2299,7 +2350,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace: withPageToolsAtTurn(turnTrace),
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -2351,6 +2407,9 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        ...(typeof modelDefinition.nativeModelId === "string"
+          ? { nativeModelId: modelDefinition.nativeModelId }
+          : {}),
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
@@ -2523,7 +2582,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace: withPageToolsAtTurn(turnTrace),
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

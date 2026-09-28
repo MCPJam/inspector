@@ -130,7 +130,9 @@ export function CaseScorecard({
           question={group.question}
         >
           {group.rows.map((row) => {
-            if (row.provenance === "route") {
+            // The route question itself. Its arguments row is authored through
+            // it and renders as an ordinary locked row.
+            if (row.provenance === "route" && row.route) {
               return (
                 <RouteRow
                   key={row.key}

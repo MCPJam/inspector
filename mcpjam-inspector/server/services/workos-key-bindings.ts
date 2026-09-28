@@ -21,6 +21,12 @@ const BINDINGS_PATH = "/internal/v1/workos-api-key-bindings";
 export interface WorkosKeyBinding {
   /** MCPJam organization id (Convex `Id<'organizations'>`). */
   mcpjamOrganizationId: string;
+  /**
+   * When the key stops working (epoch ms). Null (or absent) for a key minted
+   * before expiry existed — those do not expire — and from a backend that
+   * predates the field.
+   */
+  expiresAt?: number | null;
 }
 
 /**
@@ -30,10 +36,17 @@ export interface WorkosKeyBinding {
  */
 export class WorkosKeyBindingError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The backend's reason code, when it sent one — e.g. `ADMINS_ONLY` on a
+   * mint refused because the organization lets only its owners and admins
+   * create keys (MJ-010).
+   */
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = "WorkosKeyBindingError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -71,11 +84,20 @@ export async function lookupWorkosKeyBinding(
   if (!response.ok) {
     throw new Error(`Binding lookup failed (${response.status})`);
   }
-  const body = (await response.json()) as { mcpjamOrganizationId?: unknown };
+  const body = (await response.json()) as {
+    mcpjamOrganizationId?: unknown;
+    expiresAt?: unknown;
+  };
   if (typeof body?.mcpjamOrganizationId !== "string") {
     throw new Error("Binding lookup returned an invalid body");
   }
-  return { mcpjamOrganizationId: body.mcpjamOrganizationId };
+  return {
+    mcpjamOrganizationId: body.mcpjamOrganizationId,
+    expiresAt:
+      typeof body.expiresAt === "number" && Number.isFinite(body.expiresAt)
+        ? body.expiresAt
+        : null,
+  };
 }
 
 /**
@@ -87,6 +109,8 @@ export async function createWorkosKeyBinding(args: {
   workosApiKeyId: string;
   mcpjamOrganizationId: string;
   mintedByUserId: string;
+  /** Epoch ms. The same instant the WorkOS key was minted to expire at. */
+  expiresAt?: number;
 }): Promise<void> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const response = await fetch(`${convexUrl}${BINDINGS_PATH}`, {
@@ -99,13 +123,18 @@ export async function createWorkosKeyBinding(args: {
   });
   if (!response.ok) {
     let message = `Binding create failed (${response.status})`;
+    let code: string | undefined;
     try {
-      const body = (await response.json()) as { error?: unknown };
+      const body = (await response.json()) as {
+        error?: unknown;
+        code?: unknown;
+      };
       if (typeof body?.error === "string") message = body.error;
+      if (typeof body?.code === "string") code = body.code;
     } catch {
       // keep the status-only message
     }
-    throw new WorkosKeyBindingError(response.status, message);
+    throw new WorkosKeyBindingError(response.status, message, code);
   }
 }
 
@@ -140,6 +169,102 @@ export async function removeWorkosKeyBinding(
     throw new WorkosKeyBindingError(
       response.status,
       `Binding remove failed (${response.status})`,
+    );
+  }
+}
+
+const ORGANIZATION_API_KEYS_PATH = "/internal/v1/organization-api-keys";
+const ORGANIZATION_KEY_TIMEOUT_MS = 5_000;
+
+export interface OrganizationKeyArgs {
+  /** MCPJam organization id (Convex `Id<'organizations'>`). */
+  organizationId: string;
+  /** MCPJam `Id<'users'>` of the admin acting, NOT the WorkOS `sub`. */
+  actorUserId: string;
+  workosApiKeyId: string;
+}
+
+function organizationKeyQuery(args: OrganizationKeyArgs): string {
+  return new URLSearchParams({
+    organizationId: args.organizationId,
+    actorUserId: args.actorUserId,
+    workosApiKeyId: args.workosApiKeyId,
+  }).toString();
+}
+
+/**
+ * Ask the backend whether `actorUserId` may revoke `workosApiKeyId` as an
+ * owner or admin of `organizationId`. Call it BEFORE deleting the key at
+ * WorkOS: that delete cannot be undone, so the decision has to come first.
+ *
+ * Throws `WorkosKeyBindingError` with the backend's status on a decision the
+ * caller should relay (403 not an admin, 404 no such key in this org, 400
+ * malformed ids). Throws a plain `Error` when there is no decision at all —
+ * transport failure, timeout, or a backend that predates the route — and the
+ * caller must then refuse rather than revoke.
+ */
+export async function authorizeOrganizationKeyRevoke(
+  args: OrganizationKeyArgs,
+): Promise<void> {
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  const response = await fetch(
+    `${convexUrl}${ORGANIZATION_API_KEYS_PATH}/revoke-authorization?${organizationKeyQuery(args)}`,
+    {
+      method: "GET",
+      headers: { "x-inspector-service-token": serviceToken },
+      signal: AbortSignal.timeout(ORGANIZATION_KEY_TIMEOUT_MS),
+    },
+  );
+  if (response.ok) return;
+  if (response.status === 404) {
+    if (await isEntityNotFound(response, "API key not found")) {
+      throw new WorkosKeyBindingError(404, "API key not found");
+    }
+    throw new Error(
+      "Organization key revoke-authorization route not found — is the backend deployed?",
+    );
+  }
+  if (response.status === 403 || response.status === 400) {
+    throw new WorkosKeyBindingError(
+      response.status,
+      `Revoke authorization refused (${response.status})`,
+    );
+  }
+  throw new Error(`Revoke authorization failed (${response.status})`);
+}
+
+/**
+ * Drop the binding of a key an org admin has just revoked at WorkOS. The
+ * backend re-checks admin rank, writes the audit row naming both the admin
+ * and the minter, and is idempotent (200 whether or not a row existed).
+ * A 404 the backend answers itself (its `{ ok: false }` JSON) also means
+ * there is nothing left to drop. Throws with the status on any other
+ * non-2xx, including a 404 without that answer: that is a route that is not
+ * there (not deployed, or the wrong `CONVEX_HTTP_URL`), and nothing was
+ * dropped.
+ */
+export async function removeOrganizationKeyBinding(
+  args: OrganizationKeyArgs,
+): Promise<void> {
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  const response = await fetch(
+    `${convexUrl}${ORGANIZATION_API_KEYS_PATH}?${organizationKeyQuery(args)}`,
+    {
+      method: "DELETE",
+      headers: { "x-inspector-service-token": serviceToken },
+      signal: AbortSignal.timeout(ORGANIZATION_KEY_TIMEOUT_MS),
+    },
+  );
+  if (response.status === 404) {
+    const body = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+    } | null;
+    if (body?.ok === false) return;
+  }
+  if (!response.ok) {
+    throw new WorkosKeyBindingError(
+      response.status,
+      `Organization binding remove failed (${response.status})`,
     );
   }
 }

@@ -14,6 +14,7 @@ import {
   UI_CONTEXT_PART_TYPE,
   renderUiContextText,
 } from "@/shared/ui-context";
+import { provenanceMarksOf } from "./history-provenance.js";
 
 export type McpToolResultModelOutputOptions =
   McpModelVisibleToolResultPolicy & {
@@ -263,7 +264,12 @@ function stripInternalProviderOptions(part: unknown): unknown {
   if (!part || typeof part !== "object" || Array.isArray(part)) return part;
   const record = part as Record<string, unknown>;
   if (!record.providerOptions) return part;
-  const providerOptions = stripMcpToolOriginMetadata(record.providerOptions);
+  const stripped = stripMcpToolOriginMetadata(record.providerOptions);
+  // Except the history provenance marks (MJ-009): the engine reads them to
+  // leave out what the server could not verify, and persistence to leave it
+  // unsigned.
+  const marks = provenanceMarksOf(record.providerOptions);
+  const providerOptions = marks ? { ...stripped, ...marks } : stripped;
   const { providerOptions: _providerOptions, ...rest } = record;
   return providerOptions ? { ...rest, providerOptions } : rest;
 }

@@ -37,7 +37,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import evals from "../evals.js";
-import journeys from "../journeys.js";
+import goals from "../goals.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
@@ -283,7 +283,7 @@ describe("journey-run detail — insights embed", () => {
         journeyFindingsJob: { status: "completed", updatedAt: 0 },
       },
     });
-    const res = await makeApp(journeys).request(
+    const res = await makeApp(goals).request(
       `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
@@ -317,7 +317,7 @@ describe("journey-run detail — envelope failure degrades", () => {
       }
       return Promise.reject(new Error("Server Error"));
     });
-    const res = await makeApp(journeys).request(
+    const res = await makeApp(goals).request(
       `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);

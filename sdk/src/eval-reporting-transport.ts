@@ -1,4 +1,4 @@
-/** Shared bounded transport for ingestion and presigned artifact uploads. */
+/** Shared bounded transport for ingestion and artifact uploads. */
 export interface ReportingTransportOptions {
   timeoutMs: number;
   retryDelaysMs: number[];

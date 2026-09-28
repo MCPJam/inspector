@@ -33,6 +33,12 @@ const {
   toastError: vi.fn(),
 }));
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
     selector({ themeMode: "light" }),
@@ -125,6 +131,10 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
   routePaths: { hosts: "/hosts", environments: "/environments" },
+}));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 import { DEFAULT_CREATE_SUITE_NAME } from "../create-suite-prefill";
@@ -249,6 +259,20 @@ describe("CreateSuitePage", () => {
     fireEvent.click(screen.getByTestId("create-suite-add-client"));
     fireEvent.click(screen.getByTestId("client-row-host-1"));
     expect(screen.getByRole("button", { name: "Remove Claude" })).toBeTruthy();
+  });
+
+  it("opens the New Client modal from Add clients, like Playground", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("create-suite-add-client"));
+    fireEvent.click(screen.getByRole("button", { name: "Add clients" }));
+    expect(screen.getByTestId("create-host-dialog")).toBeTruthy();
   });
 
   it("adds and removes models through the playground's searchable picker", async () => {

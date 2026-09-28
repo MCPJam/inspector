@@ -7,7 +7,7 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
-import { isLegacyTeamEntry } from "@/lib/pricing-catalog";
+import { canCheckoutPlanEntry, isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
   amount: number,
@@ -288,6 +288,14 @@ export function OrganizationCurrentPlanPanel({
     !isTrial &&
     (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
+    // The catalog only speaks for the bundle the org actually holds. When it
+    // describes that bundle and carries no price for the other cadence, the
+    // portal would open on a cadence it cannot sell. When the catalog is
+    // silent — a legacy bundle it no longer lists — the portal stays the
+    // escape hatch, as it is for the billing detail line.
+    (currentEntry == null ||
+      currentEntry.catalogPlanId !== billingStatus.catalogPlanId ||
+      canCheckoutPlanEntry(currentEntry, currentPlan, targetBillingInterval)) &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;
   const showCancelScheduledBillingChangeLink =

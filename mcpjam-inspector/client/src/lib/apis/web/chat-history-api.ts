@@ -1,7 +1,8 @@
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
+import { registerArtifactUrls } from "@/lib/artifact-urls";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
-import { WebApiError } from "./base";
+import { WebApiError, requestIdOfResponse } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -132,15 +133,6 @@ export interface ChatHistoryDetailResponse {
   turnTraces?: ChatHistoryTurnTrace[];
 }
 
-export interface GenerateWidgetSnapshotUploadUrlRequest {
-  chatSessionId: string;
-}
-
-export interface GenerateWidgetSnapshotUploadUrlResponse {
-  ok: boolean;
-  uploadUrl: string;
-}
-
 export interface CreateChatHistoryWidgetSnapshotRequest {
   chatSessionId: string;
   serverId?: string;
@@ -200,7 +192,14 @@ async function webGet<T>(
         : typeof body?.error === "string"
         ? body.error
         : `Request failed (${response.status})`;
-    throw new WebApiError(response.status, code, message);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      undefined,
+      undefined,
+      requestIdOfResponse(response),
+    );
   }
 
   return body as T;
@@ -236,7 +235,14 @@ async function webPost<TRequest, TResponse>(
         : typeof body?.error === "string"
         ? body.error
         : `Request failed (${response.status})`;
-    throw new WebApiError(response.status, code, message);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      undefined,
+      undefined,
+      requestIdOfResponse(response),
+    );
   }
 
   return body as TResponse;
@@ -276,10 +282,14 @@ export async function getChatHistoryDetail(
   searchParams.set("chatSessionId", params.chatSessionId);
   if (params.projectId) searchParams.set("projectId", params.projectId);
 
-  return webGet<ChatHistoryDetailResponse>(
+  const detail = await webGet<ChatHistoryDetailResponse>(
     `/api/web/chat-history/detail?${searchParams.toString()}`,
     requestOptions
   );
+  // Freshly minted artifact links: record them so anything still holding an
+  // older link to the same object reads through this one.
+  registerArtifactUrls(detail);
+  return detail;
 }
 
 export async function chatHistoryAction(
@@ -291,20 +301,6 @@ export async function chatHistoryAction(
   return webPost<Record<string, unknown>, { ok: boolean }>(
     "/api/web/chat-history/action",
     { action, sessionId, ...params },
-    requestOptions
-  );
-}
-
-export async function generateWidgetSnapshotUploadUrl(
-  payload: GenerateWidgetSnapshotUploadUrlRequest,
-  requestOptions?: ChatHistoryRequestOptions
-): Promise<GenerateWidgetSnapshotUploadUrlResponse> {
-  return webPost<
-    GenerateWidgetSnapshotUploadUrlRequest,
-    GenerateWidgetSnapshotUploadUrlResponse
-  >(
-    "/api/web/chat-history/widget-snapshot/generate-upload-url",
-    payload,
     requestOptions
   );
 }

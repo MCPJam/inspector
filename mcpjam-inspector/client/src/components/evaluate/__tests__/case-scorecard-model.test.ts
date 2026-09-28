@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PREDICATE_STAGE,
+  STANDARD_CHECKS,
   STANDARD_CHECK_NAME_BY_KIND,
   USER_VALUE_STAGES,
 } from "@mcpjam/sdk/contract";
@@ -21,6 +22,7 @@ import {
   LIBRARY_OPT_IN_KINDS,
   scorerLibraryCategories,
 } from "@/components/evals/suite-scorer-table-model";
+import { RUNNER_CHECK_EXPECTED } from "@/components/evals/runner-checks";
 import {
   appendCaseScorer,
   buildCaseScorecard,
@@ -30,11 +32,13 @@ import {
   removeCaseScorer,
   ROUTE_OWNED_KINDS,
   purposeOf,
+  RUBRIC_SOURCE_HINT,
   scorerRowLabel,
   spineLibraryKinds,
   stepScope,
   updateCaseScorer,
   withCaseJudgeSkipped,
+  withRunnerChecks,
   type CaseScorecardInput,
 } from "../case-scorecard/case-scorecard-model";
 
@@ -49,17 +53,23 @@ const base: CaseScorecardInput = {
 };
 
 function allRows(input: CaseScorecardInput) {
-  return buildCaseScorecard(input).groups.flatMap((group) => group.rows);
+  return allRowsOf(buildCaseScorecard(input));
+}
+
+function allRowsOf(card: ReturnType<typeof buildCaseScorecard>) {
+  return card.groups.flatMap((group) => group.rows);
 }
 
 describe("buildCaseScorecard — shape", () => {
   it("lists stages in chain order and omits the ones with nothing on them", () => {
-    // Connection and Discovery have nothing a CASE can author. Rendering them
-    // empty would offer a reader a control that is not there.
+    // Connection and Discovery carry their built-in runner check on every
+    // case. Tool call does not apply to this one — nothing expects a call —
+    // so it has no row and no group.
     //
     // `noToolErrors` files at RESPONSE under analyzer 11, not at user value:
     // a tool error is evidence about the answer coming back, and filing it in
-    // both places counted one defect twice.
+    // both places counted one defect twice. Gating it there is what makes
+    // Response apply, so Response gets its runner check too.
     const card = buildCaseScorecard({
       ...base,
       steps: [
@@ -68,6 +78,8 @@ describe("buildCaseScorecard — shape", () => {
       ],
     });
     expect(card.groups.map((group) => group.stage)).toEqual([
+      "connection",
+      "discovery",
       "selection",
       "response",
       "userValue",
@@ -105,6 +117,210 @@ describe("buildCaseScorecard — shape", () => {
   });
 });
 
+describe("buildCaseScorecard — built-in runner checks", () => {
+  const builtins = (input: CaseScorecardInput) =>
+    allRows(input).filter((row) => row.provenance === "builtin");
+  const toolAssert = assert("t1", {
+    type: "toolCalledWith",
+    toolName: "get_me",
+    args: { args: {} },
+  } as Predicate);
+
+  it("titles each one from the SDK catalog and joins it to its stage", () => {
+    const rows = builtins({
+      ...base,
+      steps: [prompt("p1", "who am I?"), toolAssert],
+      toolsChoice: "tools",
+    });
+    expect(rows.map((row) => row.stage)).toEqual([
+      "connection",
+      "discovery",
+      "call",
+      "response",
+    ]);
+    for (const row of rows) {
+      const check = STANDARD_CHECKS.find(
+        (entry) => entry.kind === "runner" && entry.stage === row.stage,
+      );
+      expect(row.label).toBe(check?.name);
+      expect(row.join).toEqual({ kind: "stage", stage: row.stage });
+    }
+  });
+
+  it("is locked: not editable, no authorable role, never a gate", () => {
+    for (const row of builtins(base)) {
+      expect(row.editable).toBe(false);
+      expect(row.roleLock).toBe("builtin");
+      expect(row.predicate).toBeUndefined();
+      // Advisory only so no tally counts it as a gate; it renders no role.
+      expect(row.role).toBe("advisory");
+    }
+  });
+
+  it("leads its stage, ahead of anything authored there", () => {
+    const card = buildCaseScorecard({
+      ...base,
+      steps: [
+        prompt("p1", "hi"),
+        assert("a1", { type: "noToolErrors" } as Predicate),
+      ],
+    });
+    const response = card.groups.find((group) => group.stage === "response");
+    expect(response?.rows.map((row) => row.provenance)).toEqual([
+      "builtin",
+      "step",
+    ]);
+  });
+
+  it("adds call and response only when the case gives the runner a call to measure", () => {
+    const stagesOf = (input: CaseScorecardInput) =>
+      builtins(input).map((row) => row.stage);
+    // Nothing expects a call.
+    expect(stagesOf(base)).toEqual(["connection", "discovery"]);
+    // A route expects one.
+    expect(
+      stagesOf({
+        ...base,
+        steps: [prompt("p1", "hi"), toolAssert],
+        toolsChoice: "tools",
+      }),
+    ).toEqual(["connection", "discovery", "call", "response"]);
+    // A negative case exercises the call: proving none happened is the point.
+    expect(stagesOf({ ...base, toolsChoice: "noTool" })).toEqual([
+      "connection",
+      "discovery",
+      "call",
+      "response",
+    ]);
+    // A pinned call is a call.
+    expect(
+      stagesOf({
+        ...base,
+        steps: [
+          {
+            id: "c1",
+            kind: "toolCall",
+            serverName: "s",
+            toolName: "get_me",
+            arguments: {},
+          } as TestStep,
+        ],
+      }),
+    ).toEqual(["connection", "discovery", "call", "response"]);
+    // A gating response check applies Response alone.
+    expect(
+      stagesOf({
+        ...base,
+        predicates: { mode: "extend", list: [{ type: "noToolErrors" }] },
+      }),
+    ).toEqual(["connection", "discovery", "response"]);
+    // An advisory one does not: the analyzer only reads gating rows there.
+    expect(
+      stagesOf({
+        ...base,
+        predicates: {
+          mode: "extend",
+          list: [{ type: "noToolErrors", role: "advisory" } as Predicate],
+        },
+      }),
+    ).toEqual(["connection", "discovery"]);
+  });
+
+  it("expects what the stage analysis decides, never a rule", () => {
+    const [connection] = builtins(base);
+    expect(expectationOf(connection!)).toBe(RUNNER_CHECK_EXPECTED.connection);
+  });
+});
+
+describe("buildCaseScorecard — the route's arguments", () => {
+  const routed = (matchOptions?: CaseScorecardInput["matchOptions"]) =>
+    buildCaseScorecard({
+      ...base,
+      steps: [
+        prompt("p1", "who am I?"),
+        assert("t1", {
+          type: "toolCalledWith",
+          toolName: "get_me",
+          args: { args: { id: 7 } },
+        } as Predicate),
+      ],
+      toolsChoice: "tools",
+      ...(matchOptions ? { matchOptions } : {}),
+    });
+
+  it("grades them at Tool call, beside the runner check, joined to their own scorer", () => {
+    const card = routed();
+    const call = card.groups.find((group) => group.stage === "call");
+    expect(call?.rows.map((row) => row.key)).toEqual([
+      "builtin:call",
+      "route:arguments",
+    ]);
+    const row = call!.rows[1]!;
+    expect(row).toMatchObject({
+      label: "Arguments match",
+      provenance: "route",
+      role: "required",
+      roleLock: "route",
+      editable: false,
+      join: { kind: "toolArguments", scorerId: "toolCalls:arguments" },
+    });
+    // Not the route question: it carries no route to render.
+    expect(row.route).toBeUndefined();
+    expect(expectationOf(row)).toBe(
+      "Call get_me with the expected arguments (partial matching)",
+    );
+    // The route row stays at Selection, joined as before.
+    expect(card.route.join).toEqual({
+      kind: "toolMatch",
+      scorerId: "toolCalls:match",
+    });
+  });
+
+  it("names the case's own matching mode", () => {
+    const row = allRowsOf(routed({ argumentMatching: "exact" })).find(
+      (r) => r.key === "route:arguments",
+    );
+    expect(expectationOf(row!)).toBe(
+      "Call get_me with the expected arguments (exact matching)",
+    );
+  });
+
+  it("is absent where no arguments are compared, or no route is asserted", () => {
+    expect(
+      allRowsOf(routed({ argumentMatching: "ignore" })).map((r) => r.key),
+    ).not.toContain("route:arguments");
+    for (const toolsChoice of ["noTool", "checks", "unset"] as const) {
+      expect(
+        allRows({ ...base, toolsChoice }).map((r) => r.key),
+        toolsChoice,
+      ).not.toContain("route:arguments");
+    }
+  });
+});
+
+describe("withRunnerChecks", () => {
+  it("adds the runner check a run's chain names, in chain order, once", () => {
+    const card = buildCaseScorecard(base);
+    const groups = withRunnerChecks(card.groups, [...USER_VALUE_STAGES]);
+    expect(groups.map((group) => group.stage)).toEqual([...USER_VALUE_STAGES]);
+    const call = groups.find((group) => group.stage === "call");
+    expect(call?.rows.map((row) => row.key)).toEqual(["builtin:call"]);
+    // Stages that already carry one are left alone, not doubled.
+    const connection = groups.find((group) => group.stage === "connection");
+    expect(
+      connection?.rows.filter((row) => row.provenance === "builtin"),
+    ).toHaveLength(1);
+    // Selection and user value have no runner check to add.
+    const selection = groups.find((group) => group.stage === "selection");
+    expect(selection?.rows.map((row) => row.provenance)).toEqual(["route"]);
+  });
+
+  it("changes nothing without a chain", () => {
+    const card = buildCaseScorecard(base);
+    expect(withRunnerChecks(card.groups, [])).toEqual(card.groups);
+  });
+});
+
 describe("buildCaseScorecard — provenance", () => {
   const input: CaseScorecardInput = {
     steps: [
@@ -129,8 +345,8 @@ describe("buildCaseScorecard — provenance", () => {
         .map((row) => [row.provenance, row.label]),
     ).toEqual([
       ["step", "No tool errors so far"],
-      ["case", "Final message non-empty"],
-      ["suite", "Token budget under 4000"],
+      ["case", "Catch an empty answer"],
+      ["suite", "Track increases in token usage"],
     ]);
   });
 
@@ -505,12 +721,16 @@ describe("labels", () => {
     expect(scorerRowLabel(predicate, "suite")).toBe("Tool errors (isError)");
   });
 
-  it("keeps the rule as the title for a check the catalog does not name", () => {
+  it("titles a check the catalog does not name by its purpose, not its rule", () => {
+    // The rule is the row's EXPECTED line; a title that repeated it would put
+    // the same words twice on the run page.
     const predicate = {
       type: "responseContains",
       value: "ORD-48213",
     } as Predicate;
-    expect(scorerRowLabel(predicate, "case")).toBe(
+    expect(scorerRowLabel(predicate, "case")).toBe(purposeOf(predicate));
+    expect(scorerRowLabel(predicate, "case")).toBe("Check what the answer says");
+    expect(scorerRowLabel(predicate, "case")).not.toBe(
       formatCriterion({ predicate }),
     );
   });
@@ -533,12 +753,17 @@ describe("expectationOf", () => {
     );
   });
 
-  it("names the rubric when the case authored no outcome", () => {
-    expect(expectationOf(judgeRow(base))).toBe(
-      "Satisfy the task according to the configured judge rubric.",
+  it("names what the judge graded against when the case authored no outcome", () => {
+    // The same sentence the authoring pane shows under the judge row, so the
+    // two panes agree on what an empty goal means for THIS case.
+    const row = judgeRow(base);
+    expect(expectationOf(row)).toBe(
+      RUBRIC_SOURCE_HINT[row.judge!.rubricSource],
     );
-    expect(expectationOf(judgeRow({ ...base, expectedOutput: "   " }))).toBe(
-      "Satisfy the task according to the configured judge rubric.",
+    expect(expectationOf(row)).not.toContain("configured judge rubric");
+    const blank = judgeRow({ ...base, expectedOutput: "   " });
+    expect(expectationOf(blank)).toBe(
+      RUBRIC_SOURCE_HINT[blank.judge!.rubricSource],
     );
   });
 

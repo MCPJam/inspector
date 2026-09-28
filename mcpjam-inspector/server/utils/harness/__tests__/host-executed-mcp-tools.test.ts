@@ -839,3 +839,14 @@ describe("harnessMcpToolName", () => {
     });
   });
 });
+
+it("keeps eval projections on the default when a local manager has account aliases", async () => {
+  const { setManagerConnections } = await import("../../mcp-connections.js");
+  const manager = fakeManager({ server: { search: tool() } });
+  setManagerConnections(manager as any, { server: [
+    { serverId: "server", connectionId: "a".repeat(32), key: "server#a", label: "A", isDefault: true },
+    { serverId: "server", connectionId: "b".repeat(32), key: "server#b", label: "B", isDefault: false },
+  ] });
+  await projectSelectedMcpServersAsHostTools({ manager, selectedServerIds: ["server"], connectionsByServerId: {} });
+  expect(manager.getToolsForAiSdk).toHaveBeenCalledExactlyOnceWith(["server"]);
+});

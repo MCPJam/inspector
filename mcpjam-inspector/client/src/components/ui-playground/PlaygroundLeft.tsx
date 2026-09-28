@@ -442,10 +442,12 @@ function ToolParametersView({
 }: ToolParametersViewProps) {
   // Fall back to the app-tools registry when the selection is an
   // `app_<hash>` alias — the server-tool dict won't have it. Same shape:
-  // we only read `description`, `inputSchema`, and `outputSchema` below,
-  // and `AppToolDescriptor` carries all three. Routing through the
-  // registry's `resolve()` inherits its `activeBridgeByParent` gate so a
-  // superseded sibling instance won't render here.
+  // we only read `description`, `inputSchema`, `outputSchema` and
+  // `annotations` below, and `AppToolDescriptor` carries all four. `_meta` is
+  // the exception: it is only guaranteed on a server `Tool`, so the Metadata
+  // section is fed from `selectedTool` alone. Routing through the registry's
+  // `resolve()` inherits its `activeBridgeByParent` gate so a superseded
+  // sibling instance won't render here.
   const appToolDescriptor = useAppToolsRegistry((s) => {
     if (selectedTool) return undefined;
     const resolved = s.resolve(selectedToolName);
@@ -480,6 +482,8 @@ function ToolParametersView({
           description={effectiveTool?.description}
           inputSchema={effectiveTool?.inputSchema}
           outputSchema={effectiveTool?.outputSchema}
+          annotations={effectiveTool?.annotations}
+          metadata={selectedTool?._meta}
           openSections={openSections}
           onOpenSectionsChange={setOpenSections}
           parameters={

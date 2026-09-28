@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   listApiKeys: vi.fn(),
   createApiKey: vi.fn(),
   revokeApiKey: vi.fn(),
+  getApiKeyMintEligibility: vi.fn(),
   writeApiKeysSignInReturnPath: vi.fn(),
 }));
 
@@ -69,6 +70,8 @@ vi.mock("@/lib/apis/web/api-keys", () => ({
   listApiKeys: (...args: unknown[]) => mocks.listApiKeys(...args),
   createApiKey: (...args: unknown[]) => mocks.createApiKey(...args),
   revokeApiKey: (...args: unknown[]) => mocks.revokeApiKey(...args),
+  getApiKeyMintEligibility: (...args: unknown[]) =>
+    mocks.getApiKeyMintEligibility(...args),
 }));
 
 vi.mock("@/lib/api-keys-signin-return-path", () => ({
@@ -83,6 +86,9 @@ beforeEach(() => {
   mocks.organizations.current = [{ _id: "org-1", name: "Acme" }];
   mocks.listApiKeys.mockReset().mockResolvedValue([]);
   mocks.createApiKey.mockReset();
+  mocks.getApiKeyMintEligibility
+    .mockReset()
+    .mockResolvedValue({ mintAllowed: true, mintMinimumRole: "admin" });
   mocks.signIn.mockReset();
   mocks.writeApiKeysSignInReturnPath.mockReset();
 });
@@ -160,6 +166,8 @@ describe("SdkEvalQuickstart", () => {
         name: "ci",
         // Single org auto-selects, so the reader never picks one.
         organizationId: "org-1",
+        // The dialog's default lifetime; a quickstart key expires like any other.
+        expiresInDays: 90,
       });
     });
 
@@ -263,6 +271,7 @@ describe("SdkEvalQuickstart", () => {
       expect(mocks.createApiKey).toHaveBeenCalledWith({
         name: "ci",
         organizationId: "org-1",
+        expiresInDays: 90,
       }),
     );
     // The mint ran to completion, which is what proves the narrowed org was

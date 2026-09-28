@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { showSignOutScreen } from "@/stores/sign-out-store";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
@@ -24,6 +25,7 @@ import {
   markSignOutInProgress,
   SIGN_OUT_REQUEST_TIMEOUT_MS,
 } from "@/lib/auth/sign-out-latch";
+import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
@@ -47,7 +49,12 @@ interface SidebarUserProps {
 
 export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
+  const {
+    user,
+    signOut,
+    getAccessToken,
+    isLoading: isWorkOsAuthLoading,
+  } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -72,34 +79,34 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
     // next tick, and an unlatched failure would redirect this tab to the login
     // page on top of the logout navigation below. See `sign-out-latch`.
     markSignOutInProgress();
-    const returnTo = window.location.origin;
-    if (window.isElectron) {
-      // Bounded, because the latch above is. This promise settles when the
-      // logout request does, and nothing else navigates this window, so a hung
-      // request would outlive the suppression window and let the refresh timer
-      // redirect to the hosted login page mid-logout. The response is opaque,
-      // so there is nothing to lose by giving up on it and leaving anyway.
-      void Promise.race([
-        Promise.resolve(signOut({ returnTo, navigate: false })),
-        new Promise((resolve) =>
-          setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS),
-        ),
-      ])
-        // A failed logout request still gets the navigation: the session is
-        // already gone locally, and stranding the user on the signed-in app
-        // would be a worse answer than leaving.
-        .catch(() => undefined)
-        .finally(() => {
-          window.location.assign(returnTo);
-        });
-      return;
-    }
+    // Revoke the session server-side with the token about to be discarded,
+    // so it stops working everywhere now rather than when it expires. Bounded
+    // and never rejects; see `revoke-session`.
+    const leave = () => signOutOfWorkOs();
+    void startSessionRevocation(getAccessToken).then(leave, leave);
+  };
 
-    signOut({ returnTo });
+  const signOutOfWorkOs = () => {
+    const returnTo = window.location.origin;
+    // Keep our branded screen visible while WorkOS clears its cookies.
+    // Bound the request so a failed or missing token cannot strand this tab.
+    let timeout: ReturnType<typeof setTimeout>;
+    void Promise.race([
+      Promise.resolve().then(() => signOut({ returnTo, navigate: false })),
+      new Promise((resolve) => {
+        timeout = setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS);
+      }),
+    ])
+      .catch(() => undefined)
+      .finally(() => {
+        clearTimeout(timeout);
+        window.location.assign(returnTo);
+      });
   };
 
   const handleSignOut = () => {
     setMenuOpen(false);
+    showSignOutScreen();
 
     let cleanupResult: void | Promise<void>;
     try {

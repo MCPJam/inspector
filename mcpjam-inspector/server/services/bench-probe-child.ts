@@ -211,8 +211,18 @@ export function gradeProbeChecks(
     ...(metadataFound
       ? {}
       : {
+          // NOT `oauth.discoveryError`. That is the raw transport message from
+          // fetching a metadata document at a URL the TARGET named in its own
+          // `WWW-Authenticate` challenge, so its text is chosen by the server
+          // being graded — and this detail is published on a scorecard rather
+          // than shown to the person who owns the server. `ECONNREFUSED` here
+          // and a TLS handshake error there are the same graded fact, "no
+          // document", and two different facts to anyone reading the badge to
+          // map somebody else's network. `redactHostedDoctorTransportDetail`
+          // strips exactly this string on the doctor envelope; this route never
+          // passes through it, which is why the string is dropped at the source
+          // instead of a second redactor being wired up behind it.
           detail:
-            oauth.discoveryError ??
             "No RFC 9728 protected-resource metadata document could be fetched.",
         }),
   });

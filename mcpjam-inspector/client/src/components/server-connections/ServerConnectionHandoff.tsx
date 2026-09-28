@@ -38,6 +38,7 @@ import {
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
 import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
+import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import {
   readClaimRefusal,
   type ClaimRefusalDetails,
@@ -524,14 +525,17 @@ export function ServerConnectionHandoff() {
     // handoff link this function exists to return to.
     markSignOutInProgress();
     const back = `${window.location.pathname}${window.location.search}`;
-    void Promise.resolve(signOut({ navigate: false }))
+    // Revoke the session being dropped before WorkOS forgets it; bounded,
+    // never rejects. See `revoke-session`.
+    void startSessionRevocation(getAccessToken)
+      .then(() => signOut({ navigate: false }))
       .catch(() => {
         // A failed sign-out still gets the navigation: the page re-reads the
         // session on load, so a session that did survive simply lands the user
         // back on this same screen rather than on a blank one.
       })
       .finally(() => window.location.assign(back));
-  }, [signOut]);
+  }, [signOut, getAccessToken]);
 
   if (refusal && !state) {
     return (

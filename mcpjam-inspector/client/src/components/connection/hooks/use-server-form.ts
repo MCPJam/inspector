@@ -26,74 +26,7 @@ import {
   rowHoldsStoredCredential,
   type PendingCredentialClear,
 } from "@/lib/credential-origin";
-
-/**
- * The command and arguments the stdio branch of `buildFormData` will submit.
- *
- * Shared with the credential-clear warning so the two cannot disagree about
- * what this form is about to send: a warning derived from a different parse
- * would fire on edits the backend keeps and stay silent on ones it clears.
- *
- * Quoting is the exact inverse of `formatCommandInput`. A plain whitespace
- * split loses the boundaries of a saved argument that contains a space — it
- * reads `["file name.js"]` back as two arguments — which warns that an
- * untouched row is about to lose its credentials and then saves arguments the
- * user never typed.
- */
-function parseCommandInput(input: string): {
-  command: string;
-  args: string[];
-} {
-  const parts: string[] = [];
-  let current = "";
-  let inPart = false;
-  let quote: '"' | "'" | null = null;
-
-  for (let i = 0; i < input.length; i += 1) {
-    const char = input[i];
-
-    if (quote === "'") {
-      if (char === "'") quote = null;
-      else current += char;
-      continue;
-    }
-
-    if (quote === '"') {
-      if (char === "\\" && (input[i + 1] === '"' || input[i + 1] === "\\")) {
-        current += input[i + 1];
-        i += 1;
-      } else if (char === '"') {
-        quote = null;
-      } else {
-        current += char;
-      }
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      quote = char;
-      inPart = true;
-      continue;
-    }
-
-    // Outside quotes, preserve literal backslashes in Windows and UNC paths.
-    if (/\s/.test(char)) {
-      if (inPart) {
-        parts.push(current);
-        current = "";
-        inPart = false;
-      }
-      continue;
-    }
-
-    current += char;
-    inPart = true;
-  }
-
-  if (inPart) parts.push(current);
-
-  return { command: parts[0] || "", args: parts.slice(1) };
-}
+import { parseCommandInput } from "@/lib/command-input";
 
 /**
  * The single command line the edit form shows for a stored stdio target, and
@@ -708,18 +641,18 @@ export function useServerForm(
 
     if (type === "stdio") {
       if (!commandInput || commandInput.trim() === "") {
-        return "Command is required for STDIO servers";
+        return "Enter the command that starts your STDIO server.";
       }
     } else if (type === "http") {
       if (!url || url.trim() === "") {
-        return "URL is required for HTTP servers";
+        return "Enter your server’s URL.";
       }
 
       let urlObj: URL;
       try {
         urlObj = new URL(url.trim());
       } catch {
-        return "Invalid URL format";
+        return "Enter a complete server URL, such as https://example.com/mcp.";
       }
 
       // Enforce HTTPS in hosted mode or when explicitly required

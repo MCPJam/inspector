@@ -88,6 +88,7 @@ import {
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useHostList } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -99,9 +100,18 @@ import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
-import { environmentLabel } from "@/lib/environment-label";
+import {
+  environmentLabel,
+  environmentLabelsById,
+} from "@/lib/environment-label";
+import {
+  sameEnvironmentSelection,
+  type EnvironmentMoveRow,
+} from "@/components/swarms/reused-environment-move";
 import { ErrorCard } from "@/components/ui/error-card";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { WebApiError } from "@/lib/apis/web/base";
+import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
@@ -330,21 +340,6 @@ async function runWithConcurrency<T>(
   await Promise.all(runners);
 }
 
-/**
- * Set equality over environment ids — order is irrelevant to what a run
- * executes, so a reordered-but-identical selection must not trigger an
- * override that says nothing.
- */
-function sameEnvironmentSelection(
-  stored: readonly string[] | null,
-  selection: readonly string[],
-): boolean {
-  const current = stored ?? [];
-  if (current.length !== selection.length) return false;
-  const wanted = new Set(selection);
-  return current.every((id) => wanted.has(id));
-}
-
 function errorMessageOf(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message) return err.message;
   return fallback;
@@ -453,6 +448,13 @@ export function NewSwarmCreateFlow({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Ad-hoc AND archived, because this is the lookup Confirm uses to say where a
+  // reused goal is set up to run, and both kinds are exactly what a journey
+  // ends up pointing at. It never feeds a list anyone picks from.
+  const allEnvironments = useProjectEnvironments(projectId, {
+    includeArchived: true,
+    includeAdhoc: true,
+  });
   const convex = useConvex();
   const navigate = useAppNavigate();
   const [preflightModelFailure, setPreflightModelFailure] =
@@ -582,6 +584,15 @@ export function NewSwarmCreateFlow({
       : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /**
+   * The backend refused generation because the visitor is anonymous. Held
+   * separately from `errorMessage` because the remedy is a control, not a
+   * sentence: `ErrorCard` would render "Sign in to generate personas and
+   * journeys." with nothing to press.
+   */
+  const [generateSignInRequired, setGenerateSignInRequired] = useState<
+    string | null
+  >(null);
   // Sync latch: `generating`/`launching` are state, so two fast clicks in one
   // tick would both see the old value and fire twice.
   const inFlightRef = useRef(false);
@@ -671,8 +682,14 @@ export function NewSwarmCreateFlow({
       serverAttachments,
       environmentsEnabled,
     });
+    // Latch only once something was actually seeded. Latching first meant a
+    // mount where hosts and environments were both momentarily empty — `next`
+    // is null then — latched forever and never re-seeded when the queries
+    // landed, leaving the composer blank for the rest of the flow.
+    // `use-swarm-default-target.ts` has always done it in this order.
+    if (!next) return;
     targetSeededRef.current = true;
-    if (next) setTargetState(next);
+    setTargetState(next);
   }, [
     attachmentsLoading,
     attachmentsQueryEnabled,
@@ -1053,6 +1070,9 @@ export function NewSwarmCreateFlow({
     setGeneratingSince(Date.now());
     setDescribeStepError(null);
     setErrorMessage(null);
+    // Cleared on every attempt: a press is the one event that can mean the
+    // visitor signed in since the last refusal.
+    setGenerateSignInRequired(null);
     track("swarm_create_generate_started", {
       location: "swarms",
       intensity: pushIntensity,
@@ -1129,9 +1149,18 @@ export function NewSwarmCreateFlow({
       // would say the same thing twice with nothing to act on.
       const limitDialogRaised =
         err instanceof SwarmGenerateError && err.limitDialogRaised;
-      setDescribeStepError(limitDialogRaised ? null : err);
+      // Same argument as the limit dialog one line up, for the same reason:
+      // this refusal gets its own affordance below, so repeating it in the
+      // error card would say it twice and offer nothing to act on either time.
+      // Asked of the error, not of its class: the proxy raises
+      // `SwarmGenerateError` on some paths and `WebApiError` on others, and
+      // checking only the first is what put the generic card in front of a
+      // guest. `signInRemedyMessage` owns that question for both.
+      const signInRefusal = signInRemedyMessage(err);
+      setGenerateSignInRequired(signInRefusal);
+      setDescribeStepError(limitDialogRaised || signInRefusal ? null : err);
       setErrorMessage(
-        limitDialogRaised
+        limitDialogRaised || signInRefusal
           ? null
           : err instanceof SwarmTargetMaterializeError ||
             err instanceof ComposerResolveError ||
@@ -1163,21 +1192,62 @@ export function NewSwarmCreateFlow({
    * screen without writing a description or paying for a slate they didn't
    * ask for.
    */
-  const handleContinue = useCallback(() => {
-    if (!canContinue) return;
-    if (wantsGenerate) {
-      void handleGenerate();
-      return;
+  /**
+   * Enter Confirm for a swarm built only from personas that already exist.
+   *
+   * Resolves the target FIRST, which generation has always done here and this
+   * path never did. In compose mode, which is every project without
+   * `project-environments-enabled`, the environment ids do not exist until this
+   * call mints or matches them, so Confirm used to render with an empty
+   * selection and could say nothing true: not where the swarm would run, not
+   * which reused goals were being moved off the setup they were written for,
+   * and not how many conversations the launch buys, since the estimate
+   * multiplies by `Math.max(1, environmentCount)` and quoted a multi-client
+   * fan-out as a single target.
+   *
+   * Ad-hoc rows are fingerprint-deduped, so resolving here reuses the row the
+   * launch would have minted moments later rather than accumulating one per
+   * visit. Generation already pays exactly this cost at exactly this point.
+   *
+   * Best effort, and deliberately NON-BLOCKING. A reuse-only swarm is allowed
+   * to reach Confirm with no target at all — its goals carry their own, and
+   * `canContinue` says as much. Failing the step here would strand exactly the
+   * returning user that rule exists to protect, over a target their run may
+   * never need. So a throw is swallowed: Confirm then discloses nothing about
+   * the target, which is what it did before this existed, and the launch
+   * reports the failure as loudly as it always has.
+   */
+  const handleContinueReused = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setMaterializing(true);
+    setErrorMessage(null);
+    setDescribeStepError(null);
+    try {
+      await resolveTargets();
+    } catch {
+      // Intentionally ignored — see above. `resolveTargets` throws before it
+      // publishes anything, so there is no half-resolved target to clean up.
+    } finally {
+      setMaterializing(false);
+      inFlightRef.current = false;
     }
     persistedTargetsRef.current = null;
     persistedRunGroupIdRef.current = null;
     persistedSwarmIdRef.current = null;
     flowIdRef.current = null;
     setProposed([]);
-    setErrorMessage(null);
-    setDescribeStepError(null);
     setStep("confirm");
-  }, [canContinue, handleGenerate, wantsGenerate]);
+  }, [resolveTargets]);
+
+  const handleContinue = useCallback(() => {
+    if (!canContinue) return;
+    if (wantsGenerate) {
+      void handleGenerate();
+      return;
+    }
+    void handleContinueReused();
+  }, [canContinue, handleContinueReused, handleGenerate, wantsGenerate]);
 
   const handleLaunch = useCallback(
     async (payload: ConfirmLaunchPayload) => {
@@ -1903,20 +1973,51 @@ export function NewSwarmCreateFlow({
     });
   }, [envListForPayload, environmentIds, hostNameById]);
 
+  /**
+   * Every environment row in the project, INCLUDING ad-hoc ones, keyed by id.
+   *
+   * Named-only lists are right for pickers; this is a LOOKUP, and the rows it
+   * must answer for are exactly the ones a picker hides. Whenever the
+   * environments flag is off, which is every project but one, a reused goal was
+   * set up against an ad-hoc row minted from a client and a server group.
+   * Without those rows Confirm cannot name where a goal runs today, and cannot
+   * compare its client or server group against where this launch will run it.
+   *
+   * Rows this flow just minted are layered on top, because the mutation returns
+   * them before the query that lists them catches up. Appending rather than
+   * prepending keeps every other row's `#n` stable.
+   */
+  const environmentRowsById = useMemo(() => {
+    const byId = new Map<string, ProjectEnvironmentView>();
+    for (const env of allEnvironments ?? []) byId.set(env.environmentId, env);
+    for (const env of envListForPayload) byId.set(env.environmentId, env);
+    const rows = [...byId.values()];
+    const labels = environmentLabelsById(rows, { hostName: hostNameById });
+    const out = new Map<string, EnvironmentMoveRow>();
+    for (const env of rows) {
+      out.set(env.environmentId, {
+        environmentId: env.environmentId,
+        label:
+          labels.get(env.environmentId) ??
+          environmentLabel(env, { hostName: hostNameById }),
+        hostId: env.hostId,
+        serverAttachmentId: env.serverAttachmentId ?? null,
+      });
+    }
+    return out;
+  }, [allEnvironments, envListForPayload, hostNameById]);
+
   const environmentLabels = useMemo(
     () =>
-      environmentIds.map((environmentId) => {
-        const env = envListForPayload.find(
-          (entry) => entry.environmentId === environmentId,
-        );
-        // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
-        // different failure from a row that merely has no name, which
-        // `environmentLabel` covers with the client name.
-        return env
-          ? environmentLabel(env, { hostName: hostNameById })
-          : environmentId.slice(0, 8);
-      }),
-    [envListForPayload, environmentIds, hostNameById],
+      environmentIds.map(
+        (environmentId) =>
+          // `slice(0, 8)` stays for a row that isn't in the map AT ALL, a
+          // different failure from a row that merely has no name, which
+          // `environmentLabel` covers with the client name.
+          environmentRowsById.get(environmentId)?.label ??
+          environmentId.slice(0, 8),
+      ),
+    [environmentIds, environmentRowsById],
   );
 
   const groundingEnvironmentId =
@@ -1988,6 +2089,9 @@ export function NewSwarmCreateFlow({
             onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}
+            environmentIds={environmentIds}
+            environmentRowsById={environmentRowsById}
+            hostNameById={hostNameById}
             launching={launching}
             errorMessage={errorMessage}
             // Back is the same move as the Describe breadcrumb, so it goes
@@ -2155,6 +2259,14 @@ export function NewSwarmCreateFlow({
                 runs it through `describeError`, so this still gains the
                 container, icon and details disclosure that make a long backend
                 sentence readable instead of a wall of red text. */}
+            {generateSignInRequired ? (
+              <GuestSignInMessage
+                compact
+                message={generateSignInRequired}
+                location="swarm_create_generate"
+              />
+            ) : null}
+
             {describeStepError || errorMessage ? (
               <ErrorCard error={describeStepError ?? errorMessage} />
             ) : null}

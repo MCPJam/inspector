@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
 import {
   fetchConvexGuestPromotionProof,
   fetchConvexGuestSession,
@@ -160,12 +161,23 @@ guestSession.post("/", async (c) => {
   // there `http.request.failed`. Returning `c.json` directly produced a 5xx row
   // with no message at all: on 2026-07-22 this path failed 434 times in a day
   // and the reason was unrecoverable, because the route knew why and threw the
-  // text away at the response boundary. Body shape is unchanged.
+  // text away at the response boundary.
+  //
+  // `details` says why the upstream hop failed. A self-hosted install makes
+  // this 503 on the user's machine, where its log line never reaches us, so the
+  // browser's error report is the only place the cause can show up. Fields are
+  // picked by name and sanitized: this body is browser-visible on hosted too.
+  const details = sanitizeGuestSessionFailureDetails({
+    reason: result.reason,
+    upstreamStatus: result.upstreamStatus,
+    networkCode: result.networkCode,
+  });
   return webError(
     c,
     503,
     ErrorCode.INTERNAL_ERROR,
-    "Unable to obtain a guest session right now. Please try again."
+    "Unable to obtain a guest session right now. Please try again.",
+    details ? { ...details } : undefined
   );
 });
 

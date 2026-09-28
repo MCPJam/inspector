@@ -41,11 +41,12 @@ type CreditsVariant = {
   note: string;
   props: Omit<
     CreditsLimitDialogViewProps,
-    SharedHandlers | "onBuyCredits" | "onUseOwnKey"
+    "onDismiss" | "modal" | "onBuyCredits" | "onUseOwnKey" | "onExplorePlans"
   >;
 };
 
 const SHARED = {
+  organizationId: "org-preview",
   organizationName: "Acme Robotics",
   origin: "evals" as const,
   limitKind: "evalIterations",
@@ -121,13 +122,7 @@ const VARIANTS: PreviewVariant[] = [
 
 const CREDITS_SHARED = {
   organizationName: "Acme Robotics",
-  annualPriceLabel: "$30",
-  monthlyPriceLabel: "$38",
-  annualDiscountPct: 21,
-  annualSupported: true,
-  monthlySupported: true,
   teamName: "Team",
-  isStarting: false,
 };
 
 const CREDITS_VARIANTS: CreditsVariant[] = [
@@ -138,9 +133,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Your Free credits reset daily. Explore Pro or Team for more credits and credit top-ups.",
+        "Your Free credits reset daily. Get more monthly credits and top-ups with Pro or Team.",
       isKnownNonManager: false,
-      showUpgrade: true,
       requestRecipients: [],
     },
   },
@@ -150,9 +144,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     note: "Already on Team, so there is no plan to pitch. Credits are the actual answer here.",
     props: {
       ...CREDITS_SHARED,
-      description: "Buy credits to keep your team going.",
+      description: "Add shared credits to keep your team testing.",
       isKnownNonManager: false,
-      showUpgrade: false,
       requestRecipients: [],
     },
   },
@@ -163,9 +156,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Ask an organization owner or admin to buy credits or upgrade the plan.",
+        "Ask an owner to add shared credits and keep your team testing.",
       isKnownNonManager: true,
-      showUpgrade: false,
       requestRecipients: [
         { email: "dana@acmerobotics.com", name: "Dana Ruiz" },
       ],
@@ -316,9 +308,6 @@ export function PlanLimitDialogPreview() {
           key={creditsVariant.id}
           {...creditsVariant.props}
           modal={false}
-          interval={interval}
-          onIntervalChange={setInterval}
-          onUpgrade={() => setLastAction(`checkout would start (${interval})`)}
           onBuyCredits={() =>
             setLastAction("would open the buy-credits dialog")
           }

@@ -48,18 +48,18 @@ for (const [property, name] of [
   };
 }
 
-schemas.JourneyRun.properties.verdictSummary = {
+schemas.GoalRun.properties.verdictSummary = {
   $ref: "#/components/schemas/JourneyRunVerdictSummary",
 };
-schemas.JourneyRun.properties.report = {
+schemas.GoalRun.properties.report = {
   $ref: "#/components/schemas/SwarmReport",
 };
-schemas.JourneyRunSession.properties.verdict = {
+schemas.GoalRunSession.properties.verdict = {
   $ref: "#/components/schemas/SwarmSessionVerdict",
 };
-schemas.JourneyRunSession.properties.outcome.description =
+schemas.GoalRunSession.properties.outcome.description =
   "Attempt execution lifecycle. Read verdict for the graded goal result.";
-schemas.JourneyRunSession.properties.criteria = {
+schemas.GoalRunSession.properties.criteria = {
   type: "object",
   required: ["status", "generation"],
   properties: {
@@ -80,7 +80,7 @@ schemas.JourneyRunSession.properties.criteria = {
     },
   },
 };
-schemas.JourneyRunSession.properties.observations = {
+schemas.GoalRunSession.properties.observations = {
   type: "array",
   items: {
     type: "object",
@@ -128,8 +128,8 @@ function endObject(text: string, start: number): number {
 }
 let output = original;
 for (const name of [
-  "JourneyRun",
-  "JourneyRunSession",
+  "GoalRun",
+  "GoalRunSession",
   "SwarmSessionVerdict",
   "JourneyRunVerdictSummary",
   "SwarmReport",

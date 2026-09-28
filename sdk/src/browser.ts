@@ -481,10 +481,21 @@ export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 // instead of re-typing the message — it is the server under test violating
 // RFC 8414, which a host may want to treat differently from its own errors.
 export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-machines/shared/required-metadata.js";
+// Same reason: an authorization server that offers no dynamic client
+// registration and no configured fallback client is a target-server
+// configuration, not a host bug.
+export {
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
 // The debug proxy's own failures use a different error shape. This classifier
 // lets browser hosts keep a target server's authenticated-request rejection in
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
+export {
+  isResourceMetadataNotImplemented,
+  RESOURCE_METADATA_NOT_IMPLEMENTED,
+} from "./oauth/state-machines/shared/resource-metadata-error.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
@@ -544,6 +555,7 @@ export {
   classifyUnauthenticatedProbe,
   hasBearerChallenge,
   isUnauthenticatedProbeChallenge,
+  isUnexpectedProbeStatus,
   UNAUTHENTICATED_PROBE_STEP,
   type UnauthenticatedProbeOutcome,
 } from "./oauth/state-machines/shared/challenges.js";
@@ -933,6 +945,73 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+} from "./host-config/index.js";
+
+// Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
+// browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./host-config/index.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./host-config/index.js";
+
+// Execution record: what a run or turn actually ran on (also at
+// `@mcpjam/sdk/host-config`). Pure and browser-safe.
+export {
+  EXECUTION_RAILS,
+  EXECUTION_DEVIATION_KINDS,
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_EXECUTION_ATTEMPTS,
+  readExecutionRecord,
+  executionRailLabel,
+  executionDeviationTitle,
+  describeExecutionRoute,
+  describeMaxOutputTokens,
+  describeExecutionSettings,
+  describeExecutionModel,
+  formatExecutionProvenanceLine,
+  describeExecutionRequest,
+  describeExecutionAttempts,
+  summarizeExecutionRecord,
+  formatExecutionDeviationLine,
+} from "./host-config/index.js";
+export type {
+  ExecutionRecord,
+  ExecutionRail,
+  KnownExecutionRail,
+  ExecutionOffering,
+  ExecutionAttempt,
+  ExecutionAttemptOutcome,
+  ExecutionDeviation,
+  ExecutionDeviationKind,
+  KnownExecutionDeviationKind,
+  ExecutionProvenanceSummary,
 } from "./host-config/index.js";
 
 // Shared task lifecycle engine. Browser-safe by construction: it performs no

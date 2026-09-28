@@ -16,12 +16,15 @@ import {
   ChevronRight,
   Circle,
   CircleDashed,
+  CircleHelp,
   Loader2,
   MinusCircle,
   XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RoleChip } from "@/components/evals/scorer-role-control";
+import { BUILT_IN_BADGE } from "@/components/evals/runner-checks";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 import { ProvenanceChip } from "./provenance-chip";
 import { RowMarker } from "./row-marker";
 import type { JoinedScorecardRow, TrialRowResult } from "./trial-results";
@@ -51,6 +54,14 @@ export function resultGlyph(
         Icon: Circle,
         cls: "text-muted-foreground",
         label: "Missed · advisory",
+      };
+    case "uncertain":
+      // Neither a pass nor a miss: the classifier's answer sat too close to
+      // even odds to call. The value beside it says how close.
+      return {
+        Icon: CircleHelp,
+        cls: "text-muted-foreground",
+        label: "Uncertain",
       };
     case "error":
       return {
@@ -122,7 +133,13 @@ export function TrialScorecardRow({
   onSyncStep?: (stepId: string | null) => void;
   layout?: "row" | "report";
 }) {
-  const isJudge = row.provenance === "judge";
+  // Rubric checks are judge output too: a blind label taken beside them is
+  // not blind, so they are withheld with the goal judge's own row.
+  const isJudge = row.provenance === "judge" || row.provenance === "rubricCheck";
+  const builtin = row.provenance === "builtin";
+  // A runner check has no role to soften a miss with: its failure IS the
+  // stage's failure, which the heading above already wears in red.
+  const tone = builtin ? "required" : row.role;
   const withheld = isJudge && hideJudgeResult;
   const reason = withheld
     ? undefined
@@ -130,25 +147,28 @@ export function TrialScorecardRow({
       ? row.result.reason
       : undefined;
   const evidence = withheld ? [] : (row.evidence?.scoreEvidence ?? []);
-  const expandable = Boolean(reason || evidence.length > 0);
+  const floor = withheld ? undefined : row.evidence?.floor;
+  const expandable = Boolean(reason || evidence.length > 0 || floor);
   const [open, setOpen] = useState(false);
   const glyph = resultGlyph(
     withheld ? { state: "notMeasured" } : row.result,
-    row.role,
+    tone,
   );
   const value = withheld ? undefined : formatValue(row.result);
   const active = row.stepId !== undefined && syncedStepId === row.stepId;
 
   if (layout === "report") {
-    const observed = evidence.length
-      ? evidence.join("\n")
-      : value || "No observation recorded.";
-    const whyLabel =
-      row.result.state === "passed"
-        ? "Why it passed"
-        : row.result.state === "failed"
-          ? "Why it failed"
-          : "Reason";
+    // ACTUAL is one cell: the model's narrative when it is current, else the
+    // recorded reason with the measured evidence under it, else the bare
+    // value. A separate "why" line restated the reason a second time.
+    const narrative =
+      row.narrative && !row.narrative.stale ? row.narrative.text : null;
+    const recorded = [...(reason ? [reason] : []), ...evidence];
+    const actual =
+      narrative ??
+      (recorded.length
+        ? recorded.join("\n")
+        : value || "No observation recorded.");
     return (
       <li
         className={cn(
@@ -167,7 +187,18 @@ export function TrialScorecardRow({
         onMouseLeave={() => row.stepId && onSyncStep?.(null)}
       >
         <div className="flex items-start justify-between gap-3">
-          <h4 className="text-sm font-semibold">{row.label}</h4>
+          <h4 className="flex flex-wrap items-center gap-2 text-base font-semibold">
+            {row.label}
+            {builtin ? (
+              <span
+                className="rounded-sm border border-border/50 px-1.5 py-px text-[10px] font-normal text-muted-foreground"
+                data-testid="runner-check-badge"
+                title={row.tooltip}
+              >
+                {BUILT_IN_BADGE}
+              </span>
+            ) : null}
+          </h4>
           <span
             className={cn(
               "shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase",
@@ -176,7 +207,7 @@ export function TrialScorecardRow({
                 : cn(
                     row.result.state === "passed"
                       ? "bg-success/15"
-                      : row.result.state === "failed" && row.role === "required"
+                      : row.result.state === "failed" && tone === "required"
                         ? "bg-destructive/10"
                         : "bg-muted",
                     // Success stays in the tint; small text needs the reading
@@ -192,13 +223,13 @@ export function TrialScorecardRow({
         </div>
         {withheld ? (
           <p
-            className="text-xs text-muted-foreground"
+            className="text-sm text-muted-foreground"
             data-testid="judge-result-withheld"
           >
             hidden until you label this iteration
           </p>
         ) : (
-          <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
+          <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Expected
             </dt>
@@ -208,32 +239,27 @@ export function TrialScorecardRow({
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Actual
             </dt>
-            <dd className="min-w-0 whitespace-pre-wrap break-words">
-              <span
-                data-narrative-source={
-                  row.narrative && !row.narrative.stale ? "ai" : "recorded"
-                }
-              >
-                {row.narrative && !row.narrative.stale
-                  ? row.narrative.text
-                  : evidence.length || value
-                  ? observed
-                  : reason || observed}
+            <dd
+              className="min-w-0 whitespace-pre-wrap break-words"
+              data-testid="trial-scorecard-reason"
+            >
+              <span data-narrative-source={narrative ? "ai" : "recorded"}>
+                {actual}
               </span>
+              {floor ? (
+                <span
+                  className="mt-1 block"
+                  data-testid="stage-floor"
+                  data-narrative-source="recorded"
+                >
+                  <FindingText text={floor} />
+                </span>
+              ) : null}
               {row.narrative?.stale && (
                 <p className="mt-1 text-muted-foreground">
                   Narrative predates the latest grade.
                 </p>
               )}
-            </dd>
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {whyLabel}
-            </dt>
-            <dd
-              className="min-w-0 whitespace-pre-wrap break-words"
-              data-testid="trial-scorecard-reason"
-            >
-              {reason || "No reason recorded."}
             </dd>
           </dl>
         )}
@@ -286,7 +312,7 @@ export function TrialScorecardRow({
             {value}
           </span>
         ) : null}
-        <RoleChip role={row.role} />
+        {builtin ? null : <RoleChip role={row.role} />}
         {expandable ? (
           <button
             type="button"
@@ -313,6 +339,14 @@ export function TrialScorecardRow({
               data-testid="trial-scorecard-reason"
             >
               {reason}
+            </p>
+          ) : null}
+          {floor ? (
+            <p
+              className="text-[11px] leading-snug text-muted-foreground"
+              data-testid="stage-floor"
+            >
+              <FindingText text={floor} />
             </p>
           ) : null}
           {evidence.length > 0 ? (

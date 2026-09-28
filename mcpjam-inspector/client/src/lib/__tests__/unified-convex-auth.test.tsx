@@ -10,8 +10,8 @@ const mockState = vi.hoisted(() => ({
     getAccessToken: vi.fn(),
   },
   getCachedGuestSession: vi.fn(),
-  getOrCreateGuestSession: vi.fn(),
-  forceRefreshGuestSession: vi.fn(),
+  getOrCreateGuestSessionOrThrow: vi.fn(),
+  forceRefreshGuestSessionOrThrow: vi.fn(),
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: vi.fn(() => null as { until: number } | null),
   reportCaught: vi.fn(),
@@ -27,8 +27,8 @@ vi.mock("@/lib/error-reporting", () => ({
 
 vi.mock("@/lib/guest-session", () => ({
   getCachedGuestSession: mockState.getCachedGuestSession,
-  getOrCreateGuestSession: mockState.getOrCreateGuestSession,
-  forceRefreshGuestSession: mockState.forceRefreshGuestSession,
+  getOrCreateGuestSessionOrThrow: mockState.getOrCreateGuestSessionOrThrow,
+  forceRefreshGuestSessionOrThrow: mockState.forceRefreshGuestSessionOrThrow,
   markGuestActivated: mockState.markGuestActivated,
   getGuestSessionRefusal: mockState.getGuestSessionRefusal,
 }));
@@ -53,7 +53,7 @@ describe("useUnifiedConvexAuth", () => {
   });
 
   it("retries guest session bootstrap after a transient miss", async () => {
-    mockState.getOrCreateGuestSession
+    mockState.getOrCreateGuestSessionOrThrow
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         guestId: "guest-1",
@@ -66,7 +66,7 @@ describe("useUnifiedConvexAuth", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
     expect(result.current.isLoading).toBe(true);
 
     await act(async () => {
@@ -76,7 +76,7 @@ describe("useUnifiedConvexAuth", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(2);
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(2);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.user).toEqual({
       __guest: true,
@@ -86,7 +86,7 @@ describe("useUnifiedConvexAuth", () => {
   });
 
   it("stops after one attempt and does not report when the server refused to create a guest", async () => {
-    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+    mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
     mockState.getGuestSessionRefusal.mockReturnValue({
       until: Date.now() + 600_000,
     });
@@ -97,14 +97,14 @@ describe("useUnifiedConvexAuth", () => {
       await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
     });
 
-    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
     expect(mockState.reportCaught).not.toHaveBeenCalled();
     expect(result.current.isLoading).toBe(false);
     expect(result.current.user).toBeNull();
   });
 
   it("reports once after guest session bootstrap exhausts every attempt", async () => {
-    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+    mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
     const { result } = renderHook(() => useUnifiedConvexAuth());
 
@@ -112,7 +112,7 @@ describe("useUnifiedConvexAuth", () => {
       await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
     });
 
-    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(4);
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(4);
     expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
     const [error, options] = mockState.reportCaught.mock.calls[0]!;
     expect(error).toEqual(
@@ -127,8 +127,86 @@ describe("useUnifiedConvexAuth", () => {
     expect(result.current.user).toBeNull();
   });
 
+  it("reports the real cause when guest session bootstrap fails", async () => {
+    const networkError = new TypeError("Failed to fetch");
+    mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(networkError);
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(4);
+    expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
+    const [error, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(error).toBe(networkError);
+    // No HTTP status on a network error, so no `httpStatus` key at all.
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: { attempts: 4 },
+    });
+  });
+
+  it("reports why the server's upstream hop failed", async () => {
+    const relayError = Object.assign(
+      new Error(
+        "guest-session request failed: 503 Service Unavailable (network ENOTFOUND)",
+      ),
+      {
+        status: 503,
+        upstreamFailure: { reason: "network", networkCode: "ENOTFOUND" },
+      },
+    );
+    mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(relayError);
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
+    const [error, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(error).toBe(relayError);
+    // No upstream status on a network failure, so no `upstreamStatus` key.
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: {
+        attempts: 4,
+        httpStatus: 503,
+        upstreamReason: "network",
+        networkCode: "ENOTFOUND",
+      },
+    });
+  });
+
+  it("ignores malformed upstream failure details", async () => {
+    mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(
+      Object.assign(new Error("guest-session request failed: 503"), {
+        status: 503,
+        upstreamFailure: { reason: 42 },
+      }),
+    );
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    const [, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: { attempts: 4, httpStatus: 503 },
+    });
+  });
+
   it("does not report guest session bootstrap after unmount", async () => {
-    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+    mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
     const { unmount } = renderHook(() => useUnifiedConvexAuth());
     await act(async () => {
@@ -140,7 +218,7 @@ describe("useUnifiedConvexAuth", () => {
       await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
     });
 
-    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
     expect(mockState.reportCaught).not.toHaveBeenCalled();
   });
 
@@ -150,7 +228,7 @@ describe("useUnifiedConvexAuth", () => {
       token: "guest-token",
       expiresAt: Date.now() + 60_000,
     };
-    mockState.getOrCreateGuestSession.mockResolvedValue(session);
+    mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
     mockState.getCachedGuestSession.mockReturnValue(session);
 
     const { result } = renderHook(() => useUnifiedConvexAuth());
@@ -201,14 +279,14 @@ describe("useUnifiedConvexAuth", () => {
       // when getAccessToken runs, or this exercises the cached fast path
       // instead of the mint path it exists to cover.
       mockState.getCachedGuestSession.mockReturnValue(null);
-      mockState.getOrCreateGuestSession.mockResolvedValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
       const result = await mountGuest();
-      mockState.getOrCreateGuestSession.mockClear();
+      mockState.getOrCreateGuestSessionOrThrow.mockClear();
 
       // A real mint writes through to the cache (setCachedSession), which is
       // how markActiveGuest then resolves the guestId.
-      mockState.getOrCreateGuestSession.mockImplementation(async () => {
+      mockState.getOrCreateGuestSessionOrThrow.mockImplementation(async () => {
         mockState.getCachedGuestSession.mockReturnValue(session);
         return session;
       });
@@ -219,19 +297,19 @@ describe("useUnifiedConvexAuth", () => {
       });
 
       expect(token).toBe("fresh-guest-token");
-      expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+      expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
       expect(mockState.markGuestActivated).toHaveBeenCalledWith("guest-1");
       expect(mockState.reportCaught).not.toHaveBeenCalled();
     });
 
     it("retries a transient guest mint failure and returns the token", async () => {
       mockState.getCachedGuestSession.mockReturnValue(null);
-      mockState.getOrCreateGuestSession.mockResolvedValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
       const result = await mountGuest();
       // Bootstrap already exhausted its own ladder; count only the refresh.
-      mockState.getOrCreateGuestSession.mockClear();
-      mockState.getOrCreateGuestSession
+      mockState.getOrCreateGuestSessionOrThrow.mockClear();
+      mockState.getOrCreateGuestSessionOrThrow
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(session);
@@ -245,16 +323,16 @@ describe("useUnifiedConvexAuth", () => {
       await act(async () => {
         await expect(pending).resolves.toBe("fresh-guest-token");
       });
-      expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(3);
+      expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(3);
       expect(mockState.reportCaught).not.toHaveBeenCalled();
     });
 
     it("reports once and returns null when the guest ladder is exhausted", async () => {
       mockState.getCachedGuestSession.mockReturnValue(null);
-      mockState.getOrCreateGuestSession.mockResolvedValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
       const result = await mountGuest();
-      mockState.getOrCreateGuestSession.mockClear();
+      mockState.getOrCreateGuestSessionOrThrow.mockClear();
 
       let pending: Promise<string | null>;
       await act(async () => {
@@ -265,7 +343,7 @@ describe("useUnifiedConvexAuth", () => {
       await act(async () => {
         await expect(pending).resolves.toBeNull();
       });
-      expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(4);
+      expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(4);
       expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
       expect(mockState.reportCaught).toHaveBeenCalledWith(
         expect.any(Error),
@@ -280,10 +358,78 @@ describe("useUnifiedConvexAuth", () => {
       expect(useSessionRefreshStore.getState().kind).toBe("transient");
     });
 
+    it("reports the real cause and status when the guest ladder is exhausted", async () => {
+      mockState.getCachedGuestSession.mockReturnValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
+
+      const result = await mountGuest();
+      const serverError = Object.assign(
+        new Error("guest-session request failed: 503 Service Unavailable"),
+        { status: 503 },
+      );
+      mockState.getOrCreateGuestSessionOrThrow.mockReset();
+      mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(serverError);
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.getAccessToken();
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(4);
+      expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
+      expect(mockState.reportCaught).toHaveBeenCalledWith(serverError, {
+        source: "guest_token_refresh",
+        level: "warning",
+        extra: { attempts: 4, httpStatus: 503 },
+      });
+    });
+
+    it("reports the upstream status when the server's own hop got one", async () => {
+      mockState.getCachedGuestSession.mockReturnValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
+
+      const result = await mountGuest();
+      const relayError = Object.assign(
+        new Error(
+          "guest-session request failed: 503 Service Unavailable (upstream_status 522)",
+        ),
+        {
+          status: 503,
+          upstreamFailure: { reason: "upstream_status", upstreamStatus: 522 },
+        },
+      );
+      mockState.getOrCreateGuestSessionOrThrow.mockReset();
+      mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(relayError);
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.getAccessToken();
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(relayError, {
+        source: "guest_token_refresh",
+        level: "warning",
+        extra: {
+          attempts: 4,
+          httpStatus: 503,
+          upstreamReason: "upstream_status",
+          upstreamStatus: 522,
+        },
+      });
+    });
+
     it("still honors the explicit force-refresh path", async () => {
       mockState.getCachedGuestSession.mockReturnValue(session);
-      mockState.getOrCreateGuestSession.mockResolvedValue(session);
-      mockState.forceRefreshGuestSession.mockResolvedValue("forced-token");
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
+      mockState.forceRefreshGuestSessionOrThrow.mockResolvedValue("forced-token");
 
       const result = await mountGuest();
 
@@ -295,7 +441,7 @@ describe("useUnifiedConvexAuth", () => {
       });
 
       expect(token).toBe("forced-token");
-      expect(mockState.forceRefreshGuestSession).toHaveBeenCalledTimes(1);
+      expect(mockState.forceRefreshGuestSessionOrThrow).toHaveBeenCalledTimes(1);
     });
 
     it("retries a transient WorkOS network failure", async () => {
@@ -432,5 +578,97 @@ describe("useUnifiedConvexAuth", () => {
         }),
       );
     });
+  });
+});
+
+describe("useUnifiedConvexAuth on a vanity landing", () => {
+  const originalLocation = window.location;
+
+  function setHostname(hostname: string) {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, hostname },
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mockState.workos.isLoading = false;
+    mockState.workos.user = null;
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getGuestSessionRefusal.mockReturnValue(null);
+    useSessionRefreshStore.setState({
+      status: "idle",
+      kind: null,
+      retryNonce: 0,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  });
+
+  it("mints no guest session on caniuse.dev and settles signed out", async () => {
+    setHostname("caniuse.dev");
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.getOrCreateGuestSessionOrThrow).not.toHaveBeenCalled();
+    // Settled, not spinning: the surface renders instead of waiting on a
+    // bootstrap that will never run.
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
+
+    // Past the whole retry ladder, still nothing — and no error reported.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(mockState.getOrCreateGuestSessionOrThrow).not.toHaveBeenCalled();
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("mints no guest session on caniuse.dev when a retry is requested", async () => {
+    setHostname("caniuse.dev");
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      useSessionRefreshStore.setState({ retryNonce: 1 });
+      await Promise.resolve();
+    });
+
+    expect(mockState.getOrCreateGuestSessionOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("still mints a guest session on score.mcpjam.com", async () => {
+    setHostname("score.mcpjam.com");
+    mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue({
+      guestId: "guest-1",
+      token: "guest-token",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).not.toBeNull();
   });
 });

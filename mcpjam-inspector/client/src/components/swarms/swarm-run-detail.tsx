@@ -24,7 +24,7 @@ import {
 import {
   parseSelectionParam,
   serializeSelectionParam,
-  type ThemeRef,
+  type SelectionRef,
 } from "@/hooks/scenario-usage-filters";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import {
@@ -261,9 +261,7 @@ export function SwarmRunDetail({
   }, [liveProgress, navigate, parsedTab, selParam, swarmId]);
 
   const handleSelectionChange = useCallback(
-    (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
-    ) => {
+    (themes: ReadonlyArray<SelectionRef> | null) => {
       navigate(
         buildSwarmPath(swarmId, {
           tab,
@@ -601,12 +599,9 @@ export function SwarmRunDetail({
           </div>
         ) : null}
         {tab === "insights" ? (
-          // Scroll the whole Insights tab instead of locking it to the
-          // viewport: the Session-flow Sankey was crushed into a sliver on
-          // shorter windows, and its many themes could only be reached by
-          // dragging a cramped inner scroll. The workbench renders its body at
-          // natural height (bodyLayout="scroll") and this container owns the
-          // one scrollbar.
+          // Findings can scroll this tab. Session flow fills the leftover
+          // column and scrolls its own ribbons, so this page scrollbar
+          // cannot walk through the middle of the diagram.
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-4">
             {/* Flex column at least as tall as the scroll viewport, so the
                 workbench grows past it (page scrolls) while its empty state can

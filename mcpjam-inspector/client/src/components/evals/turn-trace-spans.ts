@@ -4,6 +4,7 @@ import {
 } from "@/shared/live-chat-trace";
 import { evalTraceSpanZ, type EvalTraceSpan } from "@/shared/eval-trace";
 import { rebaseTraceSpans } from "@/shared/live-chat-trace";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 /**
  * Validate a blob's spans, dropping the rows that fail rather than the blob.
@@ -100,7 +101,7 @@ export async function hydrateTurnTraceSpans(
     traces.map(async (trace) => {
       if (!trace.spansBlobUrl) return [];
       try {
-        const response = await fetch(trace.spansBlobUrl);
+        const response = await fetchArtifact(trace.spansBlobUrl);
         if (!response.ok) return [];
         const parsed = await response.json();
         if (!Array.isArray(parsed)) return [];
@@ -223,7 +224,7 @@ export async function hydrateTurnRequestPayloads(
         .sort((a, b) => a.promptIndex - b.promptIndex)
         .map(async (turn) => {
           if (!turn.requestPayloadsBlobUrl) return [];
-          const response = await fetch(turn.requestPayloadsBlobUrl);
+          const response = await fetchArtifact(turn.requestPayloadsBlobUrl);
           if (!response.ok)
             throw new Error("Failed to load saved model requests");
           const value: unknown = await response.json();

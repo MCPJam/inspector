@@ -37,6 +37,39 @@ describe("suite-settings-summary", () => {
     ).toContain("Required");
   });
 
+  it("says what changed in the rubric-checks slot, and nothing when absent", () => {
+    // Goal-only sentences stay exactly as they were.
+    expect(describeJudge({ goalCompletion: { enabled: false } })).toBe("Off");
+    expect(
+      describeJudge({
+        goalCompletion: { enabled: false },
+        rubricChecks: { enabled: false },
+      }),
+    ).toBe("Off; rubric checks off");
+    expect(describeJudge({ rubricChecks: {} })).toBe(
+      "Not configured; rubric checks on",
+    );
+    expect(
+      describeJudge({
+        rubricChecks: {
+          questions: [
+            {
+              id: "tone",
+              kind: "choice",
+              label: "Tone",
+              instructions: "Which fits?",
+              options: [
+                { id: "warm", label: "Warm" },
+                { id: "curt", label: "Curt" },
+              ],
+              pass: { anyOf: ["warm"] },
+            },
+          ],
+        },
+      }),
+    ).toBe("Not configured; rubric checks with 1 question (Tone)");
+  });
+
   it("enumerates quality-gate conditions and treats zero as configured", () => {
     expect(describeGatePolicy(undefined)).toBe("None");
     expect(

@@ -120,12 +120,32 @@ describe("prepareChatV2", () => {
         provider: "openai",
         hosted: true,
         supportedParameters: ["tools", "max_tokens"],
+        supportedParametersComplete: true,
       } as any,
       systemPrompt: "Base prompt.",
       temperature: 0.5,
     });
 
     expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature when the catalog's parameter list is partial", async () => {
+    // Only a complete list may withdraw it: the legacy DTO reported just
+    // `structured_outputs` for every hosted row.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/gpt-4o",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["structured_outputs"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
   });
 
   it("keeps temperature when the catalog lists it", async () => {
@@ -1875,5 +1895,80 @@ describe("first-class page tools in prepareChatV2", () => {
     expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
     expect(result.enhancedSystemPrompt).toContain("None are available right now");
     expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+  });
+});
+
+describe("account routing snapshots", () => {
+  it("keeps an in-flight turn on its selected account after a default change", async () => {
+    const { jsonSchema } = await import("ai");
+    const { setManagerConnections } = await import("../mcp-connections.js");
+    const a = {
+      serverId: "server",
+      connectionId: "a".repeat(32),
+      key: "server",
+      label: "Acme",
+      isDefault: true,
+    };
+    const b = {
+      serverId: "server",
+      connectionId: "b".repeat(32),
+      key: "server#" + "b".repeat(32),
+      label: "Side",
+      isDefault: false,
+    };
+    const executeA = vi.fn(async () => ({
+      content: [{ type: "text", text: "A" }],
+    }));
+    const executeB = vi.fn(async () => ({
+      content: [{ type: "text", text: "B" }],
+    }));
+    const schema = jsonSchema({ type: "object", properties: {} });
+    const manager = mockManager({});
+    manager.getToolsForAiSdkByServer = vi
+      .fn()
+      .mockResolvedValue({
+        [a.key]: { search: { inputSchema: schema, execute: executeA } },
+        [b.key]: { search: { inputSchema: schema, execute: executeB } },
+      });
+    setManagerConnections(manager, { server: [a, b] });
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    setManagerConnections(manager, {
+      server: [
+        { ...a, key: "other", isDefault: false },
+        { ...b, key: "server", isDefault: true },
+      ],
+    });
+    await result.allTools.search.execute!(
+      { link_id: b.connectionId },
+      { toolCallId: "b-call", messages: [] },
+    );
+    expect(executeA).not.toHaveBeenCalled();
+    expect(executeB).toHaveBeenCalledOnce();
+    expect(result.toolConnections?.get("b-call")).toMatchObject({
+      connectionId: b.connectionId,
+      key: b.key,
+    });
+    expect(JSON.parse(JSON.stringify(result.connectionsAtTurn))).toEqual(
+      [a, b].map((c) => ({
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+      })),
+    );
+    // Eval callers explicitly opt out even when using a local manager with aliases.
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      connectionsByServerId: {},
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+      ["server"],
+      undefined,
+    );
   });
 });

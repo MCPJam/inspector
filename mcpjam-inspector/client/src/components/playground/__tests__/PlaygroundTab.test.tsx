@@ -19,6 +19,7 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserEnabledState: () => true,
 }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
+const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
 }));
@@ -67,8 +68,9 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
     consent: null,
   }),
 }));
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => {},
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
 }));
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
   useHostCatalog: () => ({ catalog: null }),
@@ -88,14 +90,30 @@ vi.mock("@/components/playground/PlaygroundRightRail", () => ({
 // the same module the source imports as "./X".
 vi.mock("../PlaygroundCenter", async () => {
   const style = await import("@/contexts/scenario-client-style-context");
-  const caps = await import("@/contexts/scenario-client-capabilities-override-context");
+  const caps = await import(
+    "@/contexts/scenario-client-capabilities-override-context"
+  );
   const profile = await import("@/contexts/active-mcp-profile-context");
-  const resolver = await import("@/contexts/active-host-client-capabilities-context");
-  return { PlaygroundCenter: () => <div data-testid="playground-center">{JSON.stringify({
-    style: style.useScenarioHostStyle(), theme: style.useScenarioHostTheme(),
-    chatUi: style.useScenarioChatUiOverride(), capabilities: caps.useScenarioHostCapabilitiesOverride(),
-    profile: profile.useActiveMcpProfile(), clientCapabilities: resolver.useActiveHostCapsResolver()(),
-  })}</div> };
+  const resolver = await import(
+    "@/contexts/active-host-client-capabilities-context"
+  );
+  return {
+    PlaygroundCenter: (props: unknown) => {
+      mockPlaygroundCenter(props);
+      return (
+        <div data-testid="playground-center">
+          {JSON.stringify({
+            style: style.useScenarioHostStyle(),
+            theme: style.useScenarioHostTheme(),
+            chatUi: style.useScenarioChatUiOverride(),
+            capabilities: caps.useScenarioHostCapabilitiesOverride(),
+            profile: profile.useActiveMcpProfile(),
+            clientCapabilities: resolver.useActiveHostCapsResolver()(),
+          })}
+        </div>
+      );
+    },
+  };
 });
 vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
@@ -120,7 +138,17 @@ describe("PlaygroundTab loading branch", () => {
     });
     useBrowserWorkspaceStore.setState({ conversations: {} });
     mockLoadingScreen.mockClear();
+    mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
+    mockUseAutoConnectProjectServers.mockClear();
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<PlaygroundTab {...baseProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
+    );
   });
 
   it("does not close a persisted panel while conversation metadata is restoring", () => {
@@ -162,19 +190,46 @@ describe("PlaygroundTab loading branch", () => {
     expect(mockLoadingScreen).not.toHaveBeenCalled();
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
   });
+
+  it("passes the one-shot first-run prompt into the Playground center", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const onFirstRunPromptConsumed = vi.fn();
+
+    render(
+      <PlaygroundTab
+        {...baseProps}
+        firstRunPrompt="What can this server do?"
+        onFirstRunPromptConsumed={onFirstRunPromptConsumed}
+      />,
+    );
+
+    expect(mockPlaygroundCenter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+        onFirstRunPromptConsumed,
+      }),
+    );
+  });
 });
 
 it("keeps the project host's style, overrides, profile, and saved capabilities", () => {
   mockLoadingState.current = { kind: "ready" };
   const host = {
-    hostStyle: "codex", chatUiOverride: { label: "Custom" },
-    hostCapabilitiesOverride: { tools: {} }, mcpProfile: { version: 1 },
+    hostStyle: "codex",
+    chatUiOverride: { label: "Custom" },
+    hostCapabilitiesOverride: { tools: {} },
+    mcpProfile: { version: 1 },
     clientCapabilities: { extensions: { "test/saved": {} } },
   } as any;
   render(<PlaygroundTab {...baseProps} activeHost={host} />);
-  expect(JSON.parse(screen.getByTestId("playground-center").textContent!)).toMatchObject({
-    style: "codex", theme: "light", chatUi: host.chatUiOverride,
-    capabilities: host.hostCapabilitiesOverride, profile: host.mcpProfile,
+  expect(
+    JSON.parse(screen.getByTestId("playground-center").textContent!),
+  ).toMatchObject({
+    style: "codex",
+    theme: "light",
+    chatUi: host.chatUiOverride,
+    capabilities: host.hostCapabilitiesOverride,
+    profile: host.mcpProfile,
     clientCapabilities: host.clientCapabilities,
   });
 });

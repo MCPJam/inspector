@@ -120,6 +120,16 @@ vi.mock("../../../utils/harness/harness-availability.js", async () => {
 
 vi.mock("../apps.js", () => ({ default: new Hono() }));
 
+// Spied, not replaced: what the route hands the tool registry is how the
+// built-in tool policy's answer is observed (MJ-008).
+vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../../utils/built-in-tools/registry.js")
+  >();
+  return { ...actual, resolveHostTools: vi.fn(actual.resolveHostTools) };
+});
+
+import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
 /** Two environment servers; the body will claim a DIFFERENT, single server. */
@@ -215,6 +225,9 @@ describe("web chat-v2 — environment execution target", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = Array.isArray(payload?.serverIds)
@@ -360,6 +373,85 @@ describe("web chat-v2 — environment execution target", () => {
       ).toEqual(configured);
     },
   );
+
+  describe("built-in tool policy (MJ-008)", () => {
+    const requestedIds = () =>
+      (
+        vi.mocked(resolveHostTools).mock.calls.at(-1)?.[0] as {
+          builtInToolIds?: string[];
+        }
+      )?.builtInToolIds;
+
+    it("bounds an ad-hoc turn by the project default and the caller's role", async () => {
+      convexQueryMock.mockImplementation(async (ref: string) => {
+        if (ref === "hostConfigsV2:getProjectDefault") {
+          return {
+            builtInToolIds: [
+              "web_search",
+              "list_project_servers",
+              "run_eval_suite",
+            ],
+          };
+        }
+        if (ref === "projects:getProjectCapabilities") {
+          return { projectRole: null };
+        }
+        return ENV_SPEC;
+      });
+      const { app, token } = createWebTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          builtInToolIds: [
+            "web_search",
+            "bash",
+            "list_project_servers",
+            "run_eval_suite",
+            "not_a_tool",
+          ],
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      // Unknown: dropped. Not in the project default: dropped. A write for
+      // a role that cannot edit: dropped.
+      expect(requestedIds()).toEqual(["web_search", "list_project_servers"]);
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "hostConfigsV2:getProjectDefault",
+        { projectId: "project-1" },
+      );
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "projects:getProjectCapabilities",
+        { projectId: "project-1" },
+      );
+    });
+
+    it("bounds a host-bound turn by the saved host's list", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: { builtInToolIds: ["web_search"] },
+      });
+      const { app, token } = createWebTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          hostId: "host_legacy",
+          builtInToolIds: ["web_search", "bash", "run_eval_suite"],
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(requestedIds()).toEqual(["web_search"]);
+      expect(convexQueryMock).not.toHaveBeenCalledWith(
+        "hostConfigsV2:getProjectDefault",
+        expect.anything(),
+      );
+    });
+  });
 
   it("uses the RESOLVED server set everywhere, never the body's", async () => {
     const { app, token } = createWebTestApp();
@@ -779,6 +871,9 @@ describe("web chat-v2 — plugin capability attribution", () => {
       new Response("ok", { status: 200 })
     );
     global.fetch = vi.fn(async (input: any, init: any) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = Array.isArray(payload?.serverIds)
@@ -946,6 +1041,9 @@ describe("web chat-v2 — turn provenance (P1)", () => {
       return new Response("ok", { status: 200 });
     });
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = Array.isArray(payload?.serverIds)

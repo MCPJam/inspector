@@ -1,3 +1,4 @@
+import oauthConnections from "../web/oauth-connections.js";
 import { Hono } from "hono";
 import { describeError, originOf } from "@mcpjam/sdk";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -265,5 +266,7 @@ oauth.get("/metadata", async (c) => {
     );
   }
 });
+
+oauth.route("/connections", oauthConnections);
 
 export default oauth;

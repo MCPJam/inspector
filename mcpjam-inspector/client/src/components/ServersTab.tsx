@@ -1,3 +1,4 @@
+import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
 import {
   useCallback,
   useContext,
@@ -129,7 +130,6 @@ import {
   shouldQueryProjectId,
   type RemoteServer,
 } from "@/hooks/useProjects";
-import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -163,8 +163,9 @@ import {
 } from "./hosts/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "@/lib/toast";
+import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
-const ORDER_STORAGE_KEY = "mcp-server-order";
+
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
@@ -214,26 +215,6 @@ function isQuickConnectCardExcludedByProject(
       isPendingQuickConnectVisible
     )
   );
-}
-
-function loadServerOrder(projectId: string): string[] | undefined {
-  try {
-    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    return raw ? JSON.parse(raw)[projectId] : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function saveServerOrder(projectId: string, orderedNames: string[]): void {
-  try {
-    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    const all = raw ? JSON.parse(raw) : {};
-    all[projectId] = orderedNames;
-    localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    // ignore
-  }
 }
 
 function clearPersistedLoggerFocus(): void {
@@ -456,7 +437,6 @@ function SortableServerCard({
   id,
   dndDisabled,
   server,
-  needsReconnect,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -471,7 +451,6 @@ function SortableServerCard({
   id: string;
   dndDisabled: boolean;
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
@@ -518,7 +497,6 @@ function SortableServerCard({
   const cardContent = (
     <ServerConnectionCard
       server={server}
-      needsReconnect={needsReconnect}
       onDisconnect={onDisconnect}
       onReconnect={onReconnect}
       onRemove={onRemove}
@@ -602,6 +580,8 @@ interface ServersTabProps {
   routePluginId?: string | null;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 export function ServersTab({
@@ -625,6 +605,7 @@ export function ServersTab({
   routePluginId,
   isRegistryEnabled = false,
   onNavigateToRegistry,
+  suspendAutoConnect = false,
 }: ServersTabProps) {
   const hostsConnectAddServerSlot = useContext(
     HostsConnectAddServerSlotContext
@@ -777,6 +758,8 @@ export function ServersTab({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
+    catalogLoaded: viewProjectServersList !== undefined,
+    suspendAutoConnect,
   });
 
   const appReady = useAppReady();
@@ -866,6 +849,13 @@ export function ServersTab({
     return allNames;
   });
 
+  useEffect(() => {
+    serverCheckQueue.setOrder(
+      sharedProjectIdForHostScope ?? activeProjectId,
+      orderedServerNames,
+    );
+  }, [sharedProjectIdForHostScope, activeProjectId, orderedServerNames]);
+
   // Reconcile when servers are added/removed or project changes
   useEffect(() => {
     setOrderedServerNames((prev) => {
@@ -905,42 +895,13 @@ export function ServersTab({
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
         saveServerOrder(activeProjectId, newOrder);
+        if (sharedProjectIdForHostScope) serverCheckQueue.setOrder(sharedProjectIdForHostScope, newOrder);
       }
     }
     setActiveId(null);
   };
 
   const activeServer = activeId ? projectServers[activeId] : null;
-  const reconnectWarningByServerName = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(projectServers).map(([serverName, server]) => {
-          // Only fires when the user edited the per-server clientCapabilities
-          // override after connecting. Host-driven caps changes are handled by
-          // the auto-reconciler, which disconnect/reconnects affected servers
-          // on host switch — comparing against host-blended caps here just
-          // produced false positives (server fresh-reconnects under the new
-          // host, but the SDK strips runtime-gated caps like `elicitation`
-          // when no handler is wired, so the comparator never matched).
-          const override = server.config.clientCapabilities;
-          const hasOverride =
-            override != null &&
-            typeof override === "object" &&
-            !Array.isArray(override);
-          const stale =
-            hasOverride &&
-            server.connectionStatus === "connected" &&
-            server.initializationInfo?.clientCapabilities != null &&
-            projectClientCapabilitiesNeedReconnect({
-              desiredCapabilities: override as Record<string, unknown>,
-              initializedCapabilities: server.initializationInfo
-                .clientCapabilities as Record<string, unknown>,
-            });
-          return [serverName, stale];
-        })
-      ),
-    [projectServers]
-  );
 
   const detailModalLiveServer = detailModalState.serverName
     ? projectServers[detailModalState.serverName] ?? null
@@ -1270,6 +1231,20 @@ export function ServersTab({
       });
     },
     [activeProjectId]
+  );
+
+  // A connect the backend refused because the server moved away from where
+  // its saved credentials were entered: open its configuration, where they
+  // are re-entered. Read through a ref so the subscription is made once.
+  const projectServersRef = useRef(projectServers);
+  projectServersRef.current = projectServers;
+  useEffect(
+    () =>
+      onCredentialReentryRequest((serverName) => {
+        const server = projectServersRef.current[serverName];
+        if (server) handleOpenDetailModal(server, "configuration");
+      }),
+    [handleOpenDetailModal]
   );
 
   const handleCloseDetailModal = useCallback(() => {
@@ -2034,7 +2009,6 @@ export function ServersTab({
                       id={name}
                       dndDisabled={false}
                       server={displayServer}
-                      needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
                         onDisconnect(serverName);
@@ -2065,9 +2039,6 @@ export function ServersTab({
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
                     server={getDisplayServer(activeServer)}
-                    needsReconnect={
-                      reconnectWarningByServerName[activeServer.name]
-                    }
                     onDisconnect={(serverName) => {
                       clearPendingQuickConnectIfMatches(serverName);
                       onDisconnect(serverName);
@@ -2310,9 +2281,6 @@ export function ServersTab({
             isOpen={detailModalState.isOpen}
             onClose={handleCloseDetailModal}
             server={detailModalServer}
-            needsReconnect={
-              reconnectWarningByServerName[detailModalServer.name]
-            }
             defaultTab={detailModalState.defaultTab}
             onSubmit={handleSubmitDetailModal}
             onDisconnect={onDisconnect}

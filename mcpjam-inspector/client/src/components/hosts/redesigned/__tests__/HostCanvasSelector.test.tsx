@@ -139,19 +139,19 @@ describe("HostCanvasSelector", () => {
     });
   });
 
-  it("keeps the add-client action out of the switcher menu", async () => {
+  it("offers Add clients in the switcher menu and opens the New Client modal", async () => {
     const user = userEvent.setup();
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
     render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
 
     await user.click(screen.getByTestId("host-canvas-current"));
-    await screen.findByRole("menu");
+    await user.click(await screen.findByTestId("host-canvas-menu-add"));
 
-    // The only add path is the left-most pill; the menu must not carry a
-    // second one (per the #3269 review).
-    expect(
-      screen.queryByTestId("host-canvas-menu-add"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
+    expect(track).toHaveBeenCalledWith("connect_host_overlay_add_clicked", {
+      location: "host_canvas",
+      host_count: 2,
+    });
   });
 
   it("falls back to the same generic MCP mark as the header picker", async () => {
@@ -233,8 +233,9 @@ describe("HostCanvasSelector", () => {
     );
   });
 
-  it("hides add controls while retaining the client switcher", () => {
+  it("hides the add pill on Servers but still opens New Client from the switcher", async () => {
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+    const user = userEvent.setup();
     render(
       <HostCanvasSelector
         projectId="proj-1"
@@ -247,6 +248,9 @@ describe("HostCanvasSelector", () => {
       screen.queryByTestId("host-canvas-quick-add"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("host-canvas-current")).toBeVisible();
+    await user.click(screen.getByTestId("host-canvas-current"));
+    await user.click(await screen.findByTestId("host-canvas-menu-add"));
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
   });
 
   it("switches clients on Servers without navigating away", async () => {
@@ -310,5 +314,30 @@ describe("HostCanvasSelector", () => {
     const deleteBtn = await screen.findByTestId("host-canvas-delete-host-a");
     expect(deleteBtn).not.toBeDisabled();
     expect(deleteBtn).not.toHaveAttribute("title");
+  });
+
+  it("disables delete on a host in use and explains why in a tooltip", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...twoHosts[0], inUse: true }, twoHosts[1]],
+      isLoading: false,
+    });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    await user.click(screen.getByTestId("host-canvas-current"));
+
+    const blocked = await screen.findByTestId("host-canvas-delete-host-a");
+    expect(blocked).toBeDisabled();
+    expect(blocked).toHaveAttribute("title", "In use by a test suite.");
+    expect(blocked.closest('[role="menuitemradio"]')).toHaveAttribute(
+      "aria-description",
+      "In use by a test suite.",
+    );
+    const free = screen.getByTestId("host-canvas-delete-host-b");
+    expect(free).not.toBeDisabled();
+    expect(free).not.toHaveAttribute("title");
+    expect(free.closest('[role="menuitemradio"]')).not.toHaveAttribute(
+      "aria-description",
+    );
   });
 });

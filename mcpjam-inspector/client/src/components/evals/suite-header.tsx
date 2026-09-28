@@ -32,8 +32,10 @@ import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import { track } from "@/lib/analytics";
 import {
   formatRunId,
+  generationEnvironmentChoices,
   getEffectiveSuiteServers,
   getRunMetricSource,
+  suiteHasRunnableServers,
 } from "./helpers";
 import {
   EvalSuite,
@@ -285,7 +287,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     connectedServerNames,
     latestRun: latestRunForMetadata,
   });
-  const { hasServersConfigured, missingServers } = replayEligibility;
+  const { missingServers } = replayEligibility;
+  // An environment suite's servers are its environments' (resolved at
+  // launch), not the legacy list above.
+  const hasServersConfigured = suite.environmentIds?.length
+    ? suiteHasRunnableServers(suite)
+    : replayEligibility.hasServersConfigured;
   const canTriggerLiveRun = hasServersConfigured;
   const isRerunning = rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
@@ -810,6 +817,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         </Tooltip>
         <GenerateCasesConfigPopover
           suiteId={suite._id}
+          environmentChoices={generationEnvironmentChoices(suite)}
           onGenerate={onGenerateTestCases}
           disabled={!canGenerateTestCases}
           isGenerating={isGeneratingTestCases}
@@ -847,7 +855,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
+        {/* A frozen server snapshot is a legacy-suite concept: an environment
+            suite's run resolves its environment's servers when it starts. */}
+        {!readOnlyConfig &&
+        !configLocked &&
+        hasServersConfigured &&
+        !suite.environmentIds?.length ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">

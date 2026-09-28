@@ -19,6 +19,7 @@ import {
 import { resolveRunOrigin } from "@/lib/evals/run-origin";
 import {
   buildSuiteRunHistoryAggregates,
+  buildSuiteRunHistoryAggregatesFromMetrics,
   formatRunHistoryDate,
   formatRunHistoryDateRange,
   formatRunHistoryMetric,
@@ -61,6 +62,9 @@ export function projectRunRollup(
   details: Map<string, ProjectRunHistoryDetail>,
 ) {
   if (rows.some((row) => !details.has(row._id))) return null;
+  if (rows.some((row) => details.get(row._id)!.metrics !== undefined)) {
+    return projectRunRollupFromMetrics(rows, details);
+  }
   const runs = rows.map((row) => details.get(row._id)!.run);
   const iterations = rows.flatMap((row) => details.get(row._id)!.iterations);
   let total = 0;
@@ -85,6 +89,42 @@ export function projectRunRollup(
     // A launch that made no tool calls made none; only a launch whose
     // iterations recorded no counter at all has nothing to report.
     toolCalls: sumToolCalls(iterations),
+  };
+}
+
+/** `projectRunRollup` for details that carry per-run metrics, not iterations. */
+function projectRunRollupFromMetrics(
+  rows: ProjectRunRow[],
+  details: Map<string, ProjectRunHistoryDetail>,
+) {
+  const entries = rows.map((row) => details.get(row._id)!);
+  if (entries.some((entry) => !entry.metrics)) return null;
+  const runs = entries.map((entry) => entry.run);
+  const metricsByRun = new Map(
+    entries.map((entry) => [entry.run._id, entry.metrics!]),
+  );
+  let total = 0;
+  let passed = 0;
+  let toolCalls: number | null = null;
+  for (const { run, metrics } of entries) {
+    if (metrics!.iterationCount > 0) {
+      total += metrics!.iterationCount;
+      passed += metrics!.results.passed;
+    } else {
+      const stats = computeRunEffectiveStats(run, []);
+      total += stats.effectiveTotal;
+      passed += stats.effectivePassed;
+    }
+    if (metrics!.toolCallsTotal !== undefined) {
+      toolCalls = (toolCalls ?? 0) + metrics!.toolCallsTotal;
+    }
+  }
+  return {
+    ...buildSuiteRunHistoryAggregatesFromMetrics(runs, metricsByRun),
+    total,
+    passed,
+    passRate: total > 0 ? Math.round((passed / total) * 100) : null,
+    toolCalls,
   };
 }
 

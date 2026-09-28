@@ -1,6 +1,7 @@
 import { useConvex } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { RunMetrics } from "./run-metrics";
 
 const ACTIVE_STATUSES = ["pending", "running", "grading"];
 
@@ -29,6 +30,12 @@ function rowCacheKey(row: {
 export interface ProjectRunHistoryDetail {
   run: EvalSuiteRun;
   iterations: EvalIteration[];
+  /**
+   * Set by the suite page, which reads per-run metrics instead of iterations
+   * (`iterations` is then empty). `null` means the run's metrics are still
+   * loading. Absent on the project page, which reads iterations.
+   */
+  metrics?: RunMetrics | null;
 }
 
 type ProjectHistoryEntry = { detail: ProjectRunHistoryDetail };

@@ -9,6 +9,7 @@
  * evidence landed on it (all sessions launched, every graded session
  * passed). Silence renders as "none" — the legend says "do not infer pass".
  */
+import type { SwarmFindingSignal } from "@mcpjam/sdk/contract";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 import type {
@@ -100,6 +101,19 @@ export interface PersonaFindingsModel {
   sentiment: SentimentPillModel;
   /** Experience-blaming one-liner — the persona is never the failure's subject. */
   issue: string;
+  /**
+   * The persona's own words for ONE representative session, when the producer
+   * wrote them. Optional throughout: the legacy path never has one, and User
+   * Testing builds this model with `satisfies`, so a required field here is a
+   * compile error there.
+   */
+  account?: string;
+  /** The session `account` describes, so a reader can open exactly that one. */
+  accountSessionId?: string;
+  /** That same session's cited engineering detail, shown behind a disclosure. */
+  cited?: { actual: string; citations: string[] };
+  /** The recorded fact behind this persona's lead, when the lead is one. */
+  signal?: SwarmFindingSignal;
   goals: GoalFindingsModel[];
 }
 

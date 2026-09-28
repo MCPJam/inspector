@@ -301,7 +301,7 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     expect(banner.className).toContain("destructive");
     expect(
       screen.getByTestId("new-swarm-running-account-limit"),
-    ).toHaveTextContent("10 stopped at the MCPJam model limit");
+    ).toHaveTextContent("10 stopped at an organization usage limit");
   });
 
   it("does not invent a cause for an attempt without error metadata", async () => {
