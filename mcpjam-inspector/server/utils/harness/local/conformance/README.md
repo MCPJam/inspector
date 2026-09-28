@@ -76,7 +76,10 @@ WITHOUT stopping its session, because the crash it simulates is the input to
 
 `MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION` stamps the manifest these scripts
 build; CI sets it to the job's own identifier so a recorded conformance version
-always names the run that produced it.
+always names the run that produced it. In a non-hosted Inspector with
+`ENVIRONMENT=dev`, the same variable also supplies missing Claude Code
+conformance evidence to the normal local-turn availability check. Production
+and hosted builds ignore that override; it never replaces recorded evidence.
 
 `MOCK_LATENCY_MS` holds every mock upstream response for that many
 milliseconds. CI sets it to 50 and a local run should too. An upstream that

@@ -116,9 +116,8 @@ export function resetLocalHarnessRegistryForTests(): void {
  * reach of `stop-all`. The turn's teardown gives up the runtime reservation on
  * a proven stop either way; it is the map entry that has to belong to it.
  *
- * Unreachable through `run-harness-turn.ts` today, which mints
- * `local-<uuid>` per turn — but that invariant lives in another file, and the
- * cost of not depending on it is this comparison.
+ * Local turns reuse their lane id, so this guard also protects a resumed turn
+ * from a predecessor whose bounded teardown completes late.
  */
 export function forgetLocalHarnessSessionRecord(
   record: LocalHarnessSessionRecord,
