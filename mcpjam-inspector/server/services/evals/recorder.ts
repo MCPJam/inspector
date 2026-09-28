@@ -173,6 +173,12 @@ export type SuiteRunRecorder = {
     // `testIteration.metadata`; the Convex validator accepts nested values.
     metadata?: Record<string, unknown>;
   }): Promise<void>;
+  /**
+   * True once a write learned the run (or its suite) was deleted. The runner
+   * polls this so a deletion seen by an iteration write stops the whole run,
+   * not just that iteration's writes. Optional: provided recorders may omit it.
+   */
+  isRunDeleted?(): boolean;
   finalize(args: {
     status: "completed" | "failed" | "cancelled" | "timed_out";
     summary?: {
@@ -269,6 +275,7 @@ export const createSuiteRunRecorder = ({
   return {
     runId,
     suiteId,
+    isRunDeleted: () => runDeleted,
     async beginExecutionAttempt(metadata) {
       runtimeAttempt = undefined;
       iterationRuntime.clear();
