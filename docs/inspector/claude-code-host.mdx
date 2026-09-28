@@ -69,6 +69,8 @@ else. Stopping a session stops the whole process tree it started, including the
 agent binary. **Stop all local sessions** in the local-execution panel ends
 everything immediately.
 
+**Project secrets on local runs.** Local Claude Code turns support **materialized** project secrets only. Brokered secrets require cloud execution (the egress proxy that injects them is not present on your machine) and are refused before the turn starts. If your environment selects a brokered secret, switch to a cloud run or change the secret's delivery to materialized.
+
 **When it is not offered.** Your platform is not supported,
 the runtime is not installed, you are signed in as a guest, the session is a
 shared scenario or swarm run, or the feature is not enabled for your account.
