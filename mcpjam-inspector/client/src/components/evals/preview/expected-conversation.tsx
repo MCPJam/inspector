@@ -9,7 +9,7 @@
  */
 import { ListChecks } from "lucide-react";
 import {
-  describeToolArgumentsMatchExpectation,
+  describeMatchExpectation,
   type Predicate,
 } from "@mcpjam/sdk/predicates";
 import { Label } from "@mcpjam/design-system/label";
@@ -72,16 +72,21 @@ export function describeCheck(p: Predicate): string {
       return `< ${p.count} calls`;
     case "toolCalledBefore":
       return `${p.toolName || "?"} before ${p.beforeToolName || "?"}`;
-    case "toolArgumentsMatch": {
+    case "toolInputMatches":
+    case "toolResultMatches": {
       // "no matching call", never "never called": the bounds count calls
-      // that match every pattern.
-      const count = describeToolArgumentsMatchExpectation({
-        min: p.min ?? 1,
-        max: p.max,
-      });
+      // (or results) that match every pattern.
+      const isInput = p.type === "toolInputMatches";
+      const count = describeMatchExpectation(
+        { min: p.min ?? 1, max: p.max },
+        isInput ? "call" : "result",
+      );
       const [first = "", ...rest] = p.patterns ?? [];
       const more = rest.length > 0 ? ` +${rest.length}` : "";
-      return `${count} to ${p.toolName || "?"}: /${first || "…"}/${more}`;
+      const source = isInput
+        ? `to ${p.toolName || "?"}`
+        : `from ${p.toolName || "any tool"}`;
+      return `${count} ${source}: /${first || "…"}/${more}`;
     }
     case "noDeprecatedToolCalled":
       return "no deprecated tool";

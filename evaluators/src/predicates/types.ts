@@ -3,14 +3,17 @@ import {
   normalizeCloseToText,
 } from "./response-close-to.js";
 import {
-  MAX_TOOL_ARGUMENT_NAME_CHARS,
-  MAX_TOOL_ARGUMENT_PATTERN_CHARS,
-  MAX_TOOL_ARGUMENT_PATTERNS,
-  TOOL_ARGUMENT_PATTERN_FLAGS,
-  toolArgumentPatternError,
-  toolArgumentsMatchBoundsError,
-  type ToolArgumentPatternFlags,
-} from "./tool-arguments-match.js";
+  MATCH_PATH_PATTERN,
+  MATCH_PATTERN_FLAGS,
+  MAX_MATCH_PATH_CHARS,
+  MAX_MATCH_PATTERN_CHARS,
+  MAX_MATCH_PATTERNS,
+  MIN_MATCH_PATH_CHARS,
+  matchBoundsError,
+  matchPatternError,
+  type MatchPatternFlags,
+  type MatchUnit,
+} from "./pattern-match.js";
 /**
  * State-based predicate system for deterministic eval gating.
  *
@@ -208,16 +211,17 @@ export type Predicate = (
    */
   | { type: "argumentsMatchToolSchema"; toolName?: string }
   /**
-   * A call to `toolName` whose arguments match EVERY pattern in `patterns`
+   * A call to `toolName` whose input matches EVERY pattern in `patterns`
    * occurred at least `min` (default 1) and at most `max` times.
    *
    * ONE CALL, ALL PATTERNS: three labels split across three calls never add
    * up to a match. "Any of these" is alternation inside one pattern (`A|B`).
    * The subject is the whole arguments object as canonical JSON (sorted keys,
-   * no whitespace), or only the top-level `argument` when set — a string
-   * value as it is, anything else as canonical JSON; a call without that key
-   * does not match. Patterns run on re2js (linear time; no lookaround, no
-   * backreferences) with the one shared `flags` set.
+   * no whitespace), or, with `path` (a one-key JSON Pointer, `"/elements"`),
+   * only that argument — a string value as it is, anything else as canonical
+   * JSON; a call without that key does not match. Patterns run on re2js
+   * (linear time; no lookaround, no backreferences) with the one shared
+   * `flags` set.
    *
    * `min` and `max` count MATCHING calls, not all calls. `min: 0, max: 0`
    * means "no call matches" — NOT "the tool was never called", which is
@@ -226,11 +230,37 @@ export type Predicate = (
    * decided is `status: "error"`.
    */
   | {
-      type: "toolArgumentsMatch";
+      type: "toolInputMatches";
       toolName: string;
       patterns: string[];
-      flags?: ToolArgumentPatternFlags;
-      argument?: string;
+      flags?: MatchPatternFlags;
+      path?: string;
+      min?: number;
+      max?: number;
+    }
+  /**
+   * A tool result in scope — every result, or only `toolName`'s — whose
+   * content matches EVERY pattern occurred at least `min` (default 1) and at
+   * most `max` times. The output-side twin of `toolInputMatches`.
+   *
+   * ONE RESULT, ALL PATTERNS. The subject is what `toolResultContains`
+   * searches — the text, then `structuredContent`, then the `json` part, JSON
+   * as canonical JSON — or, with `path`, the value under that key in
+   * `structuredContent` (in `json` when there is no `structuredContent`). A
+   * result without the key does not match. `isError` results count like any
+   * other: an error result is still what the tool returned.
+   *
+   * `min` and `max` count MATCHING results. A result whose text was truncated
+   * for storage, or whose subject is over the budget, is counted neither way;
+   * so are results the capture never recorded. A verdict either could have
+   * decided is `status: "error"`.
+   */
+  | {
+      type: "toolResultMatches";
+      toolName?: string;
+      patterns: string[];
+      flags?: MatchPatternFlags;
+      path?: string;
       min?: number;
       max?: number;
     }
@@ -334,7 +364,7 @@ export const TURN_SCOPABLE_PREDICATE_KINDS = [
   "toolCallCountUnder",
   "toolCalledBefore",
   "noRepeatedIdenticalCall",
-  "toolArgumentsMatch",
+  "toolInputMatches",
 ] as const satisfies readonly PredicateType[];
 
 export function isTurnScopablePredicateKind(kind: string): boolean {
@@ -471,6 +501,70 @@ const checkPolicyShape = {
   role: z.enum(["gating", "advisory", "required"]).optional(),
   severity: z.literal("warn").optional(),
 };
+
+/**
+ * The fields `toolInputMatches` and `toolResultMatches` share, in the order
+ * the generated schemas list them.
+ */
+const patternMatchShape = {
+  // Authored order is kept — it is part of the criterion id.
+  patterns: z
+    .array(z.string().min(1).max(MAX_MATCH_PATTERN_CHARS))
+    .min(1)
+    .max(MAX_MATCH_PATTERNS),
+  flags: z.enum(MATCH_PATTERN_FLAGS).optional(),
+  // A one-key JSON Pointer. The pattern is what the published JSON Schema
+  // carries; `matchPathError` says which part of it an author got wrong.
+  path: z
+    .string()
+    .min(MIN_MATCH_PATH_CHARS)
+    .max(MAX_MATCH_PATH_CHARS)
+    .regex(MATCH_PATH_PATTERN, {
+      message:
+        'path must be a one-key JSON Pointer such as "/elements" ' +
+        '("~1" writes "/" and "~0" writes "~" inside the key)',
+    })
+    .optional(),
+  min: z.number().int().nonnegative().optional(),
+  max: z.number().int().nonnegative().optional(),
+};
+
+/**
+ * The cross-field rules both kinds share. On the variant, not only on
+ * `predicateSchema`, so `predicateUnion` (re-exported as `assertionUnion`)
+ * refuses a pattern re2js cannot compile too. Compiled WITH the flags: the
+ * validity rule is the exact call the evaluator makes.
+ */
+function refinePatternMatch(unit: MatchUnit) {
+  return (
+    value: {
+      patterns: string[];
+      flags?: MatchPatternFlags;
+      min?: number;
+      max?: number;
+    },
+    ctx: z.RefinementCtx
+  ): void => {
+    value.patterns.forEach((pattern, index) => {
+      const error = matchPatternError(pattern, value.flags);
+      if (error !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["patterns", index],
+          message: `pattern does not compile in re2js: ${error}`,
+        });
+      }
+    });
+    const bounds = matchBoundsError(value.min, value.max, unit);
+    if (bounds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [bounds.path],
+        message: bounds.message,
+      });
+    }
+  };
+}
 
 /**
  * The underlying discriminated union. {@link PREDICATE_KINDS} and
@@ -647,43 +741,22 @@ export const predicateUnion = z.discriminatedUnion("type", [
   }),
   z
     .object({
-      type: z.literal("toolArgumentsMatch"),
+      type: z.literal("toolInputMatches"),
       toolName: z.string().min(1),
-      // Authored order is kept — it is part of the criterion id.
-      patterns: z
-        .array(z.string().min(1).max(MAX_TOOL_ARGUMENT_PATTERN_CHARS))
-        .min(1)
-        .max(MAX_TOOL_ARGUMENT_PATTERNS),
-      flags: z.enum(TOOL_ARGUMENT_PATTERN_FLAGS).optional(),
-      argument: z.string().min(1).max(MAX_TOOL_ARGUMENT_NAME_CHARS).optional(),
-      min: z.number().int().nonnegative().optional(),
-      max: z.number().int().nonnegative().optional(),
+      ...patternMatchShape,
       ...checkPolicyShape,
     })
-    // On the variant, not only on `predicateSchema`, so `predicateUnion`
-    // (re-exported as `assertionUnion`) refuses a pattern re2js cannot compile
-    // too. Compiled WITH the flags: the validity rule is the exact call the
-    // evaluator makes.
-    .superRefine((value, ctx) => {
-      value.patterns.forEach((pattern, index) => {
-        const error = toolArgumentPatternError(pattern, value.flags);
-        if (error !== undefined) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["patterns", index],
-            message: `pattern does not compile in re2js: ${error}`,
-          });
-        }
-      });
-      const bounds = toolArgumentsMatchBoundsError(value.min, value.max);
-      if (bounds) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [bounds.path],
-          message: bounds.message,
-        });
-      }
-    }),
+    .superRefine(refinePatternMatch("call")),
+  z
+    .object({
+      type: z.literal("toolResultMatches"),
+      // Omitted = every tool's results, the same scope `toolResultContains`
+      // reads.
+      toolName: z.string().min(1).optional(),
+      ...patternMatchShape,
+      ...checkPolicyShape,
+    })
+    .superRefine(refinePatternMatch("result")),
   z.object({
     type: z.literal("noRepeatedIdenticalCall"),
     toolName: z.string().min(1).optional(),

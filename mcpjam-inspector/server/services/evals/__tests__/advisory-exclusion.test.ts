@@ -121,13 +121,23 @@ const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
   "onlyToolsCalled — an allow-list of tools": "onlyToolsCalled-ef1d9ea3488c",
   "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)":
     "onlyToolsCalled-01ce35d01165",
-  "toolArgumentsMatch — single pattern": "toolArgumentsMatch-6a4b2c612f4e",
-  "toolArgumentsMatch — three patterns in one argument, ignore case, bounds":
-    "toolArgumentsMatch-120662b8eec1",
-  "toolArgumentsMatch — min 0 max 0 (no call matches)":
-    "toolArgumentsMatch-f943c206a561",
-  "toolArgumentsMatch — named group (translated to re2 syntax)":
-    "toolArgumentsMatch-f4e064696aeb",
+  "toolInputMatches — single pattern": "toolInputMatches-77b720b42075",
+  "toolInputMatches — three patterns at one path, ignore case, bounds":
+    "toolInputMatches-6a756f142cdb",
+  "toolInputMatches — min 0 max 0 (no call matches)":
+    "toolInputMatches-5bb002881dc7",
+  "toolInputMatches — named group (translated to re2 syntax)":
+    "toolInputMatches-f9901e62fb94",
+  "toolInputMatches — path with ~1 and ~0 escapes (the key a/b~c)":
+    "toolInputMatches-5a6a42505f61",
+  "toolInputMatches — path at the 257-character limit":
+    "toolInputMatches-a0be126da34d",
+  "toolResultMatches — no toolName (every tool's results)":
+    "toolResultMatches-f1b17737c48d",
+  "toolResultMatches — toolName, path, three patterns, ignore case":
+    "toolResultMatches-503813976c5e",
+  "toolResultMatches — min 0 max 0 (no result matches)":
+    "toolResultMatches-5e1c44332a63",
 };
 
 function hostedBase() {

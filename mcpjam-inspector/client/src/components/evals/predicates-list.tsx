@@ -3,7 +3,7 @@ import { checkRole } from "@mcpjam/sdk/predicates";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import {
   PREDICATE_KIND_LABELS,
-  describeToolArgumentsMatch,
+  describePatternMatch,
   isKnownPredicateKind,
   labelForInlineAssert,
 } from "@/shared/predicate-kinds";
@@ -397,9 +397,10 @@ export function summarizePredicate(predicate: Predicate): string {
       case "toolCalledBefore":
         return `"${predicate.toolName}" before "${predicate.beforeToolName}"`;
       // Counting-exact, like the reason beside it: the bounds count calls
-      // that match every pattern, never all calls.
-      case "toolArgumentsMatch":
-        return describeToolArgumentsMatch(predicate) ?? "";
+      // (or results) that match every pattern, never all of them.
+      case "toolInputMatches":
+      case "toolResultMatches":
+        return describePatternMatch(predicate) ?? "";
       case "noDeprecatedToolCalled":
         return "no tool marked deprecated was called";
       case "noDestructiveToolCalled":

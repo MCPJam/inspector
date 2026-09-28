@@ -72,16 +72,22 @@ export {
   isObservationPredicateKind,
 } from "./types.js";
 export {
-  MAX_TOOL_ARGUMENT_PATTERNS,
-  MAX_TOOL_ARGUMENT_PATTERN_CHARS,
-  MAX_TOOL_ARGUMENT_NAME_CHARS,
-  MAX_TOOL_ARGUMENT_SUBJECT_CHARS,
-  TOOL_ARGUMENT_PATTERN_FLAGS,
-  toolArgumentPatternError,
-  toolArgumentsMatchBoundsError,
-  describeExpectation as describeToolArgumentsMatchExpectation,
-  type ToolArgumentPatternFlags,
-} from "./tool-arguments-match.js";
+  MAX_MATCH_PATTERNS,
+  MAX_MATCH_PATTERN_CHARS,
+  MIN_MATCH_PATH_CHARS,
+  MAX_MATCH_PATH_CHARS,
+  MAX_MATCH_SUBJECT_CHARS,
+  MATCH_PATH_PATTERN,
+  MATCH_PATTERN_FLAGS,
+  matchPatternError,
+  matchBoundsError,
+  matchPathError,
+  parseMatchPath,
+  matchPathFromKey,
+  describeMatchExpectation,
+  type MatchPatternFlags,
+  type MatchUnit,
+} from "./pattern-match.js";
 export {
   CHECK_POLICY_KEYS,
   stripCheckPolicy,

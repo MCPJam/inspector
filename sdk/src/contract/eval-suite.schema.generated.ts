@@ -1176,7 +1176,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   properties: {
                                     type: {
                                       type: "string",
-                                      const: "toolArgumentsMatch",
+                                      const: "toolInputMatches",
                                     },
                                     toolName: { type: "string", minLength: 1 },
                                     patterns: {
@@ -1201,10 +1201,11 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                         "ims",
                                       ],
                                     },
-                                    argument: {
+                                    path: {
                                       type: "string",
-                                      minLength: 1,
-                                      maxLength: 256,
+                                      minLength: 2,
+                                      maxLength: 257,
+                                      pattern: "^\\/(?:[^/~]|~[01])+$",
                                     },
                                     min: {
                                       type: "integer",
@@ -1223,6 +1224,60 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                     severity: { type: "string", const: "warn" },
                                   },
                                   required: ["type", "toolName", "patterns"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolResultMatches",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    patterns: {
+                                      minItems: 1,
+                                      maxItems: 8,
+                                      type: "array",
+                                      items: {
+                                        type: "string",
+                                        minLength: 1,
+                                        maxLength: 512,
+                                      },
+                                    },
+                                    flags: {
+                                      type: "string",
+                                      enum: [
+                                        "i",
+                                        "m",
+                                        "s",
+                                        "im",
+                                        "is",
+                                        "ms",
+                                        "ims",
+                                      ],
+                                    },
+                                    path: {
+                                      type: "string",
+                                      minLength: 2,
+                                      maxLength: 257,
+                                      pattern: "^\\/(?:[^/~]|~[01])+$",
+                                    },
+                                    min: {
+                                      type: "integer",
+                                      minimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    max: {
+                                      type: "integer",
+                                      minimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory", "required"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "patterns"],
                                 },
                                 {
                                   type: "object",
@@ -1791,7 +1846,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                 {
                   type: "object",
                   properties: {
-                    type: { type: "string", const: "toolArgumentsMatch" },
+                    type: { type: "string", const: "toolInputMatches" },
                     toolName: { type: "string", minLength: 1 },
                     patterns: {
                       minItems: 1,
@@ -1803,7 +1858,12 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       type: "string",
                       enum: ["i", "m", "s", "im", "is", "ms", "ims"],
                     },
-                    argument: { type: "string", minLength: 1, maxLength: 256 },
+                    path: {
+                      type: "string",
+                      minLength: 2,
+                      maxLength: 257,
+                      pattern: "^\\/(?:[^/~]|~[01])+$",
+                    },
                     min: {
                       type: "integer",
                       minimum: 0,
@@ -1821,6 +1881,45 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName", "patterns"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultMatches" },
+                    toolName: { type: "string", minLength: 1 },
+                    patterns: {
+                      minItems: 1,
+                      maxItems: 8,
+                      type: "array",
+                      items: { type: "string", minLength: 1, maxLength: 512 },
+                    },
+                    flags: {
+                      type: "string",
+                      enum: ["i", "m", "s", "im", "is", "ms", "ims"],
+                    },
+                    path: {
+                      type: "string",
+                      minLength: 2,
+                      maxLength: 257,
+                      pattern: "^\\/(?:[^/~]|~[01])+$",
+                    },
+                    min: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    max: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "patterns"],
                 },
                 {
                   type: "object",
@@ -2370,7 +2469,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                 {
                   type: "object",
                   properties: {
-                    type: { type: "string", const: "toolArgumentsMatch" },
+                    type: { type: "string", const: "toolInputMatches" },
                     toolName: { type: "string", minLength: 1 },
                     patterns: {
                       minItems: 1,
@@ -2382,7 +2481,12 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       type: "string",
                       enum: ["i", "m", "s", "im", "is", "ms", "ims"],
                     },
-                    argument: { type: "string", minLength: 1, maxLength: 256 },
+                    path: {
+                      type: "string",
+                      minLength: 2,
+                      maxLength: 257,
+                      pattern: "^\\/(?:[^/~]|~[01])+$",
+                    },
                     min: {
                       type: "integer",
                       minimum: 0,
@@ -2400,6 +2504,45 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName", "patterns"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultMatches" },
+                    toolName: { type: "string", minLength: 1 },
+                    patterns: {
+                      minItems: 1,
+                      maxItems: 8,
+                      type: "array",
+                      items: { type: "string", minLength: 1, maxLength: 512 },
+                    },
+                    flags: {
+                      type: "string",
+                      enum: ["i", "m", "s", "im", "is", "ms", "ims"],
+                    },
+                    path: {
+                      type: "string",
+                      minLength: 2,
+                      maxLength: 257,
+                      pattern: "^\\/(?:[^/~]|~[01])+$",
+                    },
+                    min: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    max: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "patterns"],
                 },
                 {
                   type: "object",

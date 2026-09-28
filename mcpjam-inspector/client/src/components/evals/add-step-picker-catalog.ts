@@ -286,13 +286,13 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     choice: { kind: "check", predicateKind: "toolCalledBefore" },
   },
   {
-    key: "check:toolArgumentsMatch",
+    key: "check:toolInputMatches",
     group: "transcriptMore",
     tier: "secondary",
-    label: labelForInlineAssert("toolArgumentsMatch"),
+    label: labelForInlineAssert("toolInputMatches"),
     hint: "Every pattern, within one call",
     keywords: ["args", "arguments", "regex", "pattern", "input", "contains"],
-    choice: { kind: "check", predicateKind: "toolArgumentsMatch" },
+    choice: { kind: "check", predicateKind: "toolInputMatches" },
   },
 ];
 
