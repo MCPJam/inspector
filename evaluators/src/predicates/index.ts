@@ -72,6 +72,17 @@ export {
   isObservationPredicateKind,
 } from "./types.js";
 export {
+  MAX_TOOL_ARGUMENT_PATTERNS,
+  MAX_TOOL_ARGUMENT_PATTERN_CHARS,
+  MAX_TOOL_ARGUMENT_NAME_CHARS,
+  MAX_TOOL_ARGUMENT_SUBJECT_CHARS,
+  TOOL_ARGUMENT_PATTERN_FLAGS,
+  toolArgumentPatternError,
+  toolArgumentsMatchBoundsError,
+  describeExpectation as describeToolArgumentsMatchExpectation,
+  type ToolArgumentPatternFlags,
+} from "./tool-arguments-match.js";
+export {
   CHECK_POLICY_KEYS,
   stripCheckPolicy,
   checkRole,
