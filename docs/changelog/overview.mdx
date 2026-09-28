@@ -9,6 +9,32 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-28 (3.12.2)
+
+#### Added
+
+- **Execution provenance on every result** — eval iterations (and their scorecard), swarm sessions, and chat turns now show a **Ran on \<model\> via \<rail/connection\>** line with harness version, effort, temperature, and max output. A visible deviation banner appears when the actual execution differed from what was configured. Rows recorded before this change show nothing rather than a guess; the CLI's `mcpjam cloud eval run --wait` prints the same line per iteration.
+
+- **Swarm sessions that never ran now say so explicitly** — every surface that shows a swarm session whose attempt ended before it recorded a single message now says so explicitly instead of showing an empty or ambiguous state. Sessions detail says **This session didn't run** with the recorded refusal; the Sessions list and Findings drawer show a **Didn't run** tag; the Findings summary names the most common refusal reason; Insights shows **These sessions didn't run** when every session in a wave never ran.
+
+- **Local connection queue across Inspector tabs and windows** — a ten-attempt connection queue is now shared across local Inspector browser tabs and desktop windows. The queue preserves saved card order, supports manual priority and cancellation, and recovers automatically after an interruption.
+
+#### Changed
+
+- **Eval suites require a server group** — eval surfaces no longer create environments without a server group. The "Where it runs" panel gains a server-group picker; new clients and models take the picked group. The run dialog blocks **Start** when the target has no server group. The `/evals` create dialog seeds and requires a server group. `--compose-host-servers` (CLI) and `compose.hostServers` (SDK/MCP) are rejected for eval runs with an error pointing to `--compose-server` / `--compose-server-group`.
+
+- **GitHub PR checks run every environment of a multi-environment suite** — the check worker now reads the run set frozen on the check plan and launches one run per environment against the PR's temporary server. The check passes only when all runs pass. A binding refusal or a run that fails before its verdict settles the remaining runs so none is left running; a retried check reuses runs that already finished.
+
+#### Fixed
+
+- **OAuth debugger no longer reports a server's own bad probe reply as an MCPJam error** — a 500, 404, or bare 403 from the MCP server's first no-token request is no longer surfaced as an MCPJam error. The message still appears on screen.
+
+- **Provider not allowlisted error** — when a model's provider is not enabled on MCPJam's hosted gateway, chat and swarm sessions now say the provider is not enabled, that retrying or changing your API key will not help, and suggest another model or your own provider key. Previously this mapped to a generic auth error.
+
+- **Desktop update downloads retry automatically** — failed desktop update downloads now retry automatically, pause deadlines during sleep and offline periods, and offer **Retry download** or **Relaunch** actions. **Relaunch to update** only appears after the download is ready.
+
+- **Swarm session metric strip scoped to the run** — the session metrics strip on a run's Sessions tab now passes the wave's run IDs to the query so session count, tool error rate, latency, and token tiles describe the run you are looking at, not the whole project.
+
 ### 2026-09-26
 
 #### Changed
