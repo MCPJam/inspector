@@ -92,7 +92,10 @@ export type {
   ResolvedMcpToolResultImageRenderingPolicy,
   ToolExposureSignals,
 } from "./host-policy.js";
-export { hostConnectionProfile } from "./host-connection.js";
+export {
+  applyHostConnectionProfile,
+  hostConnectionProfile,
+} from "./host-connection.js";
 export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,

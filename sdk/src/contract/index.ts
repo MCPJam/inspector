@@ -1147,6 +1147,11 @@ export {
 } from "./scorer-rollup.js";
 
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
+export {
+  buildStageAuthoredCase,
+  type StageCaseSource,
+  type StageTurnSource,
+} from "./stage-authored-case.js";
 
 export {
   EXECUTION_BUDGET_CEILINGS,
