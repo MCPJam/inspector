@@ -107,9 +107,7 @@ describe("FirstRunOnboardingOverlay", () => {
       true,
     );
 
-    expect(
-      screen.getByText("Guest session limit reached"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Guest session limit reached")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Try the Excalidraw demo server" }),
@@ -540,13 +538,18 @@ describe("FirstRunOnboardingOverlay", () => {
 
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit server details" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
     rerenderWithConnectionState({ status: "idle" });
 
-    expect(screen.getByRole("combobox", { name: "Authentication" }))
-      .toHaveTextContent("Bearer Token");
+    expect(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    ).toHaveTextContent("Bearer Token");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    expect(screen.getByText("Enter a bearer token to continue.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Enter a bearer token to continue."),
+    ).toBeInTheDocument();
     expect(onConnectOwnServer).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
@@ -585,17 +588,23 @@ describe("FirstRunOnboardingOverlay", () => {
       serverKind: "personal",
       error: "Connection refused",
     });
-    expect(screen.getByRole("combobox", { name: "Authentication" }))
-      .toHaveTextContent("Bearer Token");
+    expect(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    ).toHaveTextContent("Bearer Token");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    expect(screen.getByText("Enter a bearer token to continue.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Enter a bearer token to continue."),
+    ).toBeInTheDocument();
     expect(onConnectOwnServer).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
-      expect.objectContaining({ authentication: "bearer", bearerToken: "secret-token" }),
+      expect.objectContaining({
+        authentication: "bearer",
+        bearerToken: "secret-token",
+      }),
     );
   });
 
@@ -617,18 +626,115 @@ describe("FirstRunOnboardingOverlay", () => {
         oauthScopes: ["read", "write"],
       },
     );
-    await userEvent.click(screen.getByRole("button", { name: "Advanced Settings" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Advanced Settings" }),
+    );
     expect(screen.getByPlaceholderText("Your OAuth Client ID")).toHaveValue(
       "custom-client",
     );
-    expect(screen.getByPlaceholderText("Optional scopes separated by spaces"))
-      .toHaveValue("read write");
+    expect(
+      screen.getByPlaceholderText("Optional scopes separated by spaces"),
+    ).toHaveValue("read write");
     fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "custom-client",
         oauthScopes: ["read", "write"],
       }),
+    );
+  });
+
+  it("clears hidden preregistered credentials when details switch to automatic registration", async () => {
+    const { onConnectOwnServer } = renderOverlay(
+      {
+        status: "failed",
+        serverName: "Secure",
+        serverKind: "personal",
+        error: "Connection refused",
+      },
+      true,
+    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
+    });
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "OAuth" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Advanced Settings" }),
+    );
+    const registrationSelect = screen
+      .getByText("Registration Strategy")
+      .parentElement?.querySelector('[role="combobox"]');
+    expect(registrationSelect).not.toBeNull();
+    await userEvent.click(registrationSelect!);
+    await userEvent.click(
+      screen.getByRole("option", { name: /Preregistration/ }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
+      target: { value: "old-client" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client Secret"), {
+      target: { value: "old-secret" },
+    });
+    await userEvent.click(registrationSelect!);
+    await userEvent.click(screen.getByRole("option", { name: "Automatic" }));
+    expect(
+      screen.queryByPlaceholderText("Your OAuth Client ID"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authentication: "oauth",
+        registrationMode: "auto",
+        clientId: "",
+        clientSecret: undefined,
+        clearClientSecret: true,
+      }),
+    );
+  });
+
+  it("requires a valid client ID before connecting with preregistered OAuth", async () => {
+    const { onConnectOwnServer } = renderOverlay(
+      {
+        status: "failed",
+        serverName: "Secure",
+        serverKind: "personal",
+        error: "Connection refused",
+      },
+      true,
+    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
+    });
+    await userEvent.click(screen.getByRole("combobox", { name: "Authentication" }));
+    await userEvent.click(screen.getByRole("option", { name: "OAuth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Advanced Settings" }));
+    const registrationSelect = screen
+      .getByText("Registration Strategy")
+      .parentElement?.querySelector('[role="combobox"]');
+    await userEvent.click(registrationSelect!);
+    await userEvent.click(screen.getByRole("option", { name: /Preregistration/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(screen.getByText("Client ID is required when using custom credentials")).toBeVisible();
+    expect(onConnectOwnServer).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
+      target: { value: "ab" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(screen.getByText("Client ID must be at least 3 characters")).toBeVisible();
+    expect(onConnectOwnServer).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
+      target: { value: "abc" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith(
+      expect.objectContaining({ authentication: "oauth", clientId: "abc" }),
     );
   });
 
@@ -811,13 +917,18 @@ describe("FirstRunOnboardingOverlay", () => {
       },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit server details" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
     rerenderWithConnectionState({ status: "idle" });
-    expect(screen.getByRole("combobox", { name: "Authentication" }))
-      .toHaveTextContent("Cross-App Access (XAA)");
-    expect(screen.getByPlaceholderText(
-      "Client ID registered with the server's authorization server",
-    )).toHaveValue("client-123");
+    expect(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    ).toHaveTextContent("Cross-App Access (XAA)");
+    expect(
+      screen.getByPlaceholderText(
+        "Client ID registered with the server's authorization server",
+      ),
+    ).toHaveValue("client-123");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -898,11 +1009,17 @@ describe("FirstRunOnboardingOverlay", () => {
       error: "Connection refused",
     });
 
-    await userEvent.click(screen.getByRole("combobox", { name: "Authentication" }));
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    );
     expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "OAuth" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "No Authentication" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Bearer Token" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "No Authentication" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Bearer Token" }),
+    ).toBeInTheDocument();
   });
 
   it("signals when the hydrated OAuth return modal is ready", () => {

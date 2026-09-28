@@ -3838,6 +3838,58 @@ describe("useServerState auth mode regressions", () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
+  it("persists authorization edits before starting Auto's OAuth redirect", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        {
+          requestOAuthAuthorization: vi.fn().mockResolvedValue({
+            oauthProtocolMode: "2025-06-18",
+            registrationMode: "preregistered",
+            clientId: "test-client-id",
+            oauthScopes: ["read", "write"],
+          }),
+        },
+      );
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "UPSERT_SERVER",
+        name: "auto-server",
+        server: expect.objectContaining({
+          oauthProtocolMode: "2025-06-18",
+          registrationMode: "preregistered",
+          oauthFlowProfile: expect.objectContaining({
+            clientId: "test-client-id",
+            scopes: "read,write",
+          }),
+        }),
+      }),
+    );
+    expect(JSON.parse(localStorage.getItem("mcp-oauth-config-auto-server") ?? "{}")).toMatchObject({
+      protocolMode: "2025-06-18",
+      registrationMode: "preregistered",
+      scopes: ["read", "write"],
+    });
+  });
+
   it("dispatches explicit non-OAuth success when updating an OAuth server to direct auth", async () => {
     const { deleteServer } = await import("@/state/mcp-api");
     vi.mocked(deleteServer).mockResolvedValue({ success: true } as any);

@@ -3686,6 +3686,9 @@ export default function App() {
         draft.authentication === "bearer" && draft.bearerToken?.trim()
           ? `Bearer ${draft.bearerToken.trim()}`
           : undefined;
+      const clearSavedBearer =
+        draft.authentication !== "bearer" &&
+        savedServer?.hasBearerToken === true;
       const formData: ServerFormData = {
         name: effectiveServerName,
         type: draft.transport,
@@ -3704,6 +3707,7 @@ export default function App() {
         oauthScopes: draft.oauthScopes,
         clientId: draft.clientId,
         clientSecret: draft.clientSecret,
+        clearClientSecret: draft.clearClientSecret,
         oauthAllowPathScopedIssuer: draft.oauthAllowPathScopedIssuer,
         xaaClientAuth: draft.xaaClientAuth,
         xaaAuthzIssuer: draft.xaaAuthzIssuer,
@@ -3718,6 +3722,8 @@ export default function App() {
                 headers: { Authorization: authorizationHeader },
               },
             }
+          : clearSavedBearer
+          ? { secretPatch: { headers: {} } }
           : {}),
       };
       const validationError =
