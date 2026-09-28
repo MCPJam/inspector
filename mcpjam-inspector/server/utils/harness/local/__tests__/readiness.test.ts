@@ -18,7 +18,7 @@ vi.mock("../grants.js", () => ({
 }));
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
-import { ensureLocalHarnessTarget } from "../readiness.js";
+import { ensureLocalHarnessTarget, localHarnessAccountEnabled } from "../readiness.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -63,4 +63,13 @@ it("refuses rollout removal before issuing a grant", async () => {
   mocks.rollout.mockResolvedValue(false);
   await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/not available/);
   expect(mocks.grant).not.toHaveBeenCalled();
+});
+
+it("preserves local intent on rollout or verification failure after authorization", async () => {
+  mocks.rollout.mockResolvedValue(false);
+  await expect(localHarnessAccountEnabled("session", "project")).rejects.toThrow(/could not be verified/);
+  mocks.query.mockRejectedValue(new Error("backend offline"));
+  await expect(localHarnessAccountEnabled("session", "project")).rejects.toThrow("backend offline");
+  mocks.authorization.mockResolvedValue(null);
+  await expect(localHarnessAccountEnabled("session", "new-project")).resolves.toBe(false);
 });

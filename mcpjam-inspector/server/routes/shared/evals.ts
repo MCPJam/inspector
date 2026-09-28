@@ -2561,6 +2561,7 @@ export async function prepareEvalRun(
 
   const {
     runId,
+    harnessRuntimeVenue,
     config,
     recorder,
     deduped: runWasDeduped,
@@ -2723,7 +2724,7 @@ export async function prepareEvalRun(
   // their first line when no harness is selected, which is exactly the runs
   // this rule is about.
   const executionAdmission = checkEvalExecutionAdmission({
-    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, projectIdForOrgConfig ?? undefined),
+    localExecution: harnessRuntimeVenue === "local",
     hostConfig: suiteHostConfig ?? null,
     pinnedComputerImageId:
       (config.environment as { computerEnvironmentId?: string } | undefined)
@@ -2753,7 +2754,7 @@ export async function prepareEvalRun(
   // throw and strand it running forever. Same cleanup the setup phase below
   // performs, for the same reason.
   const harnessAdmission = checkEvalHarnessAdmission({
-    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, projectIdForOrgConfig ?? undefined),
+    localExecution: harnessRuntimeVenue === "local",
     hostConfig: suiteHostConfig ?? null,
     // Already includes the servers the environment's pinned plugin versions
     // contribute (`environmentServerIds` projects the effective set), so the
@@ -2796,7 +2797,7 @@ export async function prepareEvalRun(
   // mints that token (it enforces in-process), and the refusal reads its
   // delivery off the adapter rather than off a bare "is a harness" boolean.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
-    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, projectId ?? undefined),
+    localExecution: harnessRuntimeVenue === "local",
     hasToolPolicy: Boolean(toolPolicy),
     harness: harnessAdmission.harness,
   });
@@ -3046,6 +3047,7 @@ export async function prepareEvalRun(
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
+      harnessRuntimeVenue,
       // The run's PROJECT ENVIRONMENT — the same id echoed to
       // `startSuiteRunWithRecorder` above, so it is exactly what the run's
       // `configSnapshot.environmentRef` records and therefore exactly what
@@ -3227,6 +3229,7 @@ function environmentRuntimeEnvironment(
 
 /** Everything a single-case run needs, decided before anything executes. */
 export type PreparedSingleCaseExecution = {
+  harnessRuntimeVenue: "local" | "hosted";
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   testCase: any;
@@ -3394,11 +3397,12 @@ export async function prepareSingleCaseExecution(
     ? undefined
     : (hostConfigOverride as Record<string, unknown> | undefined);
   const effectiveHostConfig = legacyHostConfigOverride ?? liveHostConfig;
+  const harnessRuntimeVenue = await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, projectId ?? undefined) ? "local" : "hosted";
   // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
   // path); refused only where this deployment cannot seal the policy into the
   // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
-    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, projectId ?? undefined),
+    localExecution: harnessRuntimeVenue === "local",
     hasToolPolicy: Boolean(toolPolicy),
     harness: harnessOfHostConfig(effectiveHostConfig),
   });
@@ -3419,7 +3423,7 @@ export async function prepareSingleCaseExecution(
   // running the case inside a suite rather than at pinning an image, which
   // would change nothing here. Before the commit, so a refusal writes nothing.
   const singleCaseAdmission = checkEvalExecutionAdmission({
-    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, projectId ?? undefined),
+    localExecution: harnessRuntimeVenue === "local",
     hostConfig: effectiveHostConfig ?? null,
     surface: "single-case",
   });
@@ -3548,6 +3552,7 @@ export async function prepareSingleCaseExecution(
     resolvedServerIds,
     runtimeEnvironment,
     suiteHostConfig,
+    harnessRuntimeVenue,
     suiteHostPolicy: extractHostExecutionPolicy(
       suiteHostConfig,
       executionHostId,
@@ -3666,6 +3671,7 @@ export async function runEvalTestCaseWithManager(
       hostExecutionPolicy: prepared.suiteHostPolicy,
       // PR 4d: see comment on the suite-run wire-up site above.
       suiteHostConfig: prepared.suiteHostConfig,
+      harnessRuntimeVenue: prepared.harnessRuntimeVenue,
       ...(toolPolicy ? { toolPolicy } : {}),
       ...environmentExecutionOptions(prepared),
     });
@@ -4167,6 +4173,7 @@ export async function streamEvalTestCaseWithManager(
           // `resolveExecutionContext`. PR 5 will reduce these runners
           // further; the threading still applies in the meantime.
           suiteHostConfig,
+          harnessRuntimeVenue: prepared.harnessRuntimeVenue,
           ...(toolPolicy ? { toolPolicy } : {}),
           toolSignals: streamToolSignals,
           environment: runtimeEnvironment,

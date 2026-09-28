@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 /**
  * The environment a supervised local harness child is given.
  *
@@ -144,6 +145,7 @@ const SCOPED_NAME_DENYLIST = new Set([
   "LOCALAPPDATA",
   "PWD",
   "MCPJAM_LOCAL_CONTROL_ROOT",
+  "MCPJAM_LOCAL_DENIED_ROOTS",
   // Names the shell the vendor CLI runs commands through. A scoped override
   // would point it at any executable; the provider sets it from a path it
   // has verified exists.
@@ -180,6 +182,20 @@ export function buildLocalHarnessEnv(
   env.HOME = opts.syntheticHome;
   env.PWD = opts.sessionRoot;
   env.MCPJAM_LOCAL_CONTROL_ROOT = path.dirname(path.dirname(opts.syntheticHome)).replace(/-sessions$/, "");
+  const deniedRoots: string[] = [];
+  const controlRoot = env.MCPJAM_LOCAL_CONTROL_ROOT;
+  // Deny other sessions/workspaces, preserving this session's skill home and
+  // working folder. These file-tool rules are defense in depth, not a sandbox.
+  for (const parent of [`${controlRoot}-sessions`, path.join(path.dirname(controlRoot), "harness-workspaces"), path.join(path.dirname(controlRoot), "harness-workspaces", "scratch")]) {
+    try {
+      for (const entry of readdirSync(parent, { withFileTypes: true })) {
+        const root = path.join(parent, entry.name);
+        if (entry.isDirectory() && ![opts.syntheticHome, opts.sessionRoot].some(active => active === root || active.startsWith(root + path.sep))) deniedRoots.push(root);
+      }
+    } catch { /* A new installation may not have any sibling sessions. */ }
+  }
+  env.MCPJAM_LOCAL_DENIED_ROOTS = JSON.stringify(deniedRoots);
+
   // Vendor CLIs write caches and temp files; point every conventional variable
   // at the session's own disposable state so nothing lands in the user's real
   // config and everything is removed with the session.

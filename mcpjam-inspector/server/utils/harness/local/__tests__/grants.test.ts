@@ -95,6 +95,25 @@ describe("workspace grants", () => {
     ).resolves.toEqual({ ok: true, canonicalPath: workspace });
   });
 
+  it("refuses MCPJam trust directories but allows managed run workspaces", async () => {
+    const trust = join(base, ".mcpjam", "harness-local");
+    const managed = join(base, ".mcpjam", "harness-workspaces", "run-1");
+    await mkdir(trust, { recursive: true });
+    await mkdir(managed, { recursive: true });
+    expect((await registerWorkspaceGrant(trust)).ok).toBe(false);
+    expect((await registerWorkspaceGrant(managed)).ok).toBe(true);
+  });
+
+  it("revalidates persisted paths if a grant is tampered to point at HOME", async () => {
+    const registered = await registerWorkspaceGrant(workspace);
+    if (!registered.ok) throw new Error("fixture registration failed");
+    const path = join(base, ".mcpjam", "harness-local", "grants.json");
+    const state = JSON.parse(await readFile(path, "utf8"));
+    state.workspaces[0].canonicalPath = base;
+    await writeFile(path, JSON.stringify(state));
+    expect((await resolveWorkspaceGrant(registered.grant.workspaceGrantId)).ok).toBe(false);
+  });
+
   it("refuses an unknown id", async () => {
     await expect(resolveWorkspaceGrant("ws_nope")).resolves.toMatchObject({
       ok: false,

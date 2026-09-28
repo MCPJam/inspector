@@ -469,7 +469,7 @@ export async function revokeHarnessModelBroker(args: {
         ...(args.computerId ? { computerId: args.computerId } : {}),
         runId: args.runId,
       }),
-      signal: args.signal,
+      signal: args.signal ? AbortSignal.any([args.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     });
     const payload: any = await response.json().catch(() => null);
     if (!response.ok || payload?.ok !== true) {

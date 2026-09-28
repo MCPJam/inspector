@@ -201,7 +201,7 @@ function classify(response: EvidenceTransportResponse): WriteAttempt<true> {
   // permanent turns one throttled attempt into a refused tool call (start)
   // or a falsely incomplete turn (settle).
   if (response.status === 429 || response.status === 408) {
-    return { status: "retryable", reason };
+    return { status: "retryable", reason, ...(typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0 ? { retryAfterMs: body.retryAfterMs } : {}) };
   }
   // Any other 4xx the backend did not label is a request this client built
   // wrong; repeating it verbatim will not fix it.

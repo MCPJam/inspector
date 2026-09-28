@@ -277,7 +277,7 @@ export async function launchJourneyRun(
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
   const localEnabled = Boolean(input.waveId) && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
-  if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended" });
+  if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false });
   const localActorResult = localEnabled
     ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
     : undefined;

@@ -118,11 +118,18 @@ export async function localHarnessAccountEnabled(bearer: string | undefined, pro
   if (!bearer || HOSTED_MODE || !LOCAL_HARNESS_ENABLED) return false;
   const actor = await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}`, contextCredential: null });
   if (!actor.ok) return false;
+  const authorized = projectId
+    ? await readLocalHarnessAuthorization(actor.actor.userId, await getLocalMachineId(), projectId)
+    : null;
+  if (projectId && !authorized) return false;
   try {
     const client = localHarnessBackend(bearer);
     const user = await client.query("users:getCurrentUser" as never, {}) as { email?: string } | null;
-    if (!(await evaluateLocalHarnessRollout(actor.actor.subject, user?.email))) return false;
-    if (!projectId) return true;
-    return Boolean(await readLocalHarnessAuthorization(actor.actor.userId, await getLocalMachineId(), projectId));
-  } catch { return false; }
+    const enabled = await evaluateLocalHarnessRollout(actor.actor.subject, user?.email);
+    if (authorized && !enabled) throw new Error("Local Claude Code authorization could not be verified. Retry when access is available.");
+    return enabled;
+  } catch (error) {
+    if (authorized) throw error;
+    return false;
+  }
 }

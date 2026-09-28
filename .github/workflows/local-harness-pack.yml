@@ -118,7 +118,7 @@ jobs:
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - name: Set up pnpm
-        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
@@ -199,8 +199,8 @@ jobs:
         # vcs.revision into the binary, and the binary is inside the pack's
         # tree digest — so the digest changed on every commit to main, and the
         # committed table was one SHA stale by construction (that is why the
-        # 3.3.6 table was unshipped). The Go toolchain is pinned above; the runner
-        # image's; a bump there changes the binary too, and the table with it.
+        # 3.3.6 table was unshipped). The pinned Go toolchain above is part
+        # of the reviewed pack input fingerprint.
         run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
       # A release that publishes unsigned packs publishes packs no Inspector
@@ -375,8 +375,20 @@ jobs:
         run: |
           set -euo pipefail
           tag="local-harness-pack-v$PACK_VERSION"
+          # This job has contents:write and can see unpublished drafts.
+          if gh api "repos/$GH_REPO/releases" --paginate --jq '.[].tag_name' | grep -Fx "$tag"; then
+            echo "A release or draft already exists for $tag; choose a new version." >&2
+            exit 1
+          fi
           # No upload --clobber or release-edit retry: an existing version is never replaced.
           gh release create "$tag" packs/local-harness-pack-* \
             --target "$PACK_SHA" --title "Local harness pack $PACK_VERSION" \
             --notes "Signed local Claude Code runtime for Node and Electron." --draft --latest=false
           gh release edit "$tag" --draft=false --latest=false
+
+  published-conformance:
+    needs: publish
+    if: ${{ inputs.enforce_committed_digests }}
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ inputs.pack_version }}

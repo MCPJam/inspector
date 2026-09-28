@@ -12,6 +12,12 @@ name: Local harness conformance
 on:
   push:
     branches: [main]
+    paths:
+      - "mcpjam-inspector/server/utils/harness/**"
+      - "mcpjam-inspector/scripts/*local-harness*"
+      - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
+      - ".github/workflows/local-harness-*.yml"
+      - "package-lock.json"
   workflow_call:
     inputs:
       published_pack_version:
@@ -50,6 +56,10 @@ on:
       # anywhere before it merged.
       - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - ".github/workflows/local-harness-conformance.yml"
+
+concurrency:
+  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -362,7 +372,7 @@ jobs:
           curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
           expected=$(awk -v name="$archive" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
           test -n "$expected"
-          actual=$(sha256sum "$RUNNER_TEMP/node-runtime.zip" | awk '{print $1}')
+          actual=$(sha256sum < "$RUNNER_TEMP/node-runtime.zip" | awk '{print $1}')
           test "$actual" = "$expected"
 
       - name: Prepare the pinned published pack
@@ -483,4 +493,11 @@ jobs:
       # evidence, so a recorded conformance version can always be traced back to
       # the scenarios that justified it.
       - id: stamp
-        run: echo "version=local-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+        env:
+          PUBLISHED_PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: |
+          if [ -n "$PUBLISHED_PACK_VERSION" ]; then
+            echo "version=published-${PUBLISHED_PACK_VERSION}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=local-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi

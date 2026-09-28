@@ -149,8 +149,12 @@ const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
         ...(process.env.MCPJAM_LOCAL_CONTROL_ROOT ? { permissions: {
           ...(permissionOptions.settings?.permissions ?? {}),
           deny: [...(permissionOptions.settings?.permissions?.deny ?? []),
-            "Read(" + process.env.MCPJAM_LOCAL_CONTROL_ROOT + "/**)",
-            "Edit(" + process.env.MCPJAM_LOCAL_CONTROL_ROOT + "/**)"]
+            ...[process.env.MCPJAM_LOCAL_CONTROL_ROOT,
+              ...JSON.parse(process.env.MCPJAM_LOCAL_DENIED_ROOTS || "[]")].flatMap(root => {
+                const normalized = root.replaceAll(String.fromCharCode(92), "/").replace(/^([A-Za-z]):/, (_, drive) => "/" + drive.toLowerCase());
+                const absolute = "/" + normalized;
+                return ["Read(" + absolute + "/**)", "Edit(" + absolute + "/**)"];
+              })]
         } } : {}),
       },
       mcpServers,

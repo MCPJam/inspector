@@ -1,5 +1,9 @@
 vi.mock("../../../config.js", async () => ({ ...(await vi.importActual("../../../config.js")), HOSTED_MODE: true }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const nativeVenue = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  isLocalHarnessVenue: (harness: string) => nativeVenue.enabled && harness === "claude-code",
+}));
 
 import {
   checkEvalExecutionAdmission,
@@ -30,6 +34,7 @@ const ENV_KEYS = [
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
+  nativeVenue.enabled = false;
   for (const key of ENV_KEYS) saved[key] = process.env[key];
   // A server on which the harness runtime IS available, so every refusal below
   // is attributable to the configuration under test rather than the fixture.
@@ -777,5 +782,29 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     expect(verdict.reason).toContain(
       "Claude Code harness can't run this host's model"
     );
+  });
+});
+
+
+describe("local harness admission", () => {
+  it("admits a local single-case run without cloud service credentials", () => {
+    nativeVenue.enabled = true;
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.E2B_API_KEY;
+    delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
+    expect(checkEvalExecutionAdmission({
+      hostConfig: harnessHost(), localExecution: true, surface: "single-case",
+    })).toEqual({ ok: true });
+    expect(checkEvalHarnessAdmission({
+      hostConfig: harnessHost(), localExecution: true, serverIds: ["s1"],
+      cases: [{ title: "local", ...HOSTED_MODEL }],
+    })).toEqual({ ok: true, harness: "claude-code" });
+  });
+
+  it("does not admit cloud single-case execution just because a local pack exists", () => {
+    nativeVenue.enabled = true;
+    expect(checkEvalExecutionAdmission({
+      hostConfig: harnessHost(), localExecution: false, surface: "single-case",
+    }).ok).toBe(false);
   });
 });

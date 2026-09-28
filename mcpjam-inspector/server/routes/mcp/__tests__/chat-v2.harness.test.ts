@@ -1,3 +1,4 @@
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code") }));
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 

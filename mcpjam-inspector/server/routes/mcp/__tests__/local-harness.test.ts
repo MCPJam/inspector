@@ -543,7 +543,11 @@ describe("POST /consent/grant", () => {
     expect(response.status).toBe(200);
     expect(grantLocalHarnessConsentMock).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "authkit:user_1" }),
+      { ttlMs: 15 * 60_000 },
     );
+    const payload = await response.json();
+    expect(payload).not.toHaveProperty("token");
+    expect(payload.serverAuthorized).toBe(true);
   });
 
   it("409s before minting when no runtime is installed", async () => {

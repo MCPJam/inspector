@@ -615,7 +615,7 @@ async function main() {
         "--store-dir",
         join(outRoot, ".pnpm-store"),
       ],
-      { cwd: packRoot, stdio: "inherit" },
+      { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
     );
   });
 

@@ -29,7 +29,7 @@ export function packDependencyClosure(packages) {
       else if (!pkg.optionalDependencies?.[name]) throw new Error(`Missing pack dependency ${name} from ${key}`);
     }
   }
-  for (const name of ['@ai-sdk/harness-claude-code', 'tsx']) {
+  for (const name of ['@ai-sdk/harness-claude-code']) {
     const key = locate(name);
     if (!key) throw new Error(`Missing pack dependency ${name}`);
     visit(key);

@@ -640,6 +640,13 @@ async function main() {
   note(`continuity: model saw ${m?.[1] ?? "?"} user turns after detach+resume (expect >= 3)`);
 
   if (deliveryMcp) {
+    const deniedPath = join(localHarnessStateRoot(), "deny-rule-canary.txt");
+    const deniedCanary = "MCPJAM_PRIVATE_CONTROL_CANARY_" + randomBytes(16).toString("hex");
+    await writeFile(deniedPath, deniedCanary, { mode: 0o600 });
+    const deniedTurn = await runTurn("delivery-denied-read", agent, ref2, `READFILE ${deniedPath}`);
+    if (!deniedTurn.tools.some(tool => tool.toLowerCase() === "read") || deniedTurn.text.includes(deniedCanary) || !/denied|permission|not allowed/i.test(deniedTurn.text)) {
+      throw new Error("Claude Read did not enforce the absolute control-store deny rule");
+    }
     const mcpTurn = await runTurn("delivery-mcp", agent, ref2, "MCPPROBE");
     if (!mcpTurn.text.includes("DELIVERY_MCP_OK") || deliveryMcp.calls() < 1) {
       throw new Error("Session-config MCP tool was not executed");

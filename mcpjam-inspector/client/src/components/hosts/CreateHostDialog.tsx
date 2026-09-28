@@ -1,6 +1,6 @@
 import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
 import { HOSTED_MODE } from "@/lib/config";
-import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
+import { ensureLocalHarnessReady, fetchLocalHarnessAvailability } from "@/lib/local-harness-consent";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -71,7 +71,16 @@ export function CreateHostDialog({
   const adminOnly = !roleLoading && !canManageClients;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
-  const localHarnessEnabled = useLocalHarnessEnabled();
+  const localHarnessFlag = useLocalHarnessEnabled();
+  const [localHarnessEnabled, setLocalHarnessEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setLocalHarnessEnabled(false);
+    if (!HOSTED_MODE && localHarnessFlag) void fetchLocalHarnessAvailability().then(result => {
+      if (!cancelled) setLocalHarnessEnabled(result.ok && result.availability.setupAvailable === true);
+    });
+    return () => { cancelled = true; };
+  }, [localHarnessFlag]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();

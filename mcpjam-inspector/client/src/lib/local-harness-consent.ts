@@ -295,6 +295,8 @@ export interface LocalHarnessRuntimeStatus {
 }
 
 export interface LocalHarnessAvailabilityView {
+  preferredVenue?: "local" | "hosted";
+  setupAvailable?: boolean;
   available: boolean;
   status: string;
   message: string | null;
@@ -330,10 +332,10 @@ export type LocalHarnessAvailabilityResult =
   | { ok: true; availability: LocalHarnessAvailabilityView }
   | LocalHarnessError;
 
-export async function fetchLocalHarnessAvailability(): Promise<LocalHarnessAvailabilityResult> {
+export async function fetchLocalHarnessAvailability(projectId?: string | null): Promise<LocalHarnessAvailabilityResult> {
   let response: Response;
   try {
-    response = await localHarnessRequest("availability", undefined, "GET");
+    response = await localHarnessRequest(`availability${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`, undefined, "GET");
   } catch (error) {
     return NETWORK_ERROR(
       error instanceof Error ? error.message : "the request failed",
@@ -570,7 +572,7 @@ export async function mintLocalHarnessConsent(args: {
     return failure;
   }
   const json = (body ?? {}) as Partial<StoredLocalHarnessConsent>;
-  if (typeof json.token !== "string" || json.token.length < 16) {
+  if (json.serverAuthorized !== true && (typeof json.token !== "string" || json.token.length < 16)) {
     return {
       ok: false,
       kind: "malformed",
@@ -590,7 +592,8 @@ export async function mintLocalHarnessConsent(args: {
     ok: true,
     consent: {
       grantId: json.grantId,
-      token: json.token,
+      token: json.serverAuthorized === true ? "" : json.token as string,
+      ...(json.serverAuthorized === true ? { serverAuthorized: true } : {}),
       expiresAt: json.expiresAt ?? "",
       target: json.target,
       workspaceDisplayRoot: json.workspaceDisplayRoot ?? "",

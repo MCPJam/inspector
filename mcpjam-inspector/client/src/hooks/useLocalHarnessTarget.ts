@@ -433,7 +433,7 @@ export function useLocalHarnessController(
     }
     let cancelled = false;
     setLoading(true);
-    void fetchLocalHarnessAvailability().then((result) => {
+    void fetchLocalHarnessAvailability(projectId).then((result) => {
       if (cancelled) return;
       if (result.ok) {
         setAvailability(result.availability);
@@ -451,7 +451,7 @@ export function useLocalHarnessController(
     return () => {
       cancelled = true;
     };
-  }, [offerable, inScope, refreshToken]);
+  }, [offerable, inScope, refreshToken, projectId]);
 
   // Re-read on remount, focus and reconnect. Cheap, and it is what makes a
   // second window notice the first one's finished install.
@@ -581,7 +581,7 @@ export function useLocalHarnessController(
 
   // Reopen/reload and credential expiry never require another authorization click.
   useEffect(() => {
-    if (!offerable || !inScope || !projectId || !userKey) return;
+    if (!offerable || !inScope || !projectId || !userKey || availability?.preferredVenue !== "local") return;
     let cancelled = false;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -602,19 +602,19 @@ export function useLocalHarnessController(
     const focus = () => { if (timer) clearTimeout(timer); void renew(); };
     window.addEventListener("focus", focus);
     return () => { cancelled = true; abort.abort(); if (timer) clearTimeout(timer); window.removeEventListener("focus", focus); };
-  }, [offerable, inScope, projectId, userKey]);
+  }, [offerable, inScope, projectId, userKey, availability?.preferredVenue]);
 
   // ── The requested target ─────────────────────────────────────────────────
   const hostedAvailable = availability?.hostedAvailable ?? null;
 
   const requestedTarget: HarnessExecutionTarget | null = useMemo(() => {
     if (!offerable || !inScope) return null;
-    return "local-native";
-  }, [offerable, inScope]);
+    return availability?.preferredVenue === "local" || (availabilityError && consent?.serverAuthorized) ? "local-native" : null;
+  }, [offerable, inScope, availability?.preferredVenue, availabilityError, consent?.serverAuthorized]);
 
   useEffect(() => {
-    if (offerable && inScope && projectId && storedTarget !== "local-native") saveHarnessTarget(projectId, "local-native");
-  }, [offerable, inScope, projectId, storedTarget]);
+    if (availability?.preferredVenue === "local" && offerable && inScope && projectId && storedTarget !== "local-native") saveHarnessTarget(projectId, "local-native");
+  }, [offerable, inScope, projectId, storedTarget, availability?.preferredVenue]);
 
   const effectiveTarget: HarnessExecutionTarget =
     requestedTarget === "local-native" && consent !== null
@@ -954,7 +954,7 @@ export function useLocalHarnessController(
   // expiry holds a value that was true then; the send has to know what is true
   // now.
   const resolveSendTarget = useCallback(() => {
-    if (!offerable || !inScope || !projectId) return null;
+    if (!offerable || !inScope || !projectId || availability?.preferredVenue === "hosted") return null;
     if (userKey === null || userKey === undefined) return null;
     const fresh = parseStoredLocalHarnessConsent(
       readLocalHarnessConsentSnapshot(projectId),

@@ -71,6 +71,7 @@ const DIGEST = `sha256:${"a".repeat(64)}`;
 
 const AVAILABILITY: LocalHarnessAvailabilityView = {
   available: true,
+  preferredVenue: "local",
   status: "ok",
   message: null,
   platform: "darwin",
@@ -196,7 +197,7 @@ describe("what the user asked for is preserved", () => {
     expect(result.current.hostedAvailable).toBe(false);
   });
 
-  it("keeps local intent while readiness is unknown", async () => {
+  it("waits for project authorization before selecting local", async () => {
     // Loading, a failed fetch and a 401 are all "we do not know". Picking
     // either way from one of them hides a real option or claims one that does
     // not exist.
@@ -208,7 +209,7 @@ describe("what the user asked for is preserved", () => {
     });
     const { result } = render();
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.requestedTarget).toBe("local-native");
+    expect(result.current.requestedTarget).toBeNull();
     expect(result.current.hostedAvailable).toBeNull();
     // And a network failure is not "unavailable" — it says nothing about this
     // machine, so the honest phase is that we still do not know.
@@ -1059,4 +1060,12 @@ describe("expiry", () => {
     expect(result.current.consent).toBeNull();
     expect(result.current.effectiveTarget).toBe("hosted");
   });
+});
+
+it("keeps an existing cloud client hosted in a project without local setup", async () => {
+  fetchAvailabilityMock.mockResolvedValue({ ok: true, availability: { ...AVAILABILITY, preferredVenue: "hosted" } });
+  const { result } = render();
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.requestedTarget).toBeNull();
+  expect(result.current.effectiveTarget).toBe("hosted");
 });

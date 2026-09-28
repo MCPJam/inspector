@@ -34,7 +34,7 @@ const archivePath = join(root, `${stem}.tar.gz`);
 await writeFile(archivePath, archive);
 const runtime = join(root, 'runtime');
 await mkdir(runtime, { recursive: true });
-execFileSync('tar', ['-xzf', archivePath, '-C', runtime]);
+execFileSync('tar', [...(process.platform === 'win32' && !/bsdtar/i.test(execFileSync('tar', ['--version'], { encoding: 'utf8' }))) ? ['--force-local'] : [], '-xzf', archivePath, '-C', runtime]);
 if (await computeTreeDigest(join(runtime, 'claude-code')) !== record.treeDigest) throw new Error('Extracted release tree differs from the reviewed digest');
 await writeFile(join(root, 'published-conformance-input.json'), JSON.stringify({ version, target, treeDigest: record.treeDigest, archiveSha256: manifest.archive.sha256 }));
 process.stdout.write(`Verified published ${version} for ${target}\n`);

@@ -110,6 +110,7 @@ export async function prepareSuiteReplayFromRun(
 
     const {
       runId,
+      harnessRuntimeVenue,
       recorder,
       config,
       hostConfig: runHostConfigSnapshot,
@@ -134,7 +135,7 @@ export async function prepareSuiteReplayFromRun(
     const replayHostConfig =
       runHostConfigSnapshot ??
       (await loadSuiteHostConfig(convexClient, replayMetadata.suiteId));
-    const localExecution = await shouldUseLocalHarness(typeof replayHostConfig?.harness === "string" ? replayHostConfig.harness : undefined, convexAuthToken, replayMetadata.projectId);
+    const localExecution = harnessRuntimeVenue === "local";
     const executionAdmission = checkEvalExecutionAdmission({
       localExecution,
       hostConfig: replayHostConfig,
@@ -148,7 +149,7 @@ export async function prepareSuiteReplayFromRun(
     });
     const refusal = !executionAdmission.ok ? executionAdmission.reason : !harnessAdmission.ok ? harnessAdmission.reason :
       harnessToolPolicyLaunchRefusal({ hasToolPolicy: Boolean(replayToolPolicy), harness: harnessAdmission.harness,
-        localExecution: await shouldUseLocalHarness(harnessAdmission.harness, convexAuthToken, replayMetadata.projectId) });
+        localExecution });
     if (refusal) {
       await failRunBeforeExecution(convexClient, recorder, runId, { reason: refusal });
       throw new Error(refusal);
@@ -221,6 +222,7 @@ export async function prepareSuiteReplayFromRun(
           recorder,
           suiteInjectOpenAiCompat,
           suiteHostConfig: replayHostConfig,
+          harnessRuntimeVenue,
           // B3b: a replay is a RUN, and it grades under its own frozen
           // position like any other. Omitting this let the runner fall back to
           // the env-only resolver in `buildIterationFinishParams`, so a replay

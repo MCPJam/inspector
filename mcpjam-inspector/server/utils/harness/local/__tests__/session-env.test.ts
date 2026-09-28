@@ -94,6 +94,7 @@ describe("the child environment is an allowlist", () => {
         "PATH",
         "PWD",
       "MCPJAM_LOCAL_CONTROL_ROOT",
+      "MCPJAM_LOCAL_DENIED_ROOTS",
         "TERM",
         "TMPDIR",
         "XDG_CACHE_HOME",

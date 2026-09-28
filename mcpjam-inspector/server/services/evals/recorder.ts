@@ -1092,6 +1092,7 @@ export const startSuiteRunWithRecorder = async ({
     // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
     // the top-level spelling as a fallback so the two repos can deploy in
     // either order.
+    harnessRuntimeVenue: (response?.configSnapshot?.executionVenue === "local" ? "local" : "hosted") as "local" | "hosted",
     executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
       ?.executionBudgets ?? response?.executionBudgets) as
       | ResolvedExecutionBudgets

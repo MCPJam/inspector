@@ -448,7 +448,11 @@ export async function validateWorkspaceCandidate(
   // directory is itself a symlink, the raw value never equals the
   // canonicalized selection and the refusal below would not fire.
   const home = await realpath(homedir()).catch(() => homedir());
-  if (canonicalPath === home || isFilesystemRoot(canonicalPath)) {
+  const appRoot = join(home, ".mcpjam");
+  const workspaces = join(appRoot, "harness-workspaces");
+  if (canonicalPath === home || isFilesystemRoot(canonicalPath) ||
+      ((canonicalPath === appRoot || canonicalPath.startsWith(appRoot + sep)) &&
+       !canonicalPath.startsWith(workspaces + sep))) {
     return {
       ok: false,
       message:
@@ -533,6 +537,8 @@ export async function resolveWorkspaceGrant(
         message: "the granted workspace is no longer a directory",
       };
     }
+    const candidate = await validateWorkspaceCandidate(canonical);
+    if (!candidate.ok) return candidate;
     return { ok: true, canonicalPath: canonical };
   } catch {
     return {

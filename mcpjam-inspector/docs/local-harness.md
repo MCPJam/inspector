@@ -115,5 +115,4 @@ the release gate. An empty table deliberately keeps public installation dark.
 Activation requires published signed assets, matching committed digests, passing
 platform evidence, the matching backend deployment, and enabling the account
 rollout. Never synthesize conformance evidence or enable the flag to bypass a
-missing pack. Deploy backend PR #1671 to production before Inspector PR #5679:
-older backend validators reject the new quick-run client and venue arguments.
+missing pack.

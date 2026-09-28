@@ -1,3 +1,4 @@
+import { shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError } from "../../utils/harness/local/readiness.js";
 import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace } from "../../utils/harness/local/authorization.js";
 /**
@@ -246,8 +247,12 @@ localHarness.get("/availability", async (c) => {
   const hostedAvailable = isComputersDataPlaneConfigured();
 
   const suggestedWorkspace = await resolveSuggestedWorkspace({ displayRoot });
+  const projectId = c.req.query("projectId");
+  const preferredVenue = projectId && await shouldUseLocalHarness("claude-code", c.req.header("authorization"), projectId) ? "local" : "hosted";
 
   return c.json({
+    preferredVenue,
+    setupAvailable: isLocalHarnessVenue("claude-code") && await localHarnessAccountEnabled(c.req.header("authorization")),
     available:
       compatibility?.ok === true && ownershipProvable && runtime !== null,
     // A named status the UI can render specifically, rather than a boolean it
@@ -660,13 +665,12 @@ localHarness.post("/consent/grant", async (c) => {
     permissionProfile: "workspace-edits",
     policyVersion: LOCAL_HARNESS_POLICY_VERSION,
   };
-  const granted = await grantLocalHarnessConsent(binding);
+  const granted = await grantLocalHarnessConsent(binding, { ttlMs: 15 * 60_000 });
   await updateAuthorizedWorkspace({ userId, machineId, projectId, workspaceGrantId });
 
   return c.json({
     grantId: granted.grantId,
-    // The plaintext capability, returned exactly once. Only its hash is stored.
-    token: granted.token,
+    serverAuthorized: true,
     expiresAt: granted.expiresAt,
     // The ids a turn will send back, so the client never has to re-derive them.
     target: {
