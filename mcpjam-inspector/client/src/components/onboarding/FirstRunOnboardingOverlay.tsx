@@ -542,17 +542,6 @@ export function FirstRunOnboardingOverlay({
     } else if (connectionState.status === "connected") {
       setStep(isConnectedPresentationReady ? "connected" : "connecting");
     } else if (connectionState.status === "failed") {
-      if (connectionState.serverKind === "personal") {
-        // The recovery form has no Bearer or XAA fields. Keep the submitted
-        // value in sync with its visible Auto fallback on a direct failure.
-        setServerAuthentication((current) =>
-          current === "auto" || current === "oauth" || current === "none"
-            ? current
-            : "auto",
-        );
-        setBearerTokenError(null);
-        setXaaConfigurationError(null);
-      }
       setStep(
         connectionState.serverKind === "demo"
           ? "demo-failed"
@@ -971,20 +960,6 @@ export function FirstRunOnboardingOverlay({
                 className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
                 onClick={() => {
                   idleDestinationRef.current = "server-details";
-                  // The details form only exposes Auto, OAuth, and None. If
-                  // the inline authorization editor selected Bearer or XAA,
-                  // its controlled select would visually fall back to Auto
-                  // while retaining the unsupported value in React state.
-                  // That makes Connect silently fail hidden-field validation.
-                  if (
-                    serverAuthentication !== "auto" &&
-                    serverAuthentication !== "oauth" &&
-                    serverAuthentication !== "none"
-                  ) {
-                    setServerAuthentication("auto");
-                  }
-                  setBearerTokenError(null);
-                  setXaaConfigurationError(null);
                   onCancelConnection();
                   setStep("server-details");
                 }}
@@ -1205,23 +1180,66 @@ export function FirstRunOnboardingOverlay({
                   ) : null}
                 </div>
 
-                <label className="grid gap-1.5 font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase">
-                  Authentication
-                  <select
-                    className="h-10 rounded-md border border-border bg-card px-3 font-sans text-[12px] tracking-normal text-foreground normal-case shadow-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                    value={serverAuthentication}
-                    onChange={(event) =>
-                      setServerAuthentication(
-                        event.target
-                          .value as FirstRunServerDraft["authentication"],
-                      )
-                    }
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="oauth">OAuth</option>
-                    <option value="none">None</option>
-                  </select>
-                </label>
+                <AuthenticationSection
+                  serverUrl={serverUrlOrCommand}
+                  authType={serverAuthentication as ServerFormAuthType}
+                  onAuthTypeChange={(value) => {
+                    setServerAuthentication(value);
+                    setBearerTokenError(null);
+                    setClientIdError(null);
+                    setClientSecretError(null);
+                    setXaaConfigurationError(null);
+                  }}
+                  showAuthSettings
+                  bearerToken={bearerToken}
+                  onBearerTokenChange={(value) => {
+                    setBearerToken(value);
+                    setBearerTokenError(null);
+                  }}
+                  bearerTokenError={bearerTokenError}
+                  bearerTokenInputRef={bearerTokenInputRef}
+                  oauthScopesInput={oauthScopesInput}
+                  onOauthScopesChange={setOauthScopesInput}
+                  oauthProtocolMode={oauthProtocolMode}
+                  onOauthProtocolModeChange={setOauthProtocolMode}
+                  registrationMode={registrationMode}
+                  onOauthRegistrationModeChange={setRegistrationMode}
+                  oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
+                  onOauthAllowPathScopedIssuerChange={
+                    setOauthAllowPathScopedIssuer
+                  }
+                  useCustomClientId={useCustomClientId}
+                  onUseCustomClientIdChange={setUseCustomClientId}
+                  clientId={clientId}
+                  onClientIdChange={(value) => {
+                    setClientId(value);
+                    setClientIdError(null);
+                  }}
+                  clientSecret={clientSecret}
+                  onClientSecretChange={(value) => {
+                    setClientSecret(value);
+                    setClientSecretError(null);
+                  }}
+                  clientIdError={clientIdError}
+                  clientSecretError={clientSecretError}
+                  xaaClientAuth={xaaClientAuth}
+                  onXaaClientAuthChange={setXaaClientAuth}
+                  xaaAuthzIssuer={xaaAuthzIssuer}
+                  onXaaAuthzIssuerChange={setXaaAuthzIssuer}
+                  xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
+                  onXaaAllowPathScopedIssuerChange={
+                    setXaaAllowPathScopedIssuer
+                  }
+                  xaaSubject={xaaSubject}
+                  onXaaSubjectChange={setXaaSubject}
+                  xaaEmail={xaaEmail}
+                  onXaaEmailChange={setXaaEmail}
+                />
+                {xaaConfigurationError ? (
+                  <p className="text-xs text-destructive" role="alert">
+                    {xaaConfigurationError}
+                  </p>
+                ) : null}
               </div>
 
               <Button
