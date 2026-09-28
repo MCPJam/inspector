@@ -501,4 +501,48 @@ describe("isTransientSpendRefusal", () => {
       }),
     ).toBe(true);
   });
+
+  it("reads the held-credits sentence only at the top, never off a nested object's own message", () => {
+    // A nested object under `details` whose own message/error states the
+    // sentence is quoted text: it must not veto a real exhaustion.
+    for (const key of ["message", "error", "errorMessage"]) {
+      expect(
+        isCreditExhaustion({
+          code: "user_rate_limit",
+          message: "Daily MCPJam model limit reached.",
+          details: { previous: { [key]: STORED_HOLDS_SENTENCE } },
+        }),
+      ).toBe(true);
+    }
+    // The refusal's own words still count: the top-level message, a string
+    // `details`, and a string value directly under `details`.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: STORED_HOLDS_SENTENCE,
+      }),
+    ).toBe(false);
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: { reason: STORED_HOLDS_SENTENCE },
+      }),
+    ).toBe(false);
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        error: STORED_HOLDS_SENTENCE,
+      }),
+    ).toBe(false);
+    // The structured reason decides at any depth.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: { refusal: { refusalReason: "holds_committed" } },
+      }),
+    ).toBe(false);
+  });
 });
