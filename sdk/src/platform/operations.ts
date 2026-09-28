@@ -15258,6 +15258,7 @@ const quoteSwarmLaunchInput = z.object({
         environmentIds: z
           .array(z.string().trim().min(1))
           .min(1)
+          .max(10)
           .optional()
           .describe(
             "Fan out across these project environments instead of the goal's authored targets."
@@ -15280,6 +15281,7 @@ const quoteSwarmLaunchInput = z.object({
       })
     )
     .min(1)
+    .max(100)
     .describe(
       "The runs the launch would start: one per goal, with the settings it would launch with."
     ),

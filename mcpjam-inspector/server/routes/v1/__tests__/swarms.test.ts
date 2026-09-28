@@ -202,6 +202,33 @@ describe("POST /projects/:projectId/swarms/quote", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  const repeat = <T>(length: number, item: T): T[] =>
+    Array.from({ length }, () => item);
+
+  it.each([
+    ["101 planned runs", { plannedRuns: repeat(101, { goalId: GOAL }) }],
+    [
+      "11 environments on one run",
+      { plannedRuns: [{ goalId: GOAL, environmentIds: repeat(11, ENV) }] },
+    ],
+  ])(
+    "400s a plan over the limit (%s) before calling the backend",
+    async (_label, body) => {
+      expect((await quote(body)).status).toBe(400);
+      expect(queryMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("quotes a plan at the limits", async () => {
+    const res = await quote({
+      plannedRuns: [
+        { goalId: GOAL, environmentIds: repeat(10, ENV) },
+        ...repeat(99, { goalId: GOAL }),
+      ],
+    });
+    expect(res.status).toBe(200);
+  });
+
   it("404s a malformed id instead of letting Convex's validator reject it", async () => {
     expect((await quote({ plannedRuns: [{ goalId: "a,b" }] })).status).toBe(
       404,

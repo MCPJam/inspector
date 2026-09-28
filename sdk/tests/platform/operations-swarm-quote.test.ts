@@ -87,6 +87,19 @@ describe("quote_swarm_launch", () => {
     });
   });
 
+  it("holds the route's limits: 100 planned runs, 10 environments a run", () => {
+    const parse = (plannedRuns: unknown[]) =>
+      quoteSwarmLaunchOperation.inputSchema.safeParse({ plannedRuns }).success;
+    const runs = (n: number) =>
+      Array.from({ length: n }, () => ({ goalId: "goal-1" }));
+    const envs = (n: number) => Array.from({ length: n }, () => "env-1");
+
+    expect(parse(runs(100))).toBe(true);
+    expect(parse(runs(101))).toBe(false);
+    expect(parse([{ goalId: "goal-1", environmentIds: envs(10) }])).toBe(true);
+    expect(parse([{ goalId: "goal-1", environmentIds: envs(11) }])).toBe(false);
+  });
+
   it("refuses an empty plan before any request", () => {
     expect(
       quoteSwarmLaunchOperation.inputSchema.safeParse({ plannedRuns: [] })

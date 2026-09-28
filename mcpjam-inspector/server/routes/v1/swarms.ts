@@ -339,7 +339,7 @@ const quotePlannedRunSchema = z
     /** Echoed on `perRun[].key`; defaults to the run's index. */
     key: z.string().trim().min(1).max(200).optional(),
     goalId: z.string().trim().min(1).optional(),
-    environmentIds: z.array(z.string().trim().min(1)).min(1).optional(),
+    environmentIds: z.array(z.string().trim().min(1)).min(1).max(10).optional(),
     iterations: swarmConfigFields.iterations.optional(),
     maxTurns: swarmConfigFields.maxTurns.optional(),
     setupWrites: swarmConfigFields.setupWrites,
@@ -355,7 +355,7 @@ const quotePlannedRunSchema = z
   );
 
 const quoteSchema = z.strictObject({
-  plannedRuns: z.array(quotePlannedRunSchema).min(1),
+  plannedRuns: z.array(quotePlannedRunSchema).min(1).max(100),
 });
 
 type SwarmQuote = {
