@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   adaptContext,
+  contextOptionsFor,
   wrapPage,
   type AnyContext,
   type AnyPage,
 } from "../chromium-launch";
+import {
+  BROWSERD_CONTEXT_OPTIONS,
+  BROWSERD_LOCAL_CONTEXT_OPTIONS,
+  BROWSERD_OBSERVATION_VIEWPORT,
+} from "../launch-args";
 
 /**
  * Unit coverage for the ONE piece of the Playwright adapter that had a P1: the
@@ -17,6 +23,8 @@ function fakeAnyPage(over: Partial<AnyPage> = {}): AnyPage {
     async goto() {},
     async reload() {},
     async goBack() {},
+    async goForward() {},
+    async setViewportSize() {},
     async waitForLoadState() {}, // resolves = the page idled
     async evaluate() { return undefined as never; },
     async screenshot() { return Buffer.from("png"); },
@@ -36,14 +44,6 @@ function fakeAnyPage(over: Partial<AnyPage> = {}): AnyPage {
     hover: noop,
     fill: noop,
     async selectOption() { return []; },
-    async ariaSnapshot() { return ""; },
-    locator() {
-      const self = {
-        first: () => self,
-        ariaSnapshot: async () => "",
-      };
-      return self;
-    },
     on() {},
     ...over,
   };
@@ -140,6 +140,42 @@ describe("adaptContext — ephemeral ownership (review follow-up)", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("closes the browser even when closing the CONTEXT never answers", async () => {
+    // The other half, and the one `finally` does not cover: a REJECTION runs
+    // the block below, an unsettled promise does not. `context.close()` waits
+    // for Chromium to acknowledge, and a renderer still draining a navigation
+    // — a submitted form, a beforeunload — can leave it pending forever.
+    //
+    // Unbounded, the browser kill is never reached: the process is orphaned
+    // anyway and whoever awaited teardown waits with it. That is a server
+    // shutdown that never exits, and a test hook that times out.
+    vi.useFakeTimers();
+    try {
+      const onClose = vi.fn(async () => {});
+      const adapted = adaptContext(
+        fakeAnyContext({ close: () => new Promise<void>(() => {}) }),
+        { onClose },
+      );
+
+      let settled = false;
+      const closing = adapted.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(9_000);
+      // Not cut short: an ordinary close is milliseconds, and giving up on one
+      // that is merely slow would strand pages this could have closed cleanly.
+      expect(settled).toBe(false);
+      expect(onClose).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+      expect(settled).toBe(true);
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes the browser after a clean context close", async () => {
     const onClose = vi.fn(async () => {});
     const adapted = adaptContext(fakeAnyContext(), { onClose });
@@ -153,53 +189,29 @@ describe("adaptContext — ephemeral ownership (review follow-up)", () => {
   });
 });
 
-describe("wrapPage.a11ySnapshot", () => {
-  it("reads the tree from ariaSnapshot, NOT the removed page.accessibility API", async () => {
-    // Playwright 1.62 (our pin) has no `page.accessibility`; the adapter must
-    // go through `ariaSnapshot`, or every a11y observation is an empty page.
-    const ariaSnapshot = vi.fn(async () => '- heading "Welcome" [level=1]');
-    const page = wrapPage(fakeAnyPage({ ariaSnapshot }));
-    await expect(page.a11ySnapshot()).resolves.toEqual({
-      role: "heading",
-      name: "Welcome",
-      level: 1,
-    });
-    expect(ariaSnapshot).toHaveBeenCalledOnce();
+describe("wrapPage.pageText", () => {
+  it("evaluates the shared extraction function, self-invoked", async () => {
+    // A bare function literal evaluates to the UNCALLED function, which
+    // serializes to undefined — the mistake every in-page constant here is
+    // wrapped to prevent.
+    const evaluate = vi.fn(async (expression: string) => {
+      expect(expression.startsWith("(() => {")).toBe(true);
+      expect(expression.endsWith("})()")).toBe(true);
+      return "Hello";
+    }) as unknown as <R>(fn: string) => Promise<R>;
+    const page = wrapPage(fakeAnyPage({ evaluate }));
+    await expect(page.pageText()).resolves.toBe("Hello");
   });
 
-  it("scopes to the rootSelector's FIRST match when one is given", async () => {
-    const scoped = vi.fn(async () => "- list:\n  - listitem \"One\"");
-    const locator = vi.fn((_selector: string) => {
-      const self = { first: () => self, ariaSnapshot: scoped };
-      return self;
-    });
-    const pageAria = vi.fn(async () => "- document");
-    const page = wrapPage(fakeAnyPage({ locator, ariaSnapshot: pageAria }));
-
-    const tree = await page.a11ySnapshot("#results");
-
-    expect(locator).toHaveBeenCalledWith("#results");
-    expect(pageAria).not.toHaveBeenCalled(); // scoped, not whole-page
-    expect(tree).toEqual({
-      role: "list",
-      children: [{ role: "listitem", name: "One" }],
-    });
-  });
-
-  it("answers null when the selector matches nothing, rather than throwing", async () => {
-    // Playwright rejects on an unmatched locator; the driver turns this null
-    // into `unknown_selector`, so the adapter must not propagate the throw.
-    const locator = () => {
-      const self = {
-        first: () => self,
-        ariaSnapshot: async () => {
-          throw new Error("locator.ariaSnapshot: Timeout exceeded");
-        },
-      };
-      return self;
-    };
-    const page = wrapPage(fakeAnyPage({ locator }));
-    await expect(page.a11ySnapshot("#missing")).resolves.toBeNull();
+  it("answers an empty string when the page returns something else", async () => {
+    const page = wrapPage(
+      fakeAnyPage({
+        evaluate: (async () => undefined) as unknown as <R>(
+          fn: string,
+        ) => Promise<R>,
+      }),
+    );
+    await expect(page.pageText()).resolves.toBe("");
   });
 });
 
@@ -212,5 +224,52 @@ describe("wrapPage.screenshotBase64", () => {
       expect.objectContaining({ type: "jpeg" }),
     );
     expect(base64).toBe(Buffer.from("jpeg-bytes").toString("base64"));
+  });
+});
+
+describe("contextOptionsFor — the surface decides what is a determinism pin", () => {
+  it("gives the sandbox its full pin set, scale factor folded in when persistent", () => {
+    expect(contextOptionsFor({ contextMode: "persistent" })).toEqual(
+      BROWSERD_CONTEXT_OPTIONS,
+    );
+    expect(
+      contextOptionsFor({ contextMode: "persistent", deviceScaleFactor: 2 }),
+    ).toEqual({ ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: 2 });
+  });
+
+  it("still pins an EPHEMERAL sandbox context at scale 1, so eval captures match across hosts", () => {
+    expect(
+      contextOptionsFor({ contextMode: "ephemeral", deviceScaleFactor: 2 }),
+    ).toEqual(BROWSERD_CONTEXT_OPTIONS);
+  });
+
+  it("gives a LOCAL context the viewport and nothing that describes a machine", () => {
+    const local = contextOptionsFor({
+      contextMode: "persistent",
+      surface: "local",
+    });
+    expect(local).toEqual(BROWSERD_LOCAL_CONTEXT_OPTIONS);
+    expect(local).not.toHaveProperty("userAgent");
+    expect(local).not.toHaveProperty("timezoneId");
+    expect(local).toHaveProperty("viewport", BROWSERD_OBSERVATION_VIEWPORT);
+  });
+
+  it("drops the pins for a local EPHEMERAL run too", () => {
+    // A local eval's captures were never comparable to a hosted one's — same
+    // pins, different OS and fonts — so the pins bought nothing there and cost
+    // the same captchas.
+    expect(
+      contextOptionsFor({ contextMode: "ephemeral", surface: "local" }),
+    ).toEqual(BROWSERD_LOCAL_CONTEXT_OPTIONS);
+  });
+
+  it("honours the display's scale factor on a local persistent context", () => {
+    expect(
+      contextOptionsFor({
+        contextMode: "persistent",
+        surface: "local",
+        deviceScaleFactor: 2,
+      }),
+    ).toEqual({ ...BROWSERD_LOCAL_CONTEXT_OPTIONS, deviceScaleFactor: 2 });
   });
 });

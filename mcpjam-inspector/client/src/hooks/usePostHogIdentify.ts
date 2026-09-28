@@ -3,6 +3,7 @@ import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
+import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
 
@@ -14,16 +15,18 @@ import { useActorKey } from "@/hooks/use-actor-key";
  */
 export function usePostHogIdentify() {
   const posthog = usePostHog();
-  const { user } = useAuth();
+  const { user, getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const convexUser = useQuery(
     "users:getCurrentUser" as any,
-    isAuthenticated ? ({} as any) : "skip"
+    isAuthenticated ? ({} as any) : "skip",
   );
   const actorKey = useActorKey();
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
-    null
+    null,
   );
+  const getAccessTokenRef = useRef(getAccessToken);
+  getAccessTokenRef.current = getAccessToken;
 
   useEffect(() => {
     if (!posthog) return;
@@ -46,9 +49,17 @@ export function usePostHogIdentify() {
       // flag evaluated between the reset and the next page load would target
       // an unknown deployment.
       posthog.setPersonPropertiesForFlags?.({
+        ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
         platform: detectPlatform(),
       });
+    }
+
+    if (isActorChange && previous && !previous.wasAuthed) {
+      // reset() above only covers a departing authed actor. A departing
+      // guest's server-evaluated flags must not survive into the new actor
+      // either — the refresh below can fail without replacing them.
+      posthog.updateFlags?.({});
     }
 
     // `deployment` is a PERSON property here, not just a super property: the
@@ -82,6 +93,13 @@ export function usePostHogIdentify() {
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
+      // Flags are evaluated by our server, not by posthog-js on identify
+      // (MJ-015), so fetch the new actor's values here.
+      void refreshServerFeatureFlagsForActor(posthog, {
+        actorKey,
+        isAuthedActor,
+        getAccessToken: getAccessTokenRef.current,
+      });
     }
   }, [posthog, actorKey, user, convexUser]);
 }

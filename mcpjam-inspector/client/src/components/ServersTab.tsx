@@ -1,3 +1,4 @@
+import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
 import {
   useCallback,
   useContext,
@@ -10,7 +11,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
-import { Switch } from "@mcpjam/design-system/switch";
+import { ServersAutoConnectSwitch } from "./ServersAutoConnectSwitch";
 import {
   Plus,
   FileText,
@@ -125,12 +126,10 @@ import {
 } from "@/lib/quick-connect-pending";
 import {
   useProjectServers as useRemoteProjectServers,
-  useProjectMembers,
   useServerMutations,
   shouldQueryProjectId,
   type RemoteServer,
 } from "@/hooks/useProjects";
-import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -164,8 +163,9 @@ import {
 } from "./hosts/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "@/lib/toast";
+import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
-const ORDER_STORAGE_KEY = "mcp-server-order";
+
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
@@ -215,26 +215,6 @@ function isQuickConnectCardExcludedByProject(
       isPendingQuickConnectVisible
     )
   );
-}
-
-function loadServerOrder(projectId: string): string[] | undefined {
-  try {
-    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    return raw ? JSON.parse(raw)[projectId] : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function saveServerOrder(projectId: string, orderedNames: string[]): void {
-  try {
-    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    const all = raw ? JSON.parse(raw) : {};
-    all[projectId] = orderedNames;
-    localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    // ignore
-  }
 }
 
 function clearPersistedLoggerFocus(): void {
@@ -457,7 +437,6 @@ function SortableServerCard({
   id,
   dndDisabled,
   server,
-  needsReconnect,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -472,7 +451,6 @@ function SortableServerCard({
   id: string;
   dndDisabled: boolean;
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
@@ -519,7 +497,6 @@ function SortableServerCard({
   const cardContent = (
     <ServerConnectionCard
       server={server}
-      needsReconnect={needsReconnect}
       onDisconnect={onDisconnect}
       onReconnect={onReconnect}
       onRemove={onRemove}
@@ -603,6 +580,8 @@ interface ServersTabProps {
   routePluginId?: string | null;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 export function ServersTab({
@@ -626,6 +605,7 @@ export function ServersTab({
   routePluginId,
   isRegistryEnabled = false,
   onNavigateToRegistry,
+  suspendAutoConnect = false,
 }: ServersTabProps) {
   const hostsConnectAddServerSlot = useContext(
     HostsConnectAddServerSlotContext
@@ -731,28 +711,10 @@ export function ServersTab({
     [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
   );
 
-  // Project-wide auto-connect toggle. Single switch in the header that
-  // either enrolls every catalog server in project.serverIds (ON) or
-  // clears the set (OFF). Overrides on still-included servers are
-  // preserved on ON so existing per-server header/timeout config isn't
-  // wiped by a toggle round-trip. Per-server granularity is intentionally
-  // deferred — this is the simplest user-facing surface for the project-
-  // scoped server config rollout.
-  //
-  // Stale-server note: when this is ON and a user adds a new server to
-  // the catalog later, the new server isn't auto-included — they'd
-  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
-  // newly-added servers in automatically when the toggle is on.
-  // Permission gate for the Auto-connect toggle. Backend
-  // `projectServerConfig:setConfig` requires project admin
-  // (`canManageProjectMembers`); mirror that check on the client so
-  // non-admins see a disabled switch instead of an enabled control that
-  // toasts an authorization error when toggled. Matches the
-  // canManageProjectSettings pattern in ProjectSettingsTab.
-  const { canManageMembers: canManageProjectServers } = useProjectMembers({
-    isAuthenticated,
-    projectId: sharedProjectIdForHostScope,
-  });
+  // Project server config (`projects.serverIds` + per-server overrides).
+  // Only the protocol-pin path below still writes it; the header
+  // Auto-connect switch is a personal preference and no longer touches it
+  // (see `ServersAutoConnectSwitch`).
   const isUserReady = useDbUserReady();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
@@ -766,113 +728,38 @@ export function ServersTab({
     projectId: string;
     input: ProjectServerConfigInput;
   }) => Promise<ProjectServerConfigDto>;
-  const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
-  const catalogServerIds = useMemo(
-    () => (viewProjectServersList ?? []).map((s) => s._id),
+  const projectServerNames = useMemo(
+    () => (viewProjectServersList ?? []).map((s) => s.name),
     [viewProjectServersList]
   );
-  const autoConnectAll = useMemo(() => {
-    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
-    const enrolled = new Set(projectServerConfigDto.serverIds);
-    if (enrolled.size !== catalogServerIds.length) return false;
-    return catalogServerIds.every((id) => enrolled.has(id));
-  }, [projectServerConfigDto, catalogServerIds]);
-  const handleToggleAutoConnect = useCallback(
-    async (next: boolean) => {
-      if (!sharedProjectIdForHostScope) return;
-      setIsTogglingAutoConnect(true);
-      // Treat an explicit project toggle like a fresh host transition so the
-      // current host re-runs reconciliation instead of reusing stale attempts.
+  // Flipping the personal switch ON is a fresh intent: clear the attempt
+  // log so servers connect now instead of waiting for the next client
+  // switch. OFF needs nothing — the hook simply stops firing.
+  const handleAutoConnectToggled = useCallback(
+    (next: boolean) => {
+      if (!next) return;
       resetAutoConnectAttempts(activeProjectId);
-      resetAutoConnectAttempts(sharedProjectIdForHostScope);
-      try {
-        if (next) {
-          // Preserve overrides for servers that remain in the catalog —
-          // backend rejects override keys not in serverIds, so we filter
-          // before sending.
-          const catalogIdSet = new Set(catalogServerIds);
-          const preservedOverrides = Object.fromEntries(
-            Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
-              ([id]) => catalogIdSet.has(id)
-            )
-          );
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: {
-              serverIds: catalogServerIds,
-              overrides: preservedOverrides,
-            },
-          });
-        } else {
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: { serverIds: [], overrides: {} },
-          });
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to update project auto-connect";
-        toast.error(message);
-      } finally {
-        setIsTogglingAutoConnect(false);
+      if (sharedProjectIdForHostScope) {
+        resetAutoConnectAttempts(sharedProjectIdForHostScope);
       }
     },
-    [
-      activeProjectId,
-      sharedProjectIdForHostScope,
-      catalogServerIds,
-      projectServerConfigDto,
-      setProjectServerConfigMutation,
-    ]
+    [activeProjectId, sharedProjectIdForHostScope]
   );
 
   const renderAutoConnectToggle = () => {
-    // Hide entirely when the project hasn't synced or when there's no
-    // catalog to toggle against. Both states make the switch
-    // semantically meaningless.
+    // Hide when there's no cloud project or no catalog to connect — the
+    // switch would have nothing to act on.
     if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
-    if (catalogServerIds.length === 0) return null;
-    if (projectServerConfigDto === undefined) return null;
-    const disabled = isTogglingAutoConnect || !canManageProjectServers;
-    return (
-      <label
-        className={cn(
-          "flex items-center gap-2 text-xs text-muted-foreground select-none",
-          disabled ? "cursor-not-allowed" : "cursor-pointer"
-        )}
-        title={
-          canManageProjectServers
-            ? "Auto-connect every project server when a client opens"
-            : "Only project admins can change auto-connect"
-        }
-      >
-        <Switch
-          checked={autoConnectAll}
-          disabled={disabled}
-          onCheckedChange={handleToggleAutoConnect}
-          aria-label="Auto-connect project servers"
-        />
-        <span>Auto-connect</span>
-      </label>
-    );
+    if (projectServerNames.length === 0) return null;
+    return <ServersAutoConnectSwitch onToggled={handleAutoConnectToggled} />;
   };
 
-  const previewedHostRequiredNames = useMemo(() => {
-    const requiredIds = previewedHost?.config?.serverIds ?? [];
-    if (requiredIds.length === 0 || !viewProjectServersList) return [];
-    const byId = new Map(
-      viewProjectServersList.map((s) => [s._id, s.name] as const)
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
-    requiredServerNames: previewedHostRequiredNames,
+    serverNames: projectServerNames,
+    catalogLoaded: viewProjectServersList !== undefined,
+    suspendAutoConnect,
   });
 
   const appReady = useAppReady();
@@ -962,6 +849,13 @@ export function ServersTab({
     return allNames;
   });
 
+  useEffect(() => {
+    serverCheckQueue.setOrder(
+      sharedProjectIdForHostScope ?? activeProjectId,
+      orderedServerNames,
+    );
+  }, [sharedProjectIdForHostScope, activeProjectId, orderedServerNames]);
+
   // Reconcile when servers are added/removed or project changes
   useEffect(() => {
     setOrderedServerNames((prev) => {
@@ -1001,42 +895,13 @@ export function ServersTab({
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
         saveServerOrder(activeProjectId, newOrder);
+        if (sharedProjectIdForHostScope) serverCheckQueue.setOrder(sharedProjectIdForHostScope, newOrder);
       }
     }
     setActiveId(null);
   };
 
   const activeServer = activeId ? projectServers[activeId] : null;
-  const reconnectWarningByServerName = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(projectServers).map(([serverName, server]) => {
-          // Only fires when the user edited the per-server clientCapabilities
-          // override after connecting. Host-driven caps changes are handled by
-          // the auto-reconciler, which disconnect/reconnects affected servers
-          // on host switch — comparing against host-blended caps here just
-          // produced false positives (server fresh-reconnects under the new
-          // host, but the SDK strips runtime-gated caps like `elicitation`
-          // when no handler is wired, so the comparator never matched).
-          const override = server.config.clientCapabilities;
-          const hasOverride =
-            override != null &&
-            typeof override === "object" &&
-            !Array.isArray(override);
-          const stale =
-            hasOverride &&
-            server.connectionStatus === "connected" &&
-            server.initializationInfo?.clientCapabilities != null &&
-            projectClientCapabilitiesNeedReconnect({
-              desiredCapabilities: override as Record<string, unknown>,
-              initializedCapabilities: server.initializationInfo
-                .clientCapabilities as Record<string, unknown>,
-            });
-          return [serverName, stale];
-        })
-      ),
-    [projectServers]
-  );
 
   const detailModalLiveServer = detailModalState.serverName
     ? projectServers[detailModalState.serverName] ?? null
@@ -1366,6 +1231,20 @@ export function ServersTab({
       });
     },
     [activeProjectId]
+  );
+
+  // A connect the backend refused because the server moved away from where
+  // its saved credentials were entered: open its configuration, where they
+  // are re-entered. Read through a ref so the subscription is made once.
+  const projectServersRef = useRef(projectServers);
+  projectServersRef.current = projectServers;
+  useEffect(
+    () =>
+      onCredentialReentryRequest((serverName) => {
+        const server = projectServersRef.current[serverName];
+        if (server) handleOpenDetailModal(server, "configuration");
+      }),
+    [handleOpenDetailModal]
   );
 
   const handleCloseDetailModal = useCallback(() => {
@@ -2130,7 +2009,6 @@ export function ServersTab({
                       id={name}
                       dndDisabled={false}
                       server={displayServer}
-                      needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
                         onDisconnect(serverName);
@@ -2161,9 +2039,6 @@ export function ServersTab({
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
                     server={getDisplayServer(activeServer)}
-                    needsReconnect={
-                      reconnectWarningByServerName[activeServer.name]
-                    }
                     onDisconnect={(serverName) => {
                       clearPendingQuickConnectIfMatches(serverName);
                       onDisconnect(serverName);
@@ -2406,9 +2281,6 @@ export function ServersTab({
             isOpen={detailModalState.isOpen}
             onClose={handleCloseDetailModal}
             server={detailModalServer}
-            needsReconnect={
-              reconnectWarningByServerName[detailModalServer.name]
-            }
             defaultTab={detailModalState.defaultTab}
             onSubmit={handleSubmitDetailModal}
             onDisconnect={onDisconnect}

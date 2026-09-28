@@ -1,3 +1,4 @@
+import type { EvalMatchOptions, CasePredicates } from "@/shared/eval-matching";
 import type { ConvexReactClient } from "convex/react";
 import {
   generateEvalTests,
@@ -30,6 +31,8 @@ export type CreateEvalTestCaseInput = {
   isNegativeTest: boolean;
   scenario?: string;
   expectedOutput?: string;
+  matchOptions?: EvalMatchOptions;
+  predicates?: CasePredicates;
   /**
    * Authored test steps (the unified `steps` model). The Convex mutation
    * rejects the legacy `promptTurns`/`caseType`/`probeConfig` fields, so case
@@ -152,6 +155,11 @@ function defaultEvalModels(): Array<{ model: string; provider: string }> {
 }
 
 export type GenerateAndPersistEvalTestsOptions = {
+  /**
+   * Environment suites: generate against this environment's eval server set
+   * instead of `serverIds` (resolved server-side, plugin servers included).
+   */
+  environmentId?: string;
   convex: ConvexReactClient;
   getAccessToken: () => Promise<string | undefined | null>;
   projectId: string | null | undefined;
@@ -167,8 +175,7 @@ export type GenerateAndPersistEvalTestsOptions = {
   isDirectGuest?: boolean;
   /** Override case listing; used when the caller already has the suite's cases. */
   listExistingCases?: () =>
-    | Array<Record<string, unknown>>
-    | Promise<Array<Record<string, unknown>>>;
+    Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
   /**
    * Optional server-attachment metadata for the suite the cases are being
    * generated against. When provided, the backend scopes the LLM prompt to
@@ -221,6 +228,7 @@ export async function generateAndPersistEvalTests(
     listExistingCases,
     serverAttachment,
     generationOptions,
+    environmentId,
   } = options;
 
   let existingList: Array<Record<string, unknown>> = [];
@@ -260,7 +268,9 @@ export async function generateAndPersistEvalTests(
 
   const result = await generateEvalTests({
     projectId: isDirectGuest ? null : projectId,
-    serverIds,
+    // An environment's servers are resolved server-side.
+    serverIds: environmentId ? [] : serverIds,
+    ...(environmentId ? { environmentId } : {}),
     convexAuthToken: accessToken,
     ...(serverAttachment ? { serverAttachment } : {}),
     ...(generationOptions ? { generationOptions } : {}),

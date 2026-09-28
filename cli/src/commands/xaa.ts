@@ -393,6 +393,9 @@ export function buildXaaConfig(
     ...(options.scopes?.trim() ? { scope: options.scopes.trim() } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     httpsOnly: options.httpsOnly ?? false,
+    // The inverse of the hosted switch: without --https-only this is a local
+    // dev run, and the mock IdP plus the RS it talks to are on loopback.
+    allowPrivateNetwork: options.httpsOnly !== true,
   };
 }
 

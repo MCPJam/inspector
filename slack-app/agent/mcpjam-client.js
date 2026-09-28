@@ -147,6 +147,9 @@ export const {
   executeProposedAction,
   startSuiteRun,
   getEvalRun,
+  // The run's decision summary — read once, on a terminal non-pass, so the
+  // outcome message can name where the chain broke.
+  getEvalRunDecisionSummary,
   listEvalRunIterations,
   getEvalRunSteps,
   // Journey (Swarms) runs — the watcher's status poll and its evidence reads.

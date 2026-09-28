@@ -14,6 +14,7 @@ import { useMemo } from "react";
 import { ChevronRight } from "lucide-react";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { cn } from "@/lib/utils";
+import { ToolSourceHeader } from "./ToolSourceHeader";
 
 interface HarnessBuiltinToolsSectionProps {
   tools: HarnessBuiltinToolInfo[];
@@ -21,6 +22,17 @@ interface HarnessBuiltinToolsSectionProps {
   searchQuery: string;
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  /**
+   * Is this host's harness running on the USER'S machine?
+   *
+   * The label is a statement about containment, and getting it wrong is the
+   * one mistake `targets.ts` forbids by name: `local-native` has no host
+   * containment boundary at all, so calling it a sandbox tells the user their
+   * files are protected by something that does not exist. Defaults to false,
+   * which keeps the cloud wording for every surface that has not been taught
+   * to answer.
+   */
+  localExecution?: boolean;
 }
 
 export function HarnessBuiltinToolsSection({
@@ -28,6 +40,7 @@ export function HarnessBuiltinToolsSection({
   searchQuery,
   selectedKey,
   onSelect,
+  localExecution = false,
 }: HarnessBuiltinToolsSectionProps) {
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -43,18 +56,16 @@ export function HarnessBuiltinToolsSection({
   if (filtered.length === 0) return null;
 
   return (
-    <div className="mt-3">
-      <div className="flex items-center gap-1.5 px-3 pb-1">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          Built-in tools
-        </span>
-        <span
-          className="font-mono text-[9px] rounded bg-muted px-1 py-[1px] text-muted-foreground"
-          title="These execute inside the harness sandbox via the agent's own loop. MCPJam can't call them directly — Run asks the agent to."
-        >
-          runs in sandbox
-        </span>
-      </div>
+    <div>
+      <ToolSourceHeader
+        title="Built-in tools"
+        chip={localExecution ? "runs on this machine" : "runs in sandbox"}
+        chipTitle={
+          localExecution
+            ? "These execute on this computer, as your user account, via the agent's own loop. MCPJam can't call them directly — Run asks the agent to."
+            : "These execute inside the harness sandbox via the agent's own loop. MCPJam can't call them directly — Run asks the agent to."
+        }
+      >
       <div className="space-y-0.5">
         {filtered.map((tool) => {
           const isSelected = selectedKey === tool.key;
@@ -91,6 +102,7 @@ export function HarnessBuiltinToolsSection({
           );
         })}
       </div>
+      </ToolSourceHeader>
     </div>
   );
 }

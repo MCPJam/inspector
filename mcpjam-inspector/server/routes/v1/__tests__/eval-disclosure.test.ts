@@ -46,7 +46,7 @@ vi.mock("../../../config.js", async (importOriginal) => {
 import evalDisclosure from "../eval-disclosure.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
-import { RUNNER_CAPABILITIES } from "../../../services/evals/runner-capabilities.js";
+import { runnerCapabilities } from "../../../services/evals/runner-capabilities.js";
 
 const PROJECT = "proj_a";
 const SUITE = "suite_a";
@@ -214,6 +214,31 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     );
     const body = (await (await get()).json()) as any;
     expect(body.futureSection).toEqual({ brandNew: true, value: 42 });
+  });
+
+  it("passes the provider-retention fact through unmodified", async () => {
+    // The backend nests it under capture.redaction; the CLI, the JSON output
+    // and the MCP tool all read it from this route, so it must not project it
+    // away.
+    const base = baseDisclosure() as { capture: { redaction: object } };
+    const providerRetention = {
+      openrouter: { data_collection: "deny", zdr: true },
+      gateway: { disallowPromptTraining: true, zeroDataRetention: true },
+      zeroDataRetention: true,
+      appliesTo: ["every analysis call"],
+      notAppliedTo: ["customer Playground chat"],
+      note: "provider, not MCPJam",
+    };
+    queryMock.mockResolvedValue(
+      baseDisclosure({
+        capture: {
+          ...base.capture,
+          redaction: { ...base.capture.redaction, providerRetention },
+        },
+      }),
+    );
+    const body = (await (await get()).json()) as any;
+    expect(body.capture.redaction.providerRetention).toEqual(providerRetention);
   });
 
   it("passes analysis through unmodified even when execution is absent", async () => {
@@ -390,7 +415,7 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     queryMock.mockResolvedValue(baseDisclosure());
     await get();
     const args = queryMock.mock.calls[0]![1] as Record<string, unknown>;
-    expect(args.runnerCapabilities).toEqual([...RUNNER_CAPABILITIES]);
+    expect(args.runnerCapabilities).toEqual([...runnerCapabilities()]);
   });
 
   it("answers 404 — not a 502 incident page — for a host that is not attached", async () => {

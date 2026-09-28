@@ -6,7 +6,10 @@
  * widget-capable hosts).
  */
 import { showServersOperation } from "@mcpjam/sdk/platform";
-import { PLATFORM_WIDGET_RESOURCE_URIS } from "../shared/platform-widgets.js";
+import {
+  PLATFORM_WIDGETS_ENABLED,
+  PLATFORM_WIDGET_RESOURCE_URIS,
+} from "../shared/platform-widgets.js";
 import type { PlatformToolContext } from "../server.js";
 import {
   operationAnnotations,
@@ -30,6 +33,12 @@ export function registerShowServersTool(
       annotations: operationAnnotations(showServersOperation),
     },
     async (input) => runPlatformOperation(context, showServersOperation, input),
-    platformWidgetUi(context, showServersOperation, "servers")
+    // Widgets off (`PLATFORM_WIDGETS_ENABLED`): the tool still registers, as a
+    // plain tool returning the same payload. Dropping it outright would remove
+    // a name hosts and agents already call, which is a bigger change than the
+    // pause asks for.
+    PLATFORM_WIDGETS_ENABLED
+      ? platformWidgetUi(context, showServersOperation, "servers")
+      : undefined
   );
 }

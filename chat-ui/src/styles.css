@@ -20,27 +20,39 @@
  * selector is what makes `themeMode="light"` actually win inside a dark app —
  * without it, `.dark .mcpjam-chat-ui` would keep the transcript dark.
  */
+/* BEGIN GENERATED: light — sync via `npm run chatui:sync-tokens` */
 .mcpjam-chat-ui,
 .mcpjam-chat-ui.light,
 .dark .mcpjam-chat-ui.light {
-  --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --border: 240 5.9% 90%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
+  --background: 48 33.4% 97.1%;
+  --foreground: 48 19.6% 20%;
+  --card: 48 33.4% 97.1%;
+  --card-foreground: 60 2.6% 7.6%;
+  --muted: 44 29.4% 90%;
+  --muted-foreground: 50 2.4% 50.2%;
+  --border: 50 7.5% 84.3%;
+  --destructive: 359.6 81.1% 58.6%;
+  --destructive-foreground: 0 0% 100%;
   /* Trace-timeline-only tokens (popover tooltip, focus ring, warning badge). */
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --ring: 240 10% 3.9%;
-  --warning: 38 92% 50%;
-  --warning-foreground: 0 0% 98%;
+  --popover-foreground: 50.8 19.4% 13.1%;
+  --accent: 46.2 22.9% 88.8%;
+  --accent-foreground: 50.8 19.4% 13.1%;
+  --ring: 15.1 55.5% 52.3%;
+  --warning: 43 100% 45.8%;
+  --warning-foreground: 26.6 100% 10%;
+  /* JSON syntax colors for the token spans JsonView emits. Raw, not HSL
+     triplets: these are consumed as `var(--json-key)` directly, not through
+     `hsl(var(…))` like the role tokens above. */
+  --json-key: oklch(0.55 0.2 255);
+  --json-string: oklch(0.5 0.1 55);
+  --json-number: oklch(0.5 0.1 55);
+  --json-boolean: oklch(0.5 0.15 145);
+  --json-boolean-false: oklch(0.55 0.18 25);
+  --json-null: oklch(0.55 0.02 270);
+  --json-punctuation: oklch(0.55 0.01 270);
 }
+/* END GENERATED: light */
 
 .mcpjam-chat-ui {
   color: hsl(var(--foreground));
@@ -54,32 +66,83 @@
  * when `themeMode="system"`. `:not(.light)` keeps a forced-light transcript
  * from being pulled dark by the host.
  */
+/* BEGIN GENERATED: dark — sync via `npm run chatui:sync-tokens` */
 .mcpjam-chat-ui.dark,
 .dark .mcpjam-chat-ui:not(.light) {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --border: 240 3.7% 15.9%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
+  --background: 60 2.7% 14.5%;
+  --foreground: 46.2 9.8% 73.9%;
+  --card: 60 2.7% 14.5%;
+  --card-foreground: 48 33.4% 97.1%;
+  --muted: 60 3.8% 10.2%;
+  --muted-foreground: 51.4 8.9% 69%;
+  --border: 60 5.1% 23.1%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 100%;
   /* Trace-timeline-only tokens (popover tooltip, focus ring, warning badge). */
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --ring: 240 4.9% 83.9%;
-  --warning: 38 92% 50%;
-  --warning-foreground: 48 96% 9%;
+  --popover: 60 2.1% 18.4%;
+  --popover-foreground: 60 5.4% 89.2%;
+  --accent: 48 10.6% 9.2%;
+  --accent-foreground: 51.4 25.9% 94.7%;
+  --ring: 14.8 63.1% 59.6%;
+  --warning: 30.5 100% 52.7%;
+  --warning-foreground: 37.1 100% 88.3%;
+  /* JSON syntax colors for the token spans JsonView emits. Raw, not HSL
+     triplets: these are consumed as `var(--json-key)` directly, not through
+     `hsl(var(…))` like the role tokens above. */
+  --json-key: oklch(0.7 0.18 255);
+  --json-string: oklch(0.7 0.1 55);
+  --json-number: oklch(0.7 0.1 55);
+  --json-boolean: oklch(0.65 0.15 145);
+  --json-boolean-false: oklch(0.68 0.16 25);
+  --json-null: oklch(0.6 0.02 270);
+  --json-punctuation: oklch(0.5 0.01 270);
 }
+/* END GENERATED: dark */
 
 /* Keep long tool input/output readable without a horizontal scrollbar war. */
 .mcpjam-chat-ui .mcpjam-chat-json {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
+}
+
+/*
+ * JSON syntax colours for the token spans `JsonView` emits. The `--json-*`
+ * values themselves are in the generated blocks above, synced from
+ * design-system/src/tokens.css like every other token.
+ *
+ * WHERE THIS APPLIES. Only where `@mcpjam/chat-ui/styles.css` is loaded, which
+ * the inspector does not do — in the app the transcript paints from the global
+ * `.json-*` rules in `mcpjam-inspector/client/src/index.css`, which is what
+ * gives Sessions the Playground's exact colours. This block is for standalone
+ * embedders, who would otherwise get the monochrome payload Sessions used to
+ * show (BB-239).
+ *
+ * Where it IS loaded it WINS: `.mcpjam-chat-ui .json-key` is two classes
+ * against the host's one. A host theming `.json-key` at single-class
+ * specificity has to raise its own, or re-theme by overriding `--json-*` on
+ * `.mcpjam-chat-ui` — the supported route.
+ */
+.mcpjam-chat-ui .json-key {
+  color: var(--json-key);
+}
+.mcpjam-chat-ui .json-string {
+  color: var(--json-string);
+}
+.mcpjam-chat-ui .json-number {
+  color: var(--json-number);
+}
+.mcpjam-chat-ui .json-boolean {
+  color: var(--json-boolean);
+}
+.mcpjam-chat-ui .json-boolean-false {
+  color: var(--json-boolean-false);
+}
+.mcpjam-chat-ui .json-null {
+  color: var(--json-null);
+}
+.mcpjam-chat-ui .json-punctuation {
+  color: var(--json-punctuation);
 }
 
 .mcpjam-chat-ui .mcpjam-chat-markdown {

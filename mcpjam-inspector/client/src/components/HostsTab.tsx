@@ -1,3 +1,4 @@
+import { HostCanvasSelector } from "./hosts/redesigned/HostCanvasSelector";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { HostBuilderView } from "./hosts/HostBuilderView";
@@ -7,7 +8,11 @@ import { ConnectViewHeader } from "./hosts/ConnectViewHeader";
 import { SNAPPY_RAIL } from "./hosts/transition-tokens";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList, useHostMutations } from "@/hooks/useClients";
-import { useProjectServers } from "@/hooks/useProjects";
+import {
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+  useCanManageProjectClients,
+  useProjectServers,
+} from "@/hooks/useProjects";
 import {
   buildHostComparePath,
   routePaths,
@@ -39,6 +44,15 @@ interface HostsTabProps {
   selectedHostId: string | null;
   onSelectHost: (hostId: string | null) => void;
   serversTabElement: ReactNode;
+  /**
+   * Reconnects one server by name. Threaded from `App` (which owns it) so a
+   * saved setting that only takes effect at connect time can be applied to the
+   * live connection — see the cancellation hook in `handleSave`.
+   */
+  onReconnect?: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean; allowInteractiveOAuthFlow?: boolean }
+  ) => Promise<unknown> | void;
 }
 
 /**
@@ -55,6 +69,7 @@ export function HostsTab({
   selectedHostId,
   onSelectHost,
   serversTabElement,
+  onReconnect,
 }: HostsTabProps) {
   const navigate = useAppNavigate();
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
@@ -156,6 +171,11 @@ export function HostsTab({
   // server names) from the payload against the live host list / project
   // servers and call the SAME useHostMutations callbacks the UI uses.
   const agentOperable = isAuthenticated && Boolean(projectId);
+  // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
+  const { canManage: canManageClients } = useCanManageProjectClients({
+    isAuthenticated,
+    projectId,
+  });
   const requireAgentOperable = () => {
     if (!agentOperable) {
       throw createInspectorCommandClientError(
@@ -222,6 +242,12 @@ export function HostsTab({
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
             "No project is selected.",
+          );
+        }
+        if (!canManageClients) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
           );
         }
         const { payload } = command as CreateHostInspectorCommand;
@@ -346,6 +372,12 @@ export function HostsTab({
       },
       duplicateHost: async (command) => {
         requireAgentOperable();
+        if (!canManageClients) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+          );
+        }
         const { payload } = command as DuplicateHostInspectorCommand;
         const host = resolveHost(payload?.host);
         if (payload?.name !== undefined && typeof payload.name !== "string") {
@@ -455,6 +487,7 @@ export function HostsTab({
                   <HostBuilderView
                     hostId={selectedHostId}
                     projectId={projectId}
+                    onReconnect={onReconnect}
                   />
                 </div>
               </motion.div>
@@ -472,6 +505,14 @@ export function HostsTab({
                 >
                   <ConnectViewHeader
                     value="servers"
+                    leftSlot={
+                      <HostCanvasSelector
+                        projectId={projectId}
+                        activeHostId={previewedHostId}
+                        navigateOnSwitch={false}
+                        showAddClient={false}
+                      />
+                    }
                     previewedHostId={previewedHostId}
                     onChange={(next) => {
                       // `onSelectHost` is wired to `handleSelectHost` in

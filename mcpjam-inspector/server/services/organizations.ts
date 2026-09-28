@@ -28,10 +28,21 @@ export type ApiKeyReadinessReason =
   | "membership_pending"
   | "membership_failed";
 
+export type ApiKeyMintMinimumRole = "member" | "admin";
+
 export interface ApiKeyReadiness {
   ready: boolean;
   workosOrganizationId: string | null;
   reason?: ApiKeyReadinessReason;
+  /**
+   * Whether this caller may mint a key for this org at all: their role, and
+   * the org's own policy (which can restrict minting to owners and admins).
+   * Independent of `ready`, which is only about sync timing. `undefined` from
+   * a backend that predates the field; the binding write still enforces the
+   * rule there, so a mint is simply attempted.
+   */
+  mintAllowed?: boolean;
+  mintMinimumRole?: ApiKeyMintMinimumRole;
 }
 
 /**
@@ -104,6 +115,8 @@ export async function resolveApiKeyReadiness(
       ready?: unknown;
       workosOrganizationId?: unknown;
       reason?: unknown;
+      mintAllowed?: unknown;
+      mintMinimumRole?: unknown;
     };
     if (typeof body?.ready !== "boolean") {
       throw new Error("API key readiness check returned an invalid body");
@@ -117,6 +130,12 @@ export async function resolveApiKeyReadiness(
       reason:
         typeof body.reason === "string"
           ? (body.reason as ApiKeyReadinessReason)
+          : undefined,
+      mintAllowed:
+        typeof body.mintAllowed === "boolean" ? body.mintAllowed : undefined,
+      mintMinimumRole:
+        body.mintMinimumRole === "member" || body.mintMinimumRole === "admin"
+          ? body.mintMinimumRole
           : undefined,
     };
   } catch (error) {

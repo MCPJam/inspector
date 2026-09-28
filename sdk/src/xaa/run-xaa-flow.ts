@@ -84,6 +84,14 @@ export interface XaaFlowConfig {
   timeoutMs?: number;
   /** Reject non-HTTPS / private targets. Default false for local development. */
   httpsOnly?: boolean;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local) on
+   * the outbound issuer/JWKS/token fetches. The CLI derives it from the
+   * inverse of {@link httpsOnly}; link-local and cloud-metadata destinations
+   * stay refused either way. The CIMD document is validated strictly
+   * regardless — see the `validateUrl(..., true)` call below.
+   */
+  allowPrivateNetwork?: boolean;
   onProgress?: (message: string) => void;
 }
 export interface XaaFlowStep {
@@ -167,11 +175,16 @@ function publicJwkMatches(local: JsonWebKey, published: JsonWebKey): boolean {
 async function verifyIssuerPublication(
   issuer: string,
   httpsOnly: boolean,
+  allowPrivateNetwork: boolean,
   timeoutMs: number | undefined
 ): Promise<{ ok: boolean; detail: string }> {
   let metadata: Record<string, unknown> | undefined;
   for (const url of buildIssuerPublicationCandidates(issuer)) {
-    const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
+    const response = await fetchOAuthMetadata(
+      url,
+      { httpsOnly, allowPrivateNetwork },
+      timeoutMs
+    );
     if (!("status" in response) && response.metadata.issuer === issuer) {
       metadata = response.metadata;
       break;
@@ -194,6 +207,7 @@ async function verifyIssuerPublication(
     url: jwksUri,
     headers: { Accept: "application/json" },
     httpsOnly,
+    allowPrivateNetwork,
     timeoutMs,
   });
   const rawKeys =
@@ -462,6 +476,7 @@ async function runSharedAttempt(
   const executor = createInProcessXaaExecutor({
     issuerBaseUrl: config.issuerBaseUrl,
     httpsOnly: config.httpsOnly ?? false,
+    allowPrivateNetwork: config.allowPrivateNetwork ?? false,
     timeoutMs: config.timeoutMs,
   });
   const reportedSteps = new Set<string>();
@@ -523,6 +538,7 @@ export async function runXaaFlow(
   config: XaaFlowConfig
 ): Promise<XaaFlowResult> {
   const httpsOnly = config.httpsOnly ?? false;
+  const allowPrivateNetwork = config.allowPrivateNetwork ?? false;
   const progress = (message: string) => config.onProgress?.(message);
   const issuer = getXAAIssuerUrl(config.issuerBaseUrl);
   const publicationStep: XaaFlowStep[] = [];
@@ -634,6 +650,7 @@ export async function runXaaFlow(
     const issuerPublication = await verifyIssuerPublication(
       issuer,
       httpsOnly,
+      allowPrivateNetwork,
       config.timeoutMs
     );
     publicationStep.push({

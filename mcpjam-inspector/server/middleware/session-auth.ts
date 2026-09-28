@@ -116,6 +116,7 @@ const UNPROTECTED_PREFIXES = [
   // same `startsWith` reason as above; the router's only path is
   // `/api/internal/chat-stage/derivation-requested`.
   "/api/internal/chat-stage/",
+  "/api/internal/agent-turns/",
 ];
 
 /**
@@ -156,7 +157,7 @@ function isSSERoute(path: string): boolean {
  */
 export async function sessionAuthMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   const path = c.req.path;
   const method = c.req.method;
@@ -218,7 +219,7 @@ export async function sessionAuthMiddleware(
           ? "SSE endpoints require ?_token=<token> query parameter"
           : "Include X-MCP-Session-Auth: Bearer <token> header",
       },
-      401
+      401,
     );
   }
 
@@ -230,7 +231,7 @@ export async function sessionAuthMiddleware(
         message: "Invalid session token.",
         hint: "Try refreshing the page to get a new token.",
       },
-      401
+      401,
     );
   }
 

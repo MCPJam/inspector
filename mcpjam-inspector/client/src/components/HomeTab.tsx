@@ -145,7 +145,7 @@ export function HomeTab({
     }
     const timer = window.setTimeout(
       () => setLoadingTimedOut(true),
-      HOME_CONTEXT_LOADING_TIMEOUT_MS
+      HOME_CONTEXT_LOADING_TIMEOUT_MS,
     );
     return () => window.clearTimeout(timer);
   }, [isContextLoading]);
@@ -171,10 +171,10 @@ export function HomeTab({
           next.delete("compose");
           return next;
         },
-        { replace: false }
+        { replace: false },
       );
     },
-    [setSearchParams]
+    [setSearchParams],
   );
 
   const handleResumeSession = useCallback(
@@ -186,10 +186,10 @@ export function HomeTab({
           next.delete("compose");
           return next;
         },
-        { replace: false }
+        { replace: false },
       );
     },
-    [setSearchParams]
+    [setSearchParams],
   );
 
   const handleBackToHome = useCallback(() => {
@@ -209,7 +209,7 @@ export function HomeTab({
         next.delete("compose");
         return next;
       },
-      { replace: false }
+      { replace: false },
     );
   }, [setSearchParams]);
 
@@ -233,7 +233,7 @@ export function HomeTab({
         next.set("compose", "1");
         return next;
       },
-      { replace: false }
+      { replace: false },
     );
   }, [setSearchParams]);
   const { user } = useAuth();
@@ -243,7 +243,7 @@ export function HomeTab({
 
   const data = useQuery(
     "home:getOrgHomeData" as any,
-    organizationId ? ({ organizationId } as any) : "skip"
+    organizationId ? ({ organizationId } as any) : "skip",
   ) as
     | {
         memberCount: number;
@@ -273,14 +273,14 @@ export function HomeTab({
     "orgMetrics:getOrgMetric" as any,
     organizationId
       ? ({ organizationId, metric: "tool_executions_30d" } as any)
-      : "skip"
+      : "skip",
   ) as OrgMetricResult;
 
   const messagesSentCount = useQuery(
     "orgMetrics:getOrgMetric" as any,
     organizationId
       ? ({ organizationId, metric: "messages_sent_30d" } as any)
-      : "skip"
+      : "skip",
   ) as OrgMetricResult;
 
   const fullName =
@@ -367,12 +367,12 @@ export function HomeTab({
           />
         </header>
 
-        <McpjamAgentHero
-          surface="home"
-          onSessionStart={handleSessionStart}
-          onResumeSession={handleResumeSession}
-          ready={Boolean(projectId)}
-        />
+          <McpjamAgentHero
+            surface="home"
+            onSessionStart={handleSessionStart}
+            onResumeSession={handleResumeSession}
+            ready={Boolean(projectId)}
+          />
 
         <ProductUpdatesRow />
 

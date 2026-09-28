@@ -37,6 +37,16 @@ export class LoggingTransport implements Transport {
     this.inner.sessionId = value;
   }
 
+  /**
+   * Forwarded so the protocol layer can still see that the wrapped transport
+   * owns a per-request stream — the 2026-07-28 cancellation signal is aborting
+   * that stream, not POSTing `notifications/cancelled`.
+   */
+  get hasPerRequestStream(): boolean | undefined {
+    return (this.inner as unknown as { hasPerRequestStream?: boolean })
+      .hasPerRequestStream;
+  }
+
   async start() {
     this.inner.onmessage = (message, extra) => {
       this.onReceive?.(message);

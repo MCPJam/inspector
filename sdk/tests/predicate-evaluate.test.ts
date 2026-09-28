@@ -781,6 +781,19 @@ describe("evaluatePredicates — aggregate verdict", () => {
     expect(evaluatePredicates(baseTranscript, undefined)).toEqual([]);
     expect(allPredicatesPassed([])).toBe(true);
   });
+
+  it("a failing advisory predicate does not fail the aggregate", () => {
+    const results = evaluatePredicates(baseTranscript, [
+      {
+        type: "responseContains",
+        needle: "this text is absent",
+        role: "advisory",
+        severity: "warn",
+      },
+    ]);
+    expect(results[0]!.passed).toBe(false);
+    expect(allPredicatesPassed(results)).toBe(true);
+  });
 });
 
 describe("reason redaction + bounding (persisted to Convex metadata)", () => {
@@ -900,4 +913,54 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
     expect(JSON.stringify(persisted)).not.toContain("eyJsecret");
     expect(JSON.stringify(persisted)).not.toContain("sk-test-12345");
   });
+});
+
+describe("onlyToolsCalled", () => {
+  it.each([
+    { allowed: [], called: [], passed: true },
+    { allowed: [], called: ["search"], passed: false },
+    { allowed: ["search"], called: [], passed: true },
+    { allowed: ["search"], called: ["search", "search"], passed: true },
+    { allowed: ["search"], called: ["delete"], passed: false },
+  ])(
+    "checks allowed=$allowed against called=$called",
+    ({ allowed, called, passed }) => {
+      expect(
+        evaluatePredicate(
+          transcript({
+            toolCalls: called.map((toolName) => ({ toolName, arguments: {} })),
+          }),
+          { type: "onlyToolsCalled", toolNames: allowed }
+        ).passed
+      ).toBe(passed);
+    }
+  );
+
+  it.each([undefined, "search", [null], [1], [""], ["  "]])(
+    "rejects malformed allow-lists: %j",
+    (toolNames) => {
+      expect(
+        evaluatePredicate(transcript(), {
+          type: "onlyToolsCalled",
+          toolNames,
+        } as Predicate).passed
+      ).toBe(false);
+    }
+  );
+
+  it.each([undefined, "", "  "])(
+    "fails closed for an unnamed tool call: %j",
+    (toolName) => {
+      expect(
+        evaluatePredicate(
+          transcript({
+            toolCalls: [
+              { toolName, arguments: {} },
+            ] as IterationTranscript["toolCalls"],
+          }),
+          { type: "onlyToolsCalled", toolNames: [] }
+        ).passed
+      ).toBe(false);
+    }
+  );
 });

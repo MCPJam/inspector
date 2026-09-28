@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
 
 /**
  * Org-level settings for the Slack agent.
@@ -75,75 +76,6 @@ export interface UseOrgSlackSettingsResult {
   sendTestNotification: (bindingId: string) => Promise<void>;
 }
 
-function messageOf(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    // Convex prefixes thrown errors with the server stack; the last line is
-    // the message an admin can act on ("That channel is already bound…").
-    const lines = error.message.split("\n").filter(Boolean);
-    const last = lines[lines.length - 1] ?? error.message;
-    return last.replace(/^\[.*?\]\s*/, "").trim() || error.message;
-  }
-  return String(error);
-}
-
-/**
- * A write that belongs to ONE org, and knows it.
- *
- * Both hooks in this file need the same three things, and getting any of them
- * subtly wrong shows up only when an admin switches orgs mid-write:
- *
- *   - The error and saving flags reset when the org changes, so a failure does
- *     not follow the admin to a page where nothing failed.
- *   - A completion that lands after a switch reports to nobody, rather than
- *     putting "That channel is already bound" on a page about a different org.
- *   - The error is surfaced, never swallowed: the conflict message IS the
- *     product here — it is what tells an admin why their binding did not take.
- *
- * Kept in one place because two copies of stale-write logic will diverge, and
- * the divergence would be invisible until someone hits exactly this race.
- */
-function useOrgScopedWrite(organizationId: string | null): {
-  error: string | null;
-  isSaving: boolean;
-  run: (work: () => Promise<unknown>) => Promise<void>;
-} {
-  const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-
-  /** The org currently on screen, for a write to compare itself against. */
-  const currentOrgRef = useRef(organizationId);
-
-  useEffect(() => {
-    currentOrgRef.current = organizationId;
-    setError(null);
-    setIsSaving(false);
-  }, [organizationId]);
-
-  const run = useCallback(
-    async (work: () => Promise<unknown>) => {
-      // A mutation is a round trip, and the org picker is one click away. The
-      // org it started under is captured here so a completion that arrives
-      // after a switch reports to nobody instead of to the wrong page.
-      const startedFor = organizationId;
-      setError(null);
-      setIsSaving(true);
-      try {
-        await work();
-      } catch (nextError) {
-        if (currentOrgRef.current === startedFor) {
-          setError(messageOf(nextError));
-        }
-        throw nextError;
-      } finally {
-        if (currentOrgRef.current === startedFor) setIsSaving(false);
-      }
-    },
-    [organizationId]
-  );
-
-  return { error, isSaving, run };
-}
-
 export function useOrgSlackSettings(
   organizationId: string | null,
   /**
@@ -151,7 +83,7 @@ export function useOrgSlackSettings(
    * predate Discord therefore keep reading exactly the rows they always did —
    * the argument is not even sent.
    */
-  surfaceKind: SurfaceKind = "slack"
+  surfaceKind: SurfaceKind = "slack",
 ): UseOrgSlackSettingsResult {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -162,25 +94,25 @@ export function useOrgSlackSettings(
   // which is the ordering during the rollout window.
   const surfaceArg = useMemo(
     () => (surfaceKind === "slack" ? {} : { surfaceKind }),
-    [surfaceKind]
+    [surfaceKind],
   );
 
   const connections = useQuery(
     "slackAgentSettings:getConnections" as any,
-    enabled ? ({ organizationId, ...surfaceArg } as any) : "skip"
+    enabled ? ({ organizationId, ...surfaceArg } as any) : "skip",
   ) as SlackConnections | undefined;
 
   const setDefault = useMutation(
-    "slackAgentSettings:setOrgDefaultProject" as any
+    "slackAgentSettings:setOrgDefaultProject" as any,
   );
   const createBinding = useMutation(
-    "slackAgentSettings:createChannelBinding" as any
+    "slackAgentSettings:createChannelBinding" as any,
   );
   const removeBinding = useMutation(
-    "slackAgentSettings:removeChannelBinding" as any
+    "slackAgentSettings:removeChannelBinding" as any,
   );
   const sendTestNotificationMutation = useMutation(
-    "slackAgentSettings:sendTestNotification" as any
+    "slackAgentSettings:sendTestNotification" as any,
   );
 
   const { error, isSaving, run } = useOrgScopedWrite(organizationId);
@@ -194,10 +126,10 @@ export function useOrgSlackSettings(
           ...surfaceArg,
           surfaceTenantId: args.surfaceTenantId,
           ...(args.projectId ? { projectId: args.projectId } : {}),
-        } as any)
+        } as any),
       );
     },
-    [organizationId, run, setDefault, surfaceArg]
+    [organizationId, run, setDefault, surfaceArg],
   );
 
   const createChannelBinding = useCallback(
@@ -208,10 +140,10 @@ export function useOrgSlackSettings(
     }) => {
       if (!organizationId) return;
       await run(() =>
-        createBinding({ organizationId, ...surfaceArg, ...args } as any)
+        createBinding({ organizationId, ...surfaceArg, ...args } as any),
       );
     },
-    [createBinding, organizationId, run, surfaceArg]
+    [createBinding, organizationId, run, surfaceArg],
   );
 
   const removeChannelBinding = useCallback(
@@ -219,17 +151,17 @@ export function useOrgSlackSettings(
       if (!organizationId) return;
       await run(() => removeBinding({ organizationId, bindingId } as any));
     },
-    [organizationId, removeBinding, run]
+    [organizationId, removeBinding, run],
   );
 
   const sendTestNotification = useCallback(
     async (bindingId: string) => {
       if (!organizationId) return;
       await run(() =>
-        sendTestNotificationMutation({ organizationId, bindingId } as any)
+        sendTestNotificationMutation({ organizationId, bindingId } as any),
       );
     },
-    [organizationId, run, sendTestNotificationMutation]
+    [organizationId, run, sendTestNotificationMutation],
   );
 
   return useMemo(
@@ -256,7 +188,7 @@ export function useOrgSlackSettings(
       removeChannelBinding,
       sendTestNotification,
       setOrgDefaultProject,
-    ]
+    ],
   );
 }
 
@@ -284,7 +216,7 @@ export interface UseOrgSlackCapabilitiesResult {
 }
 
 export function useOrgSlackCapabilities(
-  organizationId: string | null
+  organizationId: string | null,
 ): UseOrgSlackCapabilitiesResult {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -292,11 +224,11 @@ export function useOrgSlackCapabilities(
 
   const policy = useQuery(
     "slackAgentSettings:getCapabilityPolicy" as any,
-    enabled ? ({ organizationId } as any) : "skip"
+    enabled ? ({ organizationId } as any) : "skip",
   ) as { disabledOperations: string[] } | undefined;
 
   const savePolicy = useMutation(
-    "slackAgentSettings:setCapabilityPolicy" as any
+    "slackAgentSettings:setCapabilityPolicy" as any,
   );
   const { error, isSaving, run } = useOrgScopedWrite(organizationId);
 
@@ -311,10 +243,10 @@ export function useOrgSlackCapabilities(
         savePolicy({
           organizationId,
           disabledOperations: names,
-        } as any)
+        } as any),
       );
     },
-    [organizationId, run, savePolicy]
+    [organizationId, run, savePolicy],
   );
 
   return useMemo(
@@ -327,6 +259,6 @@ export function useOrgSlackCapabilities(
       isSaving,
       setDisabledOperations,
     }),
-    [organizationId, error, isSaving, policy, setDisabledOperations]
+    [organizationId, error, isSaving, policy, setDisabledOperations],
   );
 }

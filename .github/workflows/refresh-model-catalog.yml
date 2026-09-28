@@ -1,0 +1,106 @@
+name: Refresh hosted model catalog
+
+# `mcpjam-inspector/shared/hosted-model-ids.generated.ts` is the offline floor
+# for hosted-model classification: the server billing cache seeds from it and
+# the client picker falls back to it. The live catalog is authoritative at
+# runtime, so a stale snapshot is never an outage, only a floor that drifts.
+# This job keeps it current without anyone having to remember to: once a week
+# it regenerates the file from the public, keyless catalog and opens (or
+# updates) a pull request when anything changed. The regeneration stays a
+# reviewed step because the diff is the audit trail.
+#
+# It never fails because the snapshot is old. It fails only when the catalog
+# cannot be read (the generator refuses to write an implausibly small or
+# non-JSON response), which is worth a red run.
+#
+# Two things about pull requests opened with the default GITHUB_TOKEN:
+#   - the repository setting "Allow GitHub Actions to create and approve pull
+#     requests" must be on, or the `gh pr create` step is refused;
+#   - GitHub does not start other workflows for them, so the PR build does not
+#     run by itself. Close and reopen the PR (or push a commit to it) to run CI.
+on:
+  schedule:
+    # Mondays, 14:17 UTC. Off the hour so it does not queue behind the jobs
+    # that everyone schedules at :00.
+    - cron: "17 14 * * 1"
+  workflow_dispatch:
+
+# Writes one bot branch and opens a PR from it. Nothing else.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: refresh-model-catalog
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24.14.0"
+  SNAPSHOT_PATH: mcpjam-inspector/shared/hosted-model-ids.generated.ts
+  BOT_BRANCH: automation/refresh-hosted-model-ids
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    name: Regenerate the hosted model id snapshot
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The generator imports node builtins only and reads a public URL, so it
+      # needs no install step and no secret.
+      - name: Regenerate the snapshot
+        working-directory: mcpjam-inspector
+        run: node scripts/generate-hosted-model-ids.mjs
+
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- "$SNAPSHOT_PATH")" ]; then
+            echo "Snapshot unchanged; nothing to open."
+            exit 0
+          fi
+
+          added=$(git diff --numstat -- "$SNAPSHOT_PATH" | awk '{print $1}')
+          removed=$(git diff --numstat -- "$SNAPSHOT_PATH" | awk '{print $2}')
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BOT_BRANCH"
+          git add -- "$SNAPSHOT_PATH"
+          git commit -m "models: refresh the hosted model id snapshot"
+          # The bot branch holds only this job's commit, so replacing it with
+          # the latest regeneration is the intended update.
+          git push --force origin "$BOT_BRANCH"
+
+          body=$(cat <<EOF
+          Weekly regeneration of \`$SNAPSHOT_PATH\` from the public model catalog, by \`.github/workflows/refresh-model-catalog.yml\`.
+
+          Lines added: $added. Lines removed: $removed.
+
+          The snapshot is the offline floor for hosted-model classification (server billing cache seed, client picker fallback). Review removed ids with care: a removed id stops counting as hosted when the live catalog is unreachable.
+
+          CI does not start by itself on pull requests opened with the default workflow token. Close and reopen this PR to run the checks.
+          EOF
+          )
+
+          existing=$(gh pr list --head "$BOT_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --body "$body"
+            echo "Updated PR #$existing."
+          else
+            gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$BOT_BRANCH" \
+              --title "models: refresh the hosted model id snapshot" \
+              --body "$body"
+          fi

@@ -14,6 +14,32 @@ interface CiMetadataDisplayProps {
   interactive?: boolean;
 }
 
+/**
+ * `runUrl` reaches this row from whoever launched the run — it is a DECLARED
+ * label, capped and trimmed on the way in but never fetched or verified. It
+ * then becomes the `href` of three anchors below (Pipeline, and the branch and
+ * commit chips when the repo base can't be derived), so a `javascript:` or
+ * `data:` value would be a script the user runs by clicking their own run's
+ * provenance. Anything that is not an absolute `http(s)` URL is treated as if
+ * no pipeline URL were recorded; the labels still render, just not as links.
+ *
+ * The header parser rejects these at the boundary too. This one also covers
+ * rows written before it did.
+ */
+function safeHttpUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password
+      ? value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getGitHubRepoBaseUrl(runUrl?: string): string | null {
   if (!runUrl) return null;
   try {
@@ -43,19 +69,27 @@ export function CiMetadataDisplay({
   const branch = ciMetadata?.branch?.trim();
   const fullSha = ciMetadata?.commitSha?.trim();
   const shortSha = formatCommitSha(fullSha);
-  const runUrl = ciMetadata?.runUrl?.trim();
+  const runUrl = safeHttpUrl(ciMetadata?.runUrl?.trim());
   const repoBaseUrl = getGitHubRepoBaseUrl(runUrl);
-  const branchUrl = branch
-    ? repoBaseUrl
-      ? `${repoBaseUrl}/tree/${encodeURIComponent(branch)}`
-      : runUrl
-    : undefined;
+  const branchUrl =
+    safeHttpUrl(ciMetadata?.branchUrl) ??
+    (branch
+      ? repoBaseUrl
+        ? `${repoBaseUrl}/tree/${encodeURIComponent(branch)}`
+        : runUrl
+      : undefined);
   const commitUrl = shortSha
     ? repoBaseUrl
       ? `${repoBaseUrl}/commit/${encodeURIComponent(fullSha ?? shortSha)}`
       : runUrl
     : undefined;
-  const hasMetadata = !!branch || !!shortSha || !!runUrl;
+  const prUrl = safeHttpUrl(ciMetadata?.prUrl);
+  const hasMetadata =
+    !!branch ||
+    !!shortSha ||
+    !!runUrl ||
+    !!prUrl ||
+    ciMetadata?.dirty !== undefined;
 
   if (!hasMetadata) {
     return null;
@@ -117,6 +151,27 @@ export function CiMetadataDisplay({
 
   const content = (
     <>
+      {ciMetadata?.dirty !== undefined && (
+        <Badge variant="outline">
+          {ciMetadata.dirty ? "Uncommitted changes" : "Clean worktree"}
+        </Badge>
+      )}
+      {prUrl &&
+        (interactive ? (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-primary hover:underline"
+          >
+            Pull request
+            {ciMetadata?.pullRequestNumber
+              ? ` #${ciMetadata.pullRequestNumber}`
+              : ""}
+          </a>
+        ) : (
+          <Badge variant="outline">Pull request</Badge>
+        ))}
       {branch &&
         (interactive && branchUrl ? (
           <a

@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 /**
  * Scenario detail. Two behaviours are load-bearing beyond layout:
  *
@@ -17,7 +18,6 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 
@@ -36,6 +36,7 @@ const {
   environmentState,
   namedListState,
   flagState,
+  findingsState,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   locationState: { search: "" },
@@ -57,6 +58,9 @@ const {
   // loading, an array once settled.
   namedListState: { value: [] as unknown },
   flagState: { environmentsEnabled: true },
+  // Lets one test make the landing tab throw the way its Convex query would
+  // against a backend that cannot answer it.
+  findingsState: { throws: false },
 }));
 
 vi.mock("react-router", async (importOriginal) => ({
@@ -83,7 +87,17 @@ vi.mock("@/lib/scenario-client-style", () => ({
   getScenarioHostLogo: () => "logo.png",
 }));
 
-vi.mock("@/lib/scenario-session", () => ({
+// Only the link BUILDER is stubbed. It reads the shareable app origin, which
+// jsdom answers as localhost, and these specs assert against a share host.
+//
+// `withScenarioPreviewSurface` is deliberately the REAL export. The previous
+// version of this mock reimplemented it, which made the preview assertion
+// below unfalsifiable: a hand-rolled copy appends `surface=preview` whether or
+// not the production helper still does — its `try/catch` returning the link
+// untouched, or the param renamed, would leave the spec green. The real helper
+// runs fine here; it only needs `window.location` for `new URL`'s base.
+vi.mock("@/lib/scenario-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/scenario-session")>()),
   buildScenarioLink: (token: string) => `https://mcpjam.link/t/${token}`,
 }));
 
@@ -142,28 +156,14 @@ vi.mock("@/components/scenarios/ScenarioShareSection", () => ({
 }));
 
 // Share UI calls useConvexAuth; stub so detail chrome specs don't need a provider.
-vi.mock("@/components/scenarios/ScenarioShareBanner", () => ({
-  ScenarioShareBanner: () => <div data-testid="stub-share-banner" />,
+vi.mock("@/components/scenarios/ScenarioShareEmptyPanel", () => ({
   ScenarioShareEmptyPanel: () => <div data-testid="stub-share-empty" />,
 }));
 
-// Provider reads Convex for pattern findings; these specs only care that the
-// workbench mounts under it, not the rail lifecycle.
-vi.mock("@/components/shared/usage-insights/run-insights", () => ({
-  RunInsightsProvider: ({ children }: { children: ReactNode }) => (
-    <>{children}</>
-  ),
-  RunInsightsRecommendations: () => null,
+vi.mock("@/components/scenarios/ScenarioShareDialog", () => ({
+  ScenarioShareDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="stub-share-dialog" /> : null,
 }));
-
-// The envelope hook subscribes to Convex; these specs render without a
-// provider, so it is stubbed exactly like the rail above. `undefined` is the
-// real "still loading / no envelope" value, and the panel renders nothing for
-// it — the mount is what these specs care about.
-vi.mock(
-  "@/components/shared/actionable-insights/use-insights-envelope",
-  () => ({ useInsightsEnvelope: () => undefined }),
-);
 
 vi.mock("@/components/scenarios/ScenarioDeleteConfirmDialog", () => ({
   ScenarioDeleteConfirmDialog: ({ open }: { open: boolean }) =>
@@ -180,16 +180,22 @@ vi.mock("@/components/scenarios/ScenarioUsagePanel", () => ({
 // Insights are their own mount now (the shared workbench), not a `section` of
 // the sessions panel. Stubbed for the same reason: these specs are about which
 // tab renders, not what the workbench draws.
+// Findings is the landing tab and reads sessions through Convex. These tests
+// are about the detail shell, so it is stubbed the same way the workbench is.
+vi.mock("@/components/scenarios/findings/scenario-findings-tab", () => ({
+  ScenarioFindingsTab: () => {
+    if (findingsState.throws) {
+      throw new Error("Could not find public function");
+    }
+    return <div data-testid="stub-scenario-findings" />;
+  },
+}));
+
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
-    // Default stub leaves empty-state reporting to the page's initial
-    // `insightsEmpty=true`. Specs that need the filled-cohort branch call
-    // `onEmptyChange(false)` themselves.
     return (
-      <div data-testid="stub-usage-insights">
-        {props.emptyState as never}
-      </div>
+      <div data-testid="stub-usage-insights">{props.emptyState as never}</div>
     );
   },
 }));
@@ -211,11 +217,9 @@ vi.mock("@/components/scenarios/ScenarioPreviewPane", () => ({
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
-  ResizablePanelGroup: ({
-    children,
-  }: {
-    children?: unknown;
-  }) => <div data-testid="stub-resizable-group">{children as never}</div>,
+  ResizablePanelGroup: ({ children }: { children?: unknown }) => (
+    <div data-testid="stub-resizable-group">{children as never}</div>
+  ),
   ResizablePanel: ({ children }: { children?: unknown }) => (
     <div>{children as never}</div>
   ),
@@ -249,11 +253,11 @@ const scenario = {
 
 const detail = (
   over: Partial<ScenarioSettings> = {},
-  opts: { editMode?: boolean } = {},
+  opts: { editMode?: boolean; sessionCount?: number } = {},
 ) => (
   <UserTestingScenarioDetail
     scenario={{ ...scenario, ...over } as ScenarioSettings}
-    isAuthenticated
+    sessionCount={opts.sessionCount}
     editMode={opts.editMode}
     onBack={vi.fn()}
     onDeleted={vi.fn()}
@@ -262,16 +266,13 @@ const detail = (
 
 const renderDetail = (
   over: Partial<ScenarioSettings> = {},
-  opts: { editMode?: boolean } = {},
+  opts: { editMode?: boolean; sessionCount?: number } = {},
 ) => render(detail(over, opts));
 
-const renderEdit = (over: Partial<ScenarioSettings> = {}) =>
-  renderDetail(over, { editMode: true });
-
-/** Composer lives in the setup dialog — open it before asserting strip props. */
-const openSetup = () => {
-  fireEvent.click(screen.getByTestId("user-testing-edit-setup"));
-};
+const renderEdit = (
+  over: Partial<ScenarioSettings> = {},
+  opts: { sessionCount?: number } = {},
+) => renderDetail(over, { ...opts, editMode: true });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -293,76 +294,155 @@ beforeEach(() => {
   environmentState.row = undefined;
   namedListState.value = [];
   flagState.environmentsEnabled = true;
+  findingsState.throws = false;
 });
 
 describe("UserTestingScenarioDetail", () => {
-  it("lands on Insights by default", () => {
+  it("lands on Findings by default, with Insights still reachable", () => {
     renderDetail();
 
-    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-    // Empty Insights owns share; the header strip stays off until there is data.
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
-    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Study view" });
+    // `stub-share-empty` is the Insights empty state and no longer renders
+    // on the landing tab.
+    expect(
+      within(nav).getByRole("button", { name: "Findings" }),
+    ).toBeInTheDocument();
+    expect(
+      within(nav).getByRole("button", { name: "Insights" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("user-testing-edit-tab"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
-    const tabNav = screen.getByRole("navigation", { name: "Scenario view" });
+    const tabNav = screen.getByRole("navigation", { name: "Study view" });
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
-  it("shows the header share strip once Insights reports a filled cohort", async () => {
-    renderDetail();
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
+  it("opens a study nobody has tested on Insights, not an empty Findings", () => {
+    // Findings summarises what testers did. On a study with nobody through the
+    // link it renders as an empty frame that reads like a broken page, which
+    // is the first thing anyone sees after creating one.
+    renderDetail({}, { sessionCount: 0 });
 
-    const onEmptyChange = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
-      | ((empty: boolean) => void)
-      | undefined;
-    expect(onEmptyChange).toBeTypeOf("function");
-    await act(async () => {
-      onEmptyChange?.(false);
-    });
-
-    expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("stub-scenario-findings"),
+    ).not.toBeInTheDocument();
   });
 
-  it("keeps onEmptyChange stable across the render it triggers", async () => {
-    // Regression for INSPECTOR-CLIENT-236 (infinite render loop).
-    renderDetail();
+  it("opens on Findings as soon as the study has a session", () => {
+    renderDetail({}, { sessionCount: 1 });
 
-    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
-      | ((empty: boolean) => void)
-      | undefined;
-    expect(before).toBeTypeOf("function");
-
-    const callsAfterMount = workbenchMock.mock.calls.length;
-    await act(async () => {
-      before?.(false);
-    });
-    // A no-op regression (setter or callback stops updating) would leave
-    // `calls` at the same length, making the identity check below vacuous.
-    expect(workbenchMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
-    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
-    expect(after).toBe(before);
-
-    // Redundant update, same value: the no-op guard must skip the re-render.
-    const callsAfterFirstUpdate = workbenchMock.mock.calls.length;
-    await act(async () => {
-      before?.(false);
-    });
-    expect(workbenchMock.mock.calls.length).toBe(callsAfterFirstUpdate);
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
   });
 
-  it("shows setup and share controls on the Edit route", () => {
+  it("names Findings in the URL on an empty study, so the tab still works", () => {
+    // The regression this guards: Findings is not the fallback here, so a link
+    // that omitted `?tab=` would parse straight back to Insights and the tab
+    // would look unclickable.
+    renderDetail({}, { sessionCount: 0 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Findings" }));
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/user-testing/cb-1?tab=findings",
+      { replace: true },
+    );
+  });
+
+  it("honours an explicit Findings link on an empty study", () => {
+    locationState.search = "?tab=findings";
+    renderDetail({}, { sessionCount: 0 });
+
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
+  });
+
+  it("keeps the page up when the landing tab's query throws", () => {
+    // Findings reads sessions through Convex, and `useQuery` throws against a
+    // backend that cannot answer. Because Findings is now the DEFAULT tab,
+    // an unguarded throw blanks `/user-testing/:scenarioId` for everyone
+    // arriving without a `?tab=` — not one tab a reader opted into. The tab
+    // strip has to survive it, or there is no way back to Insights.
+    findingsState.throws = true;
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    renderDetail();
+
+    expect(
+      screen.queryByTestId("stub-scenario-findings"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Study view" });
+    expect(
+      within(nav).getByRole("button", { name: "Insights" }),
+    ).toBeInTheDocument();
+
+    consoleError.mockRestore();
+  });
+
+  it("puts share behind one header button, with no strip in the page body", () => {
+    renderDetail();
+
+    // The landing tester-link banner is gone: Share is the only general
+    // entry point, and a second affordance is what this replaced.
+    expect(screen.queryByTestId("user-testing-share-dialog")).toBeNull();
+    expect(screen.queryByTestId("stub-share-dialog")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("user-testing-share-button"));
+
+    expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
+  });
+
+  it("keeps the Edit / Open preview / Share row off the Edit route", () => {
+    // Edit is this page, Open preview is not a setting, and sharing has its
+    // own card here. On Settings the row was noise.
+    renderEdit();
+
+    expect(screen.queryByTestId("user-testing-edit-button")).toBeNull();
+    expect(screen.queryByTestId("user-testing-open-preview")).toBeNull();
+    expect(screen.queryByTestId("user-testing-share-button")).toBeNull();
+  });
+
+  it("titles Edit as Settings, leaving the study's name to the back link", () => {
+    renderEdit();
+
+    // The back link and the title both said the study's name.
+    expect(screen.getByTestId("user-testing-detail-back")).toHaveTextContent(
+      "Payments beta",
+    );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTitle("Payments beta")).toBeNull();
+  });
+
+  it("shows Settings and its sharing controls on the Edit route", () => {
     renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sharing permissions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Ratings" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("stub-share")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
   });
 
   it("scopes Insights to this scenario's scenario", () => {
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
@@ -380,13 +460,16 @@ describe("UserTestingScenarioDetail", () => {
     // Insights `absolute inset-0` with no children — no empty state, no
     // retry. The workbench must stay reachable; if it itself blows up, the
     // share empty panel is the recovery UI.
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     workbenchMock.mockImplementation(() => {
       throw new Error(
         "Could not find public function: scenarioWindowInsights:getWindowSignals",
       );
     });
 
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
@@ -407,7 +490,7 @@ describe("UserTestingScenarioDetail", () => {
     );
   });
 
-  it("offers Edit setup next to Delete when the composer can run", () => {
+  it("edits the environment inline when the composer can run", () => {
     environmentState.row = {
       environmentId: "env-1",
       projectId: "p1",
@@ -420,9 +503,13 @@ describe("UserTestingScenarioDetail", () => {
     };
     renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
 
-    expect(screen.getByTestId("user-testing-edit-setup")).toHaveTextContent(
-      "Edit",
-    );
+    // Chips under an "Environment" heading, not a footer dialog.
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Environment" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
@@ -445,21 +532,58 @@ describe("UserTestingScenarioDetail", () => {
     // History is exactly what someone opens an archived scenario to read.
     renderDetail(archived);
     fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=sessions", {
-      replace: true,
-    });
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/user-testing/cb-1?tab=sessions",
+      {
+        replace: true,
+      },
+    );
   });
 
-  it("hides Edit setup on a host-backed scenario (composer can't run)", () => {
+  it("hides the Environment section on a host-backed scenario (composer can't run)", () => {
     renderEdit();
 
     expect(
       screen.queryByTestId("user-testing-detail-environment-error"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("user-testing-edit-setup"),
+      screen.queryByTestId("user-testing-environment-section"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
+    // With no Environment section, the header is the only thing left that can
+    // say which client this runs against.
+    expect(screen.getByTestId("user-testing-host-client")).toHaveTextContent(
+      "Client: Cursor",
+    );
+  });
+
+  it("keeps the client out of the header once Environment can show it", () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      name: "Checkout flow",
+      origin: { kind: "manual" },
+      revision: 1,
+      servers: [],
+      hostStyle: "chatgpt",
+      updatedAt: 0,
+    };
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("user-testing-host-client")).toBeNull();
+  });
+
+  it("goes back to the scenario from Edit, not out to the list", () => {
+    renderEdit();
+
+    fireEvent.click(screen.getByTestId("user-testing-detail-back"));
+
+    // Edit is a sub-route and its own Edit button is inert there, so the list
+    // would leave no one-click way back to Insights.
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1");
   });
 
   it("seeds the session pane from a deep-linked session", () => {
@@ -497,7 +621,6 @@ describe("UserTestingScenarioDetail", () => {
       // presence must NOT read as "named".
       renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      openSetup();
       const button = screen.getByTestId("user-testing-save-as-environment");
       fireEvent.click(button);
 
@@ -549,7 +672,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       expect(
         screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
@@ -587,8 +709,25 @@ describe("UserTestingScenarioDetail", () => {
       await screen.findByText("Payments beta");
     });
 
+    it("toasts the collaborative editing denial when saving a description", async () => {
+      updateScenarioMock.mockRejectedValueOnce(
+        new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+      );
+      renderEdit({ description: "Old copy" });
+      fireEvent.change(screen.getByTestId("user-testing-description"), {
+        target: { value: "New copy" },
+      });
+      fireEvent.blur(screen.getByTestId("user-testing-description"));
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "Editing another member's work requires Team or Enterprise.",
+        ),
+      );
+    });
+
     it("persists the description on blur, only when it changed", () => {
-      renderDetail({ description: "Old copy" });
+      // BB-202 moved this field off the header row and into Edit.
+      renderEdit({ description: "Old copy" });
 
       const textarea = screen.getByTestId("user-testing-description");
       // Blur with no edit: no write.
@@ -601,6 +740,342 @@ describe("UserTestingScenarioDetail", () => {
         scenarioId: "cb-1",
         description: "New copy",
       });
+    });
+
+    it("flushes a focused draft when Edit closes without a blur", () => {
+      // Navigating out of Edit unmounts the field, and React fires no blur on
+      // unmount — the typed text would be dropped and the focus guard would
+      // latch, freezing the reseed for the rest of this instance's life.
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Typed then left" } });
+      rerender(detail({ description: "Old copy" }));
+
+      expect(updateScenarioMock).toHaveBeenCalledWith({
+        scenarioId: "cb-1",
+        description: "Typed then left",
+      });
+    });
+
+    it("does not save a merely-focused draft over a collaborator's edit", () => {
+      // Holding focus is not evidence of an edit. The reseed is suppressed
+      // while focus is held, so the draft stays stale — flushing it on the way
+      // out of Edit would overwrite the value that landed meanwhile.
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      fireEvent.focus(screen.getByTestId("user-testing-description"));
+      rerender(detail({ description: "Collab copy" }, { editMode: true }));
+      rerender(detail({ description: "Collab copy" }));
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+    });
+
+    it("does not re-send a save that is still in flight when Edit closes", async () => {
+      // The blur save marks the seed synchronously. Advancing it only after
+      // the write let the exit flush measure dirty against the pre-save seed
+      // and send the same value a second time.
+      let settleSave = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          settleSave = () => resolve();
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "New copy" } });
+      fireEvent.blur(textarea);
+      expect(updateScenarioMock).toHaveBeenCalledTimes(1);
+
+      // Leaving Edit while that write is still unresolved.
+      rerender(detail({ description: "Old copy" }));
+      expect(updateScenarioMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        settleSave();
+      });
+    });
+
+    it("keeps the newer value when an older save fails late", async () => {
+      // Two writes can overlap: blur starts one, retyping and leaving Edit
+      // starts the next. The first one failing last must not resync the field
+      // over the value that superseded it.
+      let failFirst: (err: Error) => void = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, reject) => {
+          failFirst = reject;
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "First" } });
+      fireEvent.blur(textarea);
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Second" } });
+      rerender(detail({ description: "Old copy" }));
+
+      expect(updateScenarioMock).toHaveBeenNthCalledWith(2, {
+        scenarioId: "cb-1",
+        description: "Second",
+      });
+
+      await act(async () => {
+        failFirst(new Error("stale save rejected"));
+      });
+
+      // Back into Edit: the draft still holds what the newer save sent, and
+      // the superseded failure stayed silent.
+      rerender(detail({ description: "Old copy" }, { editMode: true }));
+      expect(screen.getByTestId("user-testing-description")).toHaveValue(
+        "Second",
+      );
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("adopts a collaborator's value when our save fails mid-flight", async () => {
+      // The rollback runs after the await, so reading `scenario` from its
+      // defining render restored a value the collaborator had already replaced.
+      // The reseed effect had consumed the new one, so the field stayed wrong.
+      let failSave: (err: Error) => void = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, reject) => {
+          failSave = reject;
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Mine" } });
+      fireEvent.blur(textarea);
+
+      // A collaborator's edit lands while our write is still unresolved.
+      rerender(detail({ description: "Theirs" }, { editMode: true }));
+
+      await act(async () => {
+        failSave(new Error("save rejected"));
+      });
+
+      expect(screen.getByTestId("user-testing-description")).toHaveValue(
+        "Theirs",
+      );
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("edits the name in its own card on Edit, above Description", async () => {
+      const { container } = renderEdit();
+
+      const field = screen.getByTestId("user-testing-name");
+      expect(field).toHaveValue("Payments beta");
+      const ids = Array.from(container.querySelectorAll("[data-testid]")).map(
+        (el) => el.getAttribute("data-testid"),
+      );
+      expect(ids.indexOf("user-testing-name-section")).toBeLessThan(
+        ids.indexOf("user-testing-description-section"),
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "  Payments GA " } });
+      fireEvent.blur(field);
+
+      await waitFor(() =>
+        expect(updateScenarioMock).toHaveBeenCalledWith({
+          scenarioId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+    });
+
+    it("does not save an unchanged, empty, or escaped name", () => {
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.blur(field);
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "   " } });
+      fireEvent.blur(field);
+      // An emptied field goes back to the stored name.
+      expect(field).toHaveValue("Payments beta");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Nope" } });
+      fireEvent.keyDown(field, { key: "Escape" });
+      fireEvent.blur(field);
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+      expect(field).toHaveValue("Payments beta");
+    });
+
+    it("puts a taken name on the field and keeps the draft", async () => {
+      updateScenarioMock.mockRejectedValueOnce(
+        Object.assign(new Error("taken"), {
+          data: { code: "CONFLICT", field: "name" },
+        }),
+      );
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Checkout flow" } });
+      fireEvent.blur(field);
+
+      expect(
+        await screen.findByTestId("user-testing-name-taken"),
+      ).toHaveTextContent(/already exists in this project/i);
+      expect(field).toHaveValue("Checkout flow");
+      expect(field).toHaveAttribute("aria-invalid", "true");
+
+      fireEvent.change(field, { target: { value: "Checkout flow 2" } });
+      expect(screen.queryByTestId("user-testing-name-taken")).toBeNull();
+    });
+
+    it("saves the name on Enter", async () => {
+      // A real focus: `fireEvent.focus` does not move focus in jsdom, so the
+      // handler's `currentTarget.blur()` would be a no-op and prove nothing.
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name") as HTMLInputElement;
+
+      field.focus();
+      fireEvent.change(field, { target: { value: "Payments GA" } });
+      fireEvent.keyDown(field, { key: "Enter" });
+
+      await waitFor(() =>
+        expect(updateScenarioMock).toHaveBeenCalledWith({
+          scenarioId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+      expect(document.activeElement).not.toBe(field);
+    });
+
+    it("toasts and reverts a rename that fails for another reason", async () => {
+      updateScenarioMock.mockRejectedValueOnce(new Error("network down"));
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Payments GA" } });
+      fireEvent.blur(field);
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
+      expect(field).toHaveValue("Payments beta");
+      expect(screen.queryByTestId("user-testing-name-taken")).toBeNull();
+    });
+
+    it("adopts a collaborator's rename instead of saving the old name back", () => {
+      const { rerender } = renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      // Focused, untouched — and a rename lands from elsewhere.
+      fireEvent.focus(field);
+      rerender(detail({ name: "Their name" }, { editMode: true }));
+      fireEvent.blur(field);
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+      expect(field).toHaveValue("Their name");
+    });
+
+    it("lets an older save's failure leave a newer draft alone", async () => {
+      let rejectFirst: (err: unknown) => void = () => {};
+      updateScenarioMock
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              rejectFirst = reject;
+            }),
+        )
+        .mockImplementationOnce(() => new Promise(() => {}));
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "First try" } });
+      fireEvent.blur(field);
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Second try" } });
+      fireEvent.blur(field);
+
+      rejectFirst(new Error("late failure"));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(field).toHaveValue("Second try");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("saves a typed name when Edit closes without a blur", async () => {
+      const { rerender } = renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Payments GA" } });
+      // Browser Back: the field unmounts, no blur fires.
+      rerender(detail({}, { editMode: false }));
+
+      await waitFor(() =>
+        expect(updateScenarioMock).toHaveBeenCalledWith({
+          scenarioId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+    });
+
+    it("toasts a taken name when the field is gone before the refusal lands", async () => {
+      let rejectSave: (err: unknown) => void = () => {};
+      updateScenarioMock.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectSave = reject;
+          }),
+      );
+      const { rerender } = renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      // The back link's mousedown blurs (starting the save), then navigates.
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Checkout flow" } });
+      fireEvent.blur(field);
+      rerender(detail({}, { editMode: false }));
+      rejectSave(
+        Object.assign(new Error("taken"), {
+          data: { code: "CONFLICT", field: "name" },
+        }),
+      );
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringMatching(/"Checkout flow" already exists/),
+        ),
+      );
+    });
+
+    it("keeps the description out of the header, where it crowded the tabs", () => {
+      renderDetail({ description: "Old copy" });
+
+      expect(
+        screen.queryByTestId("user-testing-description"),
+      ).not.toBeInTheDocument();
+      // The tabs the field used to sit beside.
+      expect(screen.getByRole("button", { name: "Insights" })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Sessions" })).toBeVisible();
+    });
+
+    it("lets a long study name shrink instead of pushing the tabs off", () => {
+      renderDetail({ name: "S".repeat(200) });
+
+      // The design-system button ships shrink-0; the header has to override it,
+      // or the name keeps full width and the tab row is what gives.
+      const classes = screen.getByTitle("S".repeat(200)).className.split(/\s+/);
+      expect(classes).toContain("shrink");
+      expect(classes).not.toContain("shrink-0");
+      expect(classes).toContain("min-w-0");
     });
   });
 
@@ -639,7 +1114,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -674,7 +1148,6 @@ describe("UserTestingScenarioDetail", () => {
       environmentState.row = { ...namedRow, origin: "adhoc", name: undefined };
       renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -697,7 +1170,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -724,7 +1196,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() => expect(resolveTargetsMock).toHaveBeenCalled());
@@ -738,7 +1209,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() =>
         lastComposerProps().onChange({
           ...composeState,
@@ -758,7 +1228,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       // The resolver reuses matching NAMED rows; resolving against a list
       // that hasn't loaded would mint an unnamed twin of one that exists.
       expect(lastComposerProps()).toEqual(
@@ -777,7 +1246,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       // A second edit before the first settles: its rollback would clear the
       // in-flight guard out from under the first commit.
@@ -808,7 +1276,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       await waitFor(() =>
         expect(rebindScenarioMock).toHaveBeenCalledWith({
@@ -848,7 +1315,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       // A collaborator rebinds the scenario to env-9 while our resolve is in
@@ -897,7 +1363,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -912,95 +1377,232 @@ describe("UserTestingScenarioDetail", () => {
 });
 
 /**
- * Preview docks beside Edit and embeds the live share link, which bootstraps
- * a real guest session. When it mounts is therefore a behaviour, not an
- * implementation detail: too eager and every visit to a scenario pollutes its
- * own Sessions list. Edit is a dedicated route, so leaving it unmounts Preview.
+ * Settings is ONE COLUMN — the docked Preview is gone (BB-176).
+ *
+ * The pane embedded the live share link, so merely OPENING Edit bootstrapped a
+ * real guest session that landed in the study's own Sessions list: the
+ * creator's editing was indistinguishable from tester traffic. It also spent
+ * half the screen on something whose only job was to be looked at, squeezing
+ * the form it sat beside. "Open preview" in the action row does the same job
+ * on demand, in a tab, and now says what it opens.
  */
-describe("UserTestingScenarioDetail — preview", () => {
-  it("does not embed anything until Edit is opened", () => {
+describe("UserTestingScenarioDetail — settings layout", () => {
+  it("never embeds the share link, on either route", () => {
     renderDetail();
+    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
 
+    renderEdit();
     expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Preview" }),
+      screen.queryByTestId("user-testing-edit-preview"),
     ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("user-testing-edit-button"));
-
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1/edit");
+    // No guest session was started just by opening the editor.
+    expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("embeds this scenario's share link on the Edit route", () => {
+  it("lays Settings out in one wide column, not two", () => {
+    const { container } = renderEdit();
+
+    expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    // One column, read top to bottom like every other settings surface. Two
+    // columns gave no answer to "what do I look at after Description", and on
+    // a study whose sections differ in height it left one side ragged.
+    expect(container.querySelector('[class*="grid-cols-2"]')).toBeNull();
+    // Still WIDE, though. The two-column layout answered a real report ("too
+    // much white space" against a 560px column pinned to the left of a pane
+    // twice its width), and a narrow single column would bring it straight
+    // back. Capped so an ultra-wide monitor does not stretch the measure.
+    expect(container.querySelector('[class*="w-[560px]"]')).toBeNull();
+    expect(container.querySelector('[class*="max-w-[960px]"]')).not.toBeNull();
+    // A resizable split is what the single column replaced, and it is not
+    // coming back. Asserted against the MOCK's own test id, not
+    // `[data-panel-group]`: the group is stubbed in this file, so the real
+    // attribute never appears in jsdom and that assertion could not fail even
+    // if the split came back.
+    expect(
+      screen.queryByTestId("stub-resizable-group"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reads the study first, then the rules it runs under", () => {
+    // Collapsing two columns into one makes reading ORDER a real decision for
+    // the first time. This is the old column order read down — and already
+    // what every screen below `xl` was showing — so nothing moves for anyone
+    // who was on a laptop.
+    const { container } = renderEdit();
+
+    const order = [
+      "user-testing-description-section",
+      "user-testing-tasks-section",
+      "user-testing-delete",
+    ].map((id) =>
+      Array.prototype.indexOf.call(
+        container.querySelectorAll("[data-testid]"),
+        container.querySelector(`[data-testid="${id}"]`),
+      ),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((index) => index >= 0)).toBe(true);
+  });
+
+  it("keeps every settings section on the page after the split", () => {
+    // The redesign moved sections between columns; losing one to a bad JSX
+    // nesting is the failure mode a layout change actually has.
     renderEdit();
 
-    expect(screen.getByTestId("user-testing-edit-preview")).toBeInTheDocument();
-    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({ publishLink: "https://mcpjam.link/t/tok" }),
+    expect(
+      screen.getByTestId("user-testing-description-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sharing permissions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Ratings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-tasks-section"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
+  });
+
+  it("tags Open preview as preview traffic, not as a tester session", () => {
+    // A creator opening their own study starts a real guest session. Untagged,
+    // their look-around lands in the study's own Sessions list as if a tester
+    // had run it — and the docked pane that used to set this marker is gone,
+    // so this link is the only thing that can.
+    renderDetail();
+
+    expect(screen.getByTestId("user-testing-open-preview")).toHaveAttribute(
+      "href",
+      expect.stringContaining("surface=preview"),
     );
   });
 
-  it("redirects legacy ?tab=preview to the Edit route", () => {
+  it("says what Open preview opens, without lengthening the label", () => {
+    // Research read this button as a second step of setting the study up
+    // rather than as the tester's own session.
+    renderDetail();
+
+    const link = screen.getByTestId("user-testing-open-preview");
+    expect(link).toHaveTextContent("Open preview");
+    expect(link).toHaveAttribute(
+      "title",
+      expect.stringMatching(/as a tester sees it/i),
+    );
+    expect(link).toHaveAccessibleName(/tester sees it/i);
+  });
+
+  it("still redirects legacy ?tab=preview to the Edit route", () => {
     locationState.search = "?tab=preview";
     renderDetail();
 
     expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1/edit", {
       replace: true,
     });
-    // Still on the detail tree until the parent remounts with editMode —
-    // redirect must not mount Preview here.
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
   });
 
-  it("unmounts Preview when leaving the Edit route", () => {
-    const { rerender } = renderEdit();
-    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
-
-    rerender(detail());
-
-    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-  });
-
-  it("passes the host's mcp profile through for the iframe permissions", () => {
-    const mcpProfile = { apps: { sandbox: { permissions: { mode: "deny-all" } } } };
-    hostState.host = { config: { mcpProfile } };
-    renderEdit();
-
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({ mcpProfile }),
-    );
-  });
-
-  it("waits for the host config rather than embedding with default permissions", () => {
-    hostState.isLoading = true;
-    hostState.host = null;
-    renderEdit();
-
-    // `allow` only applies at mount, and its no-config default is permissive.
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
-    expect(screen.getByText(/Loading preview/i)).toBeInTheDocument();
-  });
-
-  it("refuses to embed a scenario whose environment can't resolve", () => {
-    renderEdit({
+  it("still warns when the environment can't resolve, and offers no preview link", () => {
+    const broken = {
       environmentId: "env-1",
       environmentName: "Checkout flow",
       environmentError: {
         code: "ENV_ARCHIVED",
         message: "Environment “Checkout flow” is archived.",
       },
-    });
+    };
+    const { unmount } = renderEdit(broken);
 
-    // The link doesn't open for testers either — framing it would show them
-    // the same failure with less explanation.
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        publishLink: null,
-        emptyTitle: "This scenario can't be previewed",
-      }),
-    );
+    expect(
+      screen.getByTestId("user-testing-detail-environment-error"),
+    ).toBeInTheDocument();
+    unmount();
+
+    // The link doesn't open for testers either, so the detail page's action
+    // row does not offer it.
+    renderDetail(broken);
+    expect(
+      screen.queryByTestId("user-testing-open-preview"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the tester task list beside the study's other settings", () => {
+    renderEdit();
+
+    expect(
+      screen.getByTestId("user-testing-tasks-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-settings-tasks"),
+    ).toBeInTheDocument();
   });
 });
+
+/**
+ * Raised in review: "we're letting them mess up their test configurations —
+ * one might be pointing to Excalidraw and the other to GitHub." Repointing a
+ * study that has already been run leaves one set of results answering a setup
+ * that no longer exists, under the same name, with nothing saying so.
+ */
+describe("UserTestingScenarioDetail — the setup of a study with results", () => {
+  const composerProps = () =>
+    composerMock.mock.calls[composerMock.mock.calls.length - 1][0] as {
+      lockedSlots?: Record<string, string>;
+    };
+
+  const withEnvironment = () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      origin: "named",
+      name: "Checkout flow",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  };
+
+  it("locks the client and the servers once a tester has been through it", () => {
+    withEnvironment();
+    renderEdit(
+      { environmentId: "env-1", environmentName: "Checkout flow" },
+      { sessionCount: 3 },
+    );
+
+    const locks = composerProps().lockedSlots;
+    // One sentence, and the same one on all three: the fact is the reason.
+    expect(locks?.clients).toBe("This study already has sessions.");
+    expect(locks?.servers).toBe("This study already has sessions.");
+    // The environment picker included — it re-seeds the other two, so leaving
+    // it open would have left the whole lock bypassable (caught in review).
+    expect(locks?.environments).toBe("This study already has sessions.");
+  });
+
+  it("leaves a study nobody has run fully editable", () => {
+    withEnvironment();
+    renderEdit(
+      { environmentId: "env-1", environmentName: "Checkout flow" },
+      { sessionCount: 0 },
+    );
+
+    expect(composerProps().lockedSlots).toBeUndefined();
+  });
+
+  it("stays editable when the backend does not report the count", () => {
+    // `undefined` is "unknown", not "none". Refusing every edit on an
+    // unanswered question would take a working screen away from everyone to
+    // protect a case we cannot see.
+    withEnvironment();
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(composerProps().lockedSlots).toBeUndefined();
+  });
+});
+
+// These tests exercise the settings form after access is granted. The plan and
+// creator matrix is covered by SharedSettingsGate.test.tsx.
+vi.mock("@/components/billing/SharedSettingsGate", () => ({
+  SharedSettingsGate: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));

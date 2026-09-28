@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "../../hooks/useWebmcpInspectorEnabled";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
@@ -47,7 +48,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "registry-enabled": false }
+      { "registry-enabled": false },
     );
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toEqual(["Always Visible"]);
@@ -69,7 +70,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { xaa: false }
+      { xaa: false },
     );
 
     expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
@@ -120,11 +121,11 @@ describe("filterByFeatureFlags", () => {
     // sidebar carries no eval sub-items and no eval flag.
     const evalsItems = navigationSections
       .flatMap((section) => section.items)
-      .filter((item) => item.url.startsWith("/evals"));
+      .filter((item) => item.url.startsWith("/evaluate"));
     expect(evalsItems).toHaveLength(1);
     expect(evalsItems[0]).toMatchObject({
       title: "Evaluate",
-      url: "/evals",
+      url: "/evaluate",
       billingFeature: "evals",
     });
     expect(evalsItems[0].featureFlag).toBeUndefined();
@@ -150,7 +151,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "mcpjam-conformance": false }
+      { "mcpjam-conformance": false },
     );
 
     expect(result[0].items.map((item) => item.title)).toEqual([
@@ -175,7 +176,7 @@ describe("filterByFeatureFlags", () => {
     ];
 
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items
+      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
     ).toEqual([
       {
         title: "Scenarios",
@@ -186,7 +187,7 @@ describe("filterByFeatureFlags", () => {
       },
     ]);
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": false })
+      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
     ).toHaveLength(0);
   });
 
@@ -209,7 +210,7 @@ describe("filterByFeatureFlags", () => {
         billingUiEnabled: true,
         gateDenied: { scenarios: true },
         enforcementActive: true,
-      }
+      },
     );
 
     expect(result[0].items[0].disabled).toBe(true);
@@ -217,6 +218,21 @@ describe("filterByFeatureFlags", () => {
 });
 
 describe("declared nav flags are actually resolved", () => {
+  it("WebMCP uses the deployment Browser flag, not the legacy flag", () => {
+    const titles = (flags: Record<string, boolean>) =>
+      filterByFeatureFlags(navigationSections, flags)
+        .flatMap((section) => section.items)
+        .map((item) => item.title);
+    expect(titles({ "webmcp-inspector-enabled": true })).not.toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: true })).toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: false })).not.toContain(
+      "WebMCP",
+    );
+  });
   // The bug this guards: a nav item can declare `featureFlag: "x"` while the
   // sidebar's `featureFlags` map never sets `x`. `filterByFeatureFlags` then
   // reads `undefined`, hides the item permanently, and — because nothing ever
@@ -261,33 +277,25 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("Evaluate (New) is gated by evaluate-enabled and sits beside Evaluate", () => {
-    // The redesigned tab ships ALONGSIDE the shipped one so the two can be
-    // compared, so a flag-off user must see exactly the nav they see today —
-    // this is the assertion that a mis-wired flag would break.
-    const evaluateItem = navigationSections
-      .flatMap((section) => section.items)
-      .find((item) => item.url === "/evaluate");
-
-    expect(evaluateItem).toMatchObject({
-      title: "Evaluate (New)",
-      featureFlag: "evaluate-enabled",
-      billingFeature: "evals",
+  it("shows Evaluate publicly and gates only Evaluate (Legacy)", () => {
+    const items = navigationSections.flatMap((section) => section.items);
+    expect(items.find((item) => item.url === "/evaluate")).toMatchObject({
+      title: "Evaluate", billingFeature: "evals",
     });
-
-    const off = filterByFeatureFlags(navigationSections, {})
-      .flatMap((section) => section.items)
-      .map((item) => item.title);
-    expect(off).not.toContain("Evaluate (New)");
-    expect(off).toContain("Evaluate");
-
-    const measure = filterByFeatureFlags(navigationSections, {
-      "evaluate-enabled": true,
-    }).find((section) => section.id === "measure");
-    const titles = measure?.items.map((item) => item.title) ?? [];
-    expect(titles).toContain("Evaluate (New)");
-    const evaluateIndex = titles.indexOf("Evaluate");
-    expect(titles.indexOf("Evaluate (New)")).toBe(evaluateIndex + 1);
+    expect(items.find((item) => item.url === "/evaluate")?.featureFlag).toBeUndefined();
+    expect(items.find((item) => item.url === "/evals")).toMatchObject({
+      title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
+    });
+    for (const enabled of [undefined, false, true]) {
+      const titles = filterByFeatureFlags(
+        navigationSections,
+        enabled === undefined ? {} : { "evaluate-enabled": enabled },
+      )
+        .flatMap((section) => section.items).map((item) => item.title);
+      expect(titles).toContain("Evaluate");
+      expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
+      expect(titles).not.toContain("Ding Dong");
+    }
   });
 });
 
@@ -311,7 +319,7 @@ describe("applyBillingGateNavState", () => {
         billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: false,
-      }
+      },
     );
 
     expect(result[0].items[0].disabled).not.toBe(true);
@@ -341,7 +349,7 @@ describe("applyBillingGateNavState", () => {
         billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: true,
-      }
+      },
     );
 
     const evalItem = result[0].items.find((i) => i.title === "Testing");
@@ -357,8 +365,9 @@ describe("getHostedNavigationSections", () => {
       {
         id: "others",
         items: [
-          // Tracing is the one surface hosted cannot serve (it needs the
-          // local OTLP collector), so it is the one item dropped here.
+          // Tracing is the one surface hosted cannot serve (its live feed
+          // comes from the local Inspector's RPC bus), so it is the one item
+          // dropped here.
           { title: "Tracing", url: "#tracing", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
@@ -464,8 +473,8 @@ describe("Skills is no longer a sidebar item", () => {
     const skillsItems = (sections: typeof navigationSections) =>
       sections.flatMap((section) =>
         section.items.filter(
-          (item) => item.url.replace(/^[#/]+/, "") === "skills"
-        )
+          (item) => item.url.replace(/^[#/]+/, "") === "skills",
+        ),
       );
 
     const hosted = getHostedNavigationSections(navigationSections);
@@ -529,5 +538,69 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
 
     expect(serversTitles(authed)).toEqual(["Connect"]);
     expect(serversTitles(signedOut)).toEqual(["Servers"]);
+  });
+});
+
+/**
+ * Swarms and User Testing roll out on `sandboxes-enabled` in PostHog. The flag
+ * decides whether the items exist; REEV-6's route gate then decides what a
+ * visitor gets — a guest the preview, a member the real tab.
+ *
+ * The flag is deliberately NOT combined with sign-in here. Before REEV-6 the
+ * sidebar resolved it as `flag && isAuthenticated`, which would hide the items
+ * from exactly the signed-out visitors the preview was built for.
+ */
+describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", () => {
+  const MEASURE_ITEMS = ["User Testing", "Swarms"];
+
+  it("gates both items on sandboxes-enabled", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.featureFlag).toBe("sandboxes-enabled");
+    }
+  });
+
+  it("hides both when the flag is off", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": false,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).not.toContain(title);
+    }
+  });
+
+  it("shows both when the flag is on", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": true,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).toContain(title);
+    }
+  });
+
+  it("resolves the flag key before the nav renders", () => {
+    expect(SIDEBAR_RESOLVED_FLAG_KEYS).toContain("sandboxes-enabled");
+  });
+
+  // They stay CLICKABLE for a plan-locked org rather than disabled: the tab
+  // shows the upsell, which is a better answer than a greyed-out row.
+  it("keeps its billingFeature, so the upsell still knows what to sell", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    for (const item of items) {
+      expect(item.billingFeature).toBe("scenarios");
+    }
   });
 });

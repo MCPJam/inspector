@@ -329,7 +329,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
                     rows.length === 0 &&
                     !isLoadingFirstPage ? (
                       <p className="mt-1 text-xs text-muted-foreground/70">
-                        Chat in the Playground, share a scenario, or run an eval
+                        Chat in the Playground, share a study, or run an eval
                         or swarm to generate sessions.
                       </p>
                     ) : null}

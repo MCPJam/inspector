@@ -4,6 +4,43 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Pinned tool call: show_map on "srv-1"",
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "city": "SF",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "srv-1",
+            "toolName": "show_map",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe the widget",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -31,6 +68,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -71,6 +109,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Pinned tool call: show_map on \\"srv-1\\""},{"role":"assistant","content":"Pinned tool call show_map executed"},{"role":"user","content":"Describe the widget"}]}}]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -175,13 +214,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 1,
+          "identifierSignals": {
+            "reason": "resultsUnavailable",
+            "state": "notMeasured",
+          },
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "measured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -210,7 +262,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -280,6 +332,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -295,6 +352,43 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
 
 exports[`runner parity (golden Convex payload + event sequence) > hosted-batch hybrid pinned setup failure (server not connected): convex payload + status > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Pinned tool call: search on "Asana"",
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "q": "x",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "Asana",
+            "toolName": "search",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe it",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -402,8 +496,22 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "failureCategory": "setup",
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 0,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -417,7 +525,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "stepIndex": 1,
           },
         ],
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -446,7 +554,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -534,6 +642,39 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Hello",
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Again",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -554,6 +695,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -639,6 +781,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"},{"role":"assistant","content":[{"type":"text","text":"Done"}]},{"role":"user","content":"Again"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -741,13 +884,27 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -776,7 +933,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -846,6 +1003,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 6,
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 4,
+        "totalTokens": 6,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -861,6 +1023,34 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
 
 exports[`runner parity (golden Convex payload + event sequence) > hosted-batch prompt-only: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Hello",
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -883,6 +1073,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -972,12 +1163,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1006,7 +1211,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1070,6 +1275,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -1085,6 +1295,43 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
 
 exports[`runner parity (golden Convex payload + event sequence) > hosted-stream hybrid pinned (toolCall + prompt): events + convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Pinned tool call: show_map on "srv-1"",
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "city": "SF",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "srv-1",
+            "toolName": "show_map",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe the widget",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -1114,6 +1361,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -1154,6 +1402,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Pinned tool call: show_map on \\"srv-1\\""},{"role":"assistant","content":"Pinned tool call show_map executed"},{"role":"user","content":"Describe the widget"}]}}]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -1240,13 +1489,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 1,
+          "identifierSignals": {
+            "reason": "resultsUnavailable",
+            "state": "notMeasured",
+          },
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "measured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1275,7 +1537,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1330,6 +1592,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -1398,6 +1665,34 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Hello",
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -1418,6 +1713,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -1489,12 +1785,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1523,7 +1833,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1572,6 +1882,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -1613,6 +1928,44 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch case predicate + per-turn check (ordering): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "assertion": {
+              "needle": "Done",
+              "type": "responseContains",
+            },
+            "id": "turn-1-check-0",
+            "kind": "assert",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -1694,7 +2047,21 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -1720,7 +2087,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           },
         ],
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1749,7 +2116,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1820,6 +2187,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -1835,6 +2207,56 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch interact fires widget tool call (merged into matcher): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [
+          {
+            "arguments": {
+              "id": 1,
+            },
+            "toolName": "add-to-cart",
+          },
+        ],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Add it",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Add it",
+          },
+          {
+            "assertion": {
+              "args": {
+                "args": {
+                  "id": 1,
+                },
+              },
+              "toolName": "add-to-cart",
+              "type": "toolCalledWith",
+            },
+            "id": "turn-1-expect-0",
+            "kind": "assert",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -1973,9 +2395,22 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "failureCategory": "userValue",
         "firstFailedStage": "userValue",
+        "frictionSignals": {
+          "callCount": 1,
+          "identifierSignals": {
+            "reason": "resultsUnavailable",
+            "state": "notMeasured",
+          },
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "measured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -1999,7 +2434,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             },
           },
         ],
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2028,7 +2463,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2104,6 +2539,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -2119,6 +2559,40 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch model-free pinned (setup failure: server not connected): convex payload + status > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Pinned tool call: search on "Asana"",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "q": "x",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "Asana",
+            "toolName": "search",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -2186,8 +2660,22 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "failureCategory": "setup",
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 0,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -2201,7 +2689,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "reason": "no widget render observations recorded",
           },
         ],
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2230,7 +2718,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2309,6 +2797,41 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch multi-turn: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Again",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -2424,13 +2947,27 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2459,7 +2996,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2529,6 +3066,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 6,
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 4,
+        "totalTokens": 6,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -2544,6 +3086,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch negative test (no forbidden calls): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": true,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -2611,12 +3183,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2645,7 +3231,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2714,6 +3300,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -2729,6 +3320,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch prompt-only: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -2796,12 +3417,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2830,7 +3465,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2894,6 +3529,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -2909,6 +3549,56 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch tool call matches expected: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [
+          {
+            "arguments": {
+              "q": "x",
+            },
+            "toolName": "search",
+          },
+        ],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Search",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Search",
+          },
+          {
+            "assertion": {
+              "args": {
+                "args": {
+                  "q": "x",
+                },
+              },
+              "toolName": "search",
+              "type": "toolCalledWith",
+            },
+            "id": "turn-1-expect-0",
+            "kind": "assert",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -3016,7 +3706,20 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 1,
+          "identifierSignals": {
+            "reason": "resultsUnavailable",
+            "state": "notMeasured",
+          },
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "measured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -3040,7 +3743,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           },
         ],
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3069,7 +3772,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3140,6 +3843,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -3155,6 +3863,38 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch tool error, failOnToolError:false → passed: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": {
+          "failOnToolError": false,
+        },
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -3237,12 +3977,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3271,7 +4025,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3335,6 +4089,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -3350,6 +4109,38 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch tool error, failOnToolError:true → failed: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": {
+          "failOnToolError": true,
+        },
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -3432,12 +4223,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3466,7 +4271,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3530,6 +4335,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -3545,6 +4355,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch unrendered widget fail-closed (scriptedCheckFailures gate): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -3612,12 +4452,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3646,7 +4500,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3710,6 +4564,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -3725,6 +4584,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch widget rendered (widgetRendered predicate passes): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -3802,7 +4691,21 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -3816,7 +4719,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "reason": "widget rendered (1/1 observation(s))",
           },
         ],
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3845,7 +4748,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3909,6 +4812,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -3924,6 +4832,45 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
 
 exports[`runner parity (golden Convex payload + event sequence) > local-stream hybrid pinned (toolCall + prompt): events + convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Pinned tool call: show_map on "srv-1"",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "city": "SF",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "srv-1",
+            "toolName": "show_map",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe the widget",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -4034,13 +4981,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 1,
+          "identifierSignals": {
+            "reason": "resultsUnavailable",
+            "state": "notMeasured",
+          },
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "measured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4069,7 +5029,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4124,6 +5084,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -4192,6 +5157,41 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
 
 exports[`runner parity (golden Convex payload + event sequence) > local-stream multi-turn: events + convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Again",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -4288,13 +5288,27 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4323,7 +5337,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4378,6 +5392,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 6,
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 4,
+        "totalTokens": 6,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -4446,6 +5465,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -4498,12 +5547,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 0,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 0,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4532,7 +5595,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4608,6 +5671,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -4654,12 +5747,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
+        "frictionSignals": {
+          "callCount": 0,
+          "identifierSignals": {
+            "reason": "noToolCalls",
+            "state": "notMeasured",
+          },
+          "notMeasuredReason": "noToolCalls",
+          "resultAvailableCount": 0,
+          "signals": [],
+          "state": "notMeasured",
+          "timedCallCount": 0,
+          "version": 1,
+        },
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 5,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4688,7 +5795,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 5,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4737,6 +5844,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "resultSource": "reported",
       "status": "completed",
       "tokensUsed": 3,
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "totalTokens": 3,
+      },
     },
     "ref": "testSuites:updateTestIteration",
   },

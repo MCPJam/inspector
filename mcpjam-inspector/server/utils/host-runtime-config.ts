@@ -16,6 +16,7 @@
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
 
 export type HostRuntimeConfig = RuntimeExecutionFields & {
@@ -28,6 +29,8 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
   hostStyle: string;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  /** Shared local-only preference; never added to hosted tool configuration. */
+  localBrowserEnabled?: boolean;
   // Host harness selector from the pinned HostConfigV2. Optional so a backend
   // that predates the endpoint returns omitted → emulated path. Omitted by the
   // backend for guest actors.
@@ -233,10 +236,12 @@ export async function fetchHostRuntimeConfig(args: {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Host runtime-config failed (${response.status})`,
+      error: backendFailureText({
+        source: "host-runtime-config",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: `Host runtime-config failed (${response.status})`,
+      }),
     };
   }
 

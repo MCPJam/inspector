@@ -1,13 +1,9 @@
 /**
- * New swarm create flow: Describe → Confirm personas → Create & launch.
+ * New swarm create flow: Describe → Confirm details → Create & launch.
  *
  * The properties worth pinning are the ones that cost money or lose work:
- * nothing is written until Launch, every created journey carries the SAME
- * rubric ids, each journey is launched exactly once, and a partial failure
- * keeps what landed instead of unwinding it.
- *
- * `JourneyRubricEditor` is stubbed to a single button — driving the real
- * predicate editor would test `ChecksSection`, which has its own tests.
+ * nothing is written until Launch, each journey is launched exactly once, and
+ * a partial failure keeps what landed instead of unwinding it.
  */
 import {
   cleanup,
@@ -20,12 +16,15 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SwarmGenerateError } from "@/lib/swarm-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
-const CRITERION: Predicate = {
-  type: "toolCalledAtLeastOnce",
-  toolName: "search",
-};
-
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -80,7 +79,9 @@ const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({
     hosts: hostsRef.current,
     isLoading: false,
@@ -95,12 +96,27 @@ vi.mock("@/hooks/use-previewed-environment-id", () => ({
   usePreviewedEnvironmentId: () => [null, vi.fn()] as const,
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
+}));
+
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
+  useDbUserBootstrapStatus: () => ({
+    isUserReady: true,
+    isEnsuringUser: false,
+  }),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    user: { id: "user-1", email: "user-1@example.com" },
+  }),
 }));
 
 const {
@@ -138,7 +154,19 @@ vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
     ...actual,
     useCreateProjectEnvironment: () => createEnvironmentMock,
     useEnsureAdhocEnvironments: () => ensureAdhocEnvironmentsMock,
-    useProjectEnvironments: () => environmentsRef.current,
+    // Honours `includeAdhoc` the way the real hook does: nameless rows are
+    // ad-hoc and hidden unless a caller opts in. Ignoring the option let a
+    // caller that NEEDS ad-hoc rows look correct in tests while getting none
+    // of them in the app.
+    useProjectEnvironments: (
+      _projectId: unknown,
+      options?: { includeAdhoc?: boolean },
+    ) =>
+      options?.includeAdhoc
+        ? environmentsRef.current
+        : environmentsRef.current.filter(
+            (row: { name?: string }) => (row.name ?? "").trim().length > 0,
+          ),
   };
 });
 
@@ -214,6 +242,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({ query: convexQueryMock }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -257,8 +286,7 @@ const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
 // The create flow is entered and left by NAVIGATION now (`/swarms/new`), not
 // by in-page state, so the entry/exit assertions need the navigate call.
 vi.mock("@/lib/app-navigation", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/app-navigation")>();
+  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
   return { ...actual, useAppNavigate: () => navigateMock };
 });
 
@@ -271,23 +299,6 @@ vi.mock("@/lib/toast", () => ({
     error: vi.fn(),
     info: vi.fn(),
   },
-}));
-
-vi.mock("@/components/swarms/journey-rubric-editor", () => ({
-  JourneyRubricEditor: ({
-    value,
-    onChange,
-  }: {
-    value: Array<{ id: string; predicate: Predicate }>;
-    onChange: (next: Array<{ id: string; predicate: Predicate }>) => void;
-  }) => (
-    <button
-      type="button"
-      onClick={() => onChange([{ id: "crit-1", predicate: CRITERION }])}
-    >
-      add criterion ({value.length})
-    </button>
-  ),
 }));
 
 vi.mock("@/components/project-environments/environment-picker", () => ({
@@ -316,6 +327,9 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 }));
 
 const createSwarmMock = vi.fn();
+// The launch preflight (`projectEnvironments:resolveEnvironmentForLaunch`)
+// goes through `useConvex().query`; resolves a runnable target by default.
+const convexQueryMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
@@ -365,6 +379,10 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  convexQueryMock.mockResolvedValue({
+    effectiveModelId: "anthropic/claude-haiku-4.5",
+    modelSource: "host",
+  });
   environmentsFlagRef.current = true;
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
@@ -390,20 +408,19 @@ beforeEach(() => {
           updatedAt: 1,
         },
         created: true,
-      }))
+      })),
   );
-  createEnvironmentMock.mockImplementation(async (args: {
-    hostId: string;
-    name: string;
-  }) => ({
-    environmentId: `created-${args.hostId}`,
-    projectId: "proj-1",
-    name: args.name,
-    hostId: args.hostId,
-    revision: 1,
-    createdAt: 1,
-    updatedAt: 1,
-  }));
+  createEnvironmentMock.mockImplementation(
+    async (args: { hostId: string; name: string }) => ({
+      environmentId: `created-${args.hostId}`,
+      projectId: "proj-1",
+      name: args.name,
+      hostId: args.hostId,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
   environmentsRef.current = [
     {
       environmentId: "env-1",
@@ -450,20 +467,24 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — New swarm create flow", () => {
-  it("reaches the create flow by its own route, and Cancel leaves it", () => {
+  it("reaches the create flow by its own route, and Cancel leaves it with a confirming toast", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    // The empty state's own button, not the header's. This project has no
+    // personas, and since REEV-6 the header offers creation only once the list
+    // has something in it, so this is the button an empty project actually
+    // shows. The assertion is unchanged: whichever button you press, creation
+    // is a route, not an in-page state flip.
     fireEvent.click(
-      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
-        "button",
-        { name: /^create new swarm$/i }
-      )
+      within(screen.getByTestId("swarms-empty-hero")).getByRole("button", {
+        name: /^create new swarm$/i,
+      }),
     );
     expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
     // Still on the list: navigation is what swaps the view, not a state flip.
     expect(
-      screen.queryByTestId("new-swarm-create-flow")
+      screen.queryByTestId("new-swarm-create-flow"),
     ).not.toBeInTheDocument();
 
     cleanup();
@@ -473,16 +494,37 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByTestId("new-swarm-create-flow")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: /create an agentic swarm/i,
-      })
+        name: /create a swarm of your users/i,
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("swarms-tab-header-chrome")
+      screen.queryByTestId("swarms-tab-header-chrome"),
     ).not.toBeInTheDocument();
 
+    // Type something so there is a real draft to discard — the toast is gated
+    // on that (the untouched-exit case is pinned in its own test below).
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: leaving silently read as "did my click register?" — the toast is
+    // the acknowledgement. It promises only the draft (info, not success). The
+    // back-link exit is the other call site; the launch test pins that it never
+    // fires when a run actually launches.
+    expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
+  });
+
+  it("says nothing when an untouched flow is cancelled — no draft, no discard notice", () => {
+    openDescribe();
+    // Straight to the exit, nothing typed or picked: there is no draft, so a
+    // "discarded" notice would announce something that never happened. Same
+    // dirtiness gate the sibling discard toast uses in new-swarm-confirm-step.
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
@@ -503,13 +545,13 @@ describe("SwarmsTab — New swarm create flow", () => {
   it("auto-seeds the first named environment on open", () => {
     openDescribe();
     expect(
-      screen.getByTestId("new-swarm-environments-picker")
+      screen.getByTestId("new-swarm-environments-picker"),
     ).toHaveTextContent("1 env");
     expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
-      /claude/i
+      /claude/i,
     );
     expect(
-      screen.getByText(/grounded on 7 tools from prod-like/i)
+      screen.getByText(/grounded on 7 tools from prod-like/i),
     ).toBeVisible();
   });
 
@@ -526,7 +568,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     // untouched form no longer shows a disabled Continue with nothing on
     // screen claiming to be required.
     expect(
-      screen.getByText(/describe your users or bring in existing personas/i)
+      screen.getByText(
+        /describe your users and their behavior. we build the user goals based on your input/i,
+      ),
     ).toBeVisible();
     expect(screen.queryByText(/optional/i)).not.toBeInTheDocument();
 
@@ -537,7 +581,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(hint).toHaveTextContent(/describe your users, or pick a persona/i);
     expect(submit).toHaveAttribute(
       "aria-describedby",
-      "new-swarm-continue-hint"
+      "new-swarm-continue-hint",
     );
   });
 
@@ -557,10 +601,18 @@ describe("SwarmsTab — New swarm create flow", () => {
     fillDescribe();
 
     expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+    const block = screen.getByTestId("new-swarm-server-unreachable");
+    expect(block).toHaveTextContent(/prod-like has no servers to run against/i);
+    // BB-63 G1: nothing is attached yet, so this is a setup step — not an
+    // alarm about something the user broke.
+    expect(block).toHaveAttribute("data-tone", "guidance");
+    // BB-63 G2: name what is missing instead of ordering a fix.
+    expect(screen.getByText(/pick a server to continue/i)).toBeVisible();
+    // BB-63: an empty project cannot be fixed on this screen, so the one
+    // navigation that does fix it is a click rather than a sentence.
     expect(
-      screen.getByTestId("new-swarm-server-unreachable")
-    ).toHaveTextContent(/prod-like has no servers to run against/i);
-    expect(screen.getByText(/fix where it runs to continue/i)).toBeVisible();
+      screen.getByRole("button", { name: /connect a server/i }),
+    ).toBeVisible();
     expect(createSwarmMock).not.toHaveBeenCalled();
   });
 
@@ -577,7 +629,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
     const notice = screen.getByTestId("new-swarm-server-unreachable");
-    expect(notice).toHaveTextContent(/only has servers this run can't reach/i);
+    expect(notice).toHaveTextContent(/has servers this run can't reach/i);
     expect(notice).toHaveTextContent(/Fetch/);
   });
 
@@ -594,7 +646,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
     expect(
-      screen.queryByTestId("new-swarm-server-unreachable")
+      screen.queryByTestId("new-swarm-server-unreachable"),
     ).not.toBeInTheDocument();
   });
 
@@ -610,7 +662,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     const submit = screen.getByTestId("new-swarm-continue");
     expect(submit).toBeDisabled();
     expect(
-      screen.getByText(/describe your users, or pick a persona/i)
+      screen.getByText(/describe your users, or pick a persona/i),
     ).toBeVisible();
     expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
 
@@ -625,7 +677,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
     expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
     expect(
-      screen.queryByTestId("new-swarm-proposed-personas")
+      screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
 
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
@@ -650,11 +702,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
-    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i }),
+    );
 
     expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-reused-personas")
+      screen.queryByTestId("new-swarm-reused-personas"),
     ).not.toBeInTheDocument();
   });
 
@@ -677,14 +731,14 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /no runs were launched/i
+      /no runs were launched/i,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
 
     expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
-      screen.queryByText(/no runs were launched/i)
+      screen.queryByText(/no runs were launched/i),
     ).not.toBeInTheDocument();
   });
 
@@ -707,7 +761,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(
-      screen.queryByTestId("new-swarm-persona-detail")
+      screen.queryByTestId("new-swarm-persona-detail"),
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
@@ -716,9 +770,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(within(detail).getByText(/use cases & context/i)).toBeVisible();
     // Every field is a control now (BB-122) — the goal and the context read
     // back as values, not as text nodes.
-    expect(within(detail).getByDisplayValue("Reconcile payouts")).toBeVisible();
+    expect(within(detail).getByLabelText("Goal")).toHaveValue("Reconcile");
     expect(
-      within(detail).getByDisplayValue(/closes the books monthly/i)
+      within(detail).getByDisplayValue(/closes the books monthly/i),
     ).toBeVisible();
   });
 
@@ -736,7 +790,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       {
         _id: "j-existing",
         name: "Reconcile payouts",
-        goal: "Reconcile",
+        goal: "Reconcile every payout against the ledger and flag mismatches",
         hostIds: ["host-1"],
         environmentIds: ["env-1"],
         config: { sessionsPerTarget: 1, maxTurns: 6 },
@@ -749,9 +803,20 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
     const detail = await screen.findByTestId("new-swarm-persona-detail");
 
+    // The field carried the journey's card label — its name, or a goal cut to
+    // 48 characters — so editing a named journey wrote text derived from the
+    // name into `goal` and the panel still showed the unchanged name: the edit
+    // read as lost while the real goal was quietly replaced (UTSC-36).
+    const goalField = within(detail).getByLabelText("Goal");
+    expect(goalField).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+
     const save = within(detail).getByTestId("new-swarm-persona-save");
-    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
-      target: { value: "Reconcile payouts weekly" },
+    fireEvent.change(goalField, {
+      target: {
+        value: "Reconcile every payout against the ledger and open a ticket",
+      },
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/swarms?persona=p-1");
 
@@ -762,9 +827,84 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
       journeyRefId: "j-existing",
-      goal: "Reconcile payouts weekly",
+      goal: "Reconcile every payout against the ledger and open a ticket",
     });
     // The persona row itself did not change, so it is left alone.
+    expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("edits one goal of a multi-goal existing persona and leaves the other", async () => {
+    // Every goal field carries the same `aria-label`, so the fields are only
+    // ever told apart by their journey id. A persona carrying two named
+    // journeys is what catches a `goalText` keyed off anything else: the
+    // single-journey case passes either way.
+    existingPersonas = [
+      {
+        _id: "p-1",
+        personaId: "p1",
+        name: "Ana",
+        role: "Ops",
+        notes: "Closes the books monthly.",
+      },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-first",
+        name: "Reconcile payouts",
+        goal: "Reconcile every payout against the ledger and flag mismatches",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+      {
+        _id: "j-second",
+        name: "Chase refunds",
+        goal: "Chase every refund older than thirty days and escalate the rest",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    const goalFields = within(detail).getAllByLabelText("Goal");
+    expect(goalFields).toHaveLength(2);
+    expect(goalFields[0]).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+    expect(goalFields[1]).toHaveValue(
+      "Chase every refund older than thirty days and escalate the rest",
+    );
+
+    fireEvent.change(goalFields[1], {
+      target: { value: "Chase every refund older than seven days" },
+    });
+    // Re-read: the first edit seeds a draft for EVERY goal at once, so this is
+    // where a field reading the draft by anything but its own journey id shows
+    // its neighbour's text back to the user.
+    const edited = within(detail).getAllByLabelText("Goal");
+    expect(edited[1]).toHaveValue("Chase every refund older than seven days");
+    expect(edited[0]).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(updateJourneyMock).toHaveBeenCalled();
+    });
+    // Only the edited journey is written — the other is not touched at all,
+    // since it is shared with every other swarm reusing this persona.
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
+      journeyRefId: "j-second",
+      goal: "Chase every refund older than seven days",
+    });
     expect(updatePersonaMock).not.toHaveBeenCalled();
   });
 
@@ -795,7 +935,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     await vi.waitFor(() => {
       expect(
-        screen.queryByTestId("new-swarm-persona-detail")
+        screen.queryByTestId("new-swarm-persona-detail"),
       ).not.toBeInTheDocument();
     });
     expect(updatePersonaMock).not.toHaveBeenCalled();
@@ -855,39 +995,53 @@ describe("SwarmsTab — New swarm create flow", () => {
     pickExistingPersona(/include ana/i);
 
     expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-      "Continue"
+      "Continue",
     );
     expect(screen.getByText(/1 existing · 3 new on next step/i)).toBeVisible();
   });
 
-  it("scales the session estimate with the number of environments", () => {
+  it("shows one Lapis golem beside the heading, not the four-golem row", () => {
     openDescribe();
-    const quick = screen.getByRole("radio", { name: /quick look/i });
-    // Auto-seed picks one env: 3 personas × 5 journeys × 1 session.
-    expect(quick).toHaveTextContent("15 sessions");
-    expect(
-      screen.getByRole("radio", { name: /launch gate/i })
-    ).toHaveTextContent("120 sessions");
+    // BB-160: the V2 frame gives the graphic a 68px slot — one `lg` avatar is
+    // 44px wide against 188 for the row — and its PNG carries the Lapis
+    // palette, `MINERALS[3]`, which none of the row's four characters use.
+    const golems = screen
+      .getByTestId("swarm-hero-characters")
+      .querySelectorAll("[data-testid='persona-pixel-avatar']");
+    expect(golems).toHaveLength(1);
+    expect(golems[0]).toHaveAttribute("data-palette", "3");
+  });
 
-    // Second env doubles the fan-out.
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
-    expect(quick).toHaveTextContent("30 sessions");
+  it("shows clients and servers before the user description", () => {
+    openDescribe();
     expect(
-      screen.getByRole("radio", { name: /launch gate/i })
-    ).toHaveTextContent("240 sessions");
+      screen.getByText(
+        /choose the clients and servers your users will interact with/i,
+      ),
+    ).toBeVisible();
+    // BB-160: the picker grounds the goals the description generates, so it
+    // comes first. jsdom has no layout, so node order is all this can assert.
+    const step = screen.getByTestId("new-swarm-describe-step");
+    expect(
+      Array.from(
+        step.querySelectorAll(
+          "[data-testid='new-swarm-target-composer'],[data-testid='new-swarm-describe-input']",
+        ),
+      ).map((node) => node.getAttribute("data-testid")),
+    ).toEqual(["new-swarm-target-composer", "new-swarm-describe-input"]);
   });
 
   it("shows the grounding hint for the auto-seeded environment", () => {
     openDescribe();
     expect(
-      screen.getByText(/grounded on 7 tools from prod-like/i)
+      screen.getByText(/grounded on 7 tools from prod-like/i),
     ).toBeVisible();
   });
 
   it("hides the existing-personas row when the project has none", () => {
     openDescribe();
     expect(
-      screen.queryByTestId("new-swarm-existing-personas")
+      screen.queryByTestId("new-swarm-existing-personas"),
     ).not.toBeInTheDocument();
   });
 
@@ -902,7 +1056,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     await waitFor(() =>
-      expect(generateSwarmPersonaBatchMock).toHaveBeenCalled()
+      expect(generateSwarmPersonaBatchMock).toHaveBeenCalled(),
     );
     expect(generateSwarmPersonaBatchMock.mock.calls[0][0]).toMatchObject({
       projectId: "proj-1",
@@ -914,6 +1068,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
   });
 
+  it("refuses to generate or write goals when a target resolves to no model", async () => {
+    // The launch contract, checked before any generation or durable write:
+    // the environment inherits from a client that pins no model.
+    convexQueryMock.mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: {
+          code: "ENV_MODEL_REQUIRED",
+          message: 'Environment "Claude" has no model to run.',
+          details: { hostId: "host-1" },
+        },
+      }),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      (await screen.findAllByText(/Claude has no model/)).length,
+    ).toBeGreaterThan(0);
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      { projectId: "proj-1", environmentId: "env-1" },
+    );
+    // Caught before the persona slate, so nothing costs credits or persists.
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+    expect(createSwarmMock).not.toHaveBeenCalled();
+    expect(createPersonaMock).not.toHaveBeenCalled();
+    expect(createJourneyMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Edit client" }),
+    ).toBeInTheDocument();
+  });
+
   it("writes nothing until Launch, then creates personas, journeys, and one run each", async () => {
     openDescribe();
     fillDescribe();
@@ -923,12 +1110,17 @@ describe("SwarmsTab — New swarm create flow", () => {
     // Generation alone must not touch the database.
     expect(createPersonaMock).not.toHaveBeenCalled();
     expect(createJourneyMock).not.toHaveBeenCalled();
-    expect(screen.getByText("Refund Chaser")).toBeInTheDocument();
-    expect(screen.getByText("Billing Dev")).toBeInTheDocument();
+    expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
+    expect(screen.getByText(/Billing Dev/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ setupWrites: true }),
+      }),
+    );
     expect(createPersonaMock).toHaveBeenCalledTimes(2);
     expect(createPersonaMock.mock.calls[0][0]).toMatchObject({
       projectId: "proj-1",
@@ -944,38 +1136,43 @@ describe("SwarmsTab — New swarm create flow", () => {
       name: "Refund a charge",
       goal: "Refund the charge",
       environmentIds: ["env-1"],
-      config: { sessionsPerTarget: 1, maxTurns: 6 },
+      config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
-    // The confirm step seeds the universal starter checks, so an untouched
-    // launch stamps exactly those; the judge stays opt-in (uses credits).
+    // Untouched authoring omits overrides; the backend applies automatic grading defaults.
     expect(
-      (
-        createJourneyMock.mock.calls[0][0].rubric as Array<{
-          predicate: { type: string };
-        }>
-      ).map((entry) => entry.predicate)
-    ).toEqual([
-      { type: "noToolErrors" },
-      { type: "finalAssistantMessageNonEmpty" },
-    ]);
+      screen.queryByTestId("new-swarm-grading-toggle"),
+    ).not.toBeInTheDocument();
+    expect(createJourneyMock.mock.calls[0][0]).not.toHaveProperty("rubric");
     expect(createJourneyMock.mock.calls[0][0]).not.toHaveProperty(
-      "judgeConfig"
+      "judgeConfig",
     );
 
     // Distinct idempotency keys — one run per journey, never a shared key.
     const keys = launchJourneyRunMock.mock.calls.map(
-      (call) => call[0].launchKey
+      (call) => call[0].launchKey,
     );
     expect(new Set(keys).size).toBe(2);
-    // Launch stays in the wizard on the live matrix; Leave hands the user off
-    // to the Sessions view. That handoff is a route change now, and `?view=`
-    // carries the landing view so reloading that URL lands there too.
+    // Launch stays in the wizard on the live matrix; Open findings hands
+    // the user off to the swarm's own page (Findings is the default tab).
     await screen.findByTestId("new-swarm-running-step");
-    expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("new-swarm-running-stop"));
+    expect(
+      screen.getAllByLabelText(/Watch Refund Chaser/).length,
+    ).toBeGreaterThan(0);
+    // No run/session has arrived in this fixture yet; pending is evidence-based.
+    expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
+    const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
+      swarmRunGroupId: string;
+    }).swarmRunGroupId;
+    fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
     await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith("/swarms?view=sessions"),
+      expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
     );
+    // BB-64: a launched run leaves via onDone, and neither leaveFlow exit (the
+    // Cancel button or the ← Swarms link) is rendered on Running. This guards
+    // that the discard toast lives in leaveFlow, not in clearNewSwarmFlowDraft
+    // or an unmount effect — either of which would fire it on this successful
+    // exit.
+    expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
@@ -985,7 +1182,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-proposed-personas");
 
     fireEvent.click(
-      screen.getByRole("button", { name: /remove persona billing dev/i })
+      screen.getByRole("button", { name: /remove persona billing dev/i }),
     );
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
@@ -994,7 +1191,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(createJourneyMock).toHaveBeenCalledTimes(1);
   });
 
-  it("stamps suggested checks onto their own journey only, on top of the starters", async () => {
+  it("ignores generation-suggested tool checks — they are not shown or stamped", async () => {
     generateSwarmPersonaBatchMock.mockResolvedValue({
       personas: [
         {
@@ -1024,11 +1221,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    // The suggestion is visible (and prunable) with its journey's goal.
     fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
-    expect(screen.getByTestId("new-swarm-journey-check")).toHaveTextContent(
-      "Calls refund_charge"
-    );
+    expect(
+      screen.queryByTestId("new-swarm-journey-check"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Calls refund_charge/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() => expect(createJourneyMock).toHaveBeenCalledTimes(2));
@@ -1040,89 +1237,12 @@ describe("SwarmsTab — New swarm create flow", () => {
           label?: string;
           predicate: Predicate;
         }>,
-      ])
+      ]),
     );
+    expect(rubricByGoal.get("Refund the charge")).toBeUndefined();
     expect(
-      rubricByGoal.get("Refund the charge")!.map((row) => row.predicate)
-    ).toEqual([
-      { type: "noToolErrors" },
-      { type: "finalAssistantMessageNonEmpty" },
-      { type: "toolCalledAtLeastOnce", toolName: "refund_charge" },
-    ]);
-    expect(rubricByGoal.get("Refund the charge")![2].label).toBe(
-      "Calls refund_charge"
-    );
-    // The unrelated journey must NOT carry the refund check — it could never
-    // pass there and would read as a regression.
-    expect(
-      rubricByGoal
-        .get("Wire up the subscription webhook")!
-        .map((row) => row.predicate)
-    ).toEqual([
-      { type: "noToolErrors" },
-      { type: "finalAssistantMessageNonEmpty" },
-    ]);
-  });
-
-  it("a pruned suggested check is not stamped", async () => {
-    generateSwarmPersonaBatchMock.mockResolvedValue({
-      personas: [
-        {
-          persona: {
-            name: "Refund Chaser",
-            role: "Support agent",
-            notes: "n1",
-          },
-          journeys: [
-            {
-              goal: "Refund the charge",
-              suggestedChecks: [
-                { type: "toolCalledAtLeastOnce", toolName: "refund_charge" },
-              ],
-            },
-          ],
-        },
-      ],
-    });
-    openDescribe();
-    fillDescribe();
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-proposed-personas");
-
-    fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
-    fireEvent.click(
-      screen.getByRole("button", { name: /remove check calls refund_charge/i })
-    );
-    expect(
-      screen.queryByTestId("new-swarm-journey-check")
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await waitFor(() => expect(createJourneyMock).toHaveBeenCalledTimes(1));
-    const rubric = createJourneyMock.mock.calls[0][0].rubric as Array<{
-      predicate: Predicate;
-    }>;
-    expect(rubric.map((row) => row.predicate)).toEqual([
-      { type: "noToolErrors" },
-      { type: "finalAssistantMessageNonEmpty" },
-    ]);
-  });
-
-  it("stamps one rubric, with identical ids, onto every created journey", async () => {
-    openDescribe();
-    fillDescribe();
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-proposed-personas");
-
-    fireEvent.click(screen.getByTestId("new-swarm-grading-toggle"));
-    fireEvent.click(screen.getByRole("button", { name: /add criterion/i }));
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-
-    await waitFor(() => expect(createJourneyMock).toHaveBeenCalledTimes(2));
-    const rubrics = createJourneyMock.mock.calls.map((call) => call[0].rubric);
-    // Shared ids are what let Findings roll a criterion up across the swarm.
-    expect(rubrics[0]).toEqual([{ id: "crit-1", predicate: CRITERION }]);
-    expect(rubrics[1]).toEqual(rubrics[0]);
+      rubricByGoal.get("Wire up the subscription webhook"),
+    ).toBeUndefined();
   });
 
   it("keeps journeys that landed when one write fails, and reports the failure", async () => {
@@ -1169,7 +1289,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       if (seq === 2) throw new Error("upstream unavailable");
       throw new LaunchJourneyRunError(
         402,
-        "Your organization's credit limit was reached."
+        "Your organization's credit limit was reached.",
       );
     });
 
@@ -1196,10 +1316,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /no runs were launched/i
+      /no runs were launched/i,
     );
     expect(
-      screen.queryByTestId("new-swarm-running-step")
+      screen.queryByTestId("new-swarm-running-step"),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("sessions-panel")).not.toBeInTheDocument();
   });
@@ -1213,7 +1333,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /2 goals were created/i
+      /2 goals were created/i,
     );
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
 
@@ -1233,7 +1353,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
   it("surfaces a generation failure inline and stays on Describe", async () => {
     generateSwarmPersonaBatchMock.mockRejectedValue(
-      new Error("You're out of credits")
+      new Error("You're out of credits"),
     );
     openDescribe();
     fillDescribe();
@@ -1241,11 +1361,107 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /out of credits/i
+      /out of credits/i,
     );
     expect(
-      screen.queryByTestId("new-swarm-proposed-personas")
+      screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in when the refusal arrives as the OTHER error type", async () => {
+    // The proxy does not always raise `SwarmGenerateError`. `handleRoute`
+    // backfills `normalized` on every route error, and that path throws
+    // `WebApiError`. A consumer keyed on the class showed a guest the generic
+    // card; `signInRemedyMessage` asks the error instead, reading the envelope
+    // both classes carry, so both shapes land on the same remedy.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new WebApiError(
+        401,
+        "UNAUTHORIZED",
+        "Sign in to generate personas and journeys.",
+        undefined,
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in for a guest refusal instead of carding it", async () => {
+    // The backend refuses an anonymous caller at the door, and the proxy
+    // forwards that envelope as `details` under an HTTP-shaped `FORBIDDEN` —
+    // which is why the code is read from the envelope and not from the top
+    // level. An `ErrorCard` would state the problem and offer
+    // nothing; the remedy here is a control, so the surface renders
+    // `GuestSignInMessage` and no card.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new SwarmGenerateError(
+        403,
+        "Sign in to generate personas and journeys.",
+        false,
+        "FORBIDDEN",
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    // The refusal gets ONE surface, not two saying the same thing.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-proposed-personas"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves a model limit to its dialog instead of also carding it", async () => {
+    let rejectGenerate: (err: unknown) => void = () => {};
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectGenerate = reject;
+        })
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        /generating/i
+      )
+    );
+
+    rejectGenerate(
+      // `limitDialogRaised` is what `postGenerate` sets once the dialog has
+      // taken the error over.
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
+    );
+
+    // Back to idle, so the catch has run and had its chance to set a message.
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        "Continue"
+      )
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("launches a reused persona's journeys, re-stamped onto the selected environment", async () => {
@@ -1271,7 +1487,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     // Launch stays held until the reused persona's journeys have resolved —
     // launching early would silently omit them.
     await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
     );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -1319,7 +1535,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
     );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -1356,55 +1572,18 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
     );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(
-      "environmentIds" in launchJourneyRunMock.mock.calls[0][0]
-    ).toBe(false);
-    await screen.findByTestId("new-swarm-running-step");
-  });
-
-  it("skips the env re-stamp when a reused journey already matches, but still merges grading", async () => {
-    existingPersonas = [
-      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
-    ];
-    personaJourneys = [
-      {
-        _id: "j-existing",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-1"],
-      },
-    ];
-    openDescribe();
-    pickExistingPersona(/include ana/i);
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-reused-personas");
-    await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+    expect("environmentIds" in launchJourneyRunMock.mock.calls[0][0]).toBe(
+      false,
     );
-
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    // One call, carrying ONLY the rubric: the env selection already matches,
-    // so nothing about the journey's fan-out is rewritten.
-    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
-    const patch = updateJourneyMock.mock.calls[0][0];
-    expect(patch.journeyRefId).toBe("j-existing");
-    expect(patch.rubric.map((c: { predicate: { type: string } }) => c.predicate.type)).toEqual([
-      "noToolErrors",
-      "finalAssistantMessageNonEmpty",
-    ]);
-    expect("environmentIds" in patch).toBe(false);
-    expect("hostIds" in patch).toBe(false);
-    // Never send judgeConfig when the author didn't set one — null/undefined
-    // would clear the journey's own judge.
-    expect("judgeConfig" in patch).toBe(false);
+    // Empty swarm grading is not a patch — merging `[]` would replace the
+    // journey's own rubric.
+    expect(updateJourneyMock).not.toHaveBeenCalled();
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -1418,7 +1597,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     expect(createSwarmMock).toHaveBeenCalledTimes(1);
     const swarmRefIds = createJourneyMock.mock.calls.map(
-      (c) => c[0].swarmRefId
+      (c) => c[0].swarmRefId,
     );
     expect(new Set(swarmRefIds).size).toBe(1);
     expect(swarmRefIds[0]).toBe("swarm-1");
@@ -1438,10 +1617,10 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     const swarmKey = createSwarmMock.mock.calls[0][0].idempotencyKey;
     const personaKeys = createPersonaMock.mock.calls.map(
-      (c) => c[0].idempotencyKey
+      (c) => c[0].idempotencyKey,
     );
     const journeyKeys = createJourneyMock.mock.calls.map(
-      (c) => c[0].idempotencyKey
+      (c) => c[0].idempotencyKey,
     );
     expect(swarmKey).toBeTruthy();
     // Distinct per row, so replay resolves each to its own record.
@@ -1462,7 +1641,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     }));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() =>
-      expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0)
+      expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0),
     );
     expect(createSwarmMock).toHaveBeenCalledTimes(1);
   });
@@ -1478,9 +1657,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
-    expect(
-      "swarmRefId" in createJourneyMock.mock.calls[0][0]
-    ).toBe(false);
+    expect("swarmRefId" in createJourneyMock.mock.calls[0][0]).toBe(false);
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -1495,15 +1672,32 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     const groupIds = launchJourneyRunMock.mock.calls.map(
-      (c) => (c[0] as any).swarmRunGroupId
+      (c) => (c[0] as any).swarmRunGroupId,
     );
     expect(new Set(groupIds).size).toBe(1);
     expect(groupIds[0]).toBeTruthy();
     // Launch keys stay per-journey — grouping must not collapse idempotency.
     const launchKeys = launchJourneyRunMock.mock.calls.map(
-      (c) => (c[0] as any).launchKey
+      (c) => (c[0] as any).launchKey,
     );
     expect(new Set(launchKeys).size).toBe(2);
+  });
+
+  it("stamps the swarm with the same wave id its runs carry", async () => {
+    // How the Overview names a wave: it looks the swarm up BY this id rather
+    // than through a journey, whose authoring swarm is someone else's as soon
+    // as the launch reuses it.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    const waveId = (launchJourneyRunMock.mock.calls[0]![0] as any)
+      .swarmRunGroupId;
+    expect(waveId).toBeTruthy();
+    expect(createSwarmMock.mock.calls[0]![0].swarmRunGroupId).toBe(waveId);
   });
 
   it("reuses the wave id when a failed launch is retried", async () => {
@@ -1528,11 +1722,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() =>
-      expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0)
+      expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0),
     );
-    expect((launchJourneyRunMock.mock.calls[0]![0] as any).swarmRunGroupId).toBe(
-      firstGroupId
-    );
+    expect(
+      (launchJourneyRunMock.mock.calls[0]![0] as any).swarmRunGroupId,
+    ).toBe(firstGroupId);
   });
 
   it("counts reused journeys in the session estimate", async () => {
@@ -1550,14 +1744,17 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(
-      await screen.findByText(/run 1 session total in this swarm/i)
-    ).toBeInTheDocument();
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("keeps a reused journey's own sessions when the intensity changes", async () => {
-    // SUTB-26: a preset may seed a field, never overwrite one the user set.
-    // This journey was saved at 3 sessions and launch does not rewrite a
-    // shared journey's config, so pushing harder must not re-price it.
+  it("seeds a reused persona's counter from its saved sessions", async () => {
+    // Supersedes SUTB-26, which had no counter here at all: launch does not
+    // rewrite a shared journey's config, so the card offered no control.
+    // It now sets the size for THIS run through an override, which leaves
+    // the shared definition alone — and the counter starts at what the
+    // goals already carry, so leaving it alone launches the size it
+    // always did.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1574,71 +1771,22 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     expect(
-      await screen.findByText(/run 3 sessions total in this swarm/i)
-    ).toBeInTheDocument();
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
+    expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
+      /1 goal × 3 iterations = 3 conversations/i,
+    );
+    expect(screen.getByTestId("new-swarm-persona-iterations")).toHaveValue(3);
 
-    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
-    fireEvent.click(screen.getByRole("radio", { name: /launch gate/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i }),
+    );
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(
-      await screen.findByText(/run 3 sessions total in this swarm/i)
-    ).toBeInTheDocument();
-  });
-
-  it("merges swarm grading into a reused journey on a reuse-only launch", async () => {
-    // No environment selection at all. The Confirm copy promises the merge
-    // unconditionally, and shared criterion ids are what put this journey in
-    // the swarm's Findings rollup.
-    existingPersonas = [
-      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
-    ];
-    personaJourneys = [
-      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
-    ];
-    openDescribe();
-    pickExistingPersona(/include ana/i);
-    // Deliberately no environment picker clicks.
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-reused-personas");
-    await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
-    );
-
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
-    const patch = updateJourneyMock.mock.calls[0][0];
-    expect(patch.journeyRefId).toBe("j-existing");
-    expect(patch.rubric).toHaveLength(2);
-    expect("environmentIds" in patch).toBe(false);
-    await screen.findByTestId("new-swarm-running-step");
-  });
-
-  it("still launches a reused journey when only the grading merge failed", async () => {
-    // Grading is advisory — a failed rubric write must not drop the run the
-    // user actually asked for (unlike a failed env re-stamp, below).
-    updateJourneyMock.mockRejectedValue(new Error("rubric rejected"));
-    existingPersonas = [
-      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
-    ];
-    personaJourneys = [
-      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
-    ];
-    openDescribe();
-    pickExistingPersona(/include ana/i);
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-reused-personas");
-    await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
-    );
-
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    await screen.findByTestId("new-swarm-running-step");
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
   });
 
   it("surfaces a rejected environment override as a failed launch", async () => {
@@ -1659,16 +1807,16 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
     );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /no runs were launched/i
+      /no runs were launched/i,
     );
     expect(
-      screen.queryByTestId("new-swarm-running-step")
+      screen.queryByTestId("new-swarm-running-step"),
     ).not.toBeInTheDocument();
   });
 
@@ -1701,9 +1849,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     fillDescribe();
     // Auto-seed has env-1; one more click adds env-2.
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
-    expect(screen.getByTestId("new-swarm-environments-picker")).toHaveTextContent(
-      "2 env"
-    );
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).toHaveTextContent("2 env");
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -1731,9 +1879,12 @@ describe("SwarmsTab — New swarm create flow", () => {
       target: { value: "Operator" },
     });
     // New draft starts with one empty goal input.
-    fireEvent.change(screen.getByPlaceholderText(/what should they try to do/i), {
-      target: { value: "Resolve a stuck ticket" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(/what should they try to do/i),
+      {
+        target: { value: "Resolve a stuck ticket" },
+      },
+    );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
@@ -1742,12 +1893,12 @@ describe("SwarmsTab — New swarm create flow", () => {
       expect.objectContaining({
         name: "Manual Ops",
         role: "Operator",
-      })
+      }),
     );
     expect(createJourneyMock).toHaveBeenCalledWith(
       expect.objectContaining({
         goal: "Resolve a stuck ticket",
-      })
+      }),
     );
     await screen.findByTestId("new-swarm-running-step");
   });
@@ -1767,7 +1918,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     await waitFor(() =>
-      expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledTimes(1)
+      expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledTimes(1),
     );
     // One batch call for both clients, and no NAMED row is minted — the whole
     // point of the change is that Describe text never becomes an environment.
@@ -1810,7 +1961,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     await waitFor(() =>
-      expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledTimes(1)
+      expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledTimes(1),
     );
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledWith({
       projectId: "proj-1",
@@ -1834,7 +1985,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     ensureAdhocEnvironmentsMock.mockRejectedValue(
       Object.assign(new Error("Could not find public function"), {
         data: "Could not find public function for 'projectEnvironments:ensureAdhocEnvironments'",
-      })
+      }),
     );
     environmentsRef.current = [];
     environments = environmentsRef.current;
@@ -1849,14 +2000,12 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
-    await waitFor(() =>
-      expect(createEnvironmentMock).toHaveBeenCalledTimes(2)
-    );
+    await waitFor(() => expect(createEnvironmentMock).toHaveBeenCalledTimes(2));
     await screen.findByTestId("new-swarm-proposed-personas");
     expect(generateSwarmPersonaBatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
         environmentId: "created-host-1",
-      })
+      }),
     );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -1880,58 +2029,11 @@ describe("SwarmsTab — New swarm create flow", () => {
  * promise a rebuild that cannot happen yet.
  */
 describe("SwarmsTab create flow — insight grouping", () => {
-  it("offers the row in Shared setup and says the setting is project-wide", () => {
-    openDescribe();
-    const row = screen.getByTestId("new-swarm-insight-grouping");
-    expect(within(row).getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
-    expect(row).toHaveTextContent(/Saved for this project/i);
-  });
-
-  it("saves rather than rebuilds, and never offers to re-analyze", async () => {
-    const user = userEvent.setup();
-    openDescribe();
-    await user.click(
-      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
-    );
-
-    expect(screen.getByTestId("cluster-tuning-apply")).toHaveTextContent(
-      "Save default",
-    );
-    // Nothing has run, so re-summarizing "every session" is not on offer.
-    expect(screen.queryByTestId("cluster-tuning-force")).not.toBeInTheDocument();
-  });
-
-  it("writes the chosen preset to the project", async () => {
-    const user = userEvent.setup();
-    openDescribe();
-    await user.click(
-      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
-    );
-    await user.click(screen.getByTestId("cluster-tuning-preset-detailed"));
-    await user.click(screen.getByTestId("cluster-tuning-apply"));
-
-    await waitFor(() => expect(setInsightsTuningMock).toHaveBeenCalled());
-    expect(setInsightsTuningMock.mock.calls[0][0]).toEqual({
-      projectId: "proj-1",
-      tuning: { maxClusters: 16, minSeparation: 0.08, linkThreshold: 0.82 },
-    });
-  });
-
-  it("seeds the control from what the project already uses", async () => {
-    insightsTuningRef.current = {
-      tuning: { maxClusters: 4, minSeparation: 0.25, linkThreshold: 0.72 },
-      source: "project",
-    };
+  it("is not offered on Describe — that page is users and targets only", () => {
     openDescribe();
     expect(
-      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
-    ).toHaveTextContent("Broad");
+      screen.queryByTestId("new-swarm-insight-grouping"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -1952,47 +2054,31 @@ describe("SwarmsTab create flow — survives a remount", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
   }
 
-  it("keeps a name-only edit, and keeps its draft, across repeated remounts", async () => {
-    // The regression: `hasResumableWork` compared the name against a ref
-    // seeded from the RESTORED name, so after one remount an edited name read
-    // as untouched, the draft was cleared, and the next remount fell back to
-    // the date suggestion. Two remounts is what it takes to see it.
+  it("keeps a description-only edit, and keeps its draft, across repeated remounts", async () => {
     openDescribe();
-    fireEvent.change(screen.getByTestId("new-swarm-name"), {
-      target: { value: "Billing swarm" },
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
     });
 
     remount();
     await screen.findByTestId("new-swarm-describe-step");
-    expect(screen.getByTestId("new-swarm-name")).toHaveValue("Billing swarm");
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+      "Support agents answering refunds",
+    );
 
     remount();
     await screen.findByTestId("new-swarm-describe-step");
-    expect(screen.getByTestId("new-swarm-name")).toHaveValue("Billing swarm");
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+      "Support agents answering refunds",
+    );
   });
 
-  it("does not count the prefilled name as work of its own", async () => {
-    // The other half of the same rule. The name field is PREFILLED, so a bare
-    // non-empty check would make every fresh Describe step resumable. Asserted
-    // through the flag rather than through the draft's absence, because target
-    // auto-seeding already makes this fixture resumable on open.
+  it("does not count an untouched Describe as a name edit", async () => {
     openDescribe();
-    expect(
-      (screen.getByTestId("new-swarm-name") as HTMLInputElement).value.length
-    ).toBeGreaterThan(0);
-
     const untouched = JSON.parse(
-      sessionStorage.getItem("mcp-new-swarm-flow-draft") ?? "{}"
+      sessionStorage.getItem("mcp-new-swarm-flow-draft") ?? "{}",
     );
     expect(untouched.draft?.nameEdited).toBe(false);
-
-    fireEvent.change(screen.getByTestId("new-swarm-name"), {
-      target: { value: "Billing swarm" },
-    });
-    const edited = JSON.parse(
-      sessionStorage.getItem("mcp-new-swarm-flow-draft") ?? "{}"
-    );
-    expect(edited.draft?.nameEdited).toBe(true);
   });
 
   it("comes back on Confirm with the generated personas, not on Describe", async () => {
@@ -2004,10 +2090,10 @@ describe("SwarmsTab create flow — survives a remount", () => {
     remount();
 
     await screen.findByTestId("new-swarm-proposed-personas");
-    expect(screen.getByText("Refund Chaser")).toBeInTheDocument();
-    expect(screen.getByText("Billing Dev")).toBeInTheDocument();
+    expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
+    expect(screen.getByText(/Billing Dev/)).toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-describe-step")
+      screen.queryByTestId("new-swarm-describe-step"),
     ).not.toBeInTheDocument();
     // The slate is the restored one — nothing was re-generated behind the user.
     expect(generateSwarmPersonaBatchMock).toHaveBeenCalledTimes(1);
@@ -2040,7 +2126,9 @@ describe("SwarmsTab create flow — survives a remount", () => {
     remount();
 
     await screen.findByTestId("new-swarm-running-step");
-    expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
+    expect(
+      screen.getAllByLabelText(/Watch Refund Chaser/).length,
+    ).toBeGreaterThan(0);
     // Restoring must not re-launch what is already running.
     expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
   });
@@ -2049,22 +2137,22 @@ describe("SwarmsTab create flow — survives a remount", () => {
     // A generation in flight at unmount cannot be resumed — its request died
     // with the component — so the restored step has to explain itself.
     generateSwarmPersonaBatchMock.mockImplementation(
-      () => new Promise(() => {})
+      () => new Promise(() => {}),
     );
     openDescribe();
     fillDescribe();
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-generate-progress")).toBeVisible()
+      expect(screen.getByTestId("new-swarm-generate-progress")).toBeVisible(),
     );
 
     remount();
 
     expect(
-      await screen.findByText(/persona generation was interrupted/i)
+      await screen.findByText(/persona generation was interrupted/i),
     ).toBeVisible();
     expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
-      "Support agents answering refunds"
+      "Support agents answering refunds",
     );
   });
 
@@ -2075,20 +2163,22 @@ describe("SwarmsTab create flow — survives a remount", () => {
     await screen.findByTestId("new-swarm-proposed-personas");
 
     // Back to Describe, then Cancel out of the flow entirely.
-    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i }),
+    );
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     remount();
 
     expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-proposed-personas")
+      screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue("");
   });
 
   it("says what stage it is in while generation runs", async () => {
     generateSwarmPersonaBatchMock.mockImplementation(
-      () => new Promise(() => {})
+      () => new Promise(() => {}),
     );
     openDescribe();
     fillDescribe();
@@ -2098,8 +2188,8 @@ describe("SwarmsTab create flow — survives a remount", () => {
     // Quick look = 3 personas × 5 goals; the line names the work, not a fake ETA.
     await waitFor(() =>
       expect(progress).toHaveTextContent(
-        /writing 3 personas with up to 5 goals each/i
-      )
+        /writing 3 personas with up to 5 goals each/i,
+      ),
     );
   });
 });
@@ -2113,10 +2203,9 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
 
     const stepper = screen.getByTestId("new-swarm-progress");
     expect(stepper).toHaveTextContent("Describe");
-    expect(stepper).toHaveTextContent("Confirm personas");
-    expect(stepper).toHaveTextContent("Running");
-    expect(stepper).toHaveTextContent("Findings");
-    // Done is a state of Findings, not a fifth circle.
+    expect(stepper).toHaveTextContent("Confirm details");
+    expect(stepper).toHaveTextContent("Run swarm");
+    expect(stepper).not.toHaveTextContent("Findings");
     expect(stepper).not.toHaveTextContent(/\bDone\b/);
 
     const current = within(stepper)
@@ -2132,43 +2221,121 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     openDescribe();
 
     expect(
-      screen.getByRole("heading", { name: /create an agentic swarm/i })
+      screen.getByRole("heading", { name: /create a swarm of your users/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/set up your environment and then describe your users/i)
+      screen.getByText(
+        /simulated users run through your server so you can see what breaks/i,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /your inputs are not final. you can edit personas and goals on the next screen/i,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /you will be able to compare behavior across different clients simultaneously/i,
+      ),
     ).toBeVisible();
 
-    fireEvent.click(screen.getByTestId("new-swarm-back-to-swarms"));
-    expect(navigateMock).toHaveBeenCalledWith("/swarms");
-  });
-
-  it("prefills the Swarm name and blocks Continue when it is cleared", () => {
-    openDescribe();
-
-    const name = screen.getByTestId("new-swarm-name") as HTMLInputElement;
-    expect(name.value.length).toBeGreaterThan(0);
-
+    // A real draft so the discard toast is due on this exit too.
     fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
       target: { value: "Support agents answering refunds" },
     });
-    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
-
-    // Required, and it says so instead of just going dead.
-    fireEvent.change(name, { target: { value: "   " } });
-    expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
-    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
-      /name this swarm to continue/i
-    );
-
-    fireEvent.change(name, { target: { value: "Billing swarm" } });
-    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId("new-swarm-back-to-swarms"));
+    expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: the back link is leaveFlow's second exit, so it discards the
+    // draft and acknowledges it just like Cancel does.
+    expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
   });
 
-  it("names the swarm from the field, not from the description paragraph", async () => {
+  it("disables the ← Swarms exit while a launch is in flight, and clicking it fires no toast", async () => {
+    // Hold the launch open so `launching` stays true and the header link sits
+    // in its disabled window — the exact state the guard exists for. This is
+    // the behaviour the PR description promises.
+    launchJourneyRunMock.mockImplementation(() => new Promise(() => {}));
     openDescribe();
-    fireEvent.change(screen.getByTestId("new-swarm-name"), {
-      target: { value: "Billing swarm" },
-    });
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    const back = await screen.findByTestId("new-swarm-back-to-swarms");
+    await waitFor(() => expect(back).toBeDisabled());
+    // A disabled control ignores the click: no discard toast over a live launch.
+    fireEvent.click(back);
+    expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
+  });
+
+  it("blocks BOTH exits while generation is in flight, and neither fires a toast", async () => {
+    // The footer Cancel and the ← Swarms link both run leaveFlow. Generation
+    // awaits resolveTargets (which can mint rows) and then writes personas, so
+    // leaving mid-generation would announce a discard over a live batch. Hold
+    // generation open to sit in that window.
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-generate-progress");
+
+    const cancel = screen.getByRole("button", { name: /^cancel$/i });
+    const back = screen.getByTestId("new-swarm-back-to-swarms");
+    expect(cancel).toBeDisabled();
+    expect(back).toBeDisabled();
+    // Even if a click slips past the disabled state, leaveFlow refuses while a
+    // batch is running — no discard toast, no navigation away from the flow.
+    fireEvent.click(cancel);
+    fireEvent.click(back);
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/swarms");
+  });
+
+  it("re-enables the ← Swarms exit when the launch preflight fails", async () => {
+    // Reused persona so Continue skips generation; the launch preflight is then
+    // the resolveTargets call that fails. No saved env → the target is a client
+    // (ad-hoc), so a generic ensureAdhoc rejection (not the "old backend"
+    // adhoc-unavailable signal) throws all the way to the preflight catch.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    ensureAdhocEnvironmentsMock.mockRejectedValue(new Error("resolve failed"));
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    // Assert the COPY, not just "an alert": it states out loud that the failure
+    // came through the resolveTargets throw (the mock's message), and would
+    // fail if a later change skipped resolveTargets or routed to the other
+    // bail-out. The ensureAdhoc call confirms the ad-hoc resolve path ran at all
+    // rather than the preflight guard short-circuiting it.
+    expect(await screen.findByRole("alert")).toHaveTextContent("resolve failed");
+    expect(ensureAdhocEnvironmentsMock).toHaveBeenCalled();
+    expect(
+      screen.queryByTestId("new-swarm-running-step"),
+    ).not.toBeInTheDocument();
+    // The whole point of moving the latch ahead of the await: the finally
+    // re-enabled the exit instead of stranding it disabled with no way out.
+    expect(
+      screen.getByTestId("new-swarm-back-to-swarms"),
+    ).not.toBeDisabled();
+  });
+
+  it("names the swarm from the date suggestion, not from the description paragraph", async () => {
+    openDescribe();
     fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
       target: { value: "Support agents answering refunds" },
     });
@@ -2180,21 +2347,158 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
       expect(createSwarmMock).toHaveBeenCalled();
     });
     expect(createSwarmMock.mock.calls[0][0]).toMatchObject({
-      name: "Billing swarm",
       description: "Support agents answering refunds",
     });
+    expect(createSwarmMock.mock.calls[0][0].name).toMatch(/^Swarm · /);
   });
 
-  it("labels the scope options with the sessions each one costs", () => {
+  it("does not ask for a name or scope on Describe", () => {
     openDescribe();
+    expect(screen.queryByTestId("new-swarm-name")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-persona-iterations"),
+    ).not.toBeInTheDocument();
+  });
 
-    const scope = screen.getByTestId("new-swarm-push-intensity");
-    expect(scope).toHaveTextContent("Quick look");
-    expect(scope).toHaveTextContent("15 sessions");
-    expect(scope).toHaveTextContent("Standard");
-    expect(scope).toHaveTextContent("36 sessions");
-    expect(scope).toHaveTextContent("Launch gate");
-    expect(scope).toHaveTextContent("120 sessions");
+  it("gives every persona its own iterations counter on Confirm", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counters = screen.getAllByTestId("new-swarm-persona-iterations");
+    expect(counters).toHaveLength(2);
+    for (const counter of counters) expect(counter).toHaveValue(1);
+    expect(
+      screen.getByTestId("new-swarm-conversation-equation"),
+    ).toHaveTextContent(/across 2 personas/i);
+  });
+
+  it("keeps a usable count when the counter is cleared", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId(
+      "new-swarm-persona-iterations",
+    )[0];
+    fireEvent.change(counter, { target: { value: "" } });
+
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/2 conversations/i);
+
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(1);
+  });
+
+  it("takes a typed count instead of appending it to the current one", async () => {
+    // Clamping every keystroke turned the "1" already in the field plus a
+    // typed "2" into 12, which snapped straight to the maximum.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("2");
+
+    expect(counter).toHaveValue(2);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
+  });
+
+  it("keeps taking typed counts while the field stays focused", async () => {
+    // The first keystroke replaces the selection, but the second lands next to
+    // it: "2" then "3" read as 23, which used to settle on the maximum.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("2");
+    await user.keyboard("3");
+
+    expect(counter).toHaveValue(3);
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(3);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/4 conversations/i);
+  });
+
+  it("takes the digit typed before the current one, not the one it displaced", async () => {
+    // The caret does not have to sit at the end: Home then "2" over a 3 grows
+    // the text to 23, where keeping the last character would drop the 2 and
+    // silently leave the old count standing.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("3");
+    fireEvent.change(counter, { target: { value: "23" } });
+
+    expect(counter).toHaveValue(2);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
+  });
+
+  it("refuses a digit that no count can be, instead of showing it", async () => {
+    // "1" then "0" is 10, out of range. The 0 must not sit in the field as
+    // though the control accepted zero iterations.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("0");
+
+    expect(counter).toHaveValue(1);
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(1);
+  });
+  it("moves only the persona whose counter was touched", async () => {
+    // The whole reason the control left the footer: two personas can carry
+    // different goal counts, so one number cannot size both.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/2 conversations/i);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    const subtotals = screen.getAllByTestId("new-swarm-persona-subtotal");
+    expect(subtotals[0]).toHaveTextContent(
+      /1 goal . 2 iterations = 2 conversations/i,
+    );
+    expect(subtotals[1]).toHaveTextContent(
+      /1 goal . 1 iteration = 1 conversation/i,
+    );
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
   });
 
   it("lists attached personas as removable rows, not as a checklist", () => {
@@ -2205,7 +2509,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
 
     // Nothing attached yet: the rows only exist once a persona is picked.
     expect(
-      screen.queryByTestId("new-swarm-attached-personas")
+      screen.queryByTestId("new-swarm-attached-personas"),
     ).not.toBeInTheDocument();
 
     pickExistingPersona(/include ana/i);
@@ -2215,7 +2519,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /remove ana/i }));
     expect(
-      screen.queryByTestId("new-swarm-attached-personas")
+      screen.queryByTestId("new-swarm-attached-personas"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
   });
@@ -2225,7 +2529,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     openDescribe();
 
     expect(
-      screen.queryByTestId("new-swarm-add-existing-personas")
+      screen.queryByTestId("new-swarm-add-existing-personas"),
     ).not.toBeInTheDocument();
   });
 });
@@ -2250,33 +2554,47 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
       .getAllByRole("listitem")
       .filter((item) => item.getAttribute("aria-current") === "step");
     expect(current).toHaveLength(1);
-    expect(current[0]).toHaveTextContent("Confirm personas");
+    expect(current[0]).toHaveTextContent("Confirm details");
 
     // Describe is complete, so it is the one step offered as a way back.
     expect(
       within(stepper)
         .getAllByRole("button")
-        .map((node) => node.getAttribute("aria-label"))
+        .map((node) => node.getAttribute("aria-label")),
     ).toEqual(["Back to Describe"]);
 
     // The old chrome bar is Running's alone now.
     expect(screen.getByTestId("new-swarm-back-to-swarms")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^cancel$/i })
+      screen.queryByRole("button", { name: /^cancel$/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("shows the redesigned title and leads the helper with the session spend", async () => {
+  it("shows the redesigned title and the swarm total on Confirm", async () => {
     await reachConfirm();
 
     expect(
       screen.getByRole("heading", {
-        name: /review user personas and what they.{0,3}ll accomplish/i,
-      })
+        name: /review your users and what they.{0,3}ll accomplish/i,
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/run \d+ sessions? total in this swarm/i)
+      screen.getByText(
+        /select a user persona for details, or remove anything that doesn.{0,3}t fit/i,
+      ),
     ).toBeVisible();
+    expect(screen.getByTestId("new-swarm-conversation-total")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/run \d+ sessions? total in this swarm/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("titles a compact card as Name | Role, matching the confirm mock", async () => {
+    await reachConfirm();
+
+    const card = screen.getAllByTestId("new-swarm-persona-compact")[0];
+    expect(card).toHaveTextContent("Refund Chaser | Support agent");
+    expect(card).not.toHaveTextContent("Refund Chaser —");
   });
 
   it("puts Edit and Remove on the card, not behind an overflow menu", async () => {
@@ -2288,12 +2606,12 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     const edit = within(card).getByRole("button", { name: /^edit persona /i });
     expect(edit).toBeVisible();
     expect(
-      within(card).getByRole("button", { name: /^remove persona /i })
+      within(card).getByRole("button", { name: /^remove persona /i }),
     ).toBeVisible();
 
     fireEvent.click(edit);
     expect(
-      await screen.findByTestId("new-swarm-persona-detail")
+      await screen.findByTestId("new-swarm-persona-detail"),
     ).toBeInTheDocument();
   });
 
@@ -2309,7 +2627,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
 
     fireEvent.click(card);
     expect(
-      await screen.findByTestId("new-swarm-persona-detail")
+      await screen.findByTestId("new-swarm-persona-detail"),
     ).toBeInTheDocument();
   });
 
@@ -2324,19 +2642,18 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     fireEvent.change(within(detail).getByLabelText("Persona role"), {
       target: { value: "Renamed role" },
     });
-    fireEvent.change(
-      within(detail).getByLabelText("Use cases and context"),
-      { target: { value: "Fresh context" } }
-    );
+    fireEvent.change(within(detail).getByLabelText("Use cases and context"), {
+      target: { value: "Fresh context" },
+    });
 
     expect(
-      within(detail).getByDisplayValue("Renamed persona")
+      within(detail).getByDisplayValue("Renamed persona"),
     ).toBeInTheDocument();
     expect(
-      within(detail).getByDisplayValue("Renamed role")
+      within(detail).getByDisplayValue("Renamed role"),
     ).toBeInTheDocument();
     expect(
-      within(detail).getByDisplayValue("Fresh context")
+      within(detail).getByDisplayValue("Fresh context"),
     ).toBeInTheDocument();
 
     // In-memory edits already landed, so Save is only "done here" — and it is
@@ -2347,13 +2664,13 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
 
     await vi.waitFor(() => {
       expect(
-        screen.queryByTestId("new-swarm-persona-detail")
+        screen.queryByTestId("new-swarm-persona-detail"),
       ).not.toBeInTheDocument();
     });
     // The edit survived the collapse.
-    expect(
-      screen.getByTestId("new-swarm-proposed-personas")
-    ).toHaveTextContent("Renamed persona");
+    expect(screen.getByTestId("new-swarm-proposed-personas")).toHaveTextContent(
+      "Renamed persona",
+    );
   });
 
   it("adds an existing persona from this step, and stops offering it once added", async () => {
@@ -2369,15 +2686,15 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     expect(reused).toHaveTextContent("Zoe");
     // Nothing left to offer, so the affordance goes rather than opening empty.
     expect(
-      screen.queryByTestId("new-swarm-confirm-add-existing")
+      screen.queryByTestId("new-swarm-confirm-add-existing"),
     ).not.toBeInTheDocument();
   });
 
-  it("names the primary Launch Swarm, with Back beside it", async () => {
+  it("names the primary Continue, with Back beside it", async () => {
     await reachConfirm();
 
     expect(screen.getByTestId("new-swarm-launch")).toHaveTextContent(
-      "Launch Swarm"
+      "Continue",
     );
     expect(screen.getByRole("button", { name: /^back$/i })).toBeVisible();
   });
@@ -2397,22 +2714,20 @@ describe("SwarmsTab — expanded persona card is the editor, not the list row", 
     const detail = await expandFirstPersona();
 
     expect(
-      within(detail).queryByRole("button", { name: /^remove persona /i })
+      within(detail).queryByRole("button", { name: /^remove persona /i }),
     ).not.toBeInTheDocument();
     expect(
-      within(detail).queryByRole("button", { name: /close persona detail/i })
+      within(detail).queryByRole("button", { name: /close persona detail/i }),
     ).not.toBeInTheDocument();
     // Save changes is the one control the header carries.
-    expect(
-      within(detail).getByTestId("new-swarm-persona-save")
-    ).toBeVisible();
+    expect(within(detail).getByTestId("new-swarm-persona-save")).toBeVisible();
 
     // Remove is still one click away, on the sibling row.
     expect(
       within(screen.getAllByTestId("new-swarm-persona-compact")[0]).getByRole(
         "button",
-        { name: /^remove persona /i }
-      )
+        { name: /^remove persona /i },
+      ),
     ).toBeVisible();
   });
 
@@ -2432,7 +2747,7 @@ describe("SwarmsTab — expanded persona card is the editor, not the list row", 
 
     await vi.waitFor(() => {
       expect(
-        screen.queryByTestId("new-swarm-persona-detail")
+        screen.queryByTestId("new-swarm-persona-detail"),
       ).not.toBeInTheDocument();
     });
   });
@@ -2448,7 +2763,7 @@ describe("SwarmsTab — expanded persona card is the editor, not the list row", 
 
     await vi.waitFor(() => {
       expect(
-        screen.queryByTestId("new-swarm-persona-detail")
+        screen.queryByTestId("new-swarm-persona-detail"),
       ).not.toBeInTheDocument();
     });
   });
@@ -2495,7 +2810,7 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
 
     await vi.waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining("persona rejected")
+        expect.stringContaining("persona rejected"),
       );
     });
     // ONCE. `savePersonaField` also toasts and rethrows, so routing Confirm's
@@ -2505,7 +2820,7 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     // Still open, still holding the edit, so it can be retried.
     expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();
     expect(within(detail).getByLabelText("Persona role")).toHaveValue(
-      "Finance ops"
+      "Finance ops",
     );
   });
 
@@ -2513,20 +2828,20 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     updateJourneyMock.mockRejectedValue(new Error("goal rejected"));
     const detail = await openReusedPersona();
 
-    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
+    fireEvent.change(within(detail).getByLabelText("Goal"), {
       target: { value: "Reconcile payouts weekly" },
     });
     fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
 
     await vi.waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining("goal rejected")
+        expect.stringContaining("goal rejected"),
       );
     });
     expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();
-    expect(
-      within(detail).getByDisplayValue("Reconcile payouts weekly")
-    ).toBeInTheDocument();
+    expect(within(detail).getByLabelText("Goal")).toHaveValue(
+      "Reconcile payouts weekly",
+    );
   });
 
   /**
@@ -2548,14 +2863,14 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
 
     await vi.waitFor(() => {
       expect(
-        screen.queryByTestId("new-swarm-persona-detail")
+        screen.queryByTestId("new-swarm-persona-detail"),
       ).not.toBeInTheDocument();
     });
     // Nothing reached the shared row.
     expect(updatePersonaMock).not.toHaveBeenCalled();
     // Silently dropping typed text is the other half of the same problem.
     expect(toast.info).toHaveBeenCalledWith(
-      expect.stringContaining("Discarded unsaved changes to Ana")
+      expect.stringContaining("Discarded unsaved changes to Ana"),
     );
 
     // Reopening shows the stored persona, not the abandoned draft.
@@ -2571,11 +2886,410 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
 
     await vi.waitFor(() => {
       expect(
-        screen.queryByTestId("new-swarm-persona-detail")
+        screen.queryByTestId("new-swarm-persona-detail"),
       ).not.toBeInTheDocument();
     });
     // A discard notice for a discard that didn't happen is just noise.
     expect(toast.info).not.toHaveBeenCalled();
     expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Where a REUSED goal will actually run, said out loud before launch.
+ *
+ * A persona carries no environment; its goals do. Adding an existing persona
+ * brings those goals, and the Describe step's pre-filled environment then wins
+ * over the one they were authored against. That override is deliberate and
+ * stays — what these tests pin is that Confirm now SAYS so, which is the part
+ * that let 15 goals written for one server run against a different one and
+ * still read as a clean wave.
+ */
+describe("SwarmsTab — Confirm discloses where reused goals run", () => {
+  function setEnvironments(rows: Array<Record<string, unknown>>) {
+    environmentsRef.current = rows as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+  }
+
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    return screen.findByTestId("new-swarm-reused-personas");
+  }
+
+  it("names the target for a swarm made only of reused personas", async () => {
+    // Confirm used to show the environment line ONLY when the swarm had newly
+    // authored goals, so a reuse-only swarm approved a target it never named.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-1"],
+      },
+    ]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on Prod-like",
+    );
+    // Nothing moves — the stored fan-out already IS the seeded selection.
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says which goals are being moved, and what they were written for", async () => {
+    // Stored on Amazon; the auto-seed picks Prod-like, so the launch re-stamps.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+      {
+        _id: "j-2",
+        name: "Chase refunds",
+        goal: "Chase",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("2 goals were authored against Amazon");
+    expect(moves).toHaveTextContent("will run here instead");
+  });
+
+  it("stays silent for a LEGACY goal that never had an environment", async () => {
+    // The launch still overrides this one — it has nothing else to run
+    // against — but there is no authored environment to move it off.
+    await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on Prod-like",
+    );
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cautions when the move crosses server groups", async () => {
+    // Same client on both rows, so the server-group caution is the only one
+    // that can fire and the assertion cannot pass by accident.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different server group.");
+    expect(moves).toHaveTextContent(
+      "These goals were written for another server",
+    );
+  });
+
+  it("cautions when the move crosses CLIENTS", async () => {
+    // The shape this takes on every project without the environments flag: the
+    // composer seeds the first client and the goals were set up on another.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different client.");
+    expect(moves).not.toHaveTextContent("server group");
+  });
+
+  it("names the client a LEGACY goal was set up against", async () => {
+    // No environmentIds at all, but `hostIds` says where it ran. Treating that
+    // as unknowable hid a real move on the most common kind of stored goal.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("does not caution when the move keeps the same server group", async () => {
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    // The move is still disclosed; only the caution is withheld.
+    expect(moves).toHaveTextContent("authored against Amazon");
+    expect(moves).not.toHaveTextContent("Different server group");
+  });
+
+  it("tells two same-named environments apart, and keeps the suffix on Confirm", async () => {
+    // The real project has two live environments both called MCPJam. Without a
+    // suffix the Describe picker is a coin flip AND the move notice reads
+    // "authored against MCPJam — moved to MCPJam", which explains nothing.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on MCPJam #1",
+    );
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-moves"),
+    ).toHaveTextContent("authored against MCPJam #2");
+  });
+
+  it("re-seeds the target once hosts and environments land", async () => {
+    // The latch was set BEFORE the seed was checked, so a mount where both
+    // queries were momentarily empty latched forever: the composer stayed
+    // blank for the rest of the flow and the launch had no target.
+    hostsRef.current = [];
+    setEnvironments([]);
+    const view = render(
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />,
+    );
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).toHaveTextContent("pick env");
+
+    hostsRef.current = [{ hostId: "host-1", name: "Claude" }];
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ]);
+    // Both queries land. In the app that re-renders the flow on its own; here
+    // the rerender is what delivers the same thing.
+    view.rerender(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-environments-picker"),
+      ).toHaveTextContent("1 env"),
+    );
+  });
+});
+
+/**
+ * Confirm with `project-environments-enabled` OFF.
+ *
+ * The live configuration for every project but one: the composer shows clients
+ * and models, the launch target is an ad-hoc row minted from them, and the
+ * environment ids do not exist until the flow resolves. Confirm used to reach
+ * the user with an empty selection and therefore say nothing at all: no target,
+ * no move, and a session quote that ignored the fan-out width.
+ */
+describe("SwarmsTab: Confirm with the environments flag off", () => {
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    environmentsFlagRef.current = false;
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+  }
+
+  it("names the client a reuse-only swarm will run on", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    // The auto-seed picks the first client; the ad-hoc row minted for it has
+    // no name of its own and labels by that client.
+    expect(
+      await screen.findByTestId("new-swarm-confirm-clients"),
+    ).toHaveTextContent("Runs on Claude");
+  });
+
+  it("says which reused goals are moving to a different client", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-2"],
+      },
+    ]);
+    // The row that goal points at: ad-hoc, so it carries no name and every
+    // named-only list in the app hides it. The move notice is the one place
+    // that has to see it.
+    environmentsRef.current = [
+      {
+        environmentId: "adhoc-host-2",
+        projectId: "proj-1",
+        hostId: "host-2",
+        origin: "adhoc",
+        revision: 1,
+      },
+    ] as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("quotes the fan-out it will actually launch", async () => {
+    // It used to quote one conversation and then launch two targets, because
+    // the estimate multiplies by the environment count and the selection was
+    // still empty on this screen.
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-launch-session-estimate"),
+      ).toHaveTextContent("2 conversations"),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
+    // The quote and the launch agree.
+    expect(launchJourneyRunMock.mock.calls[0][0].environmentIds).toEqual([
+      "adhoc-host-1",
+      "adhoc-host-2",
+    ]);
+  });
+
+  it("still reaches Confirm when the target cannot be resolved", async () => {
+    // Resolving early must never strand a returning user: their goals carry
+    // their own target, and the launch is what reports a broken one.
+    ensureAdhocEnvironmentsMock.mockRejectedValue(new Error("resolve failed"));
+    reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await screen.findByTestId("new-swarm-reused-personas");
+    expect(
+      screen.queryByTestId("new-swarm-confirm-clients"),
+    ).not.toBeInTheDocument();
   });
 });

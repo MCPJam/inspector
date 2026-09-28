@@ -11,7 +11,8 @@
  * revisit" — Swarm can't rewind past a launch without re-running it.
  *
  * `Done` is deliberately not a step. A flow's terminal state is a state of the
- * last step, not a fifth circle that can never be current.
+ * last step, not a fifth circle that can never be current — which is what
+ * `activeComplete` expresses.
  */
 
 import { Fragment } from "react";
@@ -26,13 +27,21 @@ export type ProgressStepperStep = {
 
 export type ProgressStepperState = "complete" | "current" | "upcoming";
 
-/** Everything before `activeIndex` is done; everything after is still ahead. */
+/**
+ * Everything before `activeIndex` is done; everything after is still ahead.
+ *
+ * `activeComplete` marks the step the user is ON as finished — a flow whose
+ * last step has succeeded, which is the only way to draw a checkmark on it
+ * without inventing a step past the end. It changes the MARKER, never which
+ * step is current: `aria-current` still names where the user is.
+ */
 export function progressStepperState(
   index: number,
-  activeIndex: number
+  activeIndex: number,
+  activeComplete = false,
 ): ProgressStepperState {
   if (index < activeIndex) return "complete";
-  if (index === activeIndex) return "current";
+  if (index === activeIndex) return activeComplete ? "complete" : "current";
   return "upcoming";
 }
 
@@ -54,6 +63,7 @@ export function clampStepIndex(activeIndex: number, stepCount: number): number {
 export function ProgressStepper({
   steps,
   activeIndex,
+  activeComplete = false,
   onStepSelect,
   isStepSelectable,
   ariaLabel = "Progress",
@@ -63,6 +73,8 @@ export function ProgressStepper({
   steps: readonly ProgressStepperStep[];
   /** Index of the step the user is on. */
   activeIndex: number;
+  /** See {@link progressStepperState}. The current step draws as done. */
+  activeComplete?: boolean;
   /**
    * Called with the index of a step the user picked. Steps are inert unless
    * this is provided AND `isStepSelectable` returns true for them — a stepper
@@ -90,7 +102,7 @@ export function ProgressStepper({
       data-testid={testId}
     >
       {steps.map((step, index) => {
-        const state = progressStepperState(index, active);
+        const state = progressStepperState(index, active, activeComplete);
         const canSelect = selectable(index, state);
         const isLast = index === steps.length - 1;
 
@@ -109,7 +121,7 @@ export function ProgressStepper({
               // its sizing so the pills still keep their width and only the
               // connectors take up the slack.
               className="flex shrink-0"
-              aria-current={state === "current" ? "step" : undefined}
+              aria-current={index === active ? "step" : undefined}
             >
               <StepMarker
                 step={step}

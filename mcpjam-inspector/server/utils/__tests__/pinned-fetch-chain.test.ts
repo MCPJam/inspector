@@ -31,13 +31,21 @@ vi.mock("@mcpjam/sdk/oauth/node", async () => {
 const { createPinnedFetch } = await import("../pinned-fetch.js");
 const { BlockedEgressTargetError } = await import("../hosted-egress-guard.js");
 
-function respond(status: number, headers: Record<string, string> = {}) {
+function respond(
+  status: number,
+  headers: Record<string, string> = {},
+  targetIsPrivate = false,
+) {
   return {
     status,
     statusText: "",
     headers,
     body: "",
     finalUrl: "",
+    // Where the transport says the hop LANDED. The adapter fixes the chain's
+    // character from this rather than from the hostname, so the mock has to
+    // answer it for the derivation under test to mean anything.
+    targetIsPrivate,
   };
 }
 
@@ -48,29 +56,81 @@ beforeEach(() => {
 describe("a chain that started public may not arrive at loopback", () => {
   it("refuses a public → loopback redirect even with the opt-in set", async () => {
     transport.executeOAuthProxy.mockResolvedValueOnce(
-      respond(302, { location: "http://127.0.0.1:11434/steal" })
+      respond(302, { location: "http://127.0.0.1:11434/steal" }, false)
     );
 
     await expect(
-      createPinnedFetch({ allowLoopback: true, timeoutMs: 2_000 })(
-        "https://public.example/mcp"
-      )
+      createPinnedFetch({
+        allowLoopback: true,
+        allowPrivateNetwork: false,
+        timeoutMs: 2_000,
+      })("https://public.example/mcp")
     ).rejects.toBeInstanceOf(BlockedEgressTargetError);
 
     // The loopback hop was refused BEFORE the transport was asked to dial it.
     expect(transport.executeOAuthProxy).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps every hop of a public chain httpsOnly, opt-in or not", async () => {
-    transport.executeOAuthProxy.mockResolvedValueOnce(respond(200));
+  it("narrows a chain to httpsOnly once the first hop lands public", async () => {
+    // Hop 0 carries the caller's permission, because nothing here can tell a
+    // public hostname from one that answers loopback. The transport reports
+    // that it landed public, and every hop after it is held to the strict
+    // policy — which is what keeps a public chain from wandering onto the
+    // caller's own network two hops later.
+    transport.executeOAuthProxy
+      .mockResolvedValueOnce(
+        respond(302, { location: "https://public.example/next" }, false)
+      )
+      .mockResolvedValueOnce(respond(200, {}, false));
 
     await createPinnedFetch({ allowLoopback: true, timeoutMs: 2_000 })(
       "https://public.example/mcp"
     );
 
-    expect(transport.executeOAuthProxy).toHaveBeenCalledWith(
-      expect.objectContaining({ httpsOnly: true })
+    const calls = transport.executeOAuthProxy.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0]).toMatchObject({ allowPrivateNetwork: true });
+    expect(calls[1][0]).toMatchObject({
+      httpsOnly: true,
+      allowPrivateNetwork: false,
+    });
+  });
+
+  it("refuses a public-landing chain that then redirects to a private host", async () => {
+    // The same rule seen from the attack: a public server answering
+    // `302 Location: http://10.0.0.1/…` cannot make the local inspector
+    // fetch it, because hop 0 reported that it landed public.
+    transport.executeOAuthProxy.mockResolvedValueOnce(
+      respond(302, { location: "http://10.0.0.1/steal" }, false)
     );
+
+    await expect(
+      createPinnedFetch({ timeoutMs: 2_000 })("https://public.example/mcp")
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+
+    expect(transport.executeOAuthProxy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the allowance for a chain whose first hop landed private", async () => {
+    // The counterpart, and the case a hostname test refuses by mistake: the
+    // start URL reads as public and answers loopback, so hop 0 reports
+    // private and the redirect to another private port is followed.
+    transport.executeOAuthProxy
+      .mockResolvedValueOnce(
+        respond(302, { location: "http://auth.localtest.me:9401/token" }, true)
+      )
+      .mockResolvedValueOnce(respond(200, {}, true));
+
+    const res = await createPinnedFetch({ timeoutMs: 2_000 })(
+      "http://auth.localtest.me:9400/token"
+    );
+
+    expect(res.status).toBe(200);
+    const calls = transport.executeOAuthProxy.mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call[0]).toMatchObject({ allowPrivateNetwork: true });
+    }
   });
 });
 
@@ -80,9 +140,9 @@ describe("a chain that started loopback keeps its allowance", () => {
     // development, and the chain rule must not break it.
     transport.executeOAuthProxy
       .mockResolvedValueOnce(
-        respond(302, { location: "http://127.0.0.1:6060/authorize" })
+        respond(302, { location: "http://127.0.0.1:6060/authorize" }, true)
       )
-      .mockResolvedValueOnce(respond(200));
+      .mockResolvedValueOnce(respond(200, {}, true));
 
     const res = await createPinnedFetch({
       allowLoopback: true,

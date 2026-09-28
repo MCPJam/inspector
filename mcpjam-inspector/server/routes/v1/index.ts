@@ -14,10 +14,13 @@ import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
+import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverGroups from "./server-groups.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -27,19 +30,24 @@ import exporter from "./export.js";
 import evals from "./evals.js";
 import clients from "./clients.js";
 import harness from "./harness.js";
+import builtInTools from "./built-in-tools.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
 import skills from "./skills.js";
-import journeys from "./journeys.js";
+import goals from "./goals.js";
 import personas from "./personas.js";
+import secrets from "./secrets.js";
+import traceDestinations from "./trace-destinations.js";
 import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
-import userTesting from "./user-testing.js";
+import studies from "./studies.js";
 import shares from "./shares.js";
 import sandboxImages from "./images.js";
+import evalBacktest from "./eval-backtest.js";
 import evalIngest from "./eval-ingest.js";
+import modelLeases from "./model-leases.js";
 import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
@@ -50,11 +58,13 @@ import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
+import spendBudget from "./spend-budget.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
 import evalDisclosure from "./eval-disclosure.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
+import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
 import conformanceRuns from "./conformance-runs.js";
@@ -94,8 +104,16 @@ v1.use(
   "*",
   bearerAuthMiddleware,
   passthroughRateLimitMiddleware,
-  guestRateLimitMiddleware
+  guestRateLimitMiddleware,
 );
+
+// All hosted checks share ten active slots per verified user across replicas.
+for (const spendsEgress of [
+  "/projects/:projectId/servers/:serverId/doctor",
+  "/projects/:projectId/servers/:serverId/validate",
+]) {
+  v1.use(spendsEgress, mcpEgressRateLimitMiddleware);
+}
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
@@ -107,8 +125,25 @@ v1.use("*", async (c, next) => {
   return next();
 });
 
+// MJ-012, per server: the same budget `/api/web` puts on its tools, resources
+// and prompts routes, keyed on (verified principal, `:serverId`, family) and
+// shared with them — a caller does not get a second budget by switching
+// surfaces. See `mcp-operation-rate-limit.ts`. `/*` also matches the bare
+// listing path (`.../tools`). Registered after the guest gate so a request it
+// turns away never spends a budget.
+for (const family of ["tools", "resources", "prompts"] as const) {
+  v1.use(
+    `/projects/:projectId/servers/:serverId/${family}/*`,
+    mcpOperationRateLimit(family),
+  );
+}
+
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+// Server groups (immutable standalone server snapshots). Guest-DENIED: the
+// Convex reads are membership-gated and creating one is a member write, so
+// there is no share-link flow that needs them.
+v1.route("/", serverGroups);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
@@ -120,6 +155,11 @@ v1.route("/", readiness);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
+// MCPJam's own built-in tool definitions — static, and the same text for every
+// caller. Guest-DENIED by default (they are not on the allowlist): the browser
+// capability is never advertised to a guest turn, so a guest reading its
+// schemas would be reading about something they cannot be given.
+v1.route("/", builtInTools);
 // Project Environments (named execution bundles for suites and journeys) stay
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
@@ -134,22 +174,34 @@ v1.route("/", plugins);
 // by default (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are
 // member-gated, and a share-link visitor has no business enumerating skills.
 v1.route("/", skills);
-// Journeys + journey runs — the public API for Swarms. Flag-gated beta
+// Goals + goal runs — the public API for Swarms, with the pre-rename
+// `/journeys` paths kept alongside as deprecated aliases. Flag-gated beta
 // (`sandboxes-enabled`, enforced server-side on writes), so these are absent
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
-// none should — a journey run spends hosted-model credits.
+// none should — a goal run spends hosted-model credits.
 // GENERATION MOUNTS FIRST, and the order is load-bearing rather than
-// stylistic: `/personas/generate` and `/journeys/generate` are static segments
-// that would otherwise be matched by the `:personaId` / `:journeyId` params in
+// stylistic: `/personas/generate` and `/goals/generate` are static segments
+// that would otherwise be matched by the `:personaId` / `:goalId` params in
 // the routers below, turning both endpoints into 404s for a resource called
 // "generate". Registering them ahead of the parameterised routes is the fix;
 // keeping them in their own module is what makes the requirement visible.
 v1.route("/", swarmGenerateV1);
-v1.route("/", journeys);
+v1.route("/", goals);
 // Personas and swarm containers — the authoring half of Swarms. Same beta
 // gate, same guest denial: authoring is a member-only surface end to end.
 v1.route("/", personas);
+// PROJECT SECRETS — the credential a real workflow needs, as a first-class
+// resource. WRITE-ONLY: nothing here returns a value, ever. Guest-DENIED by
+// default (`guest-allowed-paths.ts` is default-deny and there is deliberately
+// NO entry for `/secrets` — adding one would be the single change that breaks
+// the guarantee).
+v1.route("/", secrets);
+// TRACE DESTINATIONS — where an organization's traces are STREAMED. Header
+// values are WRITE-ONLY: nothing here returns one, ever. Guest-DENIED on the
+// same terms as secrets (`guest-allowed-paths.ts` is default-deny and there is
+// deliberately NO entry for `/trace-destinations`).
+v1.route("/", traceDestinations);
 v1.route("/", swarms);
 // The insights layer over runs: scorecards, findings, wave insights. Reads are
 // ungated (an empty result leaks nothing); REQUESTING wave insights spends
@@ -162,11 +214,17 @@ v1.route("/", swarmInsights);
 // and the existing scenario guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
-// User testing — everything you do with a scenario ONCE IT EXISTS: read what
-// it produced, and control who can reach it. `scenarios.ts` above owns
-// publishing (keyed by environment, because the scenario does not exist yet);
-// this is keyed by the scenario. Guest-DENIED by default, same as publishing.
-v1.route("/", userTesting);
+// Studies — the list, one study's merged read, and everything you do with a
+// study ONCE IT EXISTS: read what it produced, and control who can reach it.
+// `scenarios.ts` above owns publishing (keyed by environment, because the study
+// does not exist yet); this is keyed by the study.
+//
+// The deprecated `/user-testing/scenarios` paths are registered here too, from
+// the same handlers, and carry `Deprecation: true`. Guest reach is unchanged by
+// the rename: the two `/studies` GETs are allowlisted because their
+// `/scenarios` predecessors were, GET-ONLY because a write now shares the
+// detail path; everything else stays guest-DENIED.
+v1.route("/", studies);
 // Unified share control plane. Guest-DENIED (no GUEST_ALLOWED_V1_RULES
 // entry). Existing user-testing share endpoints stay as wrappers.
 v1.route("/", shares);
@@ -174,7 +232,13 @@ v1.route("/", shares);
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
 v1.route("/", sandboxImages);
+v1.route("/", evalBacktest);
 v1.route("/", evalIngest);
+// Model leases for SDK evals running outside the platform. Guest-DENIED by
+// default (no GUEST_ALLOWED_V1_RULES entry) — every lease this mints can
+// spend hosted-model credits. Mounted beside eval-ingest because the two are
+// the same CI caller: one asks for inference, the other reports the results.
+v1.route("/", modelLeases);
 v1.route("/", conformanceIngest);
 // Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
 // GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
@@ -210,6 +274,7 @@ v1.route("/", registry);
 // Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
 v1.route("/", organizations);
 v1.route("/", evalChecks);
+v1.route("/", spendBudget);
 v1.route("/", projects);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which
@@ -223,6 +288,7 @@ v1.route("/", capabilities);
 // would actually matter.
 v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
+v1.route("/", browserSessions);
 
 v1.onError((error, c) => v1OnError(error, c));
 

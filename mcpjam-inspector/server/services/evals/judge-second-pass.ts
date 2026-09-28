@@ -10,6 +10,12 @@
  * a second implementation) with whichever advisory evidence has since
  * arrived attached, and posts only the derivation-owned keys.
  *
+ * RUBRIC CHECKS ride goal-completion's channel. The backend writes
+ * `metadata.rubricChecksVerdict` from the same job, on the same trials, under
+ * the same `goalCompletionJobId`; this pass turns it into advisory score rows
+ * beside the judge's own. It feeds no stage evidence: rubric checks describe a
+ * trial, they do not decide `userValue`.
+ *
  * TWO judges feed this ONE pass: goal-completion's `judgeVerdict`
  * (`StageEvidence.judgeEvidence`, tier-2 input to `userValue`) and D7's
  * `metadataAttributionVerdict` (`StageEvidence.metadataAttribution`, tier-2
@@ -27,24 +33,33 @@
  * counts. That is the whole reason `dual_write` is safe — a judge can move a
  * stage row and a score row, and nothing it does can move a verdict.
  *
- * THAT HOLDS AT `enforce` TOO, and it is the subtlest thing in this module. The
- * judge's row is ADVISORY, so it is structurally excluded from the gating
- * arithmetic that decides the result; the backend refuses lifecycle fields on
- * this route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`); and the
- * backend's own verify seam runs on the merged rows, so if a re-derivation ever
- * DID move the verdict, the run is marked non-gateable rather than quietly
- * re-graded. `enforce` therefore changes what this pass runs FOR (the same real
- * rows `dual_write` writes) and nothing about what it may touch.
+ * THAT HOLDS AT `enforce` TOO, AND IT HOLDS FOR A GATING JUDGE. The judge's row
+ * now carries the role the RUN froze — advisory by default, gating when the
+ * suite earned it — so on a gating run the row does enter the arithmetic that
+ * decides a verdict. What does not change is who applies it: this pass still
+ * posts rows and nothing else. The backend refuses lifecycle fields on this
+ * route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`), and it is
+ * `finalizeAfterJudge` — not this module — that reads the judge's row,
+ * downgrades STRICTER-ONLY, quarantines an unanswered trial, and then decides
+ * the run once. `enforce` therefore changes what this pass runs FOR (the same
+ * real rows `dual_write` writes) and nothing about what it may touch.
  *
  * Idempotent and safe to re-run: the pass reads current state, derives, and
  * posts; the backend rejects a stale job id and refuses terminal iterations,
  * so a duplicate doorbell produces the same rows and the same reports.
  */
 
-import type { StageEvidence } from "@mcpjam/sdk/contract";
+import type {
+  ResolvedScoreDefinition,
+  StageEvidence,
+} from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
-import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
-import { turnsNeedModel } from "@/shared/steps";
+import {
+  buildEvaluationConfigSnapshot,
+  resolvedScoreDefinitionSchema,
+  STAGE_ANALYZER_VERSION,
+} from "@mcpjam/sdk/contract";
+import { resolveCasePromptTurns, turnsNeedModel } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
 import { buildStageAuthoredCase } from "./stage-inputs.js";
@@ -65,7 +80,15 @@ import {
   type JudgeSecondPassIterationRow,
   type JudgeSecondPassRunRow,
 } from "./judge-stage-backend.js";
-import { buildHostedScoreContract } from "./score-rows.js";
+import {
+  buildHostedScoreContract,
+  type HostedRubricChecksVerdictLike,
+} from "./score-rows.js";
+import {
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+} from "./score-definitions.js";
+import { evaluateMultiTurnResults } from "./types.js";
 
 /** Iteration statuses that can still receive a derivation. */
 const DERIVABLE_STATUSES = new Set(["completed", "failed"]);
@@ -126,14 +149,167 @@ type JudgeVerdictMetadata = {
   judgeTemplateVersion?: unknown;
   judgeTemplateHash?: unknown;
   model?: unknown;
+  /** Present only in the `error` band — why the judge could not score. */
+  error?: unknown;
+  /**
+   * The judge's own rationale. NOT written today: the backend persists a
+   * scored case's `reason` nowhere, only the `error` band's. Read here anyway
+   * so that if it ever is persisted the evidence appears without a second
+   * change, and so this file names the gap rather than hiding it.
+   */
+  reason?: unknown;
+  reasons?: unknown;
+  /**
+   * Whether the run's frozen config let this judge DECIDE the trial.
+   *
+   * Forwarded to `hostedScoreDefinitionInputs` with the rest of the object,
+   * which reads the literal `"gating"` and treats everything else as advisory.
+   * Read here rather than resolved from the suite, because a role resolved at
+   * projection time could disagree with the one the run was actually held for.
+   */
+  role?: unknown;
 };
 
+/** A finite number, or `undefined` — judge scores arrive as `unknown`. */
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * What the judge can actually say for itself about this row.
+ *
+ * Two sources, in order of directness:
+ *
+ *   1. The judge's own rationale, if the backend ever persists one. Today it
+ *      does not for a scored case — `goalCompletion.ts` writes `score`,
+ *      `threshold`, `verdict` and (error band only) `error`, and drops the
+ *      per-case `reason`. Reading it here costs nothing and closes the gap the
+ *      moment the backend writes it.
+ *   2. Failing that, the NUMBERS the verdict was actually decided from. Not a
+ *      rationale, and not dressed up as one — but "scored 0.42 against a 0.70
+ *      threshold" tells a reader which side of the line the run fell and by
+ *      how much, where before the row carried nothing at all.
+ *
+ * Bounded downstream by `boundedJudgeReasons`, the same caps predicate
+ * reasons obey.
+ */
+function judgeReasonsFrom(verdict: JudgeVerdictMetadata): string[] {
+  const authored = [
+    ...(Array.isArray(verdict.reasons) ? verdict.reasons : []),
+    verdict.reason,
+    verdict.error,
+  ].filter((r): r is string => typeof r === "string" && r.trim().length > 0);
+  if (authored.length > 0) return authored;
+
+  const score = finiteNumber(verdict.score);
+  const threshold = finiteNumber(verdict.threshold);
+  if (score === undefined) return [];
+
+  // The BOUNDARIES that actually decided the band, not just the threshold.
+  //
+  // A `partial` or `fail` band is settled by the threshold AND the partial
+  // floor together, so a line naming only the threshold cannot explain itself:
+  // 0.5 against a 0.7 threshold reads as a plain miss, and says nothing about
+  // why it failed rather than landing in the partial band. The floor is
+  // included exactly when it is one of the numbers the decision turned on.
+  // The BAND is `verdict.verdict`; `verdict.status` is the outer state
+  // (scored / error / skipped / pending) and never carries a band.
+  const band = typeof verdict.verdict === "string" ? verdict.verdict : "";
+  const floor =
+    band === "partial" || band === "fail"
+      ? finiteNumber(verdict.partialFloor)
+      : undefined;
+
+  const bounds = [threshold, floor].filter(
+    (n): n is number => n !== undefined,
+  );
+  const show = showAgainst(score, bounds);
+
+  const parts = [`LLM judge scored ${show(score)}`];
+  if (threshold !== undefined) parts.push(`against a ${show(threshold)} threshold`);
+  if (floor !== undefined) parts.push(`and a ${show(floor)} partial floor`);
+  return [parts.join(" ")];
+}
+
+/**
+ * Pick a rendering precision that cannot contradict the band it explains.
+ *
+ * Two decimals is right for a person reading a score, and wrong when it erases
+ * the very comparison the line exists to show: a 0.699 score against a 0.7
+ * threshold rendered as "scored 0.7 against a 0.7 threshold" while the row
+ * says it fell short. The numbers then argue with the label, and the reader
+ * has no way to tell which is wrong.
+ *
+ * So precision grows only as far as it must: two places whenever the values
+ * are already distinguishable there, and the first deeper precision that keeps
+ * every DIFFERENT pair looking different. Equal values still render equal —
+ * a score exactly on its threshold should read that way.
+ *
+ * EVERY pair, not just each boundary against the score. The first version
+ * compared only score-to-boundary, so a threshold of 0.7001 and a floor of
+ * 0.6999 both rendered `0.7` while the score sat far from either — erasing the
+ * partial band's configured width in a line whose whole job is to show it.
+ *
+ * AND WHEN SIX IS NOT ENOUGH, the line says so rather than asserting a false
+ * equality. The cap used to fall through to the six-decimal rendering anyway,
+ * so two values differing past it printed identically — "scored 0.7 against a
+ * 0.7 threshold" for numbers that were never equal, which is the exact defect
+ * every paragraph above is about, reintroduced at the boundary. Values still
+ * colliding at the cap are marked approximate. Equal values are not: they ARE
+ * equal, and `≈` would make a true statement look uncertain.
+ */
+const APPROX = "\u2248";
+
+function showAgainst(
+  score: number,
+  bounds: readonly number[],
+): (n: number) => string {
+  const at = (n: number, digits: number) => String(Number(n.toFixed(digits)));
+  const values = [score, ...bounds];
+  const collidesAt = (digits: number) =>
+    values.some((a, i) =>
+      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
+    );
+  // Six is the floor of usefulness, not an arbitrary cap: past it a judge
+  // score is float noise, and a line no one can read explains nothing.
+  for (let digits = 2; digits <= 6; digits += 1) {
+    if (!collidesAt(digits)) return (n: number) => at(n, digits);
+  }
+  // Past the cap the numbers cannot be told apart on screen, so the honest
+  // rendering admits the rounding instead of claiming two of them are the
+  // same. Marked per VALUE, not blanket: only one that shares its rendering
+  // with a DIFFERENT value is uncertain.
+  return (n: number) => {
+    const shown = at(n, 6);
+    const ambiguous = values.some((v) => v !== n && at(v, 6) === shown);
+    return ambiguous ? `${APPROX}${shown}` : shown;
+  };
+}
+
 function readJudgeVerdict(
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
 ): JudgeVerdictMetadata | undefined {
   const verdict = metadata?.judgeVerdict;
   return typeof verdict === "object" && verdict !== null
     ? (verdict as JudgeVerdictMetadata)
+    : undefined;
+}
+
+/**
+ * `metadata.rubricChecksVerdict`, whichever job stamped it — the same rule the
+ * goal verdict follows. The backend merges score rows by `scorerId` and
+ * REPLACES `evaluationConfig` wholesale, so a verdict this pass skipped would
+ * leave the rows an earlier pass posted from it without their definitions:
+ * unjoinable, which is worse than stale.
+ */
+export function readRubricChecksVerdict(
+  metadata: Record<string, unknown> | undefined,
+): HostedRubricChecksVerdictLike | undefined {
+  const verdict = metadata?.rubricChecksVerdict;
+  return typeof verdict === "object" && verdict !== null
+    ? (verdict as HostedRubricChecksVerdictLike)
     : undefined;
 }
 
@@ -147,19 +323,26 @@ function readJudgeVerdict(
  * case the judge was never asked about.
  */
 export function judgeEvidenceFromVerdict(
-  verdict: JudgeVerdictMetadata | undefined
+  verdict: JudgeVerdictMetadata | undefined,
 ): StageEvidence["judgeEvidence"] | undefined {
   if (!verdict) return undefined;
   const status = verdict.status;
+  const reasons = judgeReasonsFrom(verdict);
+  const withReasons = <T extends object>(evidence: T) =>
+    reasons.length > 0 ? { ...evidence, reasons } : evidence;
   if (status === "error") {
-    return { status: "error" };
+    return withReasons({ status: "error" as const });
   }
   if (status === "skipped") {
     return { status: "skipped" };
   }
   const band = verdict.verdict;
   if (band === "pass" || band === "partial" || band === "fail") {
-    return { status: "scored", verdict: band };
+    // Every scored row used to ship with no evidence at all: this function
+    // never populated `reasons`, so `boundedJudgeReasons` returned undefined
+    // on the judge path and `judgeObserved` / `judgePartial` / `judgeFailed`
+    // reached a reader as bare verdicts.
+    return withReasons({ status: "scored" as const, verdict: band });
   }
   // A verdict row with no band is a judge that was owed an answer and has not
   // produced one — `judgePending`, never a silent pass.
@@ -174,7 +357,7 @@ type MetadataAttributionVerdictMetadata = {
 };
 
 function readMetadataAttributionVerdict(
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
 ): MetadataAttributionVerdictMetadata | undefined {
   const verdict = metadata?.metadataAttributionVerdict;
   return typeof verdict === "object" && verdict !== null
@@ -189,7 +372,7 @@ function readMetadataAttributionVerdict(
  * produced yet is `pending`, never a silent `attributed: false`.
  */
 export function metadataAttributionEvidenceFromVerdict(
-  verdict: MetadataAttributionVerdictMetadata | undefined
+  verdict: MetadataAttributionVerdictMetadata | undefined,
 ): StageEvidence["metadataAttribution"] | undefined {
   if (!verdict) return undefined;
   const status = verdict.status;
@@ -202,7 +385,7 @@ export function metadataAttributionEvidenceFromVerdict(
   if (status === "scored") {
     const reasons = Array.isArray(verdict.reasons)
       ? verdict.reasons.filter(
-          (r): r is string => typeof r === "string" && r.length > 0
+          (r): r is string => typeof r === "string" && r.length > 0,
         )
       : undefined;
     return {
@@ -259,6 +442,16 @@ type StoredPredicateRow = {
    * beside the original, or an `EVAL_RUN_CONFIG_CONFLICT` outright.
    */
   scope?: PredicateScope;
+  /**
+   * `"error"` ⇒ the check could not be scored, and the row carries no verdict.
+   *
+   * LOAD-BEARING for the same reason as `scope`, in the opposite direction:
+   * dropping it does not mint a new scorer, it silently CONVERTS an
+   * unscorable row into a scored 0 — a defect attributed to the server on a
+   * measurement nobody took, appearing only on the iterations a judge
+   * happened to rewrite.
+   */
+  status?: string;
 };
 
 function isPredicateRow(value: unknown): value is StoredPredicateRow {
@@ -269,22 +462,69 @@ function isPredicateRow(value: unknown): value is StoredPredicateRow {
   );
 }
 
-/** Everything the derivation needs from one stored iteration. */
-function deriveIterationPayload(args: {
+/**
+ * Recover the FIRST derivation's verdict about the model layer.
+ *
+ * `stepError` is transient runner state — an INPUT to that derivation — so a
+ * second pass that does not receive it derives from strictly less evidence
+ * than the first, and silently drops `providerError` and the `setup` category
+ * the moment a verdict arrives. A run our own provider killed goes back to
+ * being filed against the server, which is what that reason exists to prevent.
+ *
+ * PREFERRED SOURCE: `metadata.stageStepErrorSource`, written beside the chain
+ * at finalize time. An earlier revision recovered it from the chain alone, on
+ * the stated grounds that "`providerError` is written if and only if the model
+ * layer was classified as the failure". THAT WAS NOT TRUE. `categoryFor`
+ * returns `setup` for a model-call failure where NOTHING failed — there was
+ * nothing to fail against — and on that shape no row is relabelled at all. The
+ * witness was empty exactly when the fact was true, and the category vanished
+ * with no missing row to show for it.
+ *
+ * The chain scan REMAINS as a fallback, for iterations finalized before the
+ * marker shipped. It is still a faithful witness where it fires; it was only
+ * ever incomplete.
+ *
+ * `code` and `httpStatus` are not recovered by either route. They are
+ * diagnostics for a reader, were never part of the classification, and their
+ * absence changes no verdict.
+ */
+export function stepErrorFromStoredChain(
+  stageResults: unknown,
+): { source: "model" } | undefined {
+  const rows = asArray(stageResults);
+  if (!rows) return undefined;
+  return rows.some((row) => asRecord(row)?.reason === "providerError")
+    ? { source: "model" }
+    : undefined;
+}
+
+/**
+ * Everything the derivation needs from one stored iteration.
+ *
+ * Exported for tests: the recovery above is only useful if it is actually
+ * WIRED into this payload, and a test of the recovery alone cannot fail when
+ * the wire is cut — which is the precise gap that let four separate breaks in
+ * this attribution ship green.
+ */
+export function deriveIterationPayload(args: {
   iteration: JudgeSecondPassIterationRow;
   mode: GradingEngineMode;
   judgeVerdict: JudgeVerdictMetadata | undefined;
   attributionVerdict: MetadataAttributionVerdictMetadata | undefined;
+  /** Goal-completion channel only: its advisory rows ride this job's write. */
+  rubricChecksVerdict?: HostedRubricChecksVerdictLike;
 }): { stage: Record<string, unknown>; scores?: unknown[]; config?: unknown } {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
   const judgeEvidence = judgeEvidenceFromVerdict(judgeVerdict);
-  const metadataAttribution = metadataAttributionEvidenceFromVerdict(
-    attributionVerdict
-  );
+  const metadataAttribution =
+    metadataAttributionEvidenceFromVerdict(attributionVerdict);
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
-    isPredicateRow
+    isPredicateRow,
   );
+  const storedAgentActivity = isNoAgentActivity(metadata.agentActivity)
+    ? metadata.agentActivity
+    : undefined;
   // Derived HERE from the run's own frozen case snapshot, through the SAME
   // function the runner used on the first pass, whenever the backend served
   // the raw `authoredCase`. The backend also serves a derived `stageCase` for
@@ -331,21 +571,31 @@ function deriveIterationPayload(args: {
   // failed.
   const traceUsable = iteration.traceComplete !== false;
 
+  const recoveredStepError =
+    metadata.stageStepErrorSource === "model"
+      ? ({ source: "model" } as const)
+      : stepErrorFromStoredChain(metadata.stageResults);
+
   const stage = traceUsable
     ? buildStageMetadata({
-    ...(stageCase ? { stageCase } : {}),
-    ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
-    ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
-    ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
-    ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
-    ...(iteration.toolSignals ? { toolSignals: iteration.toolSignals } : {}),
-    ...(iteration.setupSignals
-      ? { setupSignals: iteration.setupSignals }
-      : {}),
-    ...(judgeEvidence ? { judgeEvidence } : {}),
-    ...(metadataAttribution ? { metadataAttribution } : {}),
-    status: iteration.status === "failed" ? "failed" : "completed",
-    ...(iteration.error ? { error: iteration.error } : {}),
+        ...(stageCase ? { stageCase } : {}),
+        ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
+        ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
+        ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
+        ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
+        // UVH-IN2: read back from the marker the first pass persisted, because
+        // `stepError` is transient runner state this pass never receives.
+        ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
+        ...(iteration.toolSignals
+          ? { toolSignals: iteration.toolSignals }
+          : {}),
+        ...(iteration.setupSignals
+          ? { setupSignals: iteration.setupSignals }
+          : {}),
+        ...(judgeEvidence ? { judgeEvidence } : {}),
+        ...(metadataAttribution ? { metadataAttribution } : {}),
+        status: iteration.status === "failed" ? "failed" : "completed",
+        ...(iteration.error ? { error: iteration.error } : {}),
       })
     : // `stageAnalyzerVersion` is suppressed WITH the rest: stamping it beside
       // no `stageResults` would claim a derivation that did not happen, and
@@ -358,7 +608,18 @@ function deriveIterationPayload(args: {
   // verdict — which is not this pass's business either way.
   if (!isDualWrite(args.mode)) return { stage };
 
-  const { scores, evaluationConfig } = buildHostedScoreContract({
+  // The tool-call scorers are graded by the FIRST pass alone: this one has no
+  // matcher output, so their rows are the first pass's and stay as stored.
+  // Their definitions therefore have to be the ones those rows were minted
+  // against — carried over from the stored config, ids, versions and hashes
+  // as written — and never rebuilt by this build. A run finalized before a
+  // deploy and judged after it would otherwise get this build's `toolCalls:*`
+  // definitions: the stored row orphaned under a new hash, and a definition
+  // (the arguments scorer) with no row at all, which reads as an unresolved
+  // gate at `enforce`.
+  const storedTools = storedToolScorerDefinitions(metadata.evaluationConfig);
+
+  const { scores, evaluationConfig: builtConfig } = buildHostedScoreContract({
     ...(predicateRows.length
       ? {
           predicateResults: predicateRows.map((row) => ({
@@ -368,6 +629,8 @@ function deriveIterationPayload(args: {
             // Forwarded so a turn-scoped predicate rebuilds under the SAME
             // scorer identity the first pass wrote. See `StoredPredicateRow`.
             ...(row.scope ? { scope: row.scope } : {}),
+            // …and so a row the first pass could not score stays unscored.
+            ...(typeof row.status === "string" ? { status: row.status } : {}),
           })),
         }
       : {}),
@@ -382,20 +645,110 @@ function deriveIterationPayload(args: {
     // pass's tool-match row therefore survived with its definition gone: an
     // unjoinable row, a per-case `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a
     // GATING scorer silently dropped from the verdict.
-    toolMatchAuthored:
-      (iteration.authoredCase?.expectedToolCalls?.length ?? 0) > 0,
+    //
+    // Read from the RESOLVED case, never the raw top-level list: see
+    // `firstPassDeclaredToolMatch`. Only when there is no stored config to
+    // carry the definitions from (see `storedTools` above).
+    ...(storedTools
+      ? {}
+      : {
+          toolMatchAuthored: firstPassDeclaredToolMatch(iteration.authoredCase),
+        }),
     // The SAME resolved options and polarity the first pass hashed into
     // `toolCalls:match`. Omitting them would rebuild that definition under a
     // different `implementationHash` and orphan the first pass's row.
     ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
     ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
+    // Redeclared from first-pass metadata (this pass has no trace), for the
+    // same reason as `toolMatchAuthored`: an omitted definition leaves the
+    // first pass's row unjoinable.
+    ...(storedAgentActivity ? { agentActivity: storedAgentActivity } : {}),
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
       : {}),
+    ...(args.rubricChecksVerdict
+      ? { rubricChecksVerdict: args.rubricChecksVerdict }
+      : {}),
   });
+  const evaluationConfig = storedTools?.length
+    ? buildEvaluationConfigSnapshot([
+        ...builtConfig.definitions,
+        ...storedTools,
+      ])
+    : builtConfig;
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
     : { stage };
+}
+
+const TOOL_SCORER_IDS: ReadonlySet<string> = new Set([
+  HOSTED_TOOL_MATCH_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+]);
+
+/**
+ * The `toolCalls:*` definitions the first pass stored, exactly as stored.
+ *
+ * `undefined` when there is no stored config to read, or one this build cannot
+ * validate: the caller then falls back to declaring the scorer from the
+ * authored case. An empty list is an answer — the first pass declared no
+ * tool-call scorer — and is honoured as one.
+ */
+function storedToolScorerDefinitions(
+  evaluationConfig: unknown,
+): ResolvedScoreDefinition[] | undefined {
+  const definitions = asRecord(evaluationConfig)?.definitions;
+  if (!Array.isArray(definitions)) return undefined;
+  const tools: ResolvedScoreDefinition[] = [];
+  for (const value of definitions) {
+    const scorerId = asRecord(value)?.scorerId;
+    if (typeof scorerId !== "string" || !TOOL_SCORER_IDS.has(scorerId)) {
+      continue;
+    }
+    const parsed = resolvedScoreDefinitionSchema.safeParse(value);
+    if (!parsed.success) return undefined;
+    tools.push(parsed.data);
+  }
+  return tools;
+}
+
+/**
+ * Whether the FIRST pass declared `toolCalls:match` for this case.
+ *
+ * It declares the scorer when the matcher's expected-call list is non-empty
+ * (`hostedScoreDefinitionInputs`), so this asks the same matcher for that list,
+ * over the turns the runner resolves. The list does not depend on which calls
+ * were made, which is why none are passed: pinned turns and negative tests
+ * contribute nothing, and every other turn's expectations count, not only the
+ * first turn's.
+ *
+ * The raw `expectedToolCalls` this replaced is undefined on a steps-authored
+ * case, whose expectations live in its steps. Reading it dropped the definition
+ * and orphaned the first pass's row.
+ */
+function firstPassDeclaredToolMatch(
+  authoredCase: JudgeSecondPassIterationRow["authoredCase"],
+): boolean {
+  if (!authoredCase) return false;
+  return (
+    evaluateMultiTurnResults(
+      resolveCasePromptTurns(authoredCase),
+      [],
+      authoredCase.isNegativeTest === true,
+    ).expectedToolCalls.length > 0
+  );
+}
+
+/** Narrow on purpose: only `no_agent_activity` redeclares a scorer. */
+function isNoAgentActivity(
+  value: unknown,
+): value is { status: "no_agent_activity"; detail: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "no_agent_activity" &&
+    typeof (value as { detail?: unknown }).detail === "string"
+  );
 }
 
 /** The derivation-owned fields common to both judges' write bodies. */
@@ -432,11 +785,11 @@ function stageFields(stage: Record<string, unknown>) {
  */
 export async function runJudgeSecondPass(
   runId: string,
-  ports: JudgeSecondPassPorts = defaultPorts
+  ports: JudgeSecondPassPorts = defaultPorts,
 ): Promise<JudgeSecondPassResult> {
   const emptyResult = (
     mode: GradingEngineMode,
-    reason: JudgeSecondPassResult["reason"]
+    reason: JudgeSecondPassResult["reason"],
   ): JudgeSecondPassResult => ({
     runId,
     mode,
@@ -448,9 +801,6 @@ export async function runJudgeSecondPass(
   });
 
   const envMode = resolveGradingEngineMode();
-  if (envMode === "off") {
-    return emptyResult("off", "mode_off");
-  }
 
   let run: JudgeSecondPassRunRow;
   try {
@@ -470,26 +820,47 @@ export async function runJudgeSecondPass(
   // "unconstrained" would fall through to this process's env ceiling and run
   // the REAL-WRITE second pass for a run whose frozen position was `off`,
   // contaminating the off and legacy cohorts with real score rows.
-  const mode = resolveFrozenRunGradingMode(
-    run.configSnapshot?.gradingEngine ?? run.gradingEngine
-  );
-  // `shadow` deliberately writes NOTHING here: a shadow row is produced
-  // in-process by the first pass, and a second-pass write is by definition a
-  // real write. `enforce` runs exactly as `dual_write` does.
-  if (!isDualWrite(mode)) {
-    // Through `emptyResult`, which is the only place that knows the full shape
-    // — `JudgeSecondPassResult` requires `metadataAttributionOutcomes`, and a
-    // hand-built literal here silently omitted it for every `off` and `shadow`
-    // run, which is most of them.
-    return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
-  }
-
+  const mode =
+    envMode === "off"
+      ? "off"
+      : resolveFrozenRunGradingMode(
+          run.configSnapshot?.gradingEngine ?? run.gradingEngine,
+        );
   const goalCompletionJobId = run.goalCompletionJobId;
   const metadataAttributionJobId = run.metadataAttributionJobId;
-  if (goalCompletionJobId === undefined && metadataAttributionJobId === undefined) {
+  if (
+    goalCompletionJobId === undefined &&
+    metadataAttributionJobId === undefined
+  ) {
     // Without a job id the backend cannot tell this derivation from a stale
     // one, and a derivation it cannot date is one it should not accept.
     return emptyResult(mode, "no_job_id");
+  }
+
+  // A no-op is still a completed delivery. Date it with the fetched job ids.
+  const settleNoop = async () => {
+    if (goalCompletionJobId !== undefined) {
+      await ports.markFanout({
+        runId,
+        goalCompletionJobId,
+        outcomes: [],
+        noop: true,
+        ...(run.incomplete ? { failed: true } : {}),
+      });
+    }
+    if (metadataAttributionJobId !== undefined) {
+      await ports.markMetadataAttributionFanout({
+        runId,
+        metadataAttributionJobId,
+        outcomes: [],
+        noop: true,
+        ...(run.incomplete ? { failed: true } : {}),
+      });
+    }
+  };
+  if (!isDualWrite(mode)) {
+    await settleNoop();
+    return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
   }
 
   const derivedAt = Date.now();
@@ -501,7 +872,7 @@ export async function runJudgeSecondPass(
   for (const iteration of run.iterations ?? []) {
     const judgeVerdict = readJudgeVerdict(iteration.metadata);
     const attributionVerdict = readMetadataAttributionVerdict(
-      iteration.metadata
+      iteration.metadata,
     );
     // No verdict of either kind ⇒ no advisory evidence ⇒ nothing this pass
     // could change. Send NOTHING, and do not report the iteration: it was
@@ -539,11 +910,13 @@ export async function runJudgeSecondPass(
       goalCompletionJobId !== undefined &&
       !goalCompletionFailed
     ) {
+      const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
       const { stage, scores, config } = deriveIterationPayload({
         iteration,
         mode,
         judgeVerdict,
         attributionVerdict: undefined,
+        ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
       });
       if (Object.keys(stage).length > 0) {
         const fields = stageFields(stage);
@@ -613,7 +986,7 @@ export async function runJudgeSecondPass(
             metadataAttributionJobId,
             judgeStageDerivedAt: derivedAt,
             ...fields,
-          }
+          },
         );
         metadataAttributionOutcomes.push({
           iterationId: iteration.iterationId,
@@ -644,18 +1017,19 @@ export async function runJudgeSecondPass(
     goalCompletionOutcomes.length === 0 &&
     metadataAttributionOutcomes.length === 0;
   if (nothingGraded && !goalCompletionFailed && !metadataAttributionFailed) {
+    await settleNoop();
     return emptyResult(mode, "no_judge_verdicts");
   }
 
-  if (
-    goalCompletionJobId !== undefined &&
-    (goalCompletionOutcomes.length > 0 || goalCompletionFailed)
-  ) {
+  if (goalCompletionJobId !== undefined) {
     try {
       await ports.markFanout({
         runId,
         goalCompletionJobId,
         outcomes: goalCompletionOutcomes,
+        ...(goalCompletionOutcomes.length === 0 && !goalCompletionFailed
+          ? { noop: true }
+          : {}),
         // `run.incomplete` ⇒ the FETCH stopped short of the run's tail, so
         // this report covers a subset. `markFanout` marks a fanout complete
         // when every reported outcome succeeded and cannot tell a fully
@@ -675,15 +1049,16 @@ export async function runJudgeSecondPass(
     }
   }
 
-  if (
-    metadataAttributionJobId !== undefined &&
-    (metadataAttributionOutcomes.length > 0 || metadataAttributionFailed)
-  ) {
+  if (metadataAttributionJobId !== undefined) {
     try {
       await ports.markMetadataAttributionFanout({
         runId,
         metadataAttributionJobId,
         outcomes: metadataAttributionOutcomes,
+        ...(metadataAttributionOutcomes.length === 0 &&
+        !metadataAttributionFailed
+          ? { noop: true }
+          : {}),
         // Same guard, same reason — see goal-completion's report above.
         ...(metadataAttributionFailed || run.incomplete
           ? { failed: true }

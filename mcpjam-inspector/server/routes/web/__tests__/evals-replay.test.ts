@@ -294,4 +294,39 @@ describe("web replay route", () => {
     expect(finalize).not.toHaveBeenCalled();
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
   });
+
+  // Same defect as the MCP replay route: `passCriteria` was a bare, unbounded
+  // `z.object`, so the canonical `minimumPassRatePercent` was STRIPPED — a
+  // replay losing the one override it was sent to apply — and `0.8` was
+  // accepted as 0.8%, a gate that could not fail.
+  describe("the pass-criteria override", () => {
+    async function replay(passCriteria: unknown): Promise<Response> {
+      return createApp().request("/api/web/evals/replay-run", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer token-123",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ runId: "source-run", passCriteria }),
+      });
+    }
+
+    it("carries the canonical spelling through instead of dropping it", async () => {
+      const response = await replay({ minimumPassRatePercent: 80 });
+
+      expect(response.status).toBe(202);
+      expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          passCriteria: { minimumPassRate: 80 },
+        }),
+      );
+    });
+
+    it("refuses a fraction, which would make the replay's gate unfailable", async () => {
+      const response = await replay({ minimumPassRate: 0.8 });
+
+      expect(response.status).toBe(400);
+      expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -1,3 +1,4 @@
+import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type {
   UIMessageChunk,
   ToolSet,
@@ -229,4 +230,62 @@ export function setToolSpanMessageRangesFromResults(
       span.messageEndIndex = toolMessageIndex;
     }
   }
+}
+
+export const MAX_PERSISTED_REQUEST_PAYLOAD_BYTES = 2 * 1024 * 1024;
+
+/** Clone before compacting: live events and the provider request stay untouched. */
+export function capRequestPayloadsForPersist(
+  entries: LiveChatTraceRequestPayloadEntry[],
+): PersistedRequestPayloadEntry[] {
+  const result: PersistedRequestPayloadEntry[] = JSON.parse(
+    JSON.stringify(entries),
+  );
+  let previous: LiveChatTraceRequestPayloadEntry | undefined;
+  for (let i = 0; i < result.length; i++) {
+    const entry = result[i];
+    const source = entries[i];
+    if (previous?.turnId === entry.turnId) {
+      for (const field of ["system", "tools"] as const) {
+        if (
+          JSON.stringify(source.payload[field]) ===
+          JSON.stringify(previous.payload[field])
+        ) {
+          entry.inherits = { ...entry.inherits, [field]: true };
+          delete entry.payload[field];
+        }
+      }
+    }
+    previous = source;
+  }
+  const bytes = () => Buffer.byteLength(JSON.stringify(result), "utf8");
+  if (bytes() <= MAX_PERSISTED_REQUEST_PAYLOAD_BYTES) return result;
+  // Mark every surviving entry so selecting the latest request still discloses loss.
+  for (const entry of result) entry.truncated = true;
+  for (const entry of result) {
+    entry.messageCount ??= entry.payload.messages?.length ?? 0;
+    delete entry.payload.messages;
+    if (bytes() <= MAX_PERSISTED_REQUEST_PAYLOAD_BYTES) return result;
+  }
+  // A single tool catalog/system prompt can itself exceed the hard cap.
+  // Clear all inheritance before dropping these fields; never invent a parent.
+  for (const entry of result) {
+    delete entry.payload.system;
+    delete entry.payload.tools;
+    delete entry.inherits;
+    if (bytes() <= MAX_PERSISTED_REQUEST_PAYLOAD_BYTES) return result;
+  }
+  while (result.length > 1 && bytes() > MAX_PERSISTED_REQUEST_PAYLOAD_BYTES)
+    result.shift();
+  if (bytes() > MAX_PERSISTED_REQUEST_PAYLOAD_BYTES)
+    return [
+      {
+        turnId: "truncated",
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {},
+        truncated: true,
+      },
+    ];
+  return result;
 }

@@ -14,6 +14,7 @@ interface UpgradeIntervalPickerProps {
   annualSupported: boolean;
   monthlySupported: boolean;
   teamName: string;
+  priceUnit?: string;
   isStarting: boolean;
   /** Catalog still in flight: the cards have no prices yet, so checkout must
    * not be reachable. */
@@ -43,6 +44,7 @@ export function UpgradeIntervalPicker({
   annualSupported,
   monthlySupported,
   teamName,
+  priceUnit = "per seat/month",
   isStarting,
   isLoadingPrices = false,
   onUpgrade,
@@ -125,7 +127,7 @@ export function UpgradeIntervalPicker({
                     {option.priceLabel}
                   </span>
                   <span className="text-xs leading-snug text-muted-foreground">
-                    per seat/month
+                    {priceUnit}
                   </span>
                 </>
               ) : null}

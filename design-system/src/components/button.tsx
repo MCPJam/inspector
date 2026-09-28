@@ -15,10 +15,23 @@ const buttonVariants = cva(
           "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
           "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+        // The chrome's filled button. --secondary IS the linen ground, so a
+        // secondary button in the nav used to be invisible against it; the
+        // control fill plus its hairline is what separates the two.
+        // text-foreground, NOT text-secondary-foreground: in dark mode the
+        // latter is the same value as --chrome-control, which made the label
+        // vanish into the fill.
         secondary:
-          "bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80",
-        ghost:
-          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+          "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-control-hover",
+        // No fill at rest, chrome fill on hover. One token for both themes,
+        // so this no longer needs a dark-mode override.
+        //
+        // text-foreground, NOT text-accent-foreground: the pair that shipped
+        // on main (bg-accent + text-accent-foreground) was self-consistent,
+        // but --chrome-hover is not --accent. Presets redefine
+        // --accent-foreground and leave --chrome-hover alone — brutalist
+        // light sets it to white, which is unreadable on the linen fill.
+        ghost: "hover:bg-chrome-hover hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

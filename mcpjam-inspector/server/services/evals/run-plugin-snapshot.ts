@@ -36,7 +36,12 @@ import {
   resolveEffectiveCapabilities,
   type EffectiveCapabilitySet,
   type RuntimePluginVersion,
+  type RuntimeSkillFile,
 } from "../environments/effective-capabilities.js";
+import type {
+  PinnedSkillArtifact,
+  PinnedSkillArtifactFile,
+} from "../../../shared/skill-types.js";
 import type {
   AttributedPluginVersion,
   PluginRuntimeAttribution,
@@ -228,6 +233,38 @@ function attributionFromSnapshot(args: {
   };
 }
 
+/** A downloaded pinned file's bytes, as `runPinnedSkillsToHarnessArtifacts`
+ *  stored them (text inline, anything else base64). */
+function downloadedFileBytes(file: PinnedSkillArtifactFile): Uint8Array {
+  return typeof file.content === "string"
+    ? new TextEncoder().encode(file.content)
+    : new Uint8Array(Buffer.from(file.base64, "base64"));
+}
+
+/**
+ * A pin's supporting files, as the turn reads them.
+ *
+ * When run preparation already downloaded the pin, each file reads from those
+ * bytes (MJ-005). The pin's URL was minted once, at preparation, and is
+ * short-lived; a run can outlast it, and reading the frozen bytes also keeps
+ * a late iteration from depending on the network at all. Without a download
+ * the URL is read, as before.
+ */
+function pinnedRuntimeFiles(
+  pin: RunPinnedSkill,
+  downloaded: PinnedSkillArtifact | undefined,
+): RuntimeSkillFile[] {
+  return (pin.files ?? []).map((file) => {
+    const body = downloaded?.files?.find((entry) => entry.path === file.path);
+    return {
+      path: file.path,
+      size: file.size,
+      url: file.url,
+      ...(body ? { read: async () => downloadedFileBytes(body) } : {}),
+    };
+  });
+}
+
 /**
  * Project a suite run's frozen plugin surface into the capability set a turn
  * consumes.
@@ -239,6 +276,13 @@ function attributionFromSnapshot(args: {
  */
 export function buildRunCapabilitySet(args: {
   pins: readonly RunPinnedSkill[];
+  /**
+   * The same pins as `runPinnedSkillsToHarnessArtifacts` downloaded them
+   * during run preparation, in the same order. When present, pinned files are
+   * read from these bytes rather than fetched again (see
+   * {@link pinnedRuntimeFiles}).
+   */
+  downloadedPins?: readonly PinnedSkillArtifact[];
   pluginVersions: readonly RunPinnedPluginVersion[];
   pluginServers: readonly RunPluginServer[];
   effectiveServerIds: readonly string[];
@@ -247,6 +291,15 @@ export function buildRunCapabilitySet(args: {
 }): EffectiveCapabilitySet {
   const serverPins = args.pins.filter(isServerSkillPin);
   const regularPins = args.pins.filter((pin) => !isServerSkillPin(pin));
+  // Paired by position, which is how the download produced them; a list that
+  // does not line up is ignored rather than guessed at.
+  const downloadedByPin = new Map<RunPinnedSkill, PinnedSkillArtifact>();
+  if (args.downloadedPins?.length === args.pins.length) {
+    args.pins.forEach((pin, index) => {
+      const downloaded = args.downloadedPins![index]!;
+      if (downloaded.name === pin.name) downloadedByPin.set(pin, downloaded);
+    });
+  }
   const pluginServerIds = new Set(args.pluginServers.map((s) => s.serverId));
   const nameById = new Map(args.pluginServers.map((s) => [s.serverId, s.name]));
   args.effectiveServerIds.forEach((serverId, index) => {
@@ -286,11 +339,7 @@ export function buildRunCapabilitySet(args: {
         // Channels drive INS-3's plugin/standalone split. A pin that carries a
         // `modelRef` but no channels (deploy skew) is still a plugin skill.
         channels: pin.channels ?? (isPluginPin(pin) ? ["plugin" as const] : []),
-        files: (pin.files ?? []).map((file) => ({
-          path: file.path,
-          size: file.size,
-          url: file.url,
-        })),
+        files: pinnedRuntimeFiles(pin, downloadedByPin.get(pin)),
       })),
       pluginVersions: args.pluginVersions.map((version) => ({
         pluginId: version.pluginId,
@@ -329,11 +378,7 @@ export function buildRunCapabilitySet(args: {
           versionHash: pin.aggregateHash ?? pin.contentHash,
           versionNumber: pin.serverSkillVersionNumber,
           capturedAt: pin.serverSkillCapturedAt,
-          files: (pin.files ?? []).map((file) => ({
-            path: file.path,
-            size: file.size,
-            url: file.url,
-          })),
+          files: pinnedRuntimeFiles(pin, downloadedByPin.get(pin)),
         };
       }),
     },

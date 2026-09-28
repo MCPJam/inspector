@@ -1,5 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sandbox } from "e2b";
+import { startNetworkMonitor, stopNetworkMonitor } from "../network-monitor";
+import { logger } from "../../../utils/logger";
+vi.mock("../network-monitor", () => ({
+  startNetworkMonitor: vi.fn(),
+  stopNetworkMonitor: vi.fn(),
+}));
+vi.mock("../../../utils/logger", () => ({
+  logger: { info: vi.fn(), warn: vi.fn() },
+}));
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllEnvs();
+});
 import {
   CHECK_SANDBOX_TIMEOUT_MS,
   GITHUB_CHECKS_EGRESS_DENY_CIDRS,
@@ -14,6 +27,7 @@ vi.mock("e2b", async () => {
 
 /** The env every test here provisions against. */
 function stubProvisionEnv(): void {
+  vi.stubEnv("E2B_EGRESS_DENY_CIDRS", undefined);
   vi.stubEnv("E2B_API_KEY", "e2b_test_key");
   vi.stubEnv("GITHUB_CHECKS_E2B_TEMPLATE_ID", "template-test");
 }
@@ -25,6 +39,75 @@ const ARGS = {
 } as const;
 
 describe("provisionCheckSandbox", () => {
+  it("applies the shared override and starts monitoring before handing back the box", async () => {
+    stubProvisionEnv();
+    vi.stubEnv("E2B_EGRESS_DENY_CIDRS", "10.0.0.0/8,169.254.0.0/16");
+    const sandbox = { sandboxId: "sb_override" } as never;
+    vi.mocked(Sandbox.create).mockResolvedValueOnce(sandbox);
+    let started = false;
+    vi.mocked(startNetworkMonitor).mockImplementationOnce(async () => {
+      await Promise.resolve();
+      started = true;
+    });
+    expect(await provisionCheckSandbox(ARGS)).toBe(sandbox);
+    expect(started).toBe(true);
+    expect(Sandbox.create).toHaveBeenCalledWith(
+      "template-test",
+      expect.objectContaining({
+        network: {
+          allowPublicTraffic: true,
+          denyOut: ["10.0.0.0/8", "169.254.0.0/16"],
+        },
+      }),
+    );
+    expect(startNetworkMonitor).toHaveBeenCalledWith(
+      sandbox,
+      expect.objectContaining({
+        ...ARGS,
+        policyVersion: "private-networks-v1",
+        policySource: "override",
+        denyOut: ["10.0.0.0/8", "169.254.0.0/16"],
+      }),
+    );
+  });
+
+  it("rejects invalid overrides before contacting E2B without exposing the value", async () => {
+    stubProvisionEnv();
+    vi.stubEnv("E2B_EGRESS_DENY_CIDRS", "SECRET");
+    await expect(provisionCheckSandbox(ARGS)).rejects.toMatchObject({
+      outcome: "infra_error",
+    });
+    expect(Sandbox.create).not.toHaveBeenCalled();
+    expect(startNetworkMonitor).not.toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(
+      "SECRET",
+    );
+  });
+
+  it("does not retry a rejected provider policy with unrestricted networking", async () => {
+    stubProvisionEnv();
+    vi.mocked(Sandbox.create).mockRejectedValueOnce(
+      new Error("SECRET provider response"),
+    );
+    await expect(provisionCheckSandbox(ARGS)).rejects.toMatchObject({
+      outcome: "infra_error",
+    });
+    expect(Sandbox.create).toHaveBeenCalledTimes(1);
+    expect(startNetworkMonitor).not.toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(
+      "SECRET",
+    );
+  });
+
+  it("continues with the provisioned policy if monitoring fails", async () => {
+    stubProvisionEnv();
+    const sandbox = { sandboxId: "sb_monitor_failure" } as never;
+    vi.mocked(Sandbox.create).mockResolvedValueOnce(sandbox);
+    vi.mocked(startNetworkMonitor).mockRejectedValueOnce(new Error("SECRET"));
+    await expect(provisionCheckSandbox(ARGS)).resolves.toBe(sandbox);
+    expect(Sandbox.create).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a public box with the backend's non-guest egress baseline", async () => {
     const create = vi.mocked(Sandbox.create);
     const sandbox = { sandboxId: "sb_test" } as never;
@@ -41,7 +124,7 @@ describe("provisionCheckSandbox", () => {
             allowPublicTraffic: true,
             denyOut: [...GITHUB_CHECKS_EGRESS_DENY_CIDRS],
           },
-        })
+        }),
       );
     } finally {
       create.mockReset();
@@ -94,7 +177,7 @@ describe("provisionCheckSandbox", () => {
       await provisionCheckSandbox({ ...ARGS });
       const [, options] = create.mock.calls[0] as [
         string,
-        Record<string, unknown>
+        Record<string, unknown>,
       ];
       const { apiKey, ...rest } = options;
       expect(apiKey).toBe("e2b_test_key");
@@ -137,6 +220,16 @@ describe("provisionCheckSandbox", () => {
 });
 
 describe("killCheckSandbox", () => {
+  it("still destroys the sandbox after a monitor cleanup failure", async () => {
+    vi.mocked(stopNetworkMonitor).mockRejectedValueOnce(new Error("SECRET"));
+    const kill = vi.fn().mockResolvedValue(undefined);
+    await killCheckSandbox({ sandboxId: "sb_cleanup", kill } as never);
+    expect(kill).toHaveBeenCalledOnce();
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(
+      "SECRET",
+    );
+  });
+
   it("kills the box it is given", async () => {
     const kill = vi.fn().mockResolvedValue(undefined);
     await killCheckSandbox({ sandboxId: "sb_1", kill } as never);
@@ -150,7 +243,7 @@ describe("killCheckSandbox", () => {
     // rather than merely convenient.
     const kill = vi.fn().mockRejectedValue(new Error("e2b unreachable"));
     await expect(
-      killCheckSandbox({ sandboxId: "sb_2", kill } as never)
+      killCheckSandbox({ sandboxId: "sb_2", kill } as never),
     ).resolves.toBeUndefined();
     expect(kill).toHaveBeenCalledTimes(1);
   });

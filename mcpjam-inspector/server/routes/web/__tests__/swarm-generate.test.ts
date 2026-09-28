@@ -103,6 +103,7 @@ describe("web routes — swarm generation proxy", () => {
       "/api/web/swarm/generate/journeys",
       {
         projectId: "proj-1",
+        swarmRefId: "swarm-1",
         serverAttachmentId: "att-1",
         journeyCount: 2,
         persona: { name: "P", role: "R", notes: "N" },
@@ -117,6 +118,7 @@ describe("web routes — swarm generation proxy", () => {
     expect(data.journeys).toHaveLength(2);
     const args = generateSwarmJourneysMock.mock.calls[0]![2] as any;
     expect(args).toMatchObject({
+      swarmRefId: "swarm-1",
       journeyCount: 2,
       persona: { name: "P", role: "R", notes: "N" },
     });
@@ -312,12 +314,109 @@ describe("web routes — swarm generation proxy", () => {
     const { status, data } = await expectJson<{
       code?: string;
       message?: string;
+      details?: { code?: string };
     }>(response);
     expect(status).toBe(429);
     expect(data.message).toContain("You've hit your usage limit for today.");
     // Code-based clients branch on this to reach standard rate-limit handling;
     // a generic VALIDATION_ERROR would strand them on a 429.
     expect(data.code).toBe("RATE_LIMITED");
+    // WHICH limit. `RATE_LIMITED` alone cannot tell the caller's own allowance
+    // (top-up offered) from MCPJam's exhausted budget (nothing to buy), and
+    // the browser was reading the backend's code out of a JSON blob glued to
+    // the message.
+    expect(data.details?.code).toBe("user_rate_limit");
+  });
+
+  it("forwards a platform_capacity 429 with its code and its Retry-After", async () => {
+    // MCPJam's OWN daily budget for the feature, not the customer's: there is
+    // nothing to top up, and the window lifts when the UTC day rolls.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        429,
+        JSON.stringify({
+          ok: false,
+          code: "platform_capacity",
+          error: "MCPJam's daily generation budget is used up.",
+          isRetryable: true,
+          retryAfterMs: 3_600_000,
+          canTopUp: false,
+        }),
+        "MCPJam's daily generation budget is used up.",
+        "1800"
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      details?: { code?: string; canTopUp?: boolean };
+    }>(response);
+    expect(status).toBe(429);
+    expect(data.code).toBe("RATE_LIMITED");
+    expect(response.headers.get("Retry-After")).toBe("1800");
+    expect(data.details?.code).toBe("platform_capacity");
+    expect(data.details?.canTopUp).toBe(false);
+  });
+
+  it("forwards the backend's own 403 code so a client can tell WHICH 403 it is", async () => {
+    // The status alone cannot separate these: 403 covers both "sign in" (one
+    // click away) and "not a member of this project" (not). The backend's own
+    // code is what does, and `upstreamRefusalRouteError` forwards the whole
+    // refusal envelope as `details` so a client can read it.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        403,
+        JSON.stringify({
+          ok: false,
+          code: "sign_in_required",
+          feature: "swarm generation",
+        }),
+        "Sign in to generate personas and journeys."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      message?: string;
+      details?: { code?: string };
+    }>(response);
+    expect(status).toBe(403);
+    // The proxy's HTTP-shaped code, and the backend's own beneath it.
+    expect(data.code).toBe("FORBIDDEN");
+    expect(data.details?.code).toBe("sign_in_required");
+    expect(data.message).toBe("Sign in to generate personas and journeys.");
+  });
+
+  it("does not invent an upstream code when the backend sent none", async () => {
+    // `parseRefusalEnvelope` is shape-gated: a WAF interstitial or a proxy
+    // error page must not land arbitrary text in a field a client reads.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(403, "<html>Forbidden</html>", "Forbidden.")
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      details?: Record<string, unknown>;
+    }>(response);
+    expect(status).toBe(403);
+    expect(data.details).toBeUndefined();
   });
 
   it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {

@@ -13,6 +13,20 @@ import type {
   OpenAiAppsCapabilities,
 } from "@/lib/client-styles";
 
+/** New mounts use an opaque string; numbers remain valid for saved data. */
+export type CspMountId = string | number;
+
+export interface CspApplicationIntent {
+  csp?: {
+    connectDomains?: string[];
+    resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
+  };
+  cspDirectives?: Record<string, string[]>;
+  permissive: boolean;
+}
+
 export interface CspViolation {
   /** The CSP directive that was violated (e.g., "script-src") */
   directive: string;
@@ -20,6 +34,11 @@ export interface CspViolation {
   effectiveDirective?: string;
   /** The URI that was blocked */
   blockedUri: string;
+  /** Id of the exact inner iframe mount that emitted this event. */
+  mountId?: CspMountId;
+  /** The policy that caused this specific violation. */
+  originalPolicy?: string;
+  disposition?: "enforce" | "report";
   /** Source file where the violation occurred */
   sourceFile?: string | null;
   /** Line number in source file */
@@ -109,6 +128,25 @@ export interface WidgetSandboxApplied {
     geolocation?: {};
     clipboardWrite?: {};
   };
+  /**
+   * How the sandbox proxy mounted the view. `"url"` means it was written into
+   * a blank same-origin frame and runs at the proxy's URL; the srcdoc values
+   * mean it has no URL of its own (`"srcdoc"` was asked for via the build-time
+   * mount switch, `"srcdoc-fallback"` was forced because the frame's document
+   * was unreachable). Twin of the same field in
+   * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
+   */
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** Id of the currently displayed inner iframe mount. */
+  mountId?: CspMountId;
+  /** The view's document URL as reported by the proxy. */
+  viewUrl?: string;
+  /**
+   * Origin of `viewUrl` — the origin a developer allowlists with a third party
+   * that keys on the page URL (a referrer-restricted API key, an OAuth
+   * redirect URI). Absent on the srcdoc paths, which have no origin.
+   */
+  assignedOrigin?: string;
 }
 
 /**
@@ -146,7 +184,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-ready"
     | "bridge-connect-error"
     | "bridge-connect-skipped"
-    | "app-initialized";
+    | "app-initialized"
+    | "view-mounted";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -172,6 +211,17 @@ export interface WidgetSandboxInfo {
   };
   /** Full CSP header string (for advanced users) */
   headerString?: string;
+  /** Latest proxy mount, retained for consumers that show current state. */
+  activeMountId?: CspMountId;
+  /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
+  appliedPoliciesByMount?: Record<
+    string,
+    {
+      headerString: string;
+      mode: "permissive" | "widget-declared";
+      intent?: CspApplicationIntent;
+    }
+  >;
   /** List of CSP violations for this widget */
   violations: CspViolation[];
   /** Widget's actual CSP declaration (null if not declared) */
@@ -185,6 +235,13 @@ export interface WidgetSandboxInfo {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /**
+   * `_meta.ui.domain` as declared by the server, or null when it declared
+   * none. Compared against the origin MCPJam actually serves the view from;
+   * a mismatch is informational, since each host's domain format differs and
+   * a server can only declare one string.
+   */
+  declaredDomain?: string | null;
 }
 
 export interface WidgetGlobals {
@@ -317,6 +374,22 @@ interface WidgetDebugStore {
     csp: Omit<WidgetSandboxInfo, "violations">,
   ) => void;
 
+  /**
+   * Record the CSP string the proxy actually injected for the current mount
+   * (`mcpjam:csp-applied`). MERGES into the existing `csp` object rather than
+   * replacing it: it arrives after `setWidgetCsp` has already stored the
+   * declared allowlists, and must not clobber them.
+   */
+  setWidgetAppliedCsp: (
+    toolCallId: string,
+    applied: {
+      mountId: CspMountId;
+      headerString: string;
+      mode: CspMode;
+      intent?: CspApplicationIntent;
+    },
+  ) => void;
+
   // Add a CSP violation for a widget
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
 
@@ -391,7 +464,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState:
           info.widgetState !== undefined
             ? info.widgetState
-            : (existing?.widgetState ?? null),
+            : existing?.widgetState ?? null,
         globals: info.globals ??
           existing?.globals ?? {
             theme: "dark",
@@ -481,7 +554,67 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: {
           ...csp,
           violations: existing.csp?.violations ?? [],
+          // Deliberately NOT preserved across this call. `setWidgetCsp` runs at
+          // the fetch-commit site, i.e. new HTML is going on screen, which means
+          // a new mount and a new `mcpjam:csp-applied` for it. Carrying the old
+          // header over would label the previous mount's policy as "what the
+          // proxy applied" to bytes it never saw — the exact
+          // assumption-presented-as-fact this panel exists to stop. Same
+          // invariant as the `setFirstCspBlock(null)` reset alongside it.
+          headerString: undefined,
+          activeMountId: undefined,
+          appliedPoliciesByMount: {},
         },
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setWidgetAppliedCsp: (toolCallId, applied) => {
+    set((state) => {
+      const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      // A permissive widget that declares no csp/permissions/domain never
+      // reaches `setWidgetCsp` (see the guard at its call site), so this can
+      // legitimately be the first writer for `csp`. Seed the required fields
+      // rather than dropping the only ground truth the host ever gets about
+      // the enforced policy.
+      const currentCsp = existing?.csp ?? {
+        mode: applied.mode,
+        connectDomains: [],
+        resourceDomains: [],
+        violations: [],
+      };
+      const nextCsp = {
+        ...currentCsp,
+        headerString: applied.headerString,
+        activeMountId: applied.mountId,
+        appliedPoliciesByMount: {
+          ...(currentCsp.appliedPoliciesByMount ?? {}),
+          [String(applied.mountId)]: {
+            headerString: applied.headerString,
+            mode: applied.mode,
+            ...(applied.intent ? { intent: applied.intent } : {}),
+          },
+        },
+        // The proxy is authoritative about which branch it took: in permissive
+        // mode it never calls buildCSP at all.
+        mode: applied.mode,
+      };
+
+      // Create-if-missing for the same reason as setSandboxApplied.
+      widgets.set(toolCallId, {
+        ...(existing ?? {
+          toolCallId,
+          toolName: "unknown",
+          protocol: "mcp-apps" as const,
+          widgetState: null,
+          globals: { theme: "dark" as const, displayMode: "inline" as const },
+          lifecycle: [],
+          mounts: [],
+        }),
+        csp: nextCsp,
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -524,6 +657,9 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: {
           ...existing.csp,
           violations: [],
+          headerString: undefined,
+          activeMountId: undefined,
+          appliedPoliciesByMount: {},
         },
         updatedAt: Date.now(),
       });
@@ -591,8 +727,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         injectedOpenAiCompatCapabilities:
           injectedOpenAiCompat === false
             ? undefined
-            : (injectedOpenAiCompatCapabilities ??
-              existing?.injectedOpenAiCompatCapabilities),
+            : injectedOpenAiCompatCapabilities ??
+              existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };

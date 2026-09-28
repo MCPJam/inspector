@@ -11,6 +11,20 @@ type ReplayConfigSourceInput = {
   mcpClientManager?: unknown;
 };
 
+/** Explicit names (including an empty list) win over connected server IDs. */
+export function resolveServerNames(
+  input: ReplayConfigSourceInput,
+  replayConfigs: MCPServerReplayConfig[] | undefined
+): string[] | undefined {
+  if (input.serverNames !== undefined) return input.serverNames;
+  const names = [
+    ...new Set(
+      replayConfigs?.map((config) => config.serverId.trim()).filter(Boolean)
+    ),
+  ];
+  return names.length > 0 ? names : undefined;
+}
+
 function filterReplayConfigs(
   replayConfigs: MCPServerReplayConfig[],
   serverNames: string[] | undefined

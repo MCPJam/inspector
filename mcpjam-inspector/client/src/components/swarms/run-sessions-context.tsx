@@ -1,3 +1,4 @@
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import {
   createContext,
   useCallback,
@@ -166,9 +167,23 @@ export function RunSessionsProvider({
   } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
     { journeyRunId: runId } as any,
-    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerTarget * 4) }
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerTarget * 4) },
   );
 
+  const observedLiveRuns = useRef(new Set<string>());
+  useEffect(() => {
+    if (runStatus === "running" || runStatus === "pending")
+      observedLiveRuns.current.add(runId);
+    if (!observedLiveRuns.current.has(runId)) return;
+    for (const attempt of run.attempts ?? []) {
+      notifyMCPJamLimitError({
+        runId,
+        code: attempt.errorCode ?? undefined,
+        message: attempt.errorMessage,
+        surface: "swarm",
+      });
+    }
+  }, [runId, runStatus, run.attempts]);
   const streamEnabled = runStatus === "running";
   const stream = useJourneyRunStream(runId, streamEnabled);
 

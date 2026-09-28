@@ -51,11 +51,41 @@ export interface ScenarioPerTurnFeedbackSettings {
   thanksMessage?: string;
 }
 
+/**
+ * One "what to try" item (BB-176).
+ *
+ * `id` is minted client-side and is stable for the life of the item: it keys
+ * the tester's local check state, so editing or deleting one task must not
+ * re-point another task's checkmark.
+ */
+export interface ScenarioTaskItem {
+  id: string;
+  title: string;
+  /** One-liner under the title. Absent ⇒ the title stands alone. */
+  hint?: string;
+}
+
+/**
+ * The study's task list. Empty is the ordinary case — a study with no tasks
+ * hides the tester-side control entirely rather than showing an empty one.
+ *
+ * Deliberately holds no completion state: checking items off is the tester's
+ * private bookkeeping, and what they actually did is read from Sessions.
+ */
+export interface ScenarioTasksSettings {
+  items: ScenarioTaskItem[];
+}
+
 export interface ChatUiSurfaces {
   welcome?: ScenarioWelcomeDialogSettings | null;
   /** @deprecated see `ScenarioFeedbackDialogSettings`. */
   feedback?: ScenarioFeedbackDialogSettings | null;
   perTurnFeedback?: ScenarioPerTurnFeedbackSettings | null;
+  /**
+   * Additive: a backend predating BB-176 omits this, so every reader must
+   * treat absent as "no tasks" rather than assume the key is there.
+   */
+  tasks?: ScenarioTasksSettings | null;
 }
 
 export interface ChatUiSettings {

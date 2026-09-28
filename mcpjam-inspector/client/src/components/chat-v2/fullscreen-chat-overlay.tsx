@@ -1,4 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
 import type { CSSProperties } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
@@ -34,6 +35,8 @@ import {
   isToolPart,
 } from "@/components/chat-v2/thread/thread-helpers";
 import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
+import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
+import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
 
 function extractTextFromUnknown(value: unknown): string {
@@ -124,6 +127,22 @@ function getToolEntrySignature(part: FullscreenToolPart): string {
 }
 
 function getMessageEntries(message: UIMessage): FullscreenMessageEntry[] {
+  // Context the user added shows as one line naming it, not its full text.
+  const contextBlocks = getUserContextBlocks(message);
+  if (contextBlocks) {
+    const summary = describeUserContext(contextBlocks);
+    return summary
+      ? [
+          {
+            kind: "bubble",
+            key: `${message.id ?? message.role}:context`,
+            message,
+            text: summary,
+          },
+        ]
+      : [];
+  }
+
   const parts = Array.isArray(message?.parts) ? message.parts : [];
   const entries: FullscreenMessageEntry[] = [];
   const hasTextPart = parts.some((part) => getTextPartPreview(part).length > 0);
@@ -598,6 +617,17 @@ type FullscreenChatOverlayProps = {
   isThinking: boolean;
   onStop?: () => void;
   onSend: () => void;
+  /**
+   * Rendered directly above the composer, inside the pinned (and therefore
+   * clickable) shell.
+   *
+   * This overlay REPLACES the docked composer — the caller stops rendering
+   * that one entirely while the overlay is up — so anything that gates Send
+   * has to be able to state its case, and offer its way out, here. Without
+   * this slot a gate whose control lives in the docked composer disables the
+   * only visible Send control and hides the only control that re-enables it.
+   */
+  notice?: ReactNode;
   /** Provider id from the active chat model — feeds the indicator's
    * fallback path for surfaces without a scenario host context. */
   modelProvider?: string | null;
@@ -615,6 +645,7 @@ export function FullscreenChatOverlay({
   isThinking,
   onStop,
   onSend,
+  notice,
   modelProvider,
 }: FullscreenChatOverlayProps) {
   const scenarioHostStyle = useScenarioHostStyle();
@@ -645,6 +676,17 @@ export function FullscreenChatOverlay({
             modelProvider={modelProvider}
             chatSessionId={chatSessionId}
           />
+          {/* Above the composer and OUTSIDE the collapsible message list, so
+              it stays visible when the thread is collapsed — the state in
+              which the composer is all there is. */}
+          {notice ? (
+            <div
+              data-testid="fullscreen-composer-notice"
+              className="mb-2 rounded-3xl border border-border/40 bg-background/95 px-2 py-2 shadow-2xl backdrop-blur-xl"
+            >
+              {notice}
+            </div>
+          ) : null}
           <Composer
             value={input}
             onChange={onInputChange}

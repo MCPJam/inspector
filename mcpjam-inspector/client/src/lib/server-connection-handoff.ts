@@ -298,6 +298,94 @@ export function takeHandoffSignInReturn(
   }
 }
 
+/**
+ * Which request a spent handoff token became.
+ *
+ * WHAT THIS EXISTS TO PREVENT. The continuation cookie has ONE name, so it
+ * always describes the last link this browser claimed — not the link in the
+ * address bar. When a spent token's claim fails, asking `/state` answers "your
+ * most recent request", and a browser that claimed link A and then link B would
+ * answer a reopened A with B: a different server, possibly a different project,
+ * silently swapped in behind the same URL the user just opened. Resuming has to
+ * mean "this link", not "some link of yours".
+ *
+ * So the claim records what it produced, and a resume proceeds only when the
+ * cookie names that same request. A mismatch is not a resume — it is an honest
+ * used-link screen, because the session that link belonged to really is gone.
+ *
+ * `localStorage`, unlike everything else in this module: the case this serves is
+ * reopening the link, and a link is reopened in a NEW TAB more often than not.
+ * The cookie it is checked against is per-browser, so a per-tab record would go
+ * missing in exactly the situation it exists for.
+ *
+ * THE TOKEN IT KEYS ON IS ALREADY SPENT. This is written after a claim
+ * SUCCEEDS, and a successful claim is what consumes the token — what lands in
+ * storage is a value that no longer opens anything, paired with a request id
+ * that is printed in tool output anyway. The lifetime still matches the
+ * backend's own hour, so an old record cannot answer for a request that has
+ * long since expired.
+ */
+const CLAIMED_KEY = "mcpjam-server-connection-claimed";
+
+interface ClaimedHandoff {
+  handoffToken: string;
+  requestId: string;
+  expiresAt: number;
+}
+
+export function rememberClaimedHandoff(
+  handoffToken: string,
+  requestId: string,
+  now: number = Date.now()
+): void {
+  try {
+    localStorage.setItem(
+      CLAIMED_KEY,
+      JSON.stringify({
+        handoffToken,
+        requestId,
+        expiresAt: now + MARKER_TTL_MS,
+      })
+    );
+  } catch {
+    // Unavailable storage costs the resume, not the flow: the claim already
+    // succeeded, and this run of the page continues normally. Only a LATER
+    // reopen is affected, and it degrades to the used-link screen — the same
+    // answer this page gave before resuming existed.
+  }
+}
+
+/**
+ * The request this token became, if this browser is the one that claimed it.
+ *
+ * Returns `null` for a token this browser never claimed, for a record past the
+ * request's own hour, and for anything unreadable — every one of which means
+ * the caller cannot prove the link is theirs, which is the only condition that
+ * licenses a resume.
+ */
+export function readClaimedHandoff(
+  handoffToken: string,
+  now: number = Date.now()
+): string | null {
+  try {
+    const raw = localStorage.getItem(CLAIMED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ClaimedHandoff>;
+    if (
+      typeof parsed?.handoffToken !== "string" ||
+      typeof parsed?.requestId !== "string" ||
+      !Number.isFinite(parsed?.expiresAt)
+    ) {
+      return null;
+    }
+    if (parsed.expiresAt! <= now) return null;
+    if (parsed.handoffToken !== handoffToken) return null;
+    return parsed.requestId;
+  } catch {
+    return null;
+  }
+}
+
 /** The key AuthKit's round-tripped `state` carries the nonce under. */
 export const HANDOFF_SIGN_IN_STATE_KEY = "mcpjamHandoffReturn";
 

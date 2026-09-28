@@ -1,7 +1,10 @@
 import { Hono } from "hono";
+import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { z } from "zod";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { logger } from "../../utils/logger.js";
+import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -12,15 +15,22 @@ import {
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
+import { resolveWorkosApiBaseUrl } from "../../services/workos-api-base.js";
 import {
+  lookupWorkosKeyBinding,
   createWorkosKeyBinding,
   removeWorkosKeyBinding,
+  authorizeOrganizationKeyRevoke,
+  removeOrganizationKeyBinding,
   WorkosKeyBindingError,
+  type OrganizationKeyArgs,
+  type WorkosKeyBinding,
 } from "../../services/workos-key-bindings.js";
 import {
   verifyAuthKitToken,
   AuthKitConfigError,
 } from "../../services/authkit-jwt.js";
+import { assertSessionServable } from "../../middleware/session-revocation.js";
 import {
   resolveApiKeyReadiness,
   ApiKeyReadinessError,
@@ -39,11 +49,28 @@ import {
  * - A user can only mint a key as powerful as their own session: the
  *   create call routes through `/user_management/users/{userId}` and
  *   `userId` is taken from the session JWT.
- * - DELETE verifies the key id appears in the session user's own key list
- *   before issuing the WorkOS delete, so passing another user's key id
- *   fails before WorkOS sees the request. (WorkOS exposes no single-key
- *   GET for user keys — both `/api_keys/{id}` and the user-scoped variant
- *   404 even for existing ids — so list membership is the ownership check.)
+ * - Every key expires. Mint sets WorkOS's `expires_at` (90 days unless the
+ *   caller picks 1–365) and records the same instant on the org binding,
+ *   which the bearer middleware enforces too — so expiry holds even if
+ *   WorkOS does not. There is no "never expires" option.
+ * - Who may mint is the organization's call: owners and admins, unless it
+ *   lets members create keys too (MJ-010). The backend enforces it at the
+ *   binding write; the readiness check reports it first, so a refused member
+ *   is turned away before a WorkOS key exists, and GET `/mint-eligibility`
+ *   lets the create dialog say so before anything is filled in.
+ * - DELETE `/:id` revokes the caller's OWN key once the key id appears in the
+ *   session user's own key list. (WorkOS exposes no single-key GET for user
+ *   keys — both `/api_keys/{id}` and the user-scoped variant 404 even for
+ *   existing ids — so list membership is the ownership check.) Any other id
+ *   is revoked only for an owner or admin of the organization the key is
+ *   bound to, through the same steps as the organization revoke below
+ *   (MJ-010); everyone else gets the 404 an unknown id gets.
+ * - DELETE `/organization/:organizationId/:keyId` (an owner or admin
+ *   revoking ANY key bound to their org) asks the backend to authorize
+ *   BEFORE the WorkOS delete, because that delete cannot be undone.
+ * - GET `/` lists the caller's own keys. With `?organizationId=` it is the
+ *   organization inventory of GET `/organization/:organizationId` instead,
+ *   for that organization's owners and admins only (MJ-010).
  * - `sk_…` keys cannot manage other `sk_…` keys (privilege isolation).
  */
 
@@ -74,8 +101,9 @@ apiKeys.use("*", async (c, next) => {
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely (session-auth.ts:103),
 // so this sub-router must explicitly require a bearer.
 apiKeys.use("*", bearerAuthMiddleware);
-
-const WORKOS_BASE_URL = "https://api.workos.com";
+// MJ-012: the `/api/web` `*` limiter runs before this router sets `authMethod`,
+// so it cannot see a signed-in caller here. See routes/web/index.ts.
+apiKeys.use("*", passthroughRateLimitMiddleware);
 
 function getWorkOSRestKey(): string {
   const key = process.env.WORKOS_API_KEY;
@@ -103,6 +131,11 @@ interface SessionContext {
  * here — unlike other `/api/web/*` routes, nothing downstream re-checks it.
  * Verification (and the resulting 401) happens before any WorkOS or
  * binding-endpoint side effect.
+ *
+ * The same holds for the session behind the token (MJ-011): a revoked session
+ * is a 401 `SESSION_REVOKED`, a token that names no session is a 401, and
+ * while the revoked-session list is loading or stale these routes answer 503
+ * rather than act on a session they cannot check.
  */
 async function resolveSessionContext(c: any): Promise<SessionContext> {
   const bearer = assertBearerToken(c);
@@ -126,8 +159,14 @@ async function resolveSessionContext(c: any): Promise<SessionContext> {
       "Invalid or expired session token",
     );
   }
+  assertSessionServable(session.sid, {
+    requireFresh: true,
+    path: c.req.path,
+  });
   return { userId: session.sub };
 }
+
+const WORKOS_CALL_TIMEOUT_MS = 15_000;
 
 async function callWorkOS(
   method: string,
@@ -135,8 +174,13 @@ async function callWorkOS(
   body?: unknown,
 ): Promise<{ status: number; body: any }> {
   const key = getWorkOSRestKey();
-  const response = await fetch(`${WORKOS_BASE_URL}${path}`, {
+  // Resolved per call so a test that stubs the env after this module
+  // loaded is still honoured.
+  const baseUrl = resolveWorkosApiBaseUrl(process.env).baseUrl;
+  const response = await fetch(`${baseUrl}${path}`, {
     method,
+    // A stalled WorkOS call must not pin a user request open indefinitely.
+    signal: AbortSignal.timeout(WORKOS_CALL_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
@@ -151,6 +195,31 @@ async function callWorkOS(
     // Empty body (204) — leave null.
   }
   return { status: response.status, body: parsed };
+}
+
+/** Max in-flight Convex binding lookups while labeling a user's key list. */
+const BINDING_LOOKUP_CONCURRENCY = 8;
+/** Max owners whose WorkOS key lists are walked at once for the org inventory. */
+const OWNER_LIST_CONCURRENCY = 4;
+
+/** `Promise.all` with at most `limit` calls of `fn` in flight; keeps order. */
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  limit: number,
+  fn: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(values.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < values.length) {
+      const index = next++;
+      results[index] = await fn(values[index]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, worker),
+  );
+  return results;
 }
 
 function mapWorkOSError(status: number, body: any, fallback: string): never {
@@ -187,6 +256,50 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
   );
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How long a key lives when the caller does not say. */
+export const DEFAULT_API_KEY_EXPIRY_DAYS = 90;
+/** The longest a caller may ask for. There is deliberately no "never". */
+export const MAX_API_KEY_EXPIRY_DAYS = 365;
+
+/**
+ * The instant a key stops working, as ISO-8601: the EARLIER of WorkOS's own
+ * `expires_at` and the org binding's `expiresAt`. They are minted equal, and
+ * either one refuses the key once it passes, so the earlier is the truthful
+ * answer. Null only when neither carries one — a key minted before expiry
+ * existed, which keeps working until someone revokes it.
+ */
+function effectiveExpiry(
+  workosExpiresAt: unknown,
+  bindingExpiresAt: number | null | undefined,
+): string | null {
+  const instants: number[] = [];
+  if (typeof workosExpiresAt === "string") {
+    const parsed = Date.parse(workosExpiresAt);
+    if (Number.isFinite(parsed)) instants.push(parsed);
+  }
+  if (typeof bindingExpiresAt === "number" && Number.isFinite(bindingExpiresAt))
+    instants.push(bindingExpiresAt);
+  return instants.length > 0
+    ? new Date(Math.min(...instants)).toISOString()
+    : null;
+}
+
+/**
+ * Whether a WorkOS create failure is WorkOS refusing the `expires_at` field
+ * itself, rather than anything else about the request. Retrying without it is
+ * safe only then: the binding still carries the expiry and the bearer
+ * middleware still enforces it, so the key expires on time either way.
+ */
+function isExpiresAtRejection(status: number, body: unknown): boolean {
+  if (status !== 400 && status !== 422) return false;
+  try {
+    return JSON.stringify(body ?? "").includes("expires_at");
+  } catch {
+    return false;
+  }
+}
+
 /**
  * WorkOS REQUIRES `organization_id` when minting a user API key (422
  * "Validation failed" without it). The dialog already requires the caller to
@@ -213,6 +326,14 @@ class OrganizationNotReadyError extends Error {
   }
 }
 
+/**
+ * The mint refusal for a member of an organization that keeps key creation
+ * to its owners and admins, which is the default (MJ-010). A member cannot
+ * change that setting, so it says who can help.
+ */
+const ADMINS_ONLY_MINT_MESSAGE =
+  "Only organization owners and admins can create API keys in this organization. Ask an owner or admin to create one for you, or to allow members to create keys.";
+
 async function resolveWorkosOrgId(
   mcpjamOrganizationId: string,
   mcpjamUserId: string,
@@ -221,15 +342,34 @@ async function resolveWorkosOrgId(
     mcpjamOrganizationId,
     mcpjamUserId,
   );
+  // Authorization before sync timing: a member the org does not let mint
+  // should hear "not allowed", not "try again shortly" followed by "not
+  // allowed". `undefined` is a backend that predates the field — the binding
+  // write still enforces the rule there, so the mint is simply attempted.
+  if (readiness.mintAllowed === false) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      readiness.mintMinimumRole === "admin"
+        ? ADMINS_ONLY_MINT_MESSAGE
+        : "Your role in this organization can't create API keys.",
+    );
+  }
   if (!readiness.ready || !readiness.workosOrganizationId) {
     const messages: Record<string, string> = {
-      org_pending: "This organization is still being set up for API keys — please try again shortly.",
-      org_failed: "This organization couldn't be set up for API keys. Please try again or contact support.",
-      membership_pending: "Your access to this organization is still syncing — please try again shortly.",
-      membership_failed: "Your access to this organization couldn't be synced. Please try again or contact support.",
+      org_pending:
+        "This organization is still being set up for API keys — please try again shortly.",
+      org_failed:
+        "This organization couldn't be set up for API keys. Please try again or contact support.",
+      membership_pending:
+        "Your access to this organization is still syncing — please try again shortly.",
+      membership_failed:
+        "Your access to this organization couldn't be synced. Please try again or contact support.",
     };
     throw new OrganizationNotReadyError(
-      readiness.reason ? messages[readiness.reason] : "This organization isn't ready to create API keys yet.",
+      readiness.reason
+        ? messages[readiness.reason]
+        : "This organization isn't ready to create API keys yet.",
       readiness.reason,
     );
   }
@@ -287,12 +427,23 @@ const createSchema = z.object({
   // The dialog requires an explicit selection (auto-selected when the user
   // has exactly one org). This is NOT the WorkOS org id.
   organizationId: z.string().min(1),
+  // Days until the key stops working. Optional (default 90) and bounded: a
+  // caller may shorten it or extend it to a year, never make it permanent.
+  expiresInDays: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_API_KEY_EXPIRY_DAYS)
+    .optional(),
 });
 
 apiKeys.post("/", async (c) =>
   handleRoute(c, async () => {
     const raw = await readJsonBody<unknown>(c);
-    const { name, organizationId } = parseWithSchema(createSchema, raw);
+    const { name, organizationId, expiresInDays } = parseWithSchema(
+      createSchema,
+      raw,
+    );
     const session = await resolveSessionContext(c);
 
     // Resolve the MCPJam (Convex) user id for the binding. The session bearer
@@ -321,25 +472,36 @@ apiKeys.post("/", async (c) =>
         throw new WebRouteError(error.status, code, error.message);
       }
       if (error instanceof OrganizationNotReadyError) {
-        throw new WebRouteError(
-          409,
-          ErrorCode.VALIDATION_ERROR,
-          error.message,
-        );
+        throw new WebRouteError(409, ErrorCode.VALIDATION_ERROR, error.message);
       }
       throw error;
     }
 
-    const payload: Record<string, unknown> = {
+    // Computed once, before WorkOS is called, so the WorkOS key and the org
+    // binding carry the same instant.
+    const expiresAt =
+      Date.now() + (expiresInDays ?? DEFAULT_API_KEY_EXPIRY_DAYS) * DAY_MS;
+    const expiresAtIso = new Date(expiresAt).toISOString();
+    const mintPath = `/user_management/users/${encodeURIComponent(session.userId)}/api_keys`;
+
+    let { status, body } = await callWorkOS("POST", mintPath, {
       name,
       organization_id: workosOrgId,
-    };
-
-    const { status, body } = await callWorkOS(
-      "POST",
-      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys`,
-      payload,
-    );
+      expires_at: expiresAtIso,
+    });
+    if (isExpiresAtRejection(status, body)) {
+      // WorkOS supports `expires_at` on API keys, but if a deployment ever
+      // refuses the field, minting must not break over it: the binding below
+      // carries the same expiry and the bearer middleware enforces it.
+      getRequestLogger(c, "routes.web.api-keys").event(
+        "apikey.expiry.workos_refused",
+        { statusCode: status },
+      );
+      ({ status, body } = await callWorkOS("POST", mintPath, {
+        name,
+        organization_id: workosOrgId,
+      }));
+    }
 
     if (status < 200 || status >= 300) {
       mapWorkOSError(status, body, "Failed to create API key");
@@ -365,6 +527,7 @@ apiKeys.post("/", async (c) =>
         workosApiKeyId: workosKeyId,
         mcpjamOrganizationId: organizationId,
         mintedByUserId: mcpjamUser._id,
+        expiresAt,
       });
     } catch (bindingError) {
       logger.error("API key org binding failed; revoking WorkOS key", {
@@ -409,7 +572,11 @@ apiKeys.post("/", async (c) =>
           throw new WebRouteError(
             403,
             ErrorCode.FORBIDDEN,
-            `${message} (API key not created)`,
+            // The organization's own setting refused it (the policy changed
+            // after the readiness check): the same answer that check gives.
+            bindingError.code === "ADMINS_ONLY"
+              ? ADMINS_ONLY_MINT_MESSAGE
+              : `${message} (API key not created)`,
           );
         }
         // The key id is already bound to a different org. The backend refuses
@@ -437,14 +604,557 @@ apiKeys.post("/", async (c) =>
       workos_key_id: workosKeyId,
       actor_user_id: session.userId,
       mcpjam_organization_id: organizationId,
+      expires_at: expiresAtIso,
     });
 
-    return body;
+    // `expires_at` is when the key stops working, which MCPJam guarantees
+    // whether or not WorkOS recorded it — so report the effective instant
+    // rather than a WorkOS `null` that would read as "never".
+    return {
+      ...body,
+      expires_at: effectiveExpiry(body?.expires_at, expiresAt),
+    };
   }),
 );
 
-apiKeys.get("/", async (c) =>
+const organizationIdParamSchema = z.string().trim().min(1);
+const keyIdParamSchema = z.string().trim().min(1);
+
+/**
+ * Local membership floor for the org-scoped routes, via the readiness check.
+ *
+ * The owner/admin decision lives in the backend next to the data. This is a
+ * second, independent check through a different backend code path, so a
+ * regression in one cannot silently widen who sees or revokes what: a
+ * non-member is refused here before the org-scoped call is even made.
+ *
+ * Returns the readiness it read, which also says whether the caller may mint.
+ */
+async function assertOrganizationMember(
+  organizationId: string,
+  actorUserId: string,
+  unavailableMessage: string,
+): ReturnType<typeof resolveApiKeyReadiness> {
+  try {
+    return await resolveApiKeyReadiness(organizationId, actorUserId);
+  } catch (error) {
+    if (error instanceof ApiKeyReadinessError) {
+      const code =
+        error.status === 404
+          ? ErrorCode.NOT_FOUND
+          : error.status === 403
+            ? ErrorCode.FORBIDDEN
+            : ErrorCode.VALIDATION_ERROR;
+      throw new WebRouteError(error.status, code, error.message);
+    }
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      unavailableMessage,
+    );
+  }
+}
+
+// Whether the caller may create a key in one organization, so the create
+// dialog can say so before anything is filled in (MJ-010). It reads the same
+// readiness check the mint runs first, and the mint still enforces the rule,
+// so this informs the dialog without deciding anything. Only the two policy
+// fields are returned.
+apiKeys.get("/mint-eligibility", async (c) =>
   handleRoute(c, async () => {
+    const session = await resolveSessionContext(c);
+    const actor = await resolveUserByExternalId(session.userId);
+    if (!actor)
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
+    const organizationId = parseWithSchema(
+      organizationIdParamSchema,
+      c.req.query("organizationId"),
+    );
+    const readiness = await assertOrganizationMember(
+      organizationId,
+      actor._id,
+      "Could not check whether you can create API keys here. Please try again later.",
+    );
+    // Null from a backend that does not report the policy: the mint then
+    // decides on its own, so the dialog lets the attempt go ahead.
+    return {
+      mintAllowed: readiness.mintAllowed ?? null,
+      mintMinimumRole: readiness.mintMinimumRole ?? null,
+    };
+  }),
+);
+
+type OrganizationKeyBinding = {
+  workosApiKeyId: string;
+  mintedAt?: number;
+  expiresAt?: number | null;
+  /**
+   * Null when the minter's user row is gone (a backend that predates this
+   * never sends one). Such a key cannot be looked up at WorkOS, which lists
+   * keys per user, but it is still bound here and is listed from the binding.
+   */
+  owner: {
+    id: string;
+    name: string;
+    email: string;
+    externalId: string | null;
+  } | null;
+};
+
+type OrganizationKeyItem = {
+  id: string;
+  /** Null when the key could not be looked up at WorkOS; see `owner`. */
+  name: string | null;
+  obfuscated_value: string | null;
+  created_at: string | null;
+  last_used_at: string | null;
+  /** When the key stops working; null for a key minted before expiry. */
+  expires_at: string | null;
+  organizationId: string;
+  /** Null when the member who minted the key no longer has an account. */
+  owner: { id: string; name: string; email: string } | null;
+};
+
+// Session-only, admin-authorized organization inventory; returns no key secrets.
+// Served at GET /organization/:organizationId and, with the same answer to the
+// same callers, at GET /?organizationId= (MJ-010).
+//
+// Trust boundary: the owner/admin decision lives in the backend
+// (`workosApiKeyBindings.listForOrganization` refuses anyone below admin, and
+// reads bindings through the org index, so it cannot return another org's
+// rows). This route adds two local checks so a backend regression cannot
+// silently widen who sees what: a membership floor via the readiness check
+// (a non-member 403s before the inventory is even asked for), and a per-key
+// cross-check that each returned key's own binding points at the requested
+// org.
+//
+// Completeness: the backend caps one listing at 1000 bindings and says so
+// with `truncated`, which is passed through for the page to warn about. A
+// binding whose minter no longer has an account (or never had a WorkOS
+// identity) cannot be looked up at WorkOS, so it is listed from the binding
+// alone — an inventory that exists to answer "which keys can act in this
+// organization" must not hide the keys nobody can vouch for.
+function organizationInventory(c: any, rawOrganizationId: string | undefined) {
+  return handleRoute(c, async () => {
+    const session = await resolveSessionContext(c);
+    const actor = await resolveUserByExternalId(session.userId);
+    if (!actor)
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
+    const organizationId = parseWithSchema(
+      organizationIdParamSchema,
+      rawOrganizationId,
+    );
+    await assertOrganizationMember(
+      organizationId,
+      actor._id,
+      "Organization API keys are unavailable. Please try again later.",
+    );
+    const { convexUrl, serviceToken } = getInternalBackendConfig();
+    const params = new URLSearchParams({
+      organizationId,
+      actorUserId: actor._id,
+      includeOwnerless: "1",
+    });
+    const response = await fetch(
+      `${convexUrl}/internal/v1/organization-api-keys?${params}`,
+      {
+        headers: { "x-inspector-service-token": serviceToken },
+      },
+    );
+    if (response.status === 403)
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Only organization owners and admins can view API keys.",
+      );
+    if (!response.ok)
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Organization API keys are unavailable. Please try again later.",
+      );
+    const { items: bindings, truncated } = (await response.json()) as {
+      items: OrganizationKeyBinding[];
+      truncated?: boolean;
+    };
+    if (truncated === true) {
+      getRequestLogger(c, "routes.web.api-keys").event(
+        "apikey.inventory.truncated",
+        { listed: bindings.length },
+      );
+    }
+    const items: OrganizationKeyItem[] = [];
+    // Fetch once per owner, then include only keys explicitly bound to this
+    // org. Owners are walked with bounded concurrency so a large org neither
+    // serializes every WorkOS call nor fans them all out at once. `null` means
+    // WorkOS has no such user any more: that owner's keys are listed from
+    // their bindings below rather than failing the whole inventory.
+    const listOwnerKeys = async (
+      externalId: string,
+    ): Promise<OrganizationKeyItem[] | null> => {
+      const owned: OrganizationKeyItem[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < 10; page++) {
+        const query = new URLSearchParams({ limit: "100" });
+        if (after) query.set("after", after);
+        const { status, body } = await callWorkOS(
+          "GET",
+          `/user_management/users/${encodeURIComponent(externalId)}/api_keys?${query}`,
+        );
+        if (status === 404 && page === 0) return null;
+        if (status < 200 || status >= 300)
+          mapWorkOSError(status, body, "Failed to list organization API keys");
+        for (const key of body?.data ?? []) {
+          const binding = bindings.find(
+            (b) =>
+              b.workosApiKeyId === key.id && b.owner?.externalId === externalId,
+          );
+          if (binding?.owner)
+            owned.push({
+              id: key.id,
+              name: key.name,
+              obfuscated_value: key.obfuscated_value,
+              created_at: key.created_at,
+              last_used_at: key.last_used_at,
+              expires_at: effectiveExpiry(key.expires_at, binding.expiresAt),
+              organizationId,
+              owner: {
+                id: binding.owner.id,
+                name: binding.owner.name,
+                email: binding.owner.email,
+              },
+            });
+        }
+        after =
+          typeof body?.list_metadata?.after === "string"
+            ? body.list_metadata.after
+            : null;
+        if (!after) break;
+        if (page === 9)
+          throw new WebRouteError(
+            502,
+            ErrorCode.SERVER_UNREACHABLE,
+            "Could not load the complete organization key list.",
+          );
+      }
+      return owned;
+    };
+    const ownerExternalIds = [
+      ...new Set(
+        bindings
+          .map((b) => b.owner?.externalId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const perOwner = await mapWithConcurrency(
+      ownerExternalIds,
+      OWNER_LIST_CONCURRENCY,
+      listOwnerKeys,
+    );
+    const unknownAtWorkos = new Set<string>();
+    perOwner.forEach((owned, index) => {
+      if (owned) items.push(...owned);
+      else unknownAtWorkos.add(ownerExternalIds[index]);
+    });
+    // Keys nobody can look up at WorkOS, straight from their binding: the
+    // minter has no account, no WorkOS identity, or a WorkOS user that no
+    // longer exists. There is no name or preview to show, but the key id is
+    // enough to revoke it (a key WorkOS already dropped revokes as a no-op
+    // and takes its binding with it).
+    for (const binding of bindings) {
+      const externalId = binding.owner?.externalId;
+      if (externalId && !unknownAtWorkos.has(externalId)) continue;
+      items.push({
+        id: binding.workosApiKeyId,
+        name: null,
+        obfuscated_value: null,
+        created_at:
+          typeof binding.mintedAt === "number"
+            ? new Date(binding.mintedAt).toISOString()
+            : null,
+        last_used_at: null,
+        expires_at: effectiveExpiry(undefined, binding.expiresAt),
+        organizationId,
+        owner: binding.owner
+          ? {
+              id: binding.owner.id,
+              name: binding.owner.name,
+              email: binding.owner.email,
+            }
+          : null,
+      });
+    }
+    // Cross-check each key's own binding against the requested org. A key
+    // whose binding is missing, points elsewhere, or cannot be read is
+    // dropped rather than shown: on this route an unlabeled key would be an
+    // authorization claim, not decoration.
+    let droppedKeys = 0;
+    const verified = await mapWithConcurrency(
+      items,
+      BINDING_LOOKUP_CONCURRENCY,
+      async (item) => {
+        try {
+          const binding = await lookupWorkosKeyBinding(item.id);
+          return binding?.mcpjamOrganizationId === organizationId;
+        } catch {
+          return false;
+        }
+      },
+    );
+    const scoped = items.filter((_, index) => {
+      if (verified[index]) return true;
+      droppedKeys += 1;
+      return false;
+    });
+    if (droppedKeys > 0) {
+      logger.warn(
+        "Dropped organization API keys whose binding did not verify",
+        {
+          organization_id: organizationId,
+          dropped: droppedKeys,
+          total: items.length,
+        },
+      );
+    }
+    return { items: scoped, truncated: truncated === true };
+  });
+}
+
+apiKeys.get("/organization/:organizationId", async (c) =>
+  organizationInventory(c, c.req.param("organizationId")),
+);
+
+const ORGANIZATION_REVOKE_UNAVAILABLE =
+  "Revoking organization API keys is unavailable. Please try again later.";
+
+/**
+ * An owner or admin revokes ANY key bound to their organization. Both
+ * DELETE `/organization/:organizationId/:keyId` and DELETE `/:id` on a key the
+ * caller did not mint come through here (MJ-010), so the two share one order
+ * of checks.
+ *
+ * Ordering is the whole design. The WorkOS delete cannot be undone, so the
+ * backend decides FIRST (`authorizeOrganizationKeyRevoke`: admin rank, and the
+ * key bound to THIS org), the key is deleted at WorkOS only on a yes, and the
+ * binding is removed last, which is where the backend writes the audit row
+ * naming both the admin and the minter. A key WorkOS no longer has is already
+ * revoked: that is a success, and the binding is still cleaned up.
+ *
+ * `refusalAsNotFound` answers every refusal with the 404 an unknown key id
+ * gets, for a caller who named only a key id: to them, a key they may not
+ * manage reads like one that does not exist.
+ */
+async function revokeOrganizationKey(
+  c: any,
+  target: OrganizationKeyArgs,
+  { refusalAsNotFound = false }: { refusalAsNotFound?: boolean } = {},
+): Promise<{ ok: true; alreadyRevoked: boolean }> {
+  const keyId = target.workosApiKeyId;
+  const notFound = () =>
+    new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+
+  try {
+    await assertOrganizationMember(
+      target.organizationId,
+      target.actorUserId,
+      ORGANIZATION_REVOKE_UNAVAILABLE,
+    );
+  } catch (error) {
+    if (
+      refusalAsNotFound &&
+      error instanceof WebRouteError &&
+      error.status !== 502
+    )
+      throw notFound();
+    throw error;
+  }
+
+  try {
+    await authorizeOrganizationKeyRevoke(target);
+  } catch (error) {
+    if (error instanceof WorkosKeyBindingError) {
+      if (refusalAsNotFound && [400, 403, 404].includes(error.status))
+        throw notFound();
+      if (error.status === 403)
+        throw new WebRouteError(
+          403,
+          ErrorCode.FORBIDDEN,
+          "Only organization owners and admins can revoke API keys.",
+        );
+      if (error.status === 404) throw notFound();
+      if (error.status === 400)
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Invalid organization or API key id",
+        );
+    }
+    // No decision (backend unreachable, or one that predates this route):
+    // refuse rather than revoke unauthorized.
+    getRequestLogger(c, "routes.web.api-keys").event(
+      "apikey.admin_revoke.unavailable",
+      {
+        workosKeyId: keyId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    );
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      ORGANIZATION_REVOKE_UNAVAILABLE,
+    );
+  }
+
+  const { status, body } = await callWorkOS(
+    "DELETE",
+    `/api_keys/${encodeURIComponent(keyId)}`,
+  );
+  const alreadyRevoked = status === 404;
+  if (!alreadyRevoked && (status < 200 || status >= 300)) {
+    mapWorkOSError(status, body, "Failed to revoke API key");
+  }
+
+  // Dropping the binding is also where the backend writes the durable
+  // `apikey.revoked` audit row naming both the admin and the minter, so a
+  // failure a second try can clear is retried a bounded number of times.
+  //
+  // The answer is success either way: the WorkOS key is already gone, and
+  // failing here would tell the admin a revoke did not happen when it did.
+  // If the drop never goes through, what remains is a binding for a key that
+  // no longer exists — inert, since the bearer middleware validates with
+  // WorkOS first — and no audit row for this revoke yet. That outcome is
+  // reported below with its cause, for follow-up: revoking the same key id
+  // again completes both.
+  const cleanup = await removeOrganizationKeyBindingWithRetry(target);
+  const bindingCleanupFailed = !cleanup.removed;
+  const bindingStatus =
+    cleanup.error instanceof WorkosKeyBindingError
+      ? cleanup.error.status
+      : undefined;
+
+  // The durable record is the backend's audit row; this is the operational
+  // one. A cleanup that never went through also carries its cause and is
+  // raised as an issue rather than left for someone to find in a query.
+  getRequestLogger(c, "routes.web.api-keys").event(
+    "apikey.admin_revoke.completed",
+    {
+      workosKeyId: keyId,
+      alreadyRevoked,
+      bindingCleanupFailed,
+      bindingCleanupAttempts: cleanup.attempts,
+      ...(bindingStatus !== undefined ? { bindingStatus } : {}),
+    },
+    bindingCleanupFailed ? { error: cleanup.error, sentry: true } : undefined,
+  );
+
+  return { ok: true, alreadyRevoked };
+}
+
+/**
+ * Waits between attempts at dropping a revoked key's org binding: three
+ * attempts in all.
+ */
+const BINDING_CLEANUP_RETRY_DELAYS_MS = [250, 1_000];
+
+/**
+ * Drop the binding of a key already revoked at WorkOS, retrying only what a
+ * second try can clear: a failure with no answer at all (transport, timeout)
+ * or a backend 5xx. Any other refusal is final. Never throws; reports how many
+ * attempts it made and, if none went through, the last cause.
+ */
+async function removeOrganizationKeyBindingWithRetry(
+  target: OrganizationKeyArgs,
+): Promise<{ removed: boolean; attempts: number; error?: unknown }> {
+  let attempts = 0;
+  for (;;) {
+    attempts += 1;
+    try {
+      await removeOrganizationKeyBinding(target);
+      return { removed: true, attempts };
+    } catch (error) {
+      const retryable =
+        !(error instanceof WorkosKeyBindingError) || error.status >= 500;
+      const delay = BINDING_CLEANUP_RETRY_DELAYS_MS[attempts - 1];
+      if (!retryable || delay === undefined) {
+        return { removed: false, attempts, error };
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+apiKeys.delete("/organization/:organizationId/:keyId", async (c) =>
+  handleRoute(c, async () => {
+    const session = await resolveSessionContext(c);
+    const actor = await resolveUserByExternalId(session.userId);
+    if (!actor)
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
+    const organizationId = parseWithSchema(
+      organizationIdParamSchema,
+      c.req.param("organizationId"),
+    );
+    const keyId = parseWithSchema(keyIdParamSchema, c.req.param("keyId"));
+    return revokeOrganizationKey(c, {
+      organizationId,
+      actorUserId: actor._id,
+      workosApiKeyId: keyId,
+    });
+  }),
+);
+
+/**
+ * DELETE `/:id` for a key the caller did not mint (MJ-010): an owner or admin
+ * of the organization the key is bound to revokes it exactly as the
+ * inventory's revoke would. Anyone else gets the 404 an unknown id gets.
+ */
+async function revokeBoundKeyForAdmin(
+  c: any,
+  sessionUserId: string,
+  keyId: string,
+): Promise<{ ok: true; alreadyRevoked: boolean }> {
+  let binding: WorkosKeyBinding | null;
+  try {
+    binding = await lookupWorkosKeyBinding(keyId);
+  } catch (error) {
+    // No way to tell which organization could authorize it: refuse, as the
+    // shared path does when it gets no decision.
+    getRequestLogger(c, "routes.web.api-keys").event(
+      "apikey.admin_revoke.unavailable",
+      {
+        workosKeyId: keyId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    );
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Revoking API keys is unavailable. Please try again later.",
+    );
+  }
+  const actor = binding ? await resolveUserByExternalId(sessionUserId) : null;
+  if (!binding || !actor) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+  }
+  return revokeOrganizationKey(
+    c,
+    {
+      organizationId: binding.mcpjamOrganizationId,
+      actorUserId: actor._id,
+      workosApiKeyId: keyId,
+    },
+    { refusalAsNotFound: true },
+  );
+}
+
+apiKeys.get("/", async (c) => {
+  // `?organizationId=` asks for that organization's inventory: the same list,
+  // for the same owners and admins only, as GET /organization/:organizationId
+  // (MJ-010). Without it, this is the caller's own keys.
+  const organizationId = c.req.query("organizationId");
+  if (organizationId !== undefined) {
+    return organizationInventory(c, organizationId);
+  }
+  return handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
     // Deliberately NOT filtered by `session.organizationId`: a key is now
     // minted into whichever MCPJam org the caller selected in the dialog
@@ -488,9 +1198,53 @@ apiKeys.get("/", async (c) =>
         break;
       }
     }
-    return { items };
-  }),
-);
+    // Org labels are decoration on this list, not authorization: the org
+    // boundary is enforced at USE time in bearer-auth.ts. So a binding lookup
+    // that fails (Convex down, route not deployed, misconfigured service
+    // token) must not take the list down or leak its message — before the
+    // labels existed this list depended on WorkOS alone, and it still should.
+    // Lookups are bounded so a long key list cannot fan out one service-token
+    // fetch per key all at once.
+    let lookupFailures = 0;
+    let firstFailure: unknown;
+    const bindings = await mapWithConcurrency(
+      items,
+      BINDING_LOOKUP_CONCURRENCY,
+      async (key) => {
+        try {
+          return await lookupWorkosKeyBinding(key.id);
+        } catch (error) {
+          lookupFailures += 1;
+          firstFailure ??= error;
+          return null;
+        }
+      },
+    );
+    if (lookupFailures > 0) {
+      logger.warn("API key org binding lookup failed; listing keys unlabeled", {
+        failed: lookupFailures,
+        total: items.length,
+        error:
+          firstFailure instanceof Error
+            ? firstFailure.message
+            : String(firstFailure),
+      });
+    }
+    return {
+      items: items.map((key, index) => ({
+        id: key.id,
+        name: key.name,
+        obfuscated_value: key.obfuscated_value,
+        created_at: key.created_at,
+        last_used_at: key.last_used_at,
+        // WorkOS's own expiry still shows when the binding lookup failed;
+        // the binding's covers a WorkOS that did not record one.
+        expires_at: effectiveExpiry(key.expires_at, bindings[index]?.expiresAt),
+        organizationId: bindings[index]?.mcpjamOrganizationId ?? null,
+      })),
+    };
+  });
+});
 
 apiKeys.delete("/:id", async (c) =>
   handleRoute(c, async () => {
@@ -508,9 +1262,11 @@ apiKeys.delete("/:id", async (c) =>
     // ownership for the org-level admin key, and it exposes no single-key
     // GET for user keys (404s even for existing ids). The key must appear
     // in the session user's OWN key list — enumeration under the user is
-    // the ownership proof. An unknown or foreign id reads as not-found.
+    // the ownership proof. Any other id is left to the organization the key
+    // is bound to: its owners and admins may revoke it (MJ-010), and for
+    // everyone else an unknown or foreign id reads as not-found.
     if (!(await userOwnsApiKey(session.userId, id))) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+      return revokeBoundKeyForAdmin(c, session.userId, id);
     }
 
     const { status, body } = await callWorkOS(

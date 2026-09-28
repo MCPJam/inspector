@@ -25,6 +25,7 @@
 
 import type { TestStep } from "./steps";
 import type { EvalStepStatus } from "./eval-stream-events";
+import type { EvalTraceVideoMeta } from "./eval-trace";
 
 export type EvalStepResultStatus = "ok" | "fail" | "skipped" | "pending";
 
@@ -55,8 +56,18 @@ export type EvalStepEvidence = {
   }>;
   /** Resolved screenshot URL (render observation or interaction step). */
   screenshotUrl?: string;
-  /** Resolved iteration replay `.webm` URL (iteration-level; same on every row). */
+  /** Resolved iteration replay video URL (iteration-level; same on every row). */
   videoUrl?: string;
+  /**
+   * What that recording says about itself — iteration-level like the URL, and
+   * carried on the same rows.
+   *
+   * `truncated` is the one a reader cannot work out from the file: a hosted
+   * take stops itself at its size cap, and what lands is a complete, playable
+   * PREFIX of the run. A caller seeking to a `videoOffsetMs` past the cut
+   * would otherwise get silence and no reason for it.
+   */
+  videoMeta?: EvalTraceVideoMeta;
   /** Playback offset for this step within the replay video, when known (M2). */
   videoOffsetMs?: number;
   /** "scripted" (authored interact/assert) vs "computer_use" (model-driven). */
@@ -75,6 +86,7 @@ export type StepReplayEnvelope = {
   widgetRenderObservations?: ReadonlyArray<Record<string, unknown>>;
   browserInteractionSteps?: ReadonlyArray<Record<string, unknown>>;
   videoUrl?: string | null;
+  videoMeta?: EvalTraceVideoMeta | null;
 };
 
 /** Structural subset of `testIteration.metadata` this assembler reads. */
@@ -130,6 +142,7 @@ function toEvidence(
   interaction: Record<string, unknown> | undefined,
   render: Record<string, unknown> | undefined,
   videoUrl: string | undefined,
+  videoMeta: EvalTraceVideoMeta | undefined,
 ): EvalStepEvidence | undefined {
   const ev: EvalStepEvidence = {};
   const screenshotUrl =
@@ -142,6 +155,9 @@ function toEvidence(
   if (offset !== undefined) {
     ev.videoOffsetMs = offset;
     if (videoUrl) ev.videoUrl = videoUrl;
+    // WITH the URL, never without: metadata for a video this row does not
+    // carry describes a recording the caller cannot reach.
+    if (videoUrl && videoMeta) ev.videoMeta = videoMeta;
   }
   const source = str(interaction?.source);
   if (source === "computer_use" || source === "scripted") ev.source = source;
@@ -248,6 +264,10 @@ export function assembleStepResults(
   const interactions = indexRows(envelope?.browserInteractionSteps ?? []);
   const renders = indexRows(envelope?.widgetRenderObservations ?? []);
   const videoUrl = str(envelope?.videoUrl ?? undefined);
+  const videoMeta =
+    envelope?.videoMeta && typeof envelope.videoMeta === "object"
+      ? envelope.videoMeta
+      : undefined;
 
   return steps.map((step, stepIndex) => {
     const interaction = evidenceFor(step.id, interactions);
@@ -264,7 +284,7 @@ export function assembleStepResults(
           kind: step.kind,
           ...fallbackStatus(step, skippedIds, interaction),
         };
-    const evidence = toEvidence(interaction, render, videoUrl);
+    const evidence = toEvidence(interaction, render, videoUrl, videoMeta);
     return { ...verdict, ...(evidence ? { evidence } : {}) };
   });
 }

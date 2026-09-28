@@ -238,6 +238,17 @@ async function completeOAuthDebuggerFlow(page: Page, fakeOAuthOrigin: string) {
   await connectServerButton.click();
 }
 
+async function waitForHarnessReady(page: Page) {
+  // The entry point loads the app dynamically so desktop OAuth browser returns
+  // can skip auth entirely. The document load event can now precede React's
+  // mount, especially while Vite loads the module graph on a slower CI worker.
+  await expect(page.getByTestId("oauth-e2e-status")).toHaveAttribute(
+    "data-status",
+    "idle",
+    { timeout: 30_000 }
+  );
+}
+
 function expectNoFrontendBearerShortcut(record: ConnectRequestRecord) {
   expect(record.headers.authorization).toBeUndefined();
   const serializedBody = JSON.stringify(record.body);
@@ -246,6 +257,17 @@ function expectNoFrontendBearerShortcut(record: ConnectRequestRecord) {
 }
 
 test.describe("OAuth Debugger e2e", () => {
+  test("recovers from a failed app bootstrap chunk", async ({ page }) => {
+    await page.route("**/src/app-bootstrap.tsx*", (route) => route.abort(), {
+      times: 1,
+    });
+    await page.goto("/__e2e/oauth-debugger");
+    await expect(page.getByRole("alert")).toContainText("MCPJam couldn't load");
+    await page.getByRole("button", { name: "Reload MCPJam" }).click();
+    await waitForHarnessReady(page);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
   test("covers first connect and reconnect for plain and OAuth MCP servers", async ({
     page,
   }) => {
@@ -302,6 +324,7 @@ test.describe("OAuth Debugger e2e", () => {
 
     try {
       await page.goto("/__e2e/oauth-debugger");
+      await waitForHarnessReady(page);
 
       await page.getByLabel("Plain server name").fill("plain-e2e-target");
       await page.getByLabel("Plain server URL").fill(fakePlainServer.serverUrl);
@@ -400,6 +423,7 @@ test.describe("OAuth Debugger e2e", () => {
         delete window.__oauthDebuggerE2EFlowState;
       });
       await page.reload();
+      await waitForHarnessReady(page);
 
       await expect(
         page.getByTestId("server-row-plain-e2e-target")

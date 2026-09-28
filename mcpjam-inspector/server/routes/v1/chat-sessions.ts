@@ -1,3 +1,4 @@
+import { registerChatSessionBrowserRoutes } from "./chat-session-browser-routes";
 /**
  * Public v1 AGENT PLAYGROUND surface — drive a conversation and read what it
  * produced.
@@ -12,10 +13,10 @@
  *
  * ONE PUBLIC ID. `sessionId` everywhere in this module is the `chatSessions`
  * DOCUMENT id, the same id `GET /v1/chat-sessions` returns and the same id the
- * trace and detail reads take. The runtime `chatSessionId` UUID — the ingest
- * write key — is INTERNAL and never leaves this file. Two ids on a public
- * surface is how callers pass the wrong one and get an opaque 404 they cannot
- * diagnose; see the two-id trap documented at `journeys.ts:291`.
+ * trace, detail, and browser command routes accept. The runtime `chatSessionId`
+ * UUID is returned read-only for Playground links and is the logical browser
+ * conversation owner. It is never accepted as a route input. Logical browser
+ * identifiers are informational too: agents address only the public sessionId.
  *
  * THE THREE ROUTES, and why they are one module:
  *
@@ -49,6 +50,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { fetchJsonBlob } from "./blob-read.js";
+import { publicArtifactLink } from "./artifact-links.js";
 import { projectMessages } from "./chat-session-payloads.js";
 import { registerChatSessionTurnRoute } from "./chat-session-turn.js";
 
@@ -94,6 +96,10 @@ type SessionRow = {
   startedAt?: number;
   lastActivityAt?: number;
   messagesBlobUrl?: string | null;
+  apiConfigState?: "unconfigured" | "configured";
+  browser?: Record<string, unknown> | null;
+  cumulativeInputTokens?: number;
+  cumulativeOutputTokens?: number;
   resumeConfig?: {
     modelId?: string;
     toolMode?: "read_only" | "auto";
@@ -115,15 +121,16 @@ type TurnTraceRow = {
   usage?: { inputTokens?: number; outputTokens?: number };
   spanCount?: number;
   spansBlobUrl?: string | null;
+  browserAtTurn?: { browserSessionId: string; bootId?: string; box?: unknown };
 };
 
 /**
  * Preflight semantics for a caller-supplied session id.
  *
  * `getSession` refuses with a plain error that production Convex redacts to
- * "Server Error"; without `redactedIsRefusal` a cross-workspace probe answers
- * 502 — an existence oracle plus a Sentry page — instead of the 404 the
- * preflight exists to guarantee.
+ * "Server Error". `redactedIsRefusal` reads that as the refusal it is, so the
+ * preflight answers the 404 it exists to guarantee for a session the caller
+ * cannot see, rather than a 502.
  */
 function translatePreflightReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {
@@ -284,6 +291,31 @@ chatSessions.get("/chat-sessions/:sessionId", async (c) => {
 
   return v1Resource(c, {
     sessionId: session._id,
+    chatSessionId: session.chatSessionId,
+    browser: session.browser ? {
+      browserSessionId: session.browser.browserSessionId,
+      state: session.browser.state,
+      policy: session.browser.policy,
+      profileId: session.browser.profileId,
+      bootId: session.browser.bootId,
+      controlledBy: session.browser.controlledBy,
+      box: session.browser.box,
+      lastActiveAt: session.browser.lastActiveAt,
+    } : null,
+    apiConfigState: session.apiConfigState ?? "configured",
+    ...(session.cumulativeInputTokens !== undefined ||
+    session.cumulativeOutputTokens !== undefined
+      ? {
+          usage: {
+            ...(session.cumulativeInputTokens !== undefined
+              ? { cumulativeInputTokens: session.cumulativeInputTokens }
+              : {}),
+            ...(session.cumulativeOutputTokens !== undefined
+              ? { cumulativeOutputTokens: session.cumulativeOutputTokens }
+              : {}),
+          },
+        }
+      : {}),
     projectId: session.projectId ?? null,
     origin: session.origin ?? null,
     modelId: session.modelId ?? null,
@@ -391,9 +423,42 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     selected = ordered.slice(Math.max(0, ordered.length - limit));
   }
 
+  type Artifact = {
+    turnId?: string;
+    toolCallId: string;
+    toolName?: string;
+    promptIndex: number;
+    stepIndex: number;
+    screenshotUrl?: string;
+    ts: number;
+  };
+  let artifacts: Artifact[] = [];
+  if (selected.some((row) => row.browserAtTurn)) {
+    const evidence = (await client.query(
+      "chatSessions:getBrowserArtifacts" as never,
+      { sessionId: session._id } as never,
+    )) as { browserInteractionSteps?: Artifact[] };
+    // Screenshot links only as signed `/web/artifact` links (MJ-005).
+    artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
+      ...step,
+      screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
+    }));
+  }
   const turns = await Promise.all(
     selected.map(async (row) => {
+      const screenshots = artifacts
+        .filter((step) => step.turnId === row.turnId && step.screenshotUrl)
+        .map((step) => ({
+          toolCallId: step.toolCallId,
+          toolName: step.toolName,
+          stepIndex: step.stepIndex,
+          url: step.screenshotUrl,
+          ts: step.ts,
+        }));
       const base = {
+        ...(row.browserAtTurn
+          ? { browser: row.browserAtTurn, screenshots }
+          : {}),
         turnId: row.turnId,
         promptIndex: row.promptIndex,
         startedAt: row.startedAt,
@@ -416,14 +481,21 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
       }
       const spans = Array.isArray(parsed)
         ? (parsed as EvalTraceSpan[])
-        : ((parsed as { spans?: unknown })?.spans as EvalTraceSpan[]) ??
-          undefined;
+        : (((parsed as { spans?: unknown })?.spans as EvalTraceSpan[]) ??
+          undefined);
       if (!Array.isArray(spans)) {
         return { ...base, spansUnavailable: true as const };
       }
       return {
         ...base,
-        spans,
+        spans: spans.map((span) => {
+          const shot = screenshots.find(
+            (shot) =>
+              shot.toolCallId ===
+              (span as unknown as { toolCallId?: string }).toolCallId,
+          );
+          return shot ? { ...span, screenshotUrl: shot.url } : span;
+        }),
         // The blob is the record; a count that disagrees with it means the
         // reader is looking at a partial write, and saying so is cheaper than
         // letting the caller discover it by arithmetic.
@@ -437,6 +509,8 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
   return v1Resource(c, {
     sessionId: session._id,
     origin: session.origin ?? null,
+    chatSessionId: session.chatSessionId,
+    projectId: session.projectId ?? null,
     traceVersion: 1,
     turnCount: ordered.length,
     turns,
@@ -459,6 +533,7 @@ function normalizeUsage(usage: {
 // ── POST /v1/chat-sessions/messages ─────────────────────────────────────────
 
 registerChatSessionTurnRoute(chatSessions);
+registerChatSessionBrowserRoutes(chatSessions);
 
 export default chatSessions;
 export type { SessionRow };

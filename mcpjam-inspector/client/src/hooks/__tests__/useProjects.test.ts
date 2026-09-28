@@ -5,16 +5,19 @@ import {
   normalizeProjectMembersResult,
   type RemoteProject,
   shouldQueryProjectId,
+  useCanManageProjectClients,
   useProjectQueries,
   useProjectServers,
   type ProjectMember,
 } from "../useProjects";
 
-const { mockUseDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
-  mockUseDbUserReady: vi.fn(() => true),
-  mockUseMutation: vi.fn(),
-  mockUseQuery: vi.fn(),
-}));
+const { mockUseDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(
+  () => ({
+    mockUseDbUserReady: vi.fn(() => true),
+    mockUseMutation: vi.fn(),
+    mockUseQuery: vi.fn(),
+  }),
+);
 
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
@@ -65,6 +68,45 @@ describe("filterProjectsForOrganization", () => {
   });
 });
 
+describe("useCanManageProjectClients", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseDbUserReady.mockReturnValue(true);
+  });
+
+  const renderFor = (projectId: string | null) =>
+    renderHook(() =>
+      useCanManageProjectClients({ isAuthenticated: true, projectId }),
+    ).result.current;
+
+  it("allows a project admin", () => {
+    mockUseQuery.mockReturnValue([
+      createProject("p1", { canDeleteProject: true }),
+    ]);
+    expect(renderFor("p1")).toEqual({ canManage: true, isLoading: false });
+  });
+
+  it("refuses a member or guest", () => {
+    mockUseQuery.mockReturnValue([
+      createProject("p1", { canDeleteProject: false }),
+    ]);
+    expect(renderFor("p1")).toEqual({ canManage: false, isLoading: false });
+  });
+
+  it("is undecided while projects load", () => {
+    mockUseQuery.mockReturnValue(undefined);
+    expect(renderFor("p1")).toEqual({ canManage: false, isLoading: true });
+  });
+
+  it("refuses a project the viewer can't see", () => {
+    mockUseQuery.mockReturnValue([
+      createProject("p1", { canDeleteProject: true }),
+    ]);
+    expect(renderFor("p2")).toEqual({ canManage: false, isLoading: false });
+    expect(renderFor(null)).toEqual({ canManage: false, isLoading: false });
+  });
+});
+
 describe("useProjectQueries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,6 +131,31 @@ describe("useProjectQueries", () => {
     expect(result.current.hasProjects).toBe(false);
     expect(result.current.hasAnyProjects).toBe(false);
     expect(mockUseQuery).toHaveBeenCalledWith("projects:getMyProjects", {});
+  });
+
+  it("does not accept an empty project list before user setup finishes", () => {
+    mockUseDbUserReady.mockReturnValue(false);
+    mockUseQuery.mockImplementation((_name, args) =>
+      args === "skip" ? undefined : [],
+    );
+
+    const { result, rerender } = renderHook(() =>
+      useProjectQueries({ isAuthenticated: true }),
+    );
+
+    expect(mockUseQuery).toHaveBeenLastCalledWith(
+      "projects:getMyProjects",
+      "skip",
+    );
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.allProjects).toBeUndefined();
+
+    mockUseDbUserReady.mockReturnValue(true);
+    rerender();
+
+    expect(mockUseQuery).toHaveBeenLastCalledWith("projects:getMyProjects", {});
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.allProjects).toEqual([]);
   });
 });
 

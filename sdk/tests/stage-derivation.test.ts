@@ -12,13 +12,21 @@
  */
 
 import { describe, expect, test } from "vitest";
+import { STAGE_REASON_LABELS } from "../src/contract/decision-labels.js";
+import { finalizePassedForEval } from "../src/eval-tool-execution";
 import {
+  GRADER_PRESENTATION_GROUP,
+  GRADER_STAGE,
   MAX_EVIDENCE_REASONS,
   MAX_EVIDENCE_REASON_CHARS,
+  PREDICATE_KINDS,
+  PREDICATE_STAGE,
   STAGE_ANALYZER_VERSION,
   STAGE_REASONS,
   USER_VALUE_STAGES,
   deriveStageResults,
+  isSelectionPredicateKind,
+  isSelectionStagePredicateKind,
   stageDerivationSchema,
   stageDerivationToMetadata,
   type StageAuthoredCase,
@@ -85,6 +93,7 @@ describe("shape invariants", () => {
   });
 
   test("stamps the analyzer version on every derivation", () => {
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
     expect(derive().stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     expect(
       derive({ iteration: { status: "cancelled" } }).stageAnalyzerVersion
@@ -279,6 +288,92 @@ describe("connection & discovery", () => {
     });
     expect(firstFailedStage).toBe("connection");
     expect(failureCategory).toBe("setup");
+  });
+
+  test("a failed phase's reasons ride into the row as predicateReasons, in every state", () => {
+    const cases = [
+      {
+        attribution: "theirs" as const,
+        egressVerified: true,
+        state: "failed",
+        reason: "connectFailed",
+      },
+      {
+        attribution: "theirs" as const,
+        state: "notMeasured",
+        reason: "egressUnverified",
+      },
+      {
+        attribution: "unknown" as const,
+        state: "notMeasured",
+        reason: "egressUnverified",
+      },
+      {
+        attribution: "ours" as const,
+        state: "notMeasured",
+        reason: "setupAborted",
+      },
+    ];
+    for (const c of cases) {
+      const { stageResults } = deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: {
+          setupSignals: {
+            connection: {
+              outcome: "failed",
+              attribution: c.attribution,
+              ...(c.egressVerified ? { egressVerified: true } : {}),
+              spanIds: ["run-connect-s1"],
+              reasons: ['"s1" rejected the stored token (invalid_token).'],
+            },
+          },
+        },
+        iteration: { status: "failed" },
+      });
+      expect(stateOf(stageResults, "connection"), c.reason).toMatchObject({
+        state: c.state,
+        reason: c.reason,
+        evidence: {
+          spanIds: ["run-connect-s1"],
+          predicateReasons: ['"s1" rejected the stored token (invalid_token).'],
+        },
+      });
+    }
+  });
+
+  test("reasons are bounded like judge reasons and ignored on an ok signal", () => {
+    const long = "x".repeat(MAX_EVIDENCE_REASON_CHARS + 50);
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok", reasons: ["should not appear"] },
+          discovery: {
+            outcome: "failed",
+            attribution: "ours",
+            reasons: Array.from(
+              { length: MAX_EVIDENCE_REASONS + 3 },
+              () => long
+            ),
+          },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(
+      stateOf(stageResults, "connection")?.evidence?.predicateReasons
+    ).toBeUndefined();
+    const discovery = stateOf(stageResults, "discovery");
+    expect(discovery).toMatchObject({
+      state: "notMeasured",
+      reason: "setupAborted",
+    });
+    expect(discovery?.evidence?.predicateReasons).toHaveLength(
+      MAX_EVIDENCE_REASONS
+    );
+    for (const reason of discovery?.evidence?.predicateReasons ?? []) {
+      expect(reason.length).toBeLessThanOrEqual(MAX_EVIDENCE_REASON_CHARS);
+    }
   });
 
   test("failed + theirs without canary ⇒ notMeasured/egressUnverified", () => {
@@ -749,6 +844,205 @@ describe("call & response", () => {
   });
 });
 
+describe("toolInputMatches files at call", () => {
+  const argumentsRow = (over: Record<string, unknown> = {}) => ({
+    passed: false,
+    reason: '"create_view" called 1×, none matched all 3 patterns',
+    predicate: {
+      type: "toolInputMatches",
+      toolName: "create_view",
+      patterns: ["Idea", "Build", "Ship"],
+    },
+    ...over,
+  });
+
+  test("a required failure fails `call` as an argument mismatch", () => {
+    expect(PREDICATE_STAGE.toolInputMatches).toBe("call");
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [argumentsRow()],
+      },
+    });
+    expect(stateOf(stageResults, "call")).toMatchObject({
+      state: "failed",
+      reason: "argumentMismatch",
+      evidence: {
+        predicateReasons: [
+          '"create_view" called 1×, none matched all 3 patterns',
+        ],
+      },
+    });
+    expect(firstFailedStage).toBe("call");
+    expect(failureCategory).toBe("arguments");
+    // Routed, not copied: the same defect is not also a user-value failure.
+    expect(stateOf(stageResults, "userValue").reason).not.toBe(
+      "predicateFailed"
+    );
+  });
+
+  test("paired with a failing toolCalledWith, the chain breaks at selection", () => {
+    // How the generator and the importer will write it: `toolCalledWith`
+    // (promoted to the matcher) says the tool was called at all, this check
+    // says what the call carried. When the tool was never called, both fail —
+    // and the earlier link is where the chain broke.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            missing: [{ toolName: "create_view" }],
+            passed: false,
+          },
+        ],
+        predicateResults: [argumentsRow()],
+      },
+    });
+    expect(firstFailedStage).toBe("selection");
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    expect(stateOf(stageResults, "call")).toMatchObject({
+      state: "failed",
+      reason: "argumentMismatch",
+    });
+  });
+
+  test("an advisory failure is recorded without failing `call`", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          argumentsRow({
+            predicate: {
+              type: "toolInputMatches",
+              toolName: "create_view",
+              patterns: ["Idea"],
+              role: "advisory",
+              severity: "warn",
+            },
+          }),
+        ],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+
+  test("an unscored row (unreadable calls) establishes nothing", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [argumentsRow({ status: "error" })],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+});
+
+describe("toolResultMatches files at response", () => {
+  const resultRow = (over: Record<string, unknown> = {}) => ({
+    passed: false,
+    reason: '"create_view" returned 1 result, none matched all 3 patterns',
+    predicate: {
+      type: "toolResultMatches",
+      toolName: "create_view",
+      patterns: ["Idea", "Build", "Ship"],
+    },
+    ...over,
+  });
+
+  test("a required failure fails `response` as a failed check", () => {
+    expect(PREDICATE_STAGE.toolResultMatches).toBe("response");
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [resultRow()],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+      evidence: {
+        predicateReasons: [
+          '"create_view" returned 1 result, none matched all 3 patterns',
+        ],
+      },
+    });
+    expect(firstFailedStage).toBe("response");
+    expect(failureCategory).toBe("serverData");
+    // Routed, not copied: the same defect is not also a user-value failure.
+    expect(stateOf(stageResults, "userValue").reason).not.toBe(
+      "predicateFailed"
+    );
+  });
+
+  test("paired with a failing toolInputMatches, the chain breaks at call", () => {
+    // What went in is an earlier link than what came out.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          resultRow(),
+          {
+            passed: false,
+            reason: '"create_view" called 1×, none matched the pattern',
+            predicate: {
+              type: "toolInputMatches",
+              toolName: "create_view",
+              patterns: ["Idea"],
+            },
+          },
+        ],
+      },
+    });
+    expect(firstFailedStage).toBe("call");
+    expect(stateOf(stageResults, "response").state).toBe("failed");
+  });
+
+  test("an advisory failure is recorded without failing `response`", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          resultRow({
+            predicate: {
+              type: "toolResultMatches",
+              patterns: ["Idea"],
+              role: "advisory",
+              severity: "warn",
+            },
+          }),
+        ],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+
+  test("an unscored row (unread results) establishes nothing", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [resultRow({ status: "error" })],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+});
+
 describe("userValue", () => {
   test("a failed predicate fails it and carries its reason", () => {
     const { stageResults, failureCategory } = derive({
@@ -778,6 +1072,673 @@ describe("userValue", () => {
       },
     });
     expect(stateOf(stageResults, "userValue").state).toBe("notApplicable");
+  });
+});
+
+// ── UVH-IN2: a model-call failure is OURS, not the server's ──────────────────
+//
+// 20 prod trials failed on "credit balance too low… Anthropic API": the step
+// errored, asserts were skipped, and the chain ended `noEvidenceCaptured` with
+// NO failure category — an outage filed as an unattributed server failure.
+
+describe("a model-call failure is attributed, not left blank", () => {
+  const providerDied = { stepError: { source: "model" as const } };
+
+  test("blank stages read as providerError, and the run is categorised setup", () => {
+    const { stageResults, failureCategory, firstFailedStage } = derive({
+      evidence: { traceAbsent: true, ...providerDied },
+    });
+
+    // Every applicable stage says the same true thing: we never got to ask.
+    for (const r of stageResults.filter((x) => x.state === "notMeasured")) {
+      expect(r.reason).toBe("providerError");
+    }
+    // `setup` is the existing bucket for our own side breaking, so no new
+    // category was needed — but a category there MUST be.
+    expect(failureCategory).toBe("setup");
+    // Never `failed`: our provider's bad day is not the server's defect.
+    expect(firstFailedStage).toBeUndefined();
+    expect(stageResults.some((r) => r.state === "failed")).toBe(false);
+  });
+
+  test("stages that DID measure something keep their own rows", () => {
+    // A provider dying at turn 4 does not un-observe turns 1-3. Only the
+    // blank rows are re-labelled.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        ...providerDied,
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+  });
+
+  test("a missing call the provider never let us make is not a selection defect", () => {
+    // THE CASE THIS REASON EXISTS FOR, and the one the first version missed.
+    //
+    // A case expecting a tool call whose provider died has
+    // `selection: failed / missingToolCall` written by the matcher before the
+    // chain is derived. Re-labelling only BLANK rows left that standing, so
+    // `firstFailedStage` stayed `selection` and the outage was filed as a
+    // model-selection defect — the exact misattribution this whole reason was
+    // built to remove, on the commonest shape in the corpus.
+    const { stageResults, failureCategory, firstFailedStage } = derive({
+      evidence: {
+        prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
+        ...providerDied,
+      },
+    });
+
+    const selection = stateOf(stageResults, "selection");
+    expect(selection.state).toBe("notMeasured");
+    expect(selection.reason).toBe("providerError");
+    // The evidence went with the verdict it supported: a notMeasured row must
+    // not still be arguing for a failure it no longer claims.
+    expect(selection.evidence).toBeUndefined();
+    expect(firstFailedStage).toBeUndefined();
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("the reason speaks for its own stage, not for the run", () => {
+    // Review finding on the label. `providerError` is applied PER ROW, so a
+    // multi-turn iteration whose provider died late keeps its earlier measured
+    // rows — and a run-level "the run never reached the server" would sit
+    // directly beside a `call: passed` that disproves it.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        ...providerDied,
+      },
+    });
+    // The precondition that makes the label's scope matter: the server WAS
+    // reached on this run.
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(STAGE_REASON_LABELS.providerError).not.toContain(
+      "never reached the server"
+    );
+    expect(STAGE_REASON_LABELS.providerError).toContain("this stage");
+  });
+
+  test("the chain does not argue with itself after a withdrawal", () => {
+    // Review finding on the withdrawal itself. The positional cascade reads
+    // `failed` rows to decide which later stages "never ran", so withdrawing
+    // the failure AFTER it ran left `call`, `response` and `userValue` saying
+    // `earlierStageFailed` while no stage failed and no firstFailedStage
+    // existed — three rows citing a failure the chain no longer records.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
+        ...providerDied,
+      },
+    });
+
+    expect(firstFailedStage).toBeUndefined();
+    expect(stageResults.some((r) => r.state === "failed")).toBe(false);
+    // Nothing may still be blaming a stage that is no longer failed.
+    expect(stageResults.some((r) => r.reason === "earlierStageFailed")).toBe(
+      false
+    );
+    // And the later stages say the true thing about why they are blank.
+    for (const stage of ["call", "response", "userValue"] as const) {
+      const r = stateOf(stageResults, stage);
+      if (r.state === "notMeasured") expect(r.reason).toBe("providerError");
+    }
+  });
+
+  test("a failure the provider did NOT explain still cascades", () => {
+    // The other side. An unexpected call survives the withdrawal, so it stays
+    // the first failed row and the stages after it still read `notReached` —
+    // the cascade is repaired, not disabled.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "delete_all" }],
+            passed: false,
+          },
+        ],
+        ...providerDied,
+      },
+    });
+    expect(firstFailedStage).toBe("selection");
+    const after = stageResults.slice(
+      stageResults.findIndex((r) => r.stage === "selection") + 1
+    );
+    expect(after.some((r) => r.state === "notReached")).toBe(true);
+  });
+
+  test("a call that really was made wrongly still counts against the server", () => {
+    // The other side of that line, and the one that keeps this honest. An
+    // UNEXPECTED call was actually observed — a presence, not an absence — so
+    // a provider dying afterwards does not un-observe it. Withdrawing this too
+    // would let any provider blip launder a genuine server defect.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "delete_all" }],
+            passed: false,
+          },
+        ],
+        ...providerDied,
+      },
+    });
+    const selection = stateOf(stageResults, "selection");
+    expect(selection.state).toBe("failed");
+    expect(selection.reason).toBe("unexpectedToolCall");
+  });
+
+  test("a server that would not connect is never excused by a later outage", () => {
+    // `connection` fails BEFORE any model call, so a provider error that came
+    // afterwards cannot explain it. This is the failure mode that would be
+    // most damaging to launder away.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        setupSignals: {
+          connection: {
+            outcome: "failed",
+            attribution: "theirs",
+            egressVerified: true,
+            spanIds: ["run-connect-s1"],
+          },
+        },
+        ...providerDied,
+      },
+    });
+    expect(stateOf(stageResults, "connection").state).toBe("failed");
+    expect(firstFailedStage).toBe("connection");
+  });
+
+  test("a SETUP-layer error is not a provider error", () => {
+    // Pre-turn setup never reached the model, and `setupAborted` already says
+    // so precisely. Widening `providerError` over it would lose that.
+    const { stageResults } = derive({
+      evidence: { traceAbsent: true, stepError: { source: "setup" } },
+    });
+    expect(stageResults.every((r) => r.reason !== "providerError")).toBe(true);
+  });
+
+  test("an unclassified error changes nothing", () => {
+    // Callers that cannot say which layer broke leave `stepError` absent, and
+    // the chain reports exactly what it did before.
+    const before = derive({ evidence: { traceAbsent: true } });
+    expect(before.stageResults.every((r) => r.reason !== "providerError")).toBe(
+      true
+    );
+    expect(before.failureCategory).toBeUndefined();
+  });
+
+  test("a broken grader still outranks it", () => {
+    // `evaluator` is never folded into another category — a grader bug is not
+    // an infrastructure outage, and counting it as one poisons both rates.
+    const { failureCategory } = derive({
+      evidence: {
+        traceAbsent: true,
+        evaluatorErrored: true,
+        ...providerDied,
+      },
+    });
+    expect(failureCategory).toBe("evaluator");
+  });
+});
+
+// ── UVH-IN7: an observed tool error makes `response` measurable ──────────────
+//
+// The disagreement class this closes: a case authors only transcript
+// predicates, so `call` and `response` were `notApplicable`; a tool errors on
+// the server during the run; `failOnToolError` fails the legacy verdict. Every
+// applicable stage green, the verdict red, and no row able to say why.
+
+describe("an observed tool error reaches response, even unauthored", () => {
+  /** Authors predicates only — nothing about tools at all. */
+  const predicateOnlyCase = {
+    mode: "model_driven" as const,
+    expectsToolCall: false,
+    assertionCount: 1,
+  };
+
+  const erroredToolSpan = () => ({
+    ...toolSpan(),
+    id: "span-err",
+    status: "error",
+  });
+
+  test("a recovered tool error fails response as toolError / serverData", () => {
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [erroredToolSpan()],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "toolError",
+    });
+    expect(firstFailedStage).toBe("response");
+    expect(failureCategory).toBe("serverData");
+  });
+
+  test("the chain no longer goes all-green while the verdict fails", () => {
+    // The exact shape of the 8 prod trials: every stage the case authored
+    // passed, so nothing in the chain contradicted a red verdict.
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [erroredToolSpan()],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stageResults.some((r) => r.state === "failed")).toBe(true);
+  });
+
+  test("the chain reports the error even when POLICY passes the trial", () => {
+    // The other half of the disagreement, and the one that shows why the
+    // chain is not just a mirror of the verdict. With `failOnToolError: false`
+    // the legacy verdict PASSES on the very run whose tool errored — so if the
+    // chain also went all-green, a suite run entirely under that policy would
+    // report a clean funnel over servers that were failing calls.
+    //
+    // Both halves are exercised against the SAME scenario rather than asserted
+    // separately, because the property is the relationship between them: the
+    // verdict answers "did policy fail this trial", the chain answers "what
+    // happened", and those are allowed to differ.
+    const erroredSpan = erroredToolSpan();
+
+    const passed = finalizePassedForEval({
+      matchPassed: true,
+      trace: { spans: [erroredSpan] },
+      failOnToolError: false,
+      predicateResults: [{ passed: true }],
+    });
+    expect(passed).toBe(true);
+
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [erroredSpan],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "toolError",
+    });
+
+    // And the control: the same span DOES fail the trial under the default
+    // policy, so the test above is about the policy and not about a span that
+    // was never failure-worthy.
+    expect(
+      finalizePassedForEval({
+        matchPassed: true,
+        trace: { spans: [erroredSpan] },
+        predicateResults: [{ passed: true }],
+      })
+    ).toBe(false);
+  });
+
+  test("a transport-local error does NOT turn the stage on", () => {
+    // A span carrying an MCP error code never reached the server's handler,
+    // so it is a setup fact rather than the server's answer — and turning
+    // `response` on for it would attribute our own failure to the server.
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [{ ...erroredToolSpan(), mcpErrorCode: -32601 }],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("notApplicable");
+  });
+
+  test("no errored span leaves an unauthored response inapplicable", () => {
+    // The floor is unchanged: a case that authors nothing about tools and saw
+    // no tool failure still has nothing for `response` to decide.
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [toolSpan()],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("notApplicable");
+  });
+
+  test("an authored case is unaffected — it was already applicable", () => {
+    const { stageResults } = derive({
+      evidence: {
+        spans: [erroredToolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "toolError",
+    });
+  });
+});
+
+// ── UVH-IN1: tool-call predicates are SELECTION evidence ─────────────────────
+//
+// `stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`,
+// so these three kinds arrive as predicate results and used to be graded as
+// user value — the chain saying the user did not get what they asked for, when
+// what happened is the model picked the wrong tool.
+
+// =============================================================================
+// The grader → stage map (B7).
+//
+// This map is what lets a settings page say "your suite measures selection and
+// user value, and nothing checks the response" — a sentence no surface could
+// form before, because the routing lived inside the analyzer. Exporting it
+// creates exactly one hazard worth testing: a second copy that drifts.
+//
+// So the properties here are about AGREEMENT, not about any individual
+// mapping. Which stage `noToolErrors` belongs to is a product judgement; that
+// the map and the analyzer agree about it is a correctness property.
+// =============================================================================
+describe("the grader→stage map is total and agrees with the analyzer", () => {
+  test("every predicate the schema admits has a stage", () => {
+    // Derived from the schema rather than listed, so the next predicate
+    // someone adds fails HERE rather than rendering as a stage that looks
+    // unmeasured on a settings page.
+    for (const kind of PREDICATE_KINDS) {
+      expect(
+        PREDICATE_STAGE[kind],
+        `${kind} has no stage in PREDICATE_STAGE`
+      ).toBeDefined();
+      expect(USER_VALUE_STAGES).toContain(PREDICATE_STAGE[kind]);
+    }
+    expect(PREDICATE_KINDS.length).toBe(Object.keys(PREDICATE_STAGE).length);
+  });
+
+  test("the map names no predicate the schema does not", () => {
+    // The other direction. An entry for a kind nobody can author is a row a
+    // settings page would render for a grader that cannot exist.
+    for (const kind of Object.keys(PREDICATE_STAGE)) {
+      expect(PREDICATE_KINDS as readonly string[]).toContain(kind);
+    }
+  });
+
+  test("a selection-routed predicate really does fail at selection", () => {
+    // The agreement property, exercised through the analyzer rather than
+    // asserted against the table: each kind the map calls `selection` is made
+    // to fail, and the chain must file it there.
+    //
+    // `toolCalledWith` is excluded deliberately and is covered separately
+    // below: it is matcher-graded, so it never arrives as a predicate row.
+    const selectionKinds = (PREDICATE_KINDS as readonly string[]).filter(
+      (kind) =>
+        PREDICATE_STAGE[kind as keyof typeof PREDICATE_STAGE] === "selection" &&
+        kind !== "toolCalledWith"
+    );
+    expect(selectionKinds.length).toBeGreaterThan(0);
+
+    for (const kind of selectionKinds) {
+      const { firstFailedStage } = derive({
+        evidence: {
+          spans: [toolSpan()],
+          predicateResults: [
+            {
+              passed: false,
+              reason: `${kind} says so`,
+              predicate: { type: kind, toolName: "get_project" },
+            },
+          ],
+        },
+      });
+      expect(firstFailedStage, `${kind} must file at its mapped stage`).toBe(
+        PREDICATE_STAGE[kind as keyof typeof PREDICATE_STAGE]
+      );
+    }
+  });
+
+  test("toolCalledWith is mapped to selection but graded by the matcher", () => {
+    // The one entry that is a claim about AUTHORING intent rather than about a
+    // predicate row: `stepsToPromptTurns` promotes it into `expectedToolCalls`.
+    // The map says so because an author who wrote it is measuring selection;
+    // the analyzer must still route it through the matcher, and reading its
+    // raw predicate row would let a residual contradict the adjudicated
+    // verdict.
+    expect(PREDICATE_STAGE.toolCalledWith).toBe("selection");
+    expect(isSelectionPredicateKind("toolCalledWith")).toBe(false);
+    expect(isSelectionStagePredicateKind("toolCalledWith")).toBe(true);
+  });
+
+  test("the analyzer's selection routing is a subset of the map", () => {
+    // The invariant that makes the derivation safe: the analyzer may route
+    // FEWER kinds than the map (the matcher case above), but never a kind the
+    // map files somewhere else — that would be the silent disagreement this
+    // whole step exists to make impossible.
+    for (const kind of PREDICATE_KINDS) {
+      if (!isSelectionPredicateKind(kind)) continue;
+      expect(PREDICATE_STAGE[kind], `${kind} disagrees`).toBe("selection");
+    }
+  });
+
+  test("non-predicate graders are placed too", () => {
+    // A suite whose only user-value grader is the judge would otherwise render
+    // as "nothing measures whether the person got what they wanted".
+    expect(GRADER_STAGE["toolCalls:match"]).toBe("selection");
+    expect(GRADER_STAGE["judge:goalCompletion"]).toBe("userValue");
+  });
+
+  test("presentation grouping carries no analytical weight", () => {
+    // Budgets group together for reading, and are still filed where the
+    // analyzer files them. If these two ever disagreed, a settings page would
+    // be quietly redefining what a stage means.
+    for (const kind of Object.keys(GRADER_PRESENTATION_GROUP)) {
+      expect(PREDICATE_STAGE[kind as keyof typeof PREDICATE_STAGE]).toBe(
+        "userValue"
+      );
+    }
+  });
+
+  test("the derivation routes exactly the kinds it is meant to route", () => {
+    // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is COMPUTED
+    // from the map, so a mistake in the derivation would silently widen or
+    // narrow what the analyzer routes — and the behavioural tests above would
+    // still pass if it only widened. Naming the set makes either direction a
+    // failure.
+    //
+    // `toolCalledWith` is absent on purpose: it is matcher-graded, so reading
+    // its raw predicate row here would let a residual contradict the
+    // adjudicated verdict. Everything else the map files at `selection` is
+    // routed.
+    //
+    // Both additions below joined the set deliberately: a tool outside an
+    // allowed set, a call before its prerequisite, one the server marks
+    // deprecated or destructive, one call too many — each is the same observed
+    // fact as a forbidden tool in a different dress. Widening this list is a
+    // decision, never a side effect: every other addition still fails here
+    // first.
+    const routed = (PREDICATE_KINDS as readonly string[])
+      .filter((kind) => isSelectionPredicateKind(kind))
+      .sort();
+    expect(routed).toEqual([
+      "firstToolWas",
+      "noDeprecatedToolCalled",
+      "noDestructiveToolCalled",
+      "onlyToolsCalled",
+      "toolCallCountUnder",
+      "toolCalledAtLeastOnce",
+      "toolCalledBefore",
+      "toolNeverCalled",
+    ]);
+  });
+
+  test("the analyzer version is response/call routing", () => {
+    // 10 was advisory exclusion: Warn/Report checks stopped consuming
+    // selection, fail-predicate precedence, and userValue.
+    // 11 routes `response` and `call` predicate rows to their own stages,
+    // moves `noToolErrors` to `response` (it used to fail there AND at
+    // userValue on the same evidence), and stops an unscorable row
+    // (`status: "error"`) from establishing any state.
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
+  });
+});
+
+describe("tool-call predicates route to selection", () => {
+  /** One predicate row, with the discriminator the producer now preserves. */
+  const pred = (type: string, passed: boolean, reason = `${type} says so`) => ({
+    passed,
+    reason,
+    predicate: { type, toolName: "get_project" },
+  });
+
+  /** No matcher evidence at all — the predicate is the only selection signal. */
+  const predicateOnly = (rows: ReturnType<typeof pred>[]) =>
+    derive({
+      evidence: { spans: [toolSpan()], predicateResults: rows },
+    });
+
+  test.each([
+    ["toolCalledAtLeastOnce", "missingToolCall"],
+    ["firstToolWas", "unexpectedToolCall"],
+    ["toolNeverCalled", "unexpectedToolCall"],
+  ])("%s fails at selection with %s", (kind, reason) => {
+    const { stageResults, firstFailedStage, failureCategory } = predicateOnly([
+      pred(kind, false),
+    ]);
+
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason,
+      evidence: { predicateReasons: [`${kind} says so`] },
+    });
+    expect(firstFailedStage).toBe("selection");
+    // The D7 metadata judge gates on exactly this, so routing here widens its
+    // candidate population — intended, and named in the PR.
+    expect(failureCategory).toBe("selection");
+    // Routed, not copied: filing it in both places would double-count one
+    // defect and make `firstFailedStage` depend on read order.
+    expect(stateOf(stageResults, "userValue").reason).not.toBe(
+      "predicateFailed"
+    );
+  });
+
+  test.each(["toolCalledAtLeastOnce", "firstToolWas", "toolNeverCalled"])(
+    "%s that PASSED is selection evidence, not silence",
+    (kind) => {
+      const { stageResults } = predicateOnly([pred(kind, true)]);
+      expect(stateOf(stageResults, "selection")).toMatchObject({
+        state: "passed",
+        reason: "observed",
+      });
+    }
+  );
+
+  test("a missing required call outranks a forbidden one that fired", () => {
+    // Both can fail at once. "The tool you needed was never called" is the
+    // more specific and more actionable of the two.
+    const { stageResults } = predicateOnly([
+      pred("toolNeverCalled", false),
+      pred("toolCalledAtLeastOnce", false),
+    ]);
+    expect(stateOf(stageResults, "selection").reason).toBe("missingToolCall");
+  });
+
+  test("a row with NO discriminator is still graded as user value", () => {
+    // Backward compatibility, and the reason this bump changed no recorded
+    // row in the parity corpus: producers that never carried the predicate —
+    // and every row stored before UVH-IN1 — grade exactly as before.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        predicateResults: [{ passed: false, reason: "no discriminator" }],
+      },
+    });
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+    });
+  });
+
+  test("toolCalledWith is deliberately left to the matcher", () => {
+    // It is already promoted to `expectedToolCalls` and adjudicated there.
+    // Re-reading its point-in-time predicate row here would let a raw residual
+    // contradict the verdict the matcher path produced.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [pred("toolCalledWith", false)],
+      },
+    });
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+    });
+  });
+
+  test("MIXED: a matcher `missing` outranks a predicate failure", () => {
+    // The matcher's verdict is the most specific signal about selection, and
+    // it is fatal in every match mode.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            ...cleanTurn,
+            missing: [{ toolName: "fetch_order" }],
+            passed: false,
+          },
+        ],
+        predicateResults: [pred("toolNeverCalled", false)],
+      },
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+      evidence: { promptIndexes: [0] },
+    });
+  });
+
+  test("MIXED: a predicate failure surfaces even when every turn passed", () => {
+    // The conflicting case. The turn tolerated its extras, so the matcher path
+    // would have reported `selection: passed` and the authored assertion would
+    // have been filed as a user-value failure instead.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [pred("firstToolWas", false)],
+      },
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason: "unexpectedToolCall",
+    });
+    expect(firstFailedStage).toBe("selection");
+  });
+
+  test("user-value predicates still reach userValue alongside a routed one", () => {
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          pred("toolNeverCalled", true),
+          { passed: false, reason: "expected 'Refunded' on screen" },
+        ],
+      },
+    });
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+      evidence: { predicateReasons: ["expected 'Refunded' on screen"] },
+    });
   });
 });
 
@@ -1048,6 +2009,26 @@ describe("stageDerivationToMetadata", () => {
     // Nothing failed, so neither optional key is invented.
     expect("firstFailedStage" in meta).toBe(false);
     expect("failureCategory" in meta).toBe(false);
+  });
+
+  test("advisory predicate failures do not move a stage", () => {
+    const baseline = derive();
+    const advised = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          { passed: true, reason: "ok" },
+          {
+            passed: false,
+            reason: "advisory miss",
+            predicate: { type: "responseContains", role: "advisory" },
+          },
+        ],
+      },
+    });
+    expect(advised.stageResults).toEqual(baseline.stageResults);
+    expect(advised.firstFailedStage).toBeUndefined();
   });
 
   test("carries the failure keys when something failed", () => {

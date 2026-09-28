@@ -382,11 +382,14 @@ describe("ui-tool-executor outcome telemetry", () => {
       );
       const addToolOutput = vi.fn();
 
+      // The switch is what defers now, so this case has to turn it on to have
+      // a deferred call to re-emit at all.
       await handleUiToolCall({
         toolName: "ui_navigate",
         toolCallId: "tc-defer-re",
         input: { target: "servers" },
         addToolOutput,
+        requireToolApproval: true,
       });
       expect(eventCalls("ui_tool_call_started")).toHaveLength(1);
 
@@ -396,6 +399,7 @@ describe("ui-tool-executor outcome telemetry", () => {
         toolCallId: "tc-defer-re",
         input: { target: "servers" },
         addToolOutput,
+        requireToolApproval: true,
       });
       expect(claimed).toBe(true);
       expect(eventCalls("ui_tool_call_started")).toHaveLength(1);

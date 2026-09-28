@@ -35,6 +35,17 @@ export interface ScannedHtml {
   styleText: string;
   /** Concatenated contents of every `<script>` element. */
   scriptText: string;
+  /**
+   * Whether the document opens with a doctype.
+   *
+   * Load-bearing for how the widget RENDERS, not just for tidiness: Claude
+   * mounts a view by writing its HTML into a blank document, and a written
+   * document with no doctype is parsed in quirks mode — where the box model
+   * and percentage heights differ from every other context the author tested
+   * in. A srcdoc-mounted view never had this problem, so the same markup can
+   * look correct locally and wrong in Claude.
+   */
+  hasDoctype: boolean;
 }
 
 const RAW_TEXT_ELEMENTS = new Set(["script", "style"]);
@@ -56,7 +67,13 @@ function isNameChar(char: string): boolean {
 }
 
 function isSpace(char: string): boolean {
-  return char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
+  return (
+    char === " " ||
+    char === "\t" ||
+    char === "\n" ||
+    char === "\r" ||
+    char === "\f"
+  );
 }
 
 /**
@@ -72,6 +89,7 @@ export function scanHtml(html: string): ScannedHtml {
   const attributes = new Set<string>();
   const styleParts: string[] = [];
   const scriptParts: string[] = [];
+  let hasDoctype = false;
 
   let index = 0;
   while (index < html.length) {
@@ -84,6 +102,10 @@ export function scanHtml(html: string): ScannedHtml {
       continue;
     }
     if (isDoctypeAt(html, lt)) {
+      // Only a doctype that precedes every element counts. One written after
+      // the document has started is ignored by the parser, so recording it
+      // would report quirks-mode safety the browser will not deliver.
+      if (tags.size === 0) hasDoctype = true;
       const end = html.indexOf(">", lt + 2);
       index = end === -1 ? html.length : end + 1;
       continue;
@@ -118,10 +140,16 @@ export function scanHtml(html: string): ScannedHtml {
         cursor += 1;
         break;
       } else if (!closing) {
-        if (attributeStart === -1 && isNameChar(char) && isSpace(html[cursor - 1])) {
+        if (
+          attributeStart === -1 &&
+          isNameChar(char) &&
+          isSpace(html[cursor - 1])
+        ) {
           attributeStart = cursor;
         } else if (attributeStart !== -1 && !isNameChar(char)) {
-          const attributeName = html.slice(attributeStart, cursor).toLowerCase();
+          const attributeName = html
+            .slice(attributeStart, cursor)
+            .toLowerCase();
           attributes.add(attributeName);
           if (attributeName === "style") {
             const value = readAttributeValue(html, cursor);
@@ -171,6 +199,7 @@ export function scanHtml(html: string): ScannedHtml {
     attributes,
     styleText: styleParts.join("\n"),
     scriptText: scriptParts.join("\n"),
+    hasDoctype,
   };
 }
 

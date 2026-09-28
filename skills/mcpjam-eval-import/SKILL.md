@@ -62,7 +62,7 @@ every case carries an `import.status` you can defend.
    `provenance.sourceFormat` naming the real origin.
 3. **Ask the operator for what the source cannot tell you**: which MCPJam
    project/server the suite targets (`target.servers`), which model
-   (`defaults.model`), and how many repetitions. Do not translate a source
+   (`defaults.model`), and how many iterations (`repetitions:` in a `schemaVersion: "1"` file, `iterations:` in `"2"`). Do not translate a source
    provider id (`openai:gpt-4o-mini`) into an MCPJam model id on your own.
 4. **Write the suite file** to `.mcpjam/evals/<suite-id>.yaml`.
 5. **Write the mapping report** next to it (one row per source case: source key,
@@ -256,7 +256,7 @@ This authenticates, uploads the file as a hosted suite owned by `suite.id`,
 syncs **every declared case with its `import` claim** — disabled ones included —
 and runs the **enabled** ones. Notes that bite imports specifically: a
 contract-invalid file exits `2` here (exit `1` is reserved for a verdict);
-`repetitions` above 10 are refused rather than clamped; `defaults.toolPolicy` and
+a count above 10 (`repetitions`, or `iterations` in a `schemaVersion: "2"` file) is refused rather than clamped; `defaults.toolPolicy` and
 non-empty `defaults.validity` gates are refused; a case the file no longer
 declares is deleted from the hosted suite. A file with no enabled cases is
 refused, so an import in which nothing reached `exact` cannot launch — review

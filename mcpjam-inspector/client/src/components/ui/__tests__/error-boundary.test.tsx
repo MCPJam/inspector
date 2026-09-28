@@ -106,6 +106,77 @@ describe("ErrorBoundary", () => {
     expect(screen.getByText("recovered")).toBeInTheDocument();
   });
 
+  it("does NOT report an error its boundary declared expected", () => {
+    // UVH-IN5. A dark-shipped query throws on a page users open repeatedly,
+    // so an unconditional report turns a documented, intended state into one
+    // Sentry issue and one PostHog event per visit.
+    render(
+      <ErrorBoundary
+        name="expected_boundary"
+        fallback={null}
+        isExpectedError={(error) => error.message === "kaboom"}
+      >
+        <Boom shouldThrow />
+      </ErrorBoundary>,
+    );
+
+    expect(reportBoundaryError).not.toHaveBeenCalled();
+  });
+
+  it("still reports an error the SAME boundary did not expect", () => {
+    // The predicate is the whole point: a boundary that suppressed everything
+    // would swallow the real bug it exists to surface.
+    render(
+      <ErrorBoundary
+        name="expected_boundary"
+        fallback={null}
+        isExpectedError={(error) => error.message === "something else"}
+      >
+        <Boom shouldThrow />
+      </ErrorBoundary>,
+    );
+
+    expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+  });
+
+  it("still calls onError for an expected error — telemetry only is suppressed", () => {
+    // The probe that motivated this uses `onError` to close its rail. Losing
+    // that alongside the reporting would trade a noisy alarm for a stuck UI.
+    const onError = vi.fn();
+    render(
+      <ErrorBoundary
+        fallback={null}
+        isExpectedError={() => true}
+        onError={onError}
+      >
+        <Boom shouldThrow />
+      </ErrorBoundary>,
+    );
+
+    expect(reportBoundaryError).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports normally when the predicate itself throws", () => {
+    // Fail loud, not silent: a broken predicate must not become a way to lose
+    // errors, which is the one outcome worse than the noise this suppresses.
+    render(
+      <ErrorBoundary
+        fallback={null}
+        isExpectedError={() => {
+          throw new Error("predicate is broken");
+        }}
+      >
+        <Boom shouldThrow />
+      </ErrorBoundary>,
+    );
+
+    expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+    expect((reportBoundaryError.mock.calls[0][0] as Error).message).toBe(
+      "kaboom",
+    );
+  });
+
   it("renders the default UI and does not report when nothing throws", () => {
     render(
       <ErrorBoundary>

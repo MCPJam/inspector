@@ -2,13 +2,6 @@ import { useMemo, useState } from "react";
 import { Loader2, RotateCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
@@ -21,6 +14,7 @@ import {
   judgeDisagreesWithVerdict,
 } from "./goal-completion-presentation";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
+import { JudgeModelPicker } from "./judge-model-picker";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
   DEFAULT_JUDGE_THRESHOLD as DEFAULT_THRESHOLD,
@@ -74,27 +68,7 @@ export function GoalCompletionCard({
     (goalCompletion?.modelUsed && goalCompletion.modelUsed !== "n/a"
       ? goalCompletion.modelUsed
       : DEFAULT_JUDGE_MODEL);
-  const [selectedModelId, setSelectedModelId] =
-    useState<string>(initialModel);
-
-  // Always keep the managed default + the current selection selectable, even
-  // before the async model catalog loads (or when BYOK has none configured).
-  const modelOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const model of availableModels) {
-      const id = String(model.id);
-      if (id && !map.has(id)) {
-        map.set(id, model.name ?? id);
-      }
-    }
-    if (!map.has(DEFAULT_JUDGE_MODEL)) {
-      map.set(DEFAULT_JUDGE_MODEL, DEFAULT_JUDGE_MODEL);
-    }
-    if (selectedModelId && !map.has(selectedModelId)) {
-      map.set(selectedModelId, selectedModelId);
-    }
-    return Array.from(map, ([value, label]) => ({ value, label }));
-  }, [availableModels, selectedModelId]);
+  const [selectedModelId, setSelectedModelId] = useState<string>(initialModel);
 
   const titleByCaseKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -156,10 +130,25 @@ export function GoalCompletionCard({
     const runOverride = overrideModel
       ? { judgeModel: overrideModel }
       : undefined;
-    onRun({ runOverride }, force);
+    onRun(
+      {
+        runOverride,
+        ...((failedGeneration ||
+          goalCompletion?.cases.some((c) => c.status === "error")) &&
+        !runOverride
+          ? { scope: "failed" as const }
+          : {}),
+      },
+      force,
+    );
   };
 
-  const cases = goalCompletion?.cases ?? [];
+  const ungraded = (goalCompletion?.cases ?? []).filter(
+    (c) => c.status === "error" || c.status === "skipped",
+  );
+  const cases = (goalCompletion?.cases ?? []).filter(
+    (c) => c.status === undefined || c.status === "scored",
+  );
   const advisoryPassed = cases.filter((c) => c.passed).length;
 
   // The rail is a run-level SUMMARY surface, not a per-case dump: the table now
@@ -195,19 +184,21 @@ export function GoalCompletionCard({
     if (error || failedGeneration) return "Grading failed";
     if (!isJudgeConfigured) return "Disabled";
     if (!goalCompletion) return "Not run yet";
-    if (cases.length === 0) return "Summary only";
+    if (cases.length === 0) return "Couldn’t grade";
     return `${advisoryPassed}/${cases.length} meet goal (advisory)`;
   })();
 
-  const runLabel = goalCompletion ? "Re-run judge" : "Run judge";
+  const runLabel = ungraded.some((c) => c.status === "error")
+    ? "Retry grading"
+    : goalCompletion
+    ? "Re-run judge"
+    : "Run judge";
 
   return (
     <section
       className={cn(
         "flex flex-col text-card-foreground",
-        embedded
-          ? "bg-transparent"
-          : "rounded-lg border border-border bg-card",
+        embedded ? "bg-transparent" : "rounded-lg border border-border bg-card",
       )}
     >
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
@@ -245,25 +236,18 @@ export function GoalCompletionCard({
               <Label htmlFor="goal-judge-model" className="text-xs">
                 Judge model
               </Label>
-              <Select
+              {/* Judge-eligible hosted models, plus the managed default and
+                  the current value (shown, but not offered again when it is
+                  not eligible). */}
+              <JudgeModelPicker
+                id="goal-judge-model"
+                className="w-full"
                 value={selectedModelId}
-                onValueChange={setSelectedModelId}
+                availableModels={availableModels}
+                managedDefaultModelId={DEFAULT_JUDGE_MODEL}
+                onChange={(row) => setSelectedModelId(String(row.id))}
                 disabled={inFlight}
-              >
-                <SelectTrigger
-                  id="goal-judge-model"
-                  className="h-8 w-full text-sm"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
             </div>
             <Button
               type="button"
@@ -279,7 +263,9 @@ export function GoalCompletionCard({
               // a second judge call.
               disabled={!completedRun || inFlight}
             >
-              {inFlight ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {inFlight ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : null}
               {runLabel}
             </Button>
           </div>
@@ -301,9 +287,9 @@ export function GoalCompletionCard({
                 </span>
               </div>
               <div className="mt-1 text-[11px] text-muted-foreground/80">
-                Scores from this run aren't directly comparable to the
-                suite's trend. Re-run with the override cleared to re-grade
-                against the suite contract.
+                Scores from this run aren't directly comparable to the suite's
+                trend. Re-run with the override cleared to re-grade against the
+                suite contract.
               </div>
             </div>
           ) : null}
@@ -325,86 +311,103 @@ export function GoalCompletionCard({
       !inFlight &&
       !error &&
       !failedGeneration ? null : (
-      <div className="border-t border-border/50">
-        {inFlight ? (
-          <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Grading final answers…
-          </div>
-        ) : error ? (
-          <div className="px-3 py-4 text-sm text-destructive">{error}</div>
-        ) : failedGeneration ? (
-          <div className="px-3 py-4 text-sm text-muted-foreground">
-            We could not finish grading. Adjust the model or threshold and
-            retry.
-          </div>
-        ) : !goalCompletion ? (
-          <div className="px-3 py-4 text-sm text-muted-foreground">
-            Advisory grading against each case&apos;s objective. Never
-            changes the run&apos;s pass/fail.
-          </div>
-        ) : cases.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-muted-foreground">
-            This run wasn&apos;t graded — no completed cases were available to
-            judge. Re-run the judge to grade against the current suite config.
-          </div>
-        ) : (
-          <>
-            {goalCompletion.summary?.trim() ? (
-              <p className="border-b border-border/40 px-3 py-2.5 text-sm text-muted-foreground">
-                {goalCompletion.summary.trim()}
-              </p>
-            ) : null}
-            {disagreements.length > 0 ? (
-              <>
-                <div className="px-3 pb-1 pt-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
-                  Disagrees with pass/fail · {disagreements.length}
-                </div>
-                <ul className="divide-y divide-border/40">
-                  {disagreements.map((c) => {
-                    const title = titleByCaseKey.get(c.caseKey) ?? c.caseKey;
-                    return (
-                      <li
-                        key={c.caseKey}
-                        className="flex items-start gap-3 px-3 py-2.5"
-                      >
-                        <span className="mt-0.5 w-10 shrink-0 text-right text-sm font-semibold tabular-nums">
-                          {formatScore(c.score)}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-medium text-foreground">
-                              {title}
-                            </span>
-                            <ScoreBadge passed={c.passed} />
-                          </div>
-                          {c.reason ? (
-                            <div className="mt-0.5 text-[13px] text-muted-foreground">
-                              {c.reason}
-                            </div>
-                          ) : null}
-                        </div>
-                      </li>
-                    );
-                  })}
+        <div className="border-t border-border/50">
+          {inFlight ? (
+            <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {/* "Processed", not "graded": the counter advances on an
+                  iteration the judge could not grade as well as one it did,
+                  and a number that claims more grading than happened is the
+                  kind of small lie that makes the rest of the card suspect. */}
+              {run.goalCompletionProgress
+                ? `Processed ${run.goalCompletionProgress.completed} of ${run.goalCompletionProgress.total} iterations…`
+                : "Grading recorded traces…"}
+            </div>
+          ) : error ? (
+            <div className="px-3 py-4 text-sm text-destructive">{error}</div>
+          ) : failedGeneration &&
+            cases.length === 0 &&
+            ungraded.length === 0 ? (
+            <div className="px-3 py-4 text-sm text-muted-foreground">
+              We could not finish grading. Retry the ungraded iterations.
+            </div>
+          ) : !goalCompletion ? (
+            <div className="px-3 py-4 text-sm text-muted-foreground">
+              Advisory grading against each case&apos;s objective. Never changes
+              the run&apos;s pass/fail.
+            </div>
+          ) : cases.length === 0 && ungraded.length === 0 ? (
+            <div className="px-3 py-4 text-sm text-muted-foreground">
+              This run wasn&apos;t graded — no completed cases were available to
+              judge. Re-run the judge to grade against the current suite config.
+            </div>
+          ) : (
+            <>
+              {ungraded.length > 0 ? (
+                <ul className="px-3 py-2 text-sm text-muted-foreground">
+                  {ungraded.map((c) => (
+                    <li key={c.iterationId ?? c.gradingKey ?? c.caseKey}>
+                      {c.status === "skipped" ? "Skipped" : "Couldn’t grade"}:{" "}
+                      {c.reason}
+                    </li>
+                  ))}
                 </ul>
-              </>
-            ) : (
-              <p className="px-3 py-2.5 text-[13px] text-muted-foreground">
-                All {cases.length} graded {cases.length === 1 ? "case" : "cases"}{" "}
-                agree with the deterministic pass/fail ({advisoryPassed}/
-                {cases.length} meet goal). Per-case scores are inline on each
-                case.
+              ) : null}
+              {goalCompletion.summary?.trim() ? (
+                <p className="border-b border-border/40 px-3 py-2.5 text-sm text-muted-foreground">
+                  {goalCompletion.summary.trim()}
+                </p>
+              ) : null}
+              {disagreements.length > 0 ? (
+                <>
+                  <div className="px-3 pb-1 pt-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                    Disagrees with pass/fail · {disagreements.length}
+                  </div>
+                  <ul className="divide-y divide-border/40">
+                    {disagreements.map((c) => {
+                      const title = titleByCaseKey.get(c.caseKey) ?? c.caseKey;
+                      return (
+                        <li
+                          key={c.iterationId ?? c.gradingKey ?? c.caseKey}
+                          className="flex items-start gap-3 px-3 py-2.5"
+                        >
+                          <span className="mt-0.5 w-10 shrink-0 text-right text-sm font-semibold tabular-nums">
+                            {formatScore(c.score)}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-medium text-foreground">
+                                {title}
+                              </span>
+                              <ScoreBadge passed={c.passed} />
+                            </div>
+                            {c.reason ? (
+                              <div className="mt-0.5 text-[13px] text-muted-foreground">
+                                {c.reason}
+                              </div>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              ) : (
+                <p className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                  All {cases.length} graded{" "}
+                  {cases.length === 1 ? "case" : "cases"} agree with the
+                  deterministic pass/fail ({advisoryPassed}/{cases.length} meet
+                  goal). Per-case scores are inline on each case.
+                </p>
+              )}
+              <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
+                Judged by {goalCompletion.modelUsed} · pass when score ≥{" "}
+                {goalCompletion.threshold}. Advisory only — never changes the
+                run&apos;s pass/fail.
               </p>
-            )}
-            <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
-              Judged by {goalCompletion.modelUsed} · pass when score ≥{" "}
-              {goalCompletion.threshold}. Advisory only — never changes the
-              run&apos;s pass/fail.
-            </p>
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </div>
       )}
     </section>
   );

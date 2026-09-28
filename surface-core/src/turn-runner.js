@@ -308,6 +308,10 @@ export async function runTurnForEvent(args) {
 			(error.code === "CONFIG" ||
 				error.code === "NO_PROJECT" ||
 				error.code === "UNAUTHORIZED");
+		if (error instanceof McpjamApiError && error.code === "AGENT_JOB_PENDING") {
+			claimDedupe.release(eventKey);
+			throw error;
+		}
 		if (!state.dispatched || preflightFailure) {
 			claimDedupe.release(eventKey);
 			if (durable)
@@ -371,6 +375,9 @@ export async function runTurn({
 /** @param {any} value */
 function normalizeResult(value) {
 	return {
+		...(value?.replyHandle
+			? { replyHandle: value.replyHandle, jobId: value.jobId }
+			: {}),
 		reply: typeof value?.reply === "string" ? value.reply : "",
 		toolCalls: Array.isArray(value?.toolCalls) ? value.toolCalls : [],
 		createdResources: Array.isArray(value?.createdResources)

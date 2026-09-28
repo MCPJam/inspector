@@ -8,6 +8,7 @@ import {
 } from "@/lib/excalidraw-quick-connect";
 import { QUICKSTART_SUITE_TAG } from "@/components/evals/constants";
 import { navigatePlaygroundEvalsRoute } from "@/components/evals/create-suite-navigation";
+import type { EvalRoute } from "@/lib/eval-route-types";
 import { EXCALIDRAW_QUICKSTART_CASES } from "./excalidraw-quickstart-cases";
 import type { ServerFormData } from "@/shared/types.js";
 import {
@@ -22,10 +23,12 @@ type CreateSuiteArgs = {
   projectId: string;
   name: string;
   description?: string;
-  environment: { servers: string[] };
+  environment?: { servers: string[] };
   tags?: string[];
   serverAttachmentId?: string;
   hostAttachments?: HostAttachmentDraft[];
+  /** `createSuiteWithEnvironments`: the suite is born an environment suite. */
+  environmentTargets?: Array<{ hostId: string; serverAttachmentId: string }>;
 };
 
 type CreateSuiteResult = { _id: string } | null | undefined;
@@ -74,6 +77,18 @@ export type RunExcalidrawQuickstartOptions = {
    * user is already working with, instead of just `hosts[0]`.
    */
   previewedHostId: string | null;
+  /**
+   * The backend creates environment suites in one call
+   * (`createSuiteWithEnvironments`). The quickstart then makes one: the
+   * previewed client with the Excalidraw group, instead of a legacy suite.
+   */
+  environmentSuites?: boolean;
+  /**
+   * Where to land once the suite exists. Defaults to the shipped Evals tab;
+   * Evaluate (New) passes its own so the quickstart does not drop the reader
+   * into the other surface's copy of the same suite.
+   */
+  navigate?: (route: EvalRoute) => void;
 };
 
 const SERVER_WAIT_TIMEOUT_MS = 15_000;
@@ -177,6 +192,8 @@ export async function runExcalidrawQuickstart(
     isExcalidrawConnected,
     existingQuickstartSuiteId,
     previewedHostId,
+    environmentSuites = false,
+    navigate = navigatePlaygroundEvalsRoute,
   } = options;
 
   track("eval_excalidraw_quickstart_clicked", {
@@ -187,7 +204,7 @@ export async function runExcalidrawQuickstart(
   });
 
   if (existingQuickstartSuiteId) {
-    navigatePlaygroundEvalsRoute({
+    navigate({
       type: "suite-overview",
       suiteId: existingQuickstartSuiteId,
     });
@@ -201,10 +218,7 @@ export async function runExcalidrawQuickstart(
   // The Convex projectServers row lags the local connect dispatch; without
   // an id we can't build a server attachment, so the chip would render
   // "pick one" on the new suite. Poll until the row materializes.
-  const excalidrawServerId = await waitForExcalidrawServerId(
-    convex,
-    projectId,
-  );
+  const excalidrawServerId = await waitForExcalidrawServerId(convex, projectId);
   if (!excalidrawServerId) {
     toast.error(
       "Could not connect to the Excalidraw server in time. Try again in a moment.",
@@ -234,15 +248,28 @@ export async function runExcalidrawQuickstart(
 
   let createdSuiteId: string | null = null;
   try {
-    const created = await createTestSuite({
-      projectId,
-      name: EXCALIDRAW_QUICKSTART_SUITE_NAME,
-      description: "Curated cases for the Excalidraw MCP server.",
-      environment: { servers: [EXCALIDRAW_SERVER_NAME] },
-      tags: [QUICKSTART_SUITE_TAG],
-      serverAttachmentId,
-      ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
-    });
+    const created = await createTestSuite(
+      environmentSuites && hostAttachments.length > 0
+        ? {
+            projectId,
+            name: EXCALIDRAW_QUICKSTART_SUITE_NAME,
+            description: "Curated cases for the Excalidraw MCP server.",
+            tags: [QUICKSTART_SUITE_TAG],
+            environmentTargets: hostAttachments.map((attachment) => ({
+              hostId: attachment.namedHostId,
+              serverAttachmentId,
+            })),
+          }
+        : {
+            projectId,
+            name: EXCALIDRAW_QUICKSTART_SUITE_NAME,
+            description: "Curated cases for the Excalidraw MCP server.",
+            environment: { servers: [EXCALIDRAW_SERVER_NAME] },
+            tags: [QUICKSTART_SUITE_TAG],
+            serverAttachmentId,
+            ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
+          },
+    );
     createdSuiteId = created?._id ?? null;
   } catch (error) {
     console.error("Excalidraw quickstart: create suite failed", error);
@@ -289,14 +316,12 @@ export async function runExcalidrawQuickstart(
       `Created ${createdCases} of ${EXCALIDRAW_QUICKSTART_CASES.length} cases. The suite is ready — you can fill in the rest manually.`,
     );
   } else if (hostAttachments.length === 0) {
-    toast.success(
-      "Excalidraw quickstart ready. Attach a client to run it.",
-    );
+    toast.success("Excalidraw quickstart ready. Attach a client to run it.");
   } else {
     toast.success("Excalidraw quickstart ready. Connect, then run.");
   }
 
-  navigatePlaygroundEvalsRoute({
+  navigate({
     type: "suite-overview",
     suiteId: createdSuiteId,
   });

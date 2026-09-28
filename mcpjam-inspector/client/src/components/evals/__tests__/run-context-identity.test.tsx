@@ -81,7 +81,7 @@ describe("runContextKey", () => {
     expect(runContextKey(hostRun("r1", "host-claude"))).toBe(
       "host:host-claude"
     );
-    expect(runContextKey(hostRun("r2", undefined))).toBe("host:none");
+    expect(runContextKey(hostRun("r2", undefined))).toBe("style:unknown");
   });
 
   it("does not conflate a host-keyed run with an environment-keyed one", () => {
@@ -115,6 +115,21 @@ describe("buildHostNamesById", () => {
     expect(names.get("host-claude")).toBe("Claude (suite)");
     expect(names.get("host-cursor")).toBe("Cursor");
   });
+
+  it("keeps a derived display name when an attachment stores the raw name", () => {
+    const names = buildHostNamesById(
+      [{ namedHostId: "host-cursor", hostName: "Cursor" }],
+      [
+        {
+          hostId: "host-cursor",
+          name: "Cursor",
+          displayName: "Cursor #2",
+        },
+      ],
+    );
+
+    expect(names.get("host-cursor")).toBe("Cursor #2");
+  });
 });
 
 describe("runContextLabel / runRevisionLabel", () => {
@@ -143,8 +158,8 @@ describe("runContextLabel / runRevisionLabel", () => {
     ).toBe("host-cla");
   });
 
-  it("returns null when a run names neither an environment nor a host", () => {
-    expect(runContextLabel(hostRun("r1", undefined))).toBeNull();
+  it("uses a neutral suite default for a pre-descriptor run", () => {
+    expect(runContextLabel(hostRun("r1", undefined))).toBe("Suite default");
   });
 
   it("puts the exact revision on the run — and never on a legacy run", () => {

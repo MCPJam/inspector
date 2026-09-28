@@ -1,3 +1,5 @@
+import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { ComponentProps } from "react";
 
 import { ErrorBox } from "@/components/chat-v2/error";
@@ -7,19 +9,55 @@ import { useCreditTopupPresets } from "@/hooks/useCreditTopup";
 type ErrorBoxProps = ComponentProps<typeof ErrorBox>;
 type TopupGatedErrorBoxProps = ErrorBoxProps & {
   /** Whether the current user may purchase credits for the active org.
-   * When false, the buy button is replaced by an "ask org admin" hint. */
+   * Members request credits; Free admins and members request an upgrade. */
   canManageCredits?: boolean;
+  organizationId?: string | null;
 };
 
-function GatedInner({ canTopUp, onTopUp, ...rest }: ErrorBoxProps) {
-  const { presets } = useCreditTopupPresets({ skip: canTopUp !== true });
-  const hasPresets = (presets?.length ?? 0) > 0;
-  const showCta = canTopUp === true && hasPresets;
+function GatedInner({
+  canTopUp: _canTopUp,
+  onTopUp,
+  canManageCredits,
+  organizationId,
+  ...rest
+}: TopupGatedErrorBoxProps) {
+  const { effectivePlan, canManageBilling, isLoadingBilling } =
+    useUpgradeCheckout({
+      organizationId: organizationId ?? null,
+      origin: "credits",
+      limitKind: "credits",
+    });
+  const free = effectivePlan === "free";
+  const { presets } = useCreditTopupPresets({
+    skip: isLoadingBilling || free || !canManageCredits,
+  });
+  const showCta =
+    !isLoadingBilling &&
+    (free || !canManageCredits || (presets?.length ?? 0) > 0);
+  const label = free
+    ? canManageBilling
+      ? "Compare plans"
+      : "Request upgrade"
+    : canManageCredits
+    ? "Buy credits to keep chatting"
+    : "Request credits";
   return (
     <ErrorBox
       {...rest}
       canTopUp={showCta}
-      onTopUp={showCta ? onTopUp : undefined}
+      creditActionLabel={label}
+      onTopUp={
+        showCta
+          ? free || !canManageCredits
+            ? () =>
+                useMCPJamLimitDialogStore
+                  .getState()
+                  .notifyLimitHit({
+                    organizationId: organizationId ?? undefined,
+                  })
+            : onTopUp
+          : undefined
+      }
     />
   );
 }
@@ -31,19 +69,10 @@ export function TopupGatedErrorBox({
   const plainErrorBox = (
     <ErrorBox {...props} canTopUp={false} onTopUp={undefined} />
   );
-  // Top-up isn't the relevant fix for this error — render plainly.
   if (props.canTopUp !== true) return plainErrorBox;
-  // Top-up is relevant but the user can't buy credits: point them at an
-  // admin instead of a button the backend would reject. No need to load
-  // presets in this case.
-  if (!canManageCredits) {
-    return (
-      <ErrorBox {...props} canTopUp={false} onTopUp={undefined} askAdminToTopUp />
-    );
-  }
   return (
     <ErrorBoundary fallback={plainErrorBox}>
-      <GatedInner {...props} />
+      <GatedInner {...props} canManageCredits={canManageCredits} />
     </ErrorBoundary>
   );
 }

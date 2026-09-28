@@ -131,6 +131,87 @@ describe("buildStageAuthoredCase", () => {
     });
   });
 
+  // ── UVH-IN1: the per-kind tool-call predicate matrix ─────────────────────
+  //
+  // The three kinds do NOT share applicability, and treating them as one group
+  // gets a case wrong in both directions: a positive assertion that leaves
+  // `call` inapplicable, or a forbidden-call assertion that demands evidence
+  // of the very call it exists to rule out.
+
+  const toolPredicateStep = (id: string, type: string): TestStep =>
+    ({
+      id,
+      kind: "assert",
+      assertion: { type, toolName: "get_project" },
+    }) as TestStep;
+
+  it.each(["toolCalledAtLeastOnce", "firstToolWas"])(
+    "%s expects a tool call and is not a user-value assertion",
+    (type) => {
+      const result = buildStageAuthoredCase({
+        test: {},
+        steps: [toolPredicateStep("a1", type)],
+        caseNeedsModel: true,
+      });
+      expect(result).toEqual({
+        mode: "model_driven",
+        expectsToolCall: true,
+        expectsWidgetRender: false,
+        // Routed to `selection`, so it cannot also be what grades user value.
+        assertionCount: 0,
+      });
+    }
+  );
+
+  it("toolNeverCalled does NOT expect a tool call", () => {
+    // The asymmetry that makes this a matrix rather than a set. A case whose
+    // only tool assertion forbids a call expects none; turning `call` on would
+    // demand evidence of the thing the case exists to forbid.
+    const result = buildStageAuthoredCase({
+      test: {},
+      steps: [toolPredicateStep("a1", "toolNeverCalled")],
+      caseNeedsModel: true,
+    });
+    expect(result).toEqual({
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    });
+  });
+
+  it("excludes tool-call predicates from assertionCount, keeping the rest", () => {
+    const result = buildStageAuthoredCase({
+      test: {
+        successPredicates: [
+          { type: "toolCalledAtLeastOnce", toolName: "get_project" },
+          { type: "responseContains", needle: "Refunded" },
+        ],
+      },
+      steps: [
+        toolPredicateStep("a1", "toolNeverCalled"),
+        predicateAssertStep("a2"),
+      ],
+      caseNeedsModel: true,
+    });
+    // Two user-value assertions survive: `responseContains` and `noToolErrors`.
+    expect(result.assertionCount).toBe(2);
+    expect(result.expectsToolCall).toBe(true);
+  });
+
+  it("a widget assertion is never mistaken for a predicate kind", () => {
+    // Widget assertions are keyed by `kind`, not `type`, so reading `.type`
+    // off one must not accidentally match a selection kind.
+    const result = buildStageAuthoredCase({
+      test: {},
+      steps: [widgetAssertStep("a1")],
+      caseNeedsModel: true,
+    });
+    expect(result.assertionCount).toBe(1);
+    expect(result.expectsWidgetRender).toBe(true);
+    expect(result.expectsToolCall).toBe(false);
+  });
+
   it("carries isNegativeTest through only when the case sets it", () => {
     expect(
       "isNegativeTest" in

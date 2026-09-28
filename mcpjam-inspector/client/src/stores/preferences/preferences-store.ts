@@ -1,3 +1,4 @@
+import { resolveThemeMode } from "@/lib/theme-mode";
 import { createStore } from "zustand/vanilla";
 
 import {
@@ -5,10 +6,16 @@ import {
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
-import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
+import type {
+  ThemeMode,
+  ThemePreference,
+  ThemePreset,
+} from "@/types/preferences/theme";
 
 export type PreferencesState = {
   themeMode: ThemeMode;
+  themePreference: ThemePreference;
+  setThemePreference: (preference: ThemePreference) => void;
   themePreset: ThemePreset;
   hostStyle: ScenarioHostStyle;
   /**
@@ -32,10 +39,11 @@ export type PreferencesState = {
   chatUiOverride: ChatUiOverride | undefined;
   /**
    * When true (default), entering the Servers tab, a host page, or the
-   * Playground triggers a one-shot batch connect of all project servers.
-   * The toggle in the Servers tab header writes here. Disabling it leaves
-   * every server untouched until the user manually flips its per-card
-   * connect switch.
+   * Playground triggers a one-shot batch connect of every server in the
+   * project catalog. Personal and per-device: the Auto-connect switch in
+   * the Servers tab header writes here, and nothing project-side reads it.
+   * Disabling it leaves every server untouched until the user manually
+   * flips its per-card connect switch.
    */
   autoConnectServersEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;
@@ -138,6 +146,7 @@ function getStoredHostCapabilitiesOverride():
 export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
   createStore<PreferencesState>()((set) => ({
     themeMode: init?.themeMode ?? "light",
+    themePreference: init?.themePreference ?? init?.themeMode ?? "light",
     themePreset: init?.themePreset ?? "default",
     hostStyle: init?.hostStyle ?? getStoredHostStyle(),
     hostCapabilitiesOverride:
@@ -156,7 +165,18 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
       } catch (error) {
         console.warn("Failed to persist theme mode:", error);
       }
-      set({ themeMode: mode });
+      set({ themeMode: mode, themePreference: mode });
+    },
+    setThemePreference: (preference) => {
+      try {
+        localStorage.setItem(THEME_MODE_KEY, preference);
+      } catch (error) {
+        console.warn("Failed to persist theme preference:", error);
+      }
+      set({
+        themePreference: preference,
+        themeMode: resolveThemeMode(preference),
+      });
     },
     setThemePreset: (preset) => {
       try {

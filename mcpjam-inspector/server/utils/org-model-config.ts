@@ -1,3 +1,8 @@
+import {
+  verifyGithubCredentialAccess,
+  githubExecutionPolicy,
+} from "../services/github-checks/credential-policy.js";
+import type { ModelWorkload } from "./model-workload.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
@@ -5,15 +10,21 @@ import {
   isBedrockModelId,
   type ModelDefinition,
 } from "@/shared/types";
-import { classifyModelIdProvider } from "@/shared/model-provider";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import {
+  classifyModelIdProvider,
+  isRuntimeChosenModelSentinel,
+  runtimeChosenModelSentinelName,
+} from "@/shared/model-provider";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
+import { selectionKey, type ModelSelection } from "@mcpjam/sdk";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
   isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
 } from "@/shared/local-only-mcp";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
+import { backendFailureText } from "./backend-failure-text.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -162,9 +173,10 @@ export async function resolveOrgModelConfig(
 
   const authHeader = normalizeAuthHeader(auth);
   const serverIds = normalizeServerIds(auth?.serverIds);
+  await verifyGithubCredentialAccess();
   const cacheKey = buildCacheKey(params, auth);
   const cached = resolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!githubExecutionPolicy() && cached && cached.expiresAt > Date.now()) {
     return cached.result;
   }
 
@@ -198,7 +210,12 @@ export async function resolveOrgModelConfig(
       let message = `Org model config resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore parse failure
       }
@@ -211,7 +228,14 @@ export async function resolveOrgModelConfig(
       providers?: ResolvedProviderConfig[];
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org model config");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org model config",
+        }),
+      );
     }
 
     let providers = data.providers ?? [];
@@ -249,10 +273,12 @@ export async function resolveOrgModelConfig(
     }
 
     const result: ResolvedOrgModelConfig = { providers };
-    resolveCache.set(cacheKey, {
-      result,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
+    if (!githubExecutionPolicy()) {
+      resolveCache.set(cacheKey, {
+        result,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+    }
     return result;
   } finally {
     clearTimeout(timeout);
@@ -274,6 +300,28 @@ export type DeriveOrgProviderKeyResult =
 export function deriveOrgProviderKey(
   modelDefinition: ModelDefinition,
 ): DeriveOrgProviderKeyResult {
+  // A RUNTIME-CHOSEN SENTINEL has no provider key, and inventing one is the
+  // bug: `cursor` is a registered ModelProvider so `cursor/auto` classifies
+  // honestly, but nobody can configure a BYOK `cursor` key — the request goes
+  // to Convex and comes back `provider_not_configured: cursor is not enabled
+  // for this project/workspace organization`, which reads as a setup mistake
+  // the customer could fix. They cannot. Refuse HERE, where the caller still
+  // has the context to say what actually went wrong, rather than asking the
+  // org-provider config a question about a model no provider serves.
+  const sentinelName = runtimeChosenModelSentinelName(
+    String(modelDefinition.id),
+  );
+  if (sentinelName) {
+    return {
+      ok: false,
+      error:
+        `"${String(modelDefinition.id)}" (${sentinelName}) is a placeholder ` +
+        "for a runtime that chooses its own model on your own account — it " +
+        "names no model provider, so there is no key to configure for it. " +
+        "Run this turn on a host whose harness provides that runtime, or " +
+        "pick a real model.",
+    };
+  }
   if (modelDefinition.provider === "custom") {
     if (!modelDefinition.customProviderName) {
       return {
@@ -470,6 +518,8 @@ function buildRuntimeCacheKey(
   providerKey: string,
   model: string,
   auth: ResolveOrgModelConfigAuth | undefined,
+  modelSelection?: ModelSelection,
+  modelWorkload?: ModelWorkload,
 ): string {
   const authHash = createHash("sha256")
     .update(
@@ -485,7 +535,18 @@ function buildRuntimeCacheKey(
       }),
     )
     .digest("hex");
-  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}`;
+  // A selection-carrying resolve is re-authorized by the backend against its
+  // connection; it must never be answered from a legacy (or another
+  // connection's) cached entry. Admission facts also scope reuse: a text
+  // chat must never authorize a tool/image call or an unattended run.
+  const selectionPart = modelSelection
+    ? `:selection:${createHash("sha256").update(selectionKey(modelSelection)).digest("hex")}`
+    : "";
+  return `runtime:${formatTargetForCache(
+    target,
+  )}:${providerKey}:${model}:auth:${authHash}${selectionPart}:workload:${JSON.stringify(
+    modelWorkload ?? null,
+  )}`;
 }
 
 /**
@@ -504,29 +565,53 @@ export async function resolveOrgProviderRuntime(
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
   return resolveOrgProviderRuntimeForTarget(
     { projectId },
     providerKey,
     model,
     auth,
+    options,
   );
 }
 
+/**
+ * `options.modelSelection`: the saved org selection behind this request, sent
+ * as the body's `modelSelection` so the backend re-resolves its connection
+ * (a deleted, disabled or moved connection is refused `credential_missing`)
+ * before it decrypts any key. Only an `org` selection is sent; a backend
+ * that predates selections ignores the field and resolves the legacy way.
+ * `options.modelWorkload` carries only admission facts, never prompt content.
+ * Callers must derive it after preparing the effective tools and messages.
+ */
 export async function resolveOrgProviderRuntimeForTarget(
   target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
+  const modelSelection =
+    options?.modelSelection?.source === "org"
+      ? options.modelSelection
+      : undefined;
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
-  const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
+  await verifyGithubCredentialAccess();
+  const cacheKey = buildRuntimeCacheKey(
+    target,
+    providerKey,
+    model,
+    auth,
+    modelSelection,
+    options?.modelWorkload,
+  );
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (!githubExecutionPolicy() && cached && cached.expiresAt > now) {
     return cached.result;
   }
 
@@ -556,6 +641,10 @@ export async function resolveOrgProviderRuntimeForTarget(
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
+        ...(options?.modelWorkload
+          ? { modelWorkload: options.modelWorkload }
+          : {}),
       }),
       signal: controller.signal,
     });
@@ -565,7 +654,12 @@ export async function resolveOrgProviderRuntimeForTarget(
       let message = `Org runtime resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore
       }
@@ -580,7 +674,14 @@ export async function resolveOrgProviderRuntimeForTarget(
       providerKey?: unknown;
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org provider runtime");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org provider runtime",
+        }),
+      );
     }
 
     if (data.runtimeLocation === "local") {
@@ -628,10 +729,12 @@ export async function resolveOrgProviderRuntimeForTarget(
 
   const writeNow = Date.now();
   pruneRuntimeResolveCache(writeNow);
-  runtimeResolveCache.set(cacheKey, {
-    result,
-    expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
-  });
+  if (!githubExecutionPolicy()) {
+    runtimeResolveCache.set(cacheKey, {
+      result,
+      expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
+    });
+  }
   return result;
 }
 
@@ -641,16 +744,29 @@ export async function resolveOrgProviderRuntimeForTarget(
 // makes per session.
 // ---------------------------------------------------------------------------
 
-/** Persisted attribution label on chatSessions / llmUsageRecord rows. */
-export type SyntheticModelSource = "mcpjam" | "byok" | "local_byok";
+/**
+ * Persisted attribution label on chatSessions / llmUsageRecord rows.
+ *
+ * `"external-account"` — the customer's own account with the RUNTIME vendor
+ * (Cursor), where MCPJam holds no model credential at all. Distinct from
+ * `"byok"` on purpose: both mean "MCPJam is not charged", but byok also asserts
+ * a configured model PROVIDER and its key, which an external-account turn does
+ * not have. Mirrors `PersistChatSessionOptions["modelSource"]`.
+ */
+export type SyntheticModelSource =
+  | "mcpjam"
+  | "byok"
+  | "local_byok"
+  | "external-account";
 
 /**
  * Result of {@link resolveSyntheticModelSource}.
  *
- * `orgRuntime` is present when `source !== "mcpjam"` so the synthetic
+ * `orgRuntime` is present when the source is a BYOK one, so the synthetic
  * dispatcher can reuse the resolved runtime (cloud providerKey OR local
  * `OrgProviderResolvedConfig`) for the actual handler call — no
- * duplicate `resolveOrgProviderRuntime` round-trip.
+ * duplicate `resolveOrgProviderRuntime` round-trip. Absent for `"mcpjam"` and
+ * for `"external-account"`, neither of which resolves an org provider.
  */
 export interface SyntheticModelResolution {
   source: SyntheticModelSource;
@@ -685,10 +801,25 @@ export async function resolveSyntheticModelSource(args: {
   scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
+  /**
+   * The saved `org` selection behind this model, forwarded to
+   * `/stream/org/resolve` so the backend re-checks its connection. Any other
+   * source is not sent.
+   */
+  modelSelection?: ModelSelection;
+  modelWorkload?: ModelWorkload;
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isHostedCatalogModel(modelIdStr)) {
+  if (isHostedModelDefinition(args.modelDefinition)) {
     return { source: "mcpjam" };
+  }
+  // A runtime-chosen sentinel resolves NO org provider — see
+  // `deriveOrgProviderKey`. Answered before the key derivation below so the
+  // resolver returns an attribution ("nobody billed MCPJam, and there is no
+  // configured provider either") instead of throwing on a key it must not ask
+  // for. `orgRuntime` is deliberately absent: there is no runtime to reuse.
+  if (isRuntimeChosenModelSentinel(modelIdStr)) {
+    return { source: "external-account" };
   }
   const keyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!keyResult.ok) {
@@ -707,6 +838,12 @@ export async function resolveSyntheticModelSource(args: {
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
+        {
+          ...(args.modelSelection?.source === "org"
+            ? { modelSelection: args.modelSelection }
+            : {}),
+          ...(args.modelWorkload ? { modelWorkload: args.modelWorkload } : {}),
+        },
       )
     : { runtimeLocation: "cloud", providerKey: keyResult.key };
   return {
@@ -724,6 +861,9 @@ export async function resolveSyntheticModelSource(args: {
 /**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
  * `runtime.config.modelId` returns from `fetchScenarioRuntimeConfig`).
+ *
+ * Optional routing provenance comes from the pinned snapshot, never the live
+ * host. Omitted keeps legacy inference; copying avoids mutating the catalog.
  *
  * Resolution order:
  *   1. Blank id — THROWS. An unpinned host persists modelId "", and without
@@ -747,6 +887,7 @@ export async function resolveSyntheticModelSource(args: {
  */
 export function buildSyntheticModelDefinition(
   modelId: string,
+  routing: Pick<ModelDefinition, "hosted"> = {},
 ): ModelDefinition {
   const classification = classifyModelIdProvider(modelId);
   // Both interactive host-wins call sites gate on a truthy modelId before
@@ -758,11 +899,20 @@ export function buildSyntheticModelDefinition(
   }
 
   const supported = getModelById(modelId);
-  if (supported) return supported;
+  if (supported) {
+    return routing.hosted === undefined
+      ? supported
+      : { ...supported, hosted: routing.hosted };
+  }
 
   return {
     id: modelId,
-    name: modelId,
+    // A runtime-chosen sentinel gets its curated label ("Cursor Auto"); every
+    // other unknown id keeps the raw string, which is all there is to show.
+    // The id itself is NEVER rewritten — it is what traces and eval metadata
+    // record, and the whole point of the sentinel is that it names no model.
+    name: runtimeChosenModelSentinelName(modelId) ?? modelId,
+    ...(routing.hosted !== undefined ? { hosted: routing.hosted } : {}),
     provider: classification.provider,
     ...(classification.customProviderName !== undefined
       ? { customProviderName: classification.customProviderName }
@@ -789,11 +939,16 @@ export function matchOrgProviderForModelId(
   for (const p of config.providers) {
     if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
       if (p.selectedModels?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: p.providerKey };
+        return {
+          id: modelId,
+          name: modelId,
+          provider: p.providerKey,
+          hosted: false,
+        };
       }
     } else if (p.providerKey === "ollama") {
       if (p.modelIds?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: "ollama" };
+        return { id: modelId, name: modelId, provider: "ollama", hosted: false };
       }
     } else if (p.providerKey.startsWith("custom:")) {
       const slug = p.providerKey.slice("custom:".length);
@@ -807,6 +962,7 @@ export function matchOrgProviderForModelId(
           name: modelId,
           provider: "custom",
           customProviderName: slug,
+          hosted: false,
         };
       }
     }
@@ -824,7 +980,8 @@ export function matchOrgProviderForModelId(
  * id, that provider wins; catalog/shape inference is the fallback.
  *
  * `custom:`-prefixed and Bedrock-shaped ids skip the config fetch — their
- * shape is exact, and this path sits on a live chat turn.
+ * shape is exact, and this path sits on a live chat turn. So does a
+ * runtime-chosen sentinel, which no org provider can list.
  */
 export async function resolveHostModelDefinition(args: {
   modelId: string;
@@ -835,7 +992,15 @@ export async function resolveHostModelDefinition(args: {
 
   const shapeIsExact =
     modelId.startsWith("custom:") || isBedrockModelId(modelId);
-  if (!shapeIsExact && projectId) {
+  // A RUNTIME-CHOSEN SENTINEL skips the fetch for a different reason than the
+  // exact shapes above: not "we already know which provider serves it" but "no
+  // provider serves it at all". `matchOrgProviderForModelId` can only ever miss
+  // on `cursor/auto`, so the round-trip is pure cost — and not a cheap one on a
+  // live turn: `resolveOrgModelConfig` carries a 15 s timeout, and this call
+  // sits between the request and the first token of an external-account harness
+  // turn that needs nothing from the org's model config.
+  const skipOrgConfig = shapeIsExact || isRuntimeChosenModelSentinel(modelId);
+  if (!skipOrgConfig && projectId) {
     try {
       const config = await resolveOrgModelConfig({ projectId }, auth);
       const fromConfig = matchOrgProviderForModelId(config, modelId);

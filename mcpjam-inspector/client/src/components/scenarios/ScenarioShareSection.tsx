@@ -20,8 +20,14 @@ import type { ShareMemberView } from "@/components/sharing/share-types";
 interface ScenarioShareSectionProps {
   scenario: ScenarioSettings;
   onUpdated?: (scenario: ScenarioSettings) => void;
-  /** Shown as the project-wide access option label (e.g. current project name). */
-  projectName?: string | null;
+  /** Off in the Share modal — roster management stays on the settings page. */
+  showMembers?: boolean;
+  /**
+   * Off in the Share modal. Rotating invalidates every URL already handed
+   * out; it belongs behind the settings page, not one click from a button
+   * whose whole job is handing the URL out.
+   */
+  allowRotate?: boolean;
 }
 
 function memberView(member: ScenarioMember): ShareMemberView {
@@ -39,7 +45,8 @@ function memberView(member: ScenarioMember): ShareMemberView {
 export function ScenarioShareSection({
   scenario,
   onUpdated,
-  projectName,
+  showMembers = true,
+  allowRotate = true,
 }: ScenarioShareSectionProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -57,7 +64,6 @@ export function ScenarioShareSection({
     setSettings(scenario);
   }, [scenario]);
 
-  const projectLabel = projectName?.trim() || "Project";
   const accessPreset = scenarioAccessPresetFromSettings(
     settings.mode,
     settings.allowGuestAccess,
@@ -87,24 +93,32 @@ export function ScenarioShareSection({
             value: "invited_only",
             label: "Invited users only",
             description:
-              "Only people you invite by email can open this scenario.",
+              "Only people you invite by email can open this study.",
           },
           {
             value: "link_guests",
-            label: "Anyone with the link (guests included)",
-            description:
-              "Anyone with the link can open the scenario, including guests without an account.",
+            label: settings.requiresSignIn
+              ? "Anyone with the link who is signed in"
+              : "Anyone with the link (guests included)",
+            description: settings.requiresSignIn
+              ? "Testers must sign in or create an account to preview and test this study."
+              : "Anyone with the link can open the study, including guests without an account.",
           },
           {
             value: "project",
-            label: projectLabel,
+            // This option used to be labeled with the project's NAME — a third
+            // way of saying one thing, beside the sidebar's "team members" and
+            // the create flow's "Project members" (BB-203). No caller ever
+            // passed a name, so what actually rendered was the literal word
+            // "Project"; the prop went with it.
+            label: "Team members",
             description:
-              "Signed-in members of this project can open the scenario with the link. Guests cannot.",
+              "Signed-in team members can open the study with the link. Guests cannot.",
           },
         ],
         settings.maxShareMode,
       ),
-    [projectLabel, settings.maxShareMode],
+    [settings.maxShareMode, settings.requiresSignIn],
   );
 
   const updateSettings = (next: ScenarioSettings) => {
@@ -127,18 +141,20 @@ export function ScenarioShareSection({
       currentPreset={accessPreset}
       presets={presets}
       disabledReason={unrunnableReason}
+      showMembers={showMembers}
       activeNote={
         accessPreset === "link_guests" ? (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Guest usage runs on your organization&apos;s credits. Guests are
-            people who open the link without being invited.
+            {settings.requiresSignIn
+              ? "Testers must sign in or create an account to preview and test this study."
+              : "Guest usage runs on your organization's credits. Guests are people who open the link without being invited."}
           </p>
         ) : null
       }
       copy={{
         linkLabel: "Tester link",
-        signedOutMessage: "Sign in to manage scenario access.",
-        withheldLabel: "Withheld — this scenario can't run.",
+        signedOutMessage: "Sign in to manage study access.",
+        withheldLabel: "Withheld: this study can't run.",
         rotateConfirmTitle: "Rotate this tester link?",
         rotateConfirmBody:
           "Anyone with the old URL will no longer be able to redeem it. Testers who already opened the link keep their access until you remove them.",
@@ -174,10 +190,13 @@ export function ScenarioShareSection({
           memberIdOrEmail: member.email,
         })) as ScenarioSettings
       }
-      onRotateLink={async () =>
-        (await rotateScenarioLink({
-          scenarioId: settings.scenarioId,
-        })) as ScenarioSettings
+      onRotateLink={
+        allowRotate
+          ? async () =>
+              (await rotateScenarioLink({
+                scenarioId: settings.scenarioId,
+              })) as ScenarioSettings
+          : undefined
       }
     />
   );

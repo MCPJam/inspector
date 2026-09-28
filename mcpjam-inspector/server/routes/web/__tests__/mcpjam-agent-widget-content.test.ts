@@ -294,3 +294,33 @@ describe("POST /api/web/mcpjam-agent/widget-content", () => {
     expect(managerState.disconnectAllServers).toHaveBeenCalled();
   });
 });
+
+describe("eval-scoped agent requests", () => {
+  const scope = { kind: "evals", version: 1, id: "scope-1", projectId: "project-a", suiteId: "suite-a", suiteName: "Support", caseId: "draft:describe" };
+  const request = (extra: Record<string, unknown> = {}) => makeApp().request("/api/web/mcpjam-agent", {
+    method: "POST", headers: { "content-type": "application/json", authorization: "Bearer user-token" },
+    body: JSON.stringify({ messages: [{ role: "user", parts: [{ type: "text", text: "Generate cases" }] }], model: { id: "anthropic/claude-haiku-4.5" }, chatSessionId: "eval-session", projectId: "project-a", evalScope: scope, ...extra }),
+  });
+  it("rejects missing scope and project mismatches", async () => {
+    expect((await request({ evalScope: undefined })).status).toBe(400);
+    expect((await request({ projectId: "project-b" })).status).toBe(400);
+    expect(streamWebChatTurn).not.toHaveBeenCalled();
+  });
+  it("filters UI tools and disables platform and built-in tool escape paths", async () => {
+    process.env.MCPJAM_AGENT_PLATFORM_TOOLS = "1";
+    try {
+      const response = await request({ systemPrompt: "Navigate to Playground", uiTools: [
+        { name: "ui_navigate", description: "Navigate", readOnly: false, inputSchema: { type: "object" } },
+        { name: "ui_eval_context", description: "Read evals", readOnly: true, inputSchema: { type: "object" } },
+      ] });
+      expect(response.status).toBe(200);
+      const args = streamWebChatTurn.mock.calls[0]![0] as any;
+      expect(args.prepare.uiTools.map((t: any) => t.name)).toEqual(["ui_eval_context"]);
+      expect(args.prepare.selectedServerIds).toEqual([]);
+      expect(args.prepare.builtInTools).toBeUndefined();
+      expect(args.prepare.systemPrompt).toContain("available only in Describe");
+      expect(args.prepare.systemPrompt).not.toContain("Navigate to Playground");
+      expect(managerState.constructedConfigs[0]).not.toHaveProperty(MCPJAM_PLATFORM_SERVER_ID);
+    } finally { delete process.env.MCPJAM_AGENT_PLATFORM_TOOLS; }
+  });
+});

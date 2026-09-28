@@ -258,6 +258,45 @@ describe("evals-api hosted mode", () => {
     expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
   });
 
+  it("opens the topup dialog when generation is refused inside a wrapped 500", async () => {
+    // The generate route wraps the backend refusal in its own message —
+    // `Failed to generate test cases: {…}` — under a generic code, so the
+    // limit has to be read out of the JSON suffix, not the envelope.
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      isOpen: false,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+    });
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "INTERNAL_ERROR",
+          message:
+            'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true,"organizationId":"org_1"}',
+        },
+        500
+      )
+    );
+
+    await expect(
+      generateEvalTests({
+        projectId: "project-1",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      })
+    ).rejects.toThrow("Failed to generate test cases");
+
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    expect(state.organizationId).toBe("org_1");
+  });
+
   it("rebuilds the eval-iteration billing error so getBillingErrorMessage renders the upgrade message", async () => {
     // The server forwards the original Convex billing payload on `details`
     // (HTTP 402). runEvals must rethrow it as a ConvexError so the shared
@@ -300,6 +339,7 @@ describe("evals-api hosted mode", () => {
       caught = error;
     }
 
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(caught).toBeInstanceOf(Error);
     const message = getBillingErrorMessage(caught, "Failed to start eval run");
     // Matches the canonical billing-entitlements message:
@@ -453,6 +493,48 @@ describe("evals-api hosted mode", () => {
         iteration: { _id: "iter-1" },
       }),
     ]);
+  });
+
+  it("opens once for duplicate mid-run credit errors without dropping completed events", async () => {
+    const encoder = new TextEncoder();
+    const events = [
+      { type: "complete", iteration: { _id: "completed" } },
+      { type: "error", message: "Credits exhausted" },
+      { type: "error", message: "Credits exhausted" },
+    ];
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const event of events)
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+              );
+            controller.close();
+          },
+        }),
+      ),
+    );
+    const received: unknown[] = [];
+    let opened = 0;
+    await streamEvalTestCase(
+      {
+        projectId: "project",
+        testCaseId: "case",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: [],
+      },
+      (event) => {
+        received.push(event);
+        if (useMCPJamLimitDialogStore.getState().isOpen) {
+          opened++;
+          useMCPJamLimitDialogStore.getState().close();
+        }
+      },
+    );
+    expect(opened).toBe(1);
+    expect(received).toEqual(events);
   });
 
   it("posts hosted guest compare streams with the project/server payload", async () => {

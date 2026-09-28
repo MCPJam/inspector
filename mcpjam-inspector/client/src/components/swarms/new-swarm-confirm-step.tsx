@@ -7,40 +7,36 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown, Loader2, Trash2, X } from "lucide-react";
+import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
 import { SectionLabel } from "@/components/shared/section-label";
-import { JudgesSection } from "@/components/evals/judges-section";
-import { areAllChecksValid } from "@/components/evals/checks-section";
-import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
 import {
   PersonaPixelAvatar,
   mintPersonaAvatarLook,
 } from "@/components/swarms/persona-pixel-avatar";
 import {
+  DEFAULT_SWARM_ITERATIONS,
+  reusedIterationsSeed,
   estimateLaunchSessions,
-  type SwarmIntensityPreset,
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
-import { useAvailableModels } from "@/hooks/use-available-models";
+import {
+  describeReusedEnvironmentMove,
+  type EnvironmentMoveRow,
+} from "@/components/swarms/reused-environment-move";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
-import {
-  formatCriterion,
-  SWARM_LEVEL_PREDICATE_KINDS,
-} from "@/shared/predicate-kinds";
-import {
-  MAX_RUBRIC_CRITERIA,
-  mintCriterionId,
-  type JourneyCriterion,
-} from "@/shared/journey-rubric";
+import { type JourneyCriterion } from "@/shared/journey-rubric";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -57,9 +53,6 @@ export type ProposedPersona = {
     key: string;
     name?: string;
     goal: string;
-    /** Generation-suggested checks, stamped onto THIS journey's rubric only —
-     * ids minted at proposal time so the row shown here is the row stamped. */
-    checks?: JourneyCriterion[];
   }[];
 };
 
@@ -77,6 +70,8 @@ export type ReusedPersona = {
 export type LaunchTarget = {
   journeyId: string;
   label: string;
+  /** Goal/journey name alone — Running-step cells lead with this. */
+  goalLabel?: string;
   personaId: string;
   personaName: string;
   personaRole: string;
@@ -87,6 +82,11 @@ export type LaunchTarget = {
    * journey must be re-stamped before launching. Absent on created targets —
    * they are born with the selection. */
   environmentIds?: string[] | null;
+  /** Legacy origin of a REUSED journey — the clients it runs against and the
+   * server group overriding their servers. Inactive compatibility data on an
+   * env-based row, so they are read only when `environmentIds` is `null`. */
+  hostIds?: string[];
+  legacyServerAttachmentId?: string | null;
   /** Stored sessions-per-target of a REUSED journey (`null` = the row carries
    * no config). Launch does not rewrite a shared journey's config, so this —
    * not the intensity preset — is what the run will execute. Absent on created
@@ -101,9 +101,8 @@ export type ConfirmLaunchPayload = {
    * environment selection, launch stamps it onto any of these whose stored
    * environments differ — the picker's promise wins over the journey's past. */
   reusedTargets: LaunchTarget[];
-  /** Per reused journey: its current rubric. Swarm-level grading is MERGED
-   * into it at launch (additive, structural dedupe) — same "this screen's
-   * promise wins" rule as environments, minus the overwrite. */
+  /** Per reused journey: its current rubric. Confirm does not author
+   * swarm-level grading, so this is empty from this screen. */
   reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
 };
 
@@ -112,35 +111,20 @@ type SelectedPersona =
   | { kind: "reused"; id: string };
 
 /**
- * Checks a fresh slate starts with, honoring the Describe step's "we infer …
- * a scoring rubric" promise. Confirm is a prune screen, so these arrive
- * pre-filled the same way personas do — and they're limited to the universal
- * instruments that hold for ANY server: no tool names, no thresholds to
- * guess, free to grade. Journey-specific checks (naming actual tools) belong
- * to generation and land with the backend follow-up.
+ * One existing journey's goal, as the editor edits it: the stored text, never
+ * `journeyLabel`. The panel binds a field to this AND diffs against it to
+ * decide what to write, so a display label here (a name, or a goal truncated
+ * for a card) is what the user's edit would be saved as (UTSC-36).
  */
-function starterRubric(): JourneyCriterion[] {
-  return [
-    { id: mintCriterionId(), predicate: { type: "noToolErrors" } },
-    {
-      id: mintCriterionId(),
-      predicate: { type: "finalAssistantMessageNonEmpty" },
-    },
-  ];
-}
-
 type ReusedGoal = {
   journeyId: string;
-  label: string;
+  goal: string;
 };
 
 type ReusedResolved = {
   targets: LaunchTarget[] | null;
   goals: ReusedGoal[];
   graded: boolean;
-  /** Each journey's CURRENT rubric, so launch can merge swarm-level criteria
-   * into it instead of overwriting what its owner authored. */
-  grading: { journeyId: string; rubric: JourneyCriterion[] }[];
 };
 
 /** Uncommitted edits to one EXISTING persona, held while its panel is open. */
@@ -183,7 +167,7 @@ export function diffReusedDraft(
     // user cannot act on from here. It is not a pending edit either: there is
     // nothing this panel could save, so closing loses nothing.
     if (next === undefined || next.trim().length === 0) continue;
-    if (next === goal.label) continue;
+    if (next === goal.goal) continue;
     goalEdits.push({ journeyId: goal.journeyId, goal: next });
   }
 
@@ -226,6 +210,7 @@ function CompactPersonaCard({
   editLabel,
   avatarShape,
   avatarPalette,
+  footer,
 }: {
   seed: string;
   name: string;
@@ -240,6 +225,8 @@ function CompactPersonaCard({
   editLabel: string;
   avatarShape?: number;
   avatarPalette?: number;
+  /** Strip under the row: this persona's iterations and what they cost. */
+  footer?: ReactNode;
 }) {
   return (
     <li>
@@ -251,37 +238,32 @@ function CompactPersonaCard({
           keyboard users reach the same thing through Edit, which is a real
           focusable control and names its persona. */}
       <div
-        data-testid="new-swarm-persona-compact"
-        onClick={onSelect}
         className={cn(
-          "flex w-full cursor-pointer items-start gap-4 rounded-xl border border-border/50 bg-muted/15 p-4 text-left transition-colors hover:bg-muted/25",
-          muted && "opacity-70"
+          "overflow-hidden rounded-xl border border-border/50 bg-muted/15",
+          muted && "opacity-70",
         )}
       >
+        <div
+          data-testid="new-swarm-persona-compact"
+          onClick={onSelect}
+          className="flex w-full cursor-pointer items-start gap-4 p-4 text-left transition-colors hover:bg-muted/25"
+        >
         <PersonaPixelAvatar
           seed={seed}
           shapeIndex={avatarShape}
           paletteIndex={avatarPalette}
           size="lg"
         />
-        <div className="min-w-0 flex-1 space-y-1">
+        <div className="min-w-0 flex-1">
           <p
             className={cn(
-              "min-w-0 truncate text-sm font-semibold",
+              "mb-1 line-clamp-1 text-sm font-semibold leading-5",
               muted ? "text-muted-foreground" : "text-foreground"
             )}
           >
-            {name}
-            {role ? (
-              <span className="font-normal text-muted-foreground"> — {role}</span>
-            ) : null}
+            {role ? `${name} | ${role}` : name}
           </p>
-          <p
-            className={cn(
-              "line-clamp-2 text-sm leading-snug",
-              muted ? "text-muted-foreground" : "text-foreground"
-            )}
-          >
+          <p className="mb-1 line-clamp-2 text-sm leading-snug text-muted-foreground">
             {description}
           </p>
           <p className="text-xs leading-snug text-muted-foreground">{meta}</p>
@@ -314,8 +296,150 @@ function CompactPersonaCard({
             Remove
           </Button>
         </div>
+        </div>
+        {footer ? (
+          <div className="border-t border-border/50 px-4 py-2.5">{footer}</div>
+        ) : null}
       </div>
     </li>
+  );
+}
+
+/**
+ * The character just typed, found by comparing the field against what it
+ * showed. `selectionStart` would say it directly, but reading it on a number
+ * input throws, so the caret is inferred from where the two texts diverge.
+ * Null when the text did not grow by exactly one character.
+ */
+function insertedCharacter(shown: string, typed: string): string | null {
+  if (typed.length !== shown.length + 1) return null;
+  let index = 0;
+  while (index < shown.length && shown[index] === typed[index]) index++;
+  return typed[index];
+}
+
+/**
+ * Iterations for one persona, and what they cost.
+ *
+ * Sits on the collapsed card next to the persona it sizes, the way Remove
+ * does. One swarm-wide number could not describe this slate: the generator
+ * hands every persona the same goals, but the user edits it before launching,
+ * so one persona ends up carrying three goals and its neighbour five.
+ *
+ * The subtotal is PER ENVIRONMENT. Environments multiply the swarm once, in
+ * the total below the list, rather than on every card.
+ */
+function PersonaIterationsRow({
+  goalCount,
+  iterations,
+  personaName,
+  onChange,
+  disabled,
+}: {
+  goalCount: number;
+  iterations: number;
+  personaName: string;
+  onChange: (value: number) => void;
+  disabled: boolean;
+}) {
+  const id = useId();
+  // What the user is part-way through typing, before it is a count. Committing
+  // every keystroke through the clamp turned the "1" already in the field plus
+  // a typed "2" into 12, which landed straight on the maximum.
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (value: number) => {
+    setDraft(null);
+    onChange(value);
+  };
+  const conversations = goalCount * iterations;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex items-center gap-2">
+        <label htmlFor={id} className="text-sm text-muted-foreground">
+          Iterations
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label={`Fewer iterations for ${personaName}`}
+          disabled={disabled || iterations <= MIN_SWARM_ITERATIONS}
+          onClick={() => commit(iterations - 1)}
+        >
+          <Minus className="size-3.5" />
+        </Button>
+        <Input
+          id={id}
+          type="number"
+          min={MIN_SWARM_ITERATIONS}
+          max={MAX_SWARM_ITERATIONS}
+          step={1}
+          value={draft ?? iterations}
+          disabled={disabled}
+          data-testid="new-swarm-persona-iterations"
+          onFocus={(event) => event.target.select()}
+          onChange={(event) => {
+            const typed = event.target.value;
+            const shown = String(draft ?? iterations);
+            const grew = typed.length > shown.length;
+            // A digit pressed beside the one already there reads as 12, not 2.
+            // The range ends below ten, so a digit added to a field that
+            // already holds one is the count meant and the rest is stale.
+            const entered = grew ? insertedCharacter(shown, typed) : typed;
+            const count = entered === null ? Number.NaN : Number(entered);
+            if (
+              entered !== null &&
+              entered !== "" &&
+              Number.isInteger(count) &&
+              count >= MIN_SWARM_ITERATIONS &&
+              count <= MAX_SWARM_ITERATIONS
+            ) {
+              commit(count);
+              return;
+            }
+            // Only a shrinking field holds text that is not a count: an empty
+            // box on the way to one. Anything else is a keystroke the control
+            // cannot take, and showing it would display a forbidden value.
+            setDraft(typed.length < shown.length ? typed : shown);
+          }}
+          onBlur={() => {
+            if (draft === null) return;
+            // Number("") is 0, which the parent clamp lifts to the minimum.
+            commit(Number(draft));
+          }}
+          className="h-7 w-14 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label={`More iterations for ${personaName}`}
+          disabled={disabled || iterations >= MAX_SWARM_ITERATIONS}
+          onClick={() => commit(iterations + 1)}
+        >
+          <Plus className="size-3.5" />
+        </Button>
+      </div>
+      <p
+        className="text-sm text-muted-foreground"
+        data-testid="new-swarm-persona-subtotal"
+      >
+        <strong className="font-semibold tabular-nums text-foreground">
+          {goalCount}
+        </strong>{" "}
+        {goalCount === 1 ? "goal" : "goals"} ×{" "}
+        <strong className="font-semibold tabular-nums text-foreground">
+          {iterations}
+        </strong>{" "}
+        {iterations === 1 ? "iteration" : "iterations"} ={" "}
+        <strong className="font-semibold tabular-nums text-foreground">
+          {conversations}
+        </strong>{" "}
+        {conversations === 1 ? "conversation" : "conversations"}
+      </p>
+    </div>
   );
 }
 
@@ -361,7 +485,6 @@ function PersonaDetailPanel({
   draftEditable,
   onClose,
   onRemoveGoal,
-  onRemoveCheck,
   onChangeName,
   onChangeRole,
   onChangeContext,
@@ -379,8 +502,6 @@ function PersonaDetailPanel({
   goals: {
     key: string;
     label: string;
-    /** Suggested deterministic checks scoped to this goal's journey. */
-    checks?: { id: string; label: string }[];
   }[];
   graded?: boolean;
   loadingGoals?: boolean;
@@ -393,7 +514,6 @@ function PersonaDetailPanel({
    */
   onClose: () => void;
   onRemoveGoal?: (goalKey: string) => void;
-  onRemoveCheck?: (goalKey: string, checkId: string) => void;
   onChangeName?: (name: string) => void;
   onChangeRole?: (role: string) => void;
   onChangeContext?: (notes: string) => void;
@@ -459,23 +579,25 @@ function PersonaDetailPanel({
 
       <div className="space-y-4 px-4 pb-4 pt-3">
         <div className="space-y-1.5">
-          <SectionLabel>Persona</SectionLabel>
-          <div className="space-y-2">
-            <Input
-              value={name}
-              onChange={(event) => onChangeName?.(event.target.value)}
-              placeholder="Name"
-              aria-label="Persona name"
-              className="h-9 bg-background"
-            />
-            <Input
-              value={role}
-              onChange={(event) => onChangeRole?.(event.target.value)}
-              placeholder="Role"
-              aria-label="Persona role"
-              className="h-9 bg-background"
-            />
-          </div>
+          <SectionLabel>Name</SectionLabel>
+          <Input
+            value={name}
+            onChange={(event) => onChangeName?.(event.target.value)}
+            placeholder="Name"
+            aria-label="Persona name"
+            className="h-9 bg-background"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <SectionLabel>Role</SectionLabel>
+          <Input
+            value={role}
+            onChange={(event) => onChangeRole?.(event.target.value)}
+            placeholder="Role"
+            aria-label="Persona role"
+            className="h-9 bg-background"
+          />
         </div>
 
         <div className="space-y-1.5">
@@ -545,44 +667,13 @@ function PersonaDetailPanel({
                       </button>
                     ) : null}
                   </div>
-                  {/* Journey-scoped checks live with the journey they grade,
-                      not in the swarm-level rubric below the persona list —
-                      stamping them there would drag down pass rates on
-                      journeys that never touch the tool. */}
-                  {goal.checks && goal.checks.length > 0 ? (
-                    <ul
-                      className="mt-1.5 flex flex-wrap gap-1.5 pl-4"
-                      aria-label={`Suggested checks for ${goal.label}`}
-                    >
-                      {goal.checks.map((check) => (
-                        <li
-                          key={check.id}
-                          data-testid="new-swarm-journey-check"
-                          className="flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
-                        >
-                          {check.label}
-                          {onRemoveCheck ? (
-                            <button
-                              type="button"
-                              aria-label={`Remove check ${check.label}`}
-                              className="text-muted-foreground hover:text-foreground"
-                              onClick={() => onRemoveCheck(goal.key, check.id)}
-                            >
-                              <X className="size-3" />
-                            </button>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
                 </li>
               ))}
             </ul>
           )}
           {graded ? (
             <p className="text-xs text-muted-foreground">
-              Has its own grading — swarm-level checks are merged in at launch,
-              never replacing it.
+              Has its own grading.
             </p>
           ) : null}
           {draftEditable ? null : (
@@ -619,26 +710,27 @@ function ReusedPersonaJourneyLoader({
         rubric?: JourneyCriterion[] | null;
         judgeConfig?: GoalJudgeConfig;
         environmentIds?: string[] | null;
+        hostIds?: string[] | null;
+        serverAttachmentId?: string | null;
         config?: { sessionsPerTarget?: number; maxTurns?: number } | null;
       }[]
     | undefined;
 
   const resolved = useMemo((): ReusedResolved => {
     if (journeys === undefined) {
-      return { targets: null, goals: [], graded: false, grading: [] };
+      return { targets: null, goals: [], graded: false };
     }
     return {
-      grading: journeys.map((journey) => ({
-        journeyId: journey._id,
-        rubric: journey.rubric ?? [],
-      })),
       targets: journeys.map((journey) => ({
         journeyId: journey._id,
         label: `${persona.name} · ${journeyLabel(journey)}`,
+        goalLabel: journeyLabel(journey),
         personaId: persona._id,
         personaName: persona.name,
         personaRole: persona.role,
         environmentIds: journey.environmentIds ?? null,
+        hostIds: journey.hostIds ?? [],
+        legacyServerAttachmentId: journey.serverAttachmentId ?? null,
         sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
         ...(persona.avatarShape !== undefined
           ? { avatarShape: persona.avatarShape }
@@ -649,7 +741,7 @@ function ReusedPersonaJourneyLoader({
       })),
       goals: journeys.map((journey) => ({
         journeyId: journey._id,
-        label: journeyLabel(journey),
+        goal: journey.goal,
       })),
       graded: journeys.some(
         (journey) =>
@@ -681,14 +773,24 @@ function ReusedPersonaCard({
   onSelect,
   onRemove,
   resolved,
+  iterations,
+  disabled,
+  onIterationsChange,
 }: {
   persona: ReusedPersona;
   muted?: boolean;
   onSelect: () => void;
   onRemove: () => void;
   resolved: ReusedResolved | undefined;
+  iterations: number;
+  disabled: boolean;
+  onIterationsChange: (value: number) => void;
 }) {
   const goalCount = resolved?.goals.length;
+  // Set for THIS run, not written back: the journey belongs to whoever
+  // authored the persona, and resizing one launch must not resize every
+  // future run of a shared definition. Launch sends it as an override.
+  const targets = resolved?.targets ?? null;
   const meta =
     resolved == null || resolved.targets === null
       ? "Loading goals…"
@@ -714,19 +816,33 @@ function ReusedPersonaCard({
       removeLabel={`Remove ${persona.name} from this swarm`}
       avatarShape={persona.avatarShape}
       avatarPalette={persona.avatarPalette}
+      footer={
+        targets != null ? (
+          <PersonaIterationsRow
+            goalCount={targets.length}
+            iterations={iterations}
+            personaName={persona.name}
+            disabled={disabled}
+            onChange={onIterationsChange}
+          />
+        ) : null
+      }
     />
   );
 }
 
 export function NewSwarmConfirmStep({
-  projectId,
   proposed,
   onProposedChange,
   reusedPersonas,
   onRemoveReused,
-  preset,
+  iterationsByPersona,
+  onIterationsChange,
   environmentCount,
   environmentLabels,
+  environmentIds,
+  environmentRowsById,
+  hostNameById,
   launching,
   errorMessage,
   onBack,
@@ -737,15 +853,26 @@ export function NewSwarmConfirmStep({
   onSaveReusedPersona,
   onSaveReusedGoal,
 }: {
-  projectId: string;
   proposed: ProposedPersona[];
   onProposedChange: (next: ProposedPersona[]) => void;
   reusedPersonas: ReusedPersona[];
   onRemoveReused: (personaId: string) => void;
-  preset: SwarmIntensityPreset;
+  /** Iterations per goal, keyed by proposed persona key. */
+  iterationsByPersona: Record<string, number>;
+  onIterationsChange: (personaKey: string, value: number) => void;
   environmentCount: number;
   /** Display names of the environments this launch will fan out across. */
   environmentLabels: string[];
+  /**
+   * The ids behind those labels, same order. The move notice compares ids —
+   * two environments can share a display name, which is half of why a reused
+   * goal ends up somewhere nobody chose.
+   */
+  environmentIds: string[];
+  /** Every environment this project can name, for the move notice. */
+  environmentRowsById: ReadonlyMap<string, EnvironmentMoveRow>;
+  /** Client names, so a legacy goal's origin can be named rather than counted. */
+  hostNameById: (hostId: string) => string;
   launching: boolean;
   errorMessage: string | null;
   onBack: () => void;
@@ -767,22 +894,10 @@ export function NewSwarmConfirmStep({
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
 }) {
-  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
-    undefined
-  );
-  // Always seeded: swarm-level grading applies to every journey this swarm
-  // launches — created ones get it stamped, reused ones get it MERGED into
-  // their own rubric (existing rows survive; structural dupes are skipped).
-  // Lazy init on purpose: Back discards all grading state anyway.
-  const [rubric, setRubric] = useState<JourneyCriterion[]>(() =>
-    starterRubric()
-  );
-  const [gradingOpen, setGradingOpen] = useState(false);
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
     Record<string, ReusedResolved>
   >({});
-  const { availableModels } = useAvailableModels({ projectId });
 
   const handleReusedResolved = useCallback(
     (personaId: string, data: ReusedResolved) => {
@@ -810,7 +925,7 @@ export function NewSwarmConfirmStep({
           previous.goals.every(
             (goal, index) =>
               goal.journeyId === data.goals[index]?.journeyId &&
-              goal.label === data.goals[index]?.label
+              goal.goal === data.goals[index]?.goal
           );
         if (
           previous &&
@@ -854,25 +969,6 @@ export function NewSwarmConfirmStep({
       journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
     }));
   };
-  const removeJourneyCheck = (
-    personaKey: string,
-    journeyKey: string,
-    checkId: string
-  ) => {
-    patchProposed(personaKey, (persona) => ({
-      ...persona,
-      journeys: persona.journeys.map((journey) =>
-        journey.key === journeyKey
-          ? {
-              ...journey,
-              checks: (journey.checks ?? []).filter(
-                (check) => check.id !== checkId
-              ),
-            }
-          : journey
-      ),
-    }));
-  };
   const addPersona = () => {
     const key = newLocalKey("persona");
     const next: ProposedPersona = {
@@ -909,49 +1005,81 @@ export function NewSwarmConfirmStep({
   const reusedPending = reusedPersonas.some(
     (persona) => (reusedResolved[persona._id]?.targets ?? null) === null
   );
-  const activeReusedTargets = reusedPersonas.flatMap(
-    (persona) => reusedResolved[persona._id]?.targets ?? []
+  // A reused persona starts at what its goals already carry rather than at
+  // the default, so leaving the control alone launches the same size it
+  // always did.
+  const reusedIterationsFor = (personaId: string) =>
+    iterationsByPersona[personaId] ??
+    reusedIterationsSeed(
+      (reusedResolved[personaId]?.targets ?? []).map(
+        (target) => target.sessionsPerTarget ?? null,
+      ),
+    );
+  const activeReusedTargets = reusedPersonas.flatMap((persona) =>
+    (reusedResolved[persona._id]?.targets ?? []).map((target) => ({
+      ...target,
+      sessionsPerTarget: reusedIterationsFor(persona._id),
+    }))
   );
-  // Empty draft goals stay visible for authoring but don't count toward
-  // launch readiness — Create & launch only persists trimmed goals.
-  const newJourneyCount = proposed.reduce(
-    (sum, persona) =>
-      sum + persona.journeys.filter((journey) => journey.goal.trim()).length,
+  /**
+   * Which reused goals this launch is about to re-stamp onto the selected
+   * environment, and what they were authored against.
+   *
+   * The override is not new and is not a bug — it is what lets a swarm run
+   * shared goals somewhere new without rewriting definitions other swarms also
+   * launch. What was missing is anyone being TOLD, which is how 15 goals
+   * written for one server's tools ran against a different server and looked
+   * like a successful wave.
+   */
+  const reusedMoves = reusedPersonas.flatMap((persona) => {
+    const targets = reusedResolved[persona._id]?.targets ?? null;
+    // Still loading. Launch is blocked on the same condition, so no move can
+    // slip past while this is empty.
+    if (targets === null) return [];
+    const move = describeReusedEnvironmentMove({
+      goals: targets.map((target) => ({
+        environmentIds: target.environmentIds,
+        hostIds: target.hostIds,
+        serverAttachmentId: target.legacyServerAttachmentId,
+      })),
+      selection: environmentIds,
+      rowsById: environmentRowsById,
+      hostName: hostNameById,
+    });
+    return move
+      ? [{ personaId: persona._id, personaName: persona.name, move }]
+      : [];
+  });
+
+  const iterationsFor = (personaKey: string) =>
+    iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
+  // Empty draft goals stay visible for authoring but never launch, so they
+  // count toward neither launch readiness nor a subtotal — Create & launch
+  // only persists trimmed goals.
+  const authoredPersonas = proposed.map((persona) => ({
+    goalCount: persona.journeys.filter((journey) => journey.goal.trim()).length,
+    iterations: iterationsFor(persona.key),
+  }));
+  const newJourneyCount = authoredPersonas.reduce(
+    (sum, persona) => sum + persona.goalCount,
     0
   );
-  const personaCount = proposed.length + reusedPersonas.length;
   const journeyCount = newJourneyCount + activeReusedTargets.length;
   // Every journey this launch fans out, not just the newly authored ones —
   // a reuse-heavy swarm was under-reporting its own session count. Reused
-  // journeys are counted at THEIR OWN sessions, which is what launch runs
-  // them at; the preset only sizes the journeys this swarm creates.
-  const sessionEstimate = estimateLaunchSessions({
-    preset,
-    newJourneyCount,
+  // journeys are counted at the iterations chosen for THIS run, which is
+  // what launch sends as an override, so the quote and the run agree.
+  const launchSessionEstimate = estimateLaunchSessions({
+    personas: authoredPersonas,
     reusedSessionsPerTarget: activeReusedTargets.map(
-      (target) => target.sessionsPerTarget ?? null
+      (target) => target.sessionsPerTarget ?? null,
     ),
     environmentCount,
   });
-  /**
-   * Rubric budget held back for per-journey suggested checks. Launch stamps
-   * the swarm rubric FIRST and appends each journey's own checks after, then
-   * hard-slices at the cap — so without this reserve a full swarm rubric is
-   * exactly what silently drops the tool-specific checks generation produced.
-   * Reserve the worst case (the journey carrying the most checks), since the
-   * cap applies per journey, not across the swarm.
-   */
-  const reservedCheckSlots = proposed.reduce(
-    (worst, persona) =>
-      persona.journeys.reduce(
-        (inner, journey) => Math.max(inner, journey.checks?.length ?? 0),
-        worst
-      ),
-    0
-  );
-  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
-  const canLaunch =
-    journeyCount > 0 && rubricValid && !launching && !reusedPending;
+  const reusedCount = activeReusedTargets.length;
+  const personaTotal = proposed.length + reusedPersonas.length;
+  const fanoutEnvironmentCount = Math.max(1, environmentCount);
+  const canLaunch = journeyCount > 0 && !launching && !reusedPending;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -992,7 +1120,7 @@ export function NewSwarmConfirmStep({
             role: persona.role,
             notes: persona.notes ?? "",
             goals: Object.fromEntries(
-              goals.map((goal) => [goal.journeyId, goal.label])
+              goals.map((goal) => [goal.journeyId, goal.goal])
             ),
           };
         const next = {
@@ -1108,25 +1236,27 @@ export function NewSwarmConfirmStep({
         {header}
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
-            Review user personas and what they&rsquo;ll accomplish
+            Review your users and what they&rsquo;ll accomplish
           </h2>
           <p className="text-sm leading-relaxed text-foreground">
-            {/* The session count is what this screen actually spends, so it
-                leads. Persona and goal counts stay because a slate you are
-                about to prune is easier to judge with its size on screen. */}
-            We&rsquo;ll run {sessionEstimate}{" "}
-            {sessionEstimate === 1 ? "session" : "sessions"} total in this
-            swarm, across {personaCount}{" "}
-            {personaCount === 1 ? "persona" : "personas"} and {journeyCount}{" "}
-            {journeyCount === 1 ? "goal" : "goals"}. Select a persona for
-            details, or remove anything that doesn&rsquo;t fit.
+            Select a user persona for details, or remove anything that
+            doesn&rsquo;t fit.
           </p>
-          {environmentLabels.length > 0 && proposed.length > 0 ? (
+          <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
+            This launch will run {launchSessionEstimate}{" "}
+            {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
+            total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
+          </p>
+          {/* Shown for ANY swarm that has a target, not just one with newly
+              authored goals. A reuse-only swarm used to name no environment at
+              all on this screen, while its launch quietly re-stamped every
+              reused goal onto the pre-filled selection. */}
+          {environmentLabels.length > 0 ? (
             <p
               className="text-sm leading-relaxed text-muted-foreground"
               data-testid="new-swarm-confirm-clients"
             >
-              New goals run on{" "}
+              {proposed.length > 0 ? "New goals run on" : "Runs on"}{" "}
               <span className="font-medium text-foreground">
                 {environmentLabels.join(" · ")}
               </span>
@@ -1134,6 +1264,45 @@ export function NewSwarmConfirmStep({
                 ? " — pick more environments on Describe to compare clients."
                 : "."}
             </p>
+          ) : null}
+          {reusedMoves.length > 0 ? (
+            <ul
+              className="space-y-1 text-sm leading-relaxed text-muted-foreground"
+              data-testid="new-swarm-confirm-env-moves"
+            >
+              {reusedMoves.map(({ personaId, personaName, move }) => (
+                <li key={personaId}>
+                  <span className="font-medium text-foreground">
+                    {personaName}
+                  </span>
+                  {": "}
+                  {move.goalCount}{" "}
+                  {move.goalCount === 1 ? "goal was" : "goals were"} authored
+                  against{" "}
+                  {move.fromLabels.length > 0 ? (
+                    <span className="font-medium text-foreground">
+                      {move.fromLabels.join(" · ")}
+                    </span>
+                  ) : (
+                    "another environment"
+                  )}
+                  {" and will run here instead."}
+                  {move.differentClient || move.differentServerGroup ? (
+                    <span className="font-medium text-foreground">
+                      {" "}
+                      {move.differentServerGroup
+                        ? move.differentClient
+                          ? "Different client and server group."
+                          : "Different server group."
+                        : "Different client."}
+                    </span>
+                  ) : null}
+                  {move.differentServerGroup
+                    ? " These goals were written for another server\u2019s tools."
+                    : ""}
+                </li>
+              ))}
+            </ul>
           ) : null}
         </div>
 
@@ -1153,14 +1322,6 @@ export function NewSwarmConfirmStep({
                       goals={persona.journeys.map((journey) => ({
                         key: journey.key,
                         label: journey.goal,
-                        ...(journey.checks && journey.checks.length > 0
-                          ? {
-                              checks: journey.checks.map((check) => ({
-                                id: check.id,
-                                label: formatCriterion(check),
-                              })),
-                            }
-                          : {}),
                       }))}
                       draftEditable
                       avatarShape={persona.avatarShape}
@@ -1168,9 +1329,6 @@ export function NewSwarmConfirmStep({
                       onClose={() => setSelected(null)}
                       onRemoveGoal={(goalKey) =>
                         removeJourney(persona.key, goalKey)
-                      }
-                      onRemoveCheck={(goalKey, checkId) =>
-                        removeJourneyCheck(persona.key, goalKey, checkId)
                       }
                       onChangeName={(nextName) =>
                         patchProposed(persona.key, (current) => ({
@@ -1209,6 +1367,9 @@ export function NewSwarmConfirmStep({
                 );
               }
               const goalCount = persona.journeys.length;
+              const launchableGoals = persona.journeys.filter((journey) =>
+                journey.goal.trim(),
+              ).length;
               return (
                 <CompactPersonaCard
                   key={persona.key}
@@ -1228,6 +1389,17 @@ export function NewSwarmConfirmStep({
                   removeLabel={`Remove persona ${persona.name}`}
                   avatarShape={persona.avatarShape}
                   avatarPalette={persona.avatarPalette}
+                  footer={
+                    <PersonaIterationsRow
+                      goalCount={launchableGoals}
+                      iterations={iterationsFor(persona.key)}
+                      personaName={persona.name}
+                      disabled={launching}
+                      onChange={(value) =>
+                        onIterationsChange(persona.key, value)
+                      }
+                    />
+                  }
                 />
               );
             })}
@@ -1255,7 +1427,7 @@ export function NewSwarmConfirmStep({
                           reusedResolved[persona._id]?.goals ?? [];
                         const draft = reusedDrafts[persona._id];
                         const goalText = (goal: ReusedGoal) =>
-                          draft?.goals[goal.journeyId] ?? goal.label;
+                          draft?.goals[goal.journeyId] ?? goal.goal;
                         return (
                           <PersonaDetailPanel
                             seed={persona._id}
@@ -1306,6 +1478,11 @@ export function NewSwarmConfirmStep({
                     }
                     onRemove={() => removeReused(persona._id)}
                     resolved={reusedResolved[persona._id]}
+                    iterations={reusedIterationsFor(persona._id)}
+                    disabled={launching}
+                    onIterationsChange={(value) =>
+                      onIterationsChange(persona._id, value)
+                    }
                   />
                 );
               })}
@@ -1314,14 +1491,14 @@ export function NewSwarmConfirmStep({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={addPersona}
             data-testid="new-swarm-add-persona"
-            className="text-sm font-medium text-primary hover:text-primary/80"
           >
-            + Add persona
-          </button>
+            Add new persona
+          </Button>
           {personasAvailableToAdd.length > 0 ? (
             // Add-only: what is already attached is dropped from the list, and
             // detaching is the card's own Remove.
@@ -1329,95 +1506,54 @@ export function NewSwarmConfirmStep({
               personas={personasAvailableToAdd}
               open={addExistingOpen}
               onOpenChange={setAddExistingOpen}
-              groupLabel="Add existing personas"
+              groupLabel="Add existing persona"
+              triggerLabel="Add existing persona"
               triggerSize="sm"
               triggerTestId="new-swarm-confirm-add-existing"
+              showTriggerIcon={false}
               mode={{ kind: "add", onAdd: onAddReused }}
             />
           ) : null}
         </div>
 
-        {/* Scoring applies to EVERY journey this swarm launches: stamped
-            onto created journeys, merged additively into reused ones (their
-            own rows survive with their ids). Always visible for the same
-            reason the environment picker is — this screen's promise wins. */}
-        <div className="border-t border-border/40 pt-3">
-          <button
-            type="button"
-            onClick={() => setGradingOpen((open) => !open)}
-            className="flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
-            aria-expanded={gradingOpen}
-            data-testid="new-swarm-grading-toggle"
-          >
-            <ChevronDown
-              className={cn(
-                "size-3.5 transition-transform",
-                gradingOpen && "rotate-180"
-              )}
-            />
-            Grading
-            {(() => {
-              // Same invitation the header line makes with "2 personas ·
-              // 10 journeys": say what's inside before it's opened.
-              const journeyCheckCount = proposed.reduce(
-                (sum, persona) =>
-                  sum +
-                  persona.journeys.reduce(
-                    (inner, journey) =>
-                      inner + (journey.checks?.length ?? 0),
-                    0
-                  ),
-                0
-              );
-              const summary = [
-                judgeConfig ? "judge on" : null,
-                rubric.length > 0
-                  ? `${rubric.length} ${
-                      rubric.length === 1 ? "check" : "checks"
-                    }`
-                  : null,
-                journeyCheckCount > 0
-                  ? `${journeyCheckCount} goal-specific`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ");
-              return summary ? (
-                <span className="font-normal text-muted-foreground/80">
-                  · {summary}
-                </span>
-              ) : null;
-            })()}
-          </button>
-          {gradingOpen ? (
-            <div className="mt-2">
-              <JudgesSection
-                chrome="bare"
-                value={judgeConfig}
-                onChange={setJudgeConfig}
-                availableModels={availableModels}
-                bareAutoGradeBlurb="Grade every session in this swarm automatically against its goal. Uses credits. You can also judge any session on demand from its detail view."
-                bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
-              />
-              <div className="mt-3 border-t border-border/40 pt-3">
-                <JourneyRubricEditor
-                  value={rubric}
-                  onChange={setRubric}
-                  allowedKinds={SWARM_LEVEL_PREDICATE_KINDS}
-                  maxCriteria={MAX_RUBRIC_CRITERIA - reservedCheckSlots}
-                />
-                {reservedCheckSlots > 0 ? (
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    Goal-specific checks were also suggested — they
-                    appear with each persona&rsquo;s goals, and grade only
-                    their own goal. {reservedCheckSlots}{" "}
-                    {reservedCheckSlots === 1 ? "slot is" : "slots are"}{" "}
-                    reserved for them.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
+        <div
+          className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3"
+          data-testid="new-swarm-conversation-total"
+        >
+          <div>
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="new-swarm-conversation-equation"
+            >
+              Across{" "}
+              <strong className="font-semibold tabular-nums text-foreground">
+                {personaTotal}
+              </strong>{" "}
+              {personaTotal === 1 ? "persona" : "personas"}
+              {fanoutEnvironmentCount > 1 ? (
+                <>
+                  {" "}
+                  and{" "}
+                  <strong className="font-semibold tabular-nums text-foreground">
+                    {fanoutEnvironmentCount}
+                  </strong>{" "}
+                  environments
+                </>
+              ) : null}
+            </p>
+            {reusedCount > 0 ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Reused goals are counted at the iterations already saved on
+                them.
+              </p>
+            ) : null}
+          </div>
+          <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
+            {launchSessionEstimate.toLocaleString()}
+            <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
+              conversations
+            </span>
+          </p>
         </div>
 
         {errorMessage ? (
@@ -1441,17 +1577,9 @@ export function NewSwarmConfirmStep({
             data-testid="new-swarm-launch"
             onClick={() =>
               onLaunch({
-                rubric,
-                ...(judgeConfig ? { judgeConfig } : {}),
+                rubric: [],
                 reusedTargets: activeReusedTargets,
-                reusedGrading: reusedPersonas.flatMap((persona) =>
-                  (reusedResolved[persona._id]?.grading ?? []).map(
-                    (entry) => ({
-                      journeyId: entry.journeyId,
-                      existingRubric: entry.rubric,
-                    })
-                  )
-                ),
+                reusedGrading: [],
               })
             }
           >
@@ -1461,7 +1589,7 @@ export function NewSwarmConfirmStep({
                 Launching…
               </>
             ) : (
-              "Launch Swarm"
+              "Continue"
             )}
           </Button>
         </div>

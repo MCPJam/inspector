@@ -12,7 +12,7 @@
  * worker able to choose its own stamp could declare its stale work fresh,
  * which is the one thing the stamp exists to prevent.
  */
-
+import { SWARM_STAGE_EVIDENCE_VERSION } from "@mcpjam/sdk/contract";
 import { logger } from "../../utils/logger.js";
 
 /** Per-request cap so a stalled Convex cannot wedge the pass. */
@@ -87,6 +87,8 @@ export type ClaimedStageEvidence = {
   lifecycle?: unknown;
   readiness?: unknown;
   criteria?: unknown;
+  criterionDefinitions?: unknown;
+  swarmPolicy?: unknown;
   goalScore?: unknown;
 };
 
@@ -115,6 +117,7 @@ export async function claimNextStageDerivation(
 ): Promise<StageClaimOutcome> {
   const { status, body } = await postServiceRoute(`${BASE_PATH}/claim`, {
     claimedBy,
+    evidenceVersion: SWARM_STAGE_EVIDENCE_VERSION,
   });
   if (status === 404) return { kind: "disabled" };
   if (status !== 200 || !body?.ok) {

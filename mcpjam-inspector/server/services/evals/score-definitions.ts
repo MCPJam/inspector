@@ -6,17 +6,42 @@
  * — nothing here hashes by hand, because two producers of the same digest is
  * exactly how a `definitionHash` stops meaning anything.
  *
- * Three scorers, and the roles are the load-bearing part:
+ * Five scorers, and the roles are the load-bearing part:
  *
- *   | scorerId                  | deterministic | role     | threshold |
- *   |---------------------------|---------------|----------|-----------|
- *   | `predicate:<criterionId>` | true          | gating   | 1         |
- *   | `toolCalls:match`         | true          | gating   | 1         |
- *   | `judge:goalCompletion`    | false         | ADVISORY | resolved  |
+ *   | scorerId                   | deterministic | role         | threshold  |
+ *   |----------------------------|---------------|--------------|------------|
+ *   | `predicate:<criterionId>`  | true          | check policy | 1          |
+ *   | `toolCalls:match`          | true          | gating       | 1          |
+ *   | `toolCalls:arguments`      | true          | gating       | 1          |
+ *   | `judge:goalCompletion`     | false         | from the run | resolved   |
+ *   | `judge:rubricChecks:<key>` | false         | advisory     | per answer |
  *
- * `role: "advisory"` on the judge is what makes it structurally incapable of
- * gating: `sdk/src/gates.ts` only ever considers gating scorers, so an advisory
- * row cannot decide a customer's CI no matter what it scores.
+ * The two `toolCalls:*` scorers are the tool-call matcher's verdict split at
+ * the chain's stages: `match` is WHICH tools were called (Selection),
+ * `arguments` is HOW the expected ones were called (Tool call). Both gate, and
+ * together they pass exactly when the matcher did, so a gate on the pair means
+ * what a gate on the old single row meant.
+ *
+ * THE JUDGE'S ROLE COMES FROM THE RUN, NOT FROM THIS FILE. It used to be
+ * hard-coded advisory, which made a gating judge structurally powerless: a
+ * suite could earn the gate, the backend could hold the run for it, and the
+ * projection would still emit a row `sdk/src/gates.ts` never considers.
+ *
+ * It is read off `metadata.judgeVerdict.role`, which the backend stamps from
+ * the run's FROZEN config — so a run that started advisory cannot be
+ * retroactively gated by a later suite edit, and a run override that lowered
+ * the judge is honoured here exactly as it was at grading time. The decision is
+ * a closed one: the literal `"gating"` gates; absent, `"advisory"`, and
+ * anything else are advisory, because a role this build does not recognise must
+ * never be read as licence to fail a run.
+ *
+ * A gating judge's row then enters `allGatingScorersPassed` and
+ * `noGatingScoreErrors` exactly like a predicate's. Two invariants still hold
+ * STRUCTURALLY rather than by this file's choice: a judge row never carries
+ * `passed` unless it actually scored, so an errored judge cannot fail a trial
+ * on its own (the backend quarantines it instead); and the backend's finalizer
+ * applies a gating judge STRICTER-ONLY, so it can take a green away and never
+ * hand one out.
  */
 
 import {
@@ -27,12 +52,37 @@ import {
   type ResolvedScoreDefinition,
   type ScoreDefinition,
 } from "@mcpjam/sdk/contract";
-import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  stripCheckPolicy,
+  type Predicate,
+  type PredicateScope,
+} from "@mcpjam/sdk/predicates";
 
-/** Stable id of the hosted tool-call matcher projection. */
-export const HOSTED_TOOL_MATCH_SCORER_ID = "toolCalls:match";
-/** Stable id of the hosted advisory judge projection. */
-export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
+/**
+ * Scorer identity lives in `shared/` so the client can mint the same ids it
+ * has to join against. Re-exported here because this module is where every
+ * server caller already looks for them.
+ */
+import {
+  hostedCriterionId,
+  hostedRubricCheckScorerId,
+  HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+} from "@/shared/hosted-criterion-id";
+
+export {
+  hostedCriterionId,
+  hostedPredicateScorerId,
+  hostedRubricCheckScorerId,
+  HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+  HOSTED_JUDGE_SCORER_ID,
+} from "@/shared/hosted-criterion-id";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
@@ -54,8 +104,17 @@ export const HOSTED_PREDICATE_EVALUATOR_VERSION = "1";
  * the same `scorerVersion`, and a reader comparing them would have no way to
  * tell a fixed projection from a changed scorer. With it, the digest moves
  * because the version moved, which is exactly what a version is for.
+ *
+ * BUMPED to "3" when the arguments moved out into `toolCalls:arguments`. The
+ * row now passes on SELECTION alone — per turn, no missing call and extras
+ * within `maxExtraToolCalls` (order folds in through both) — so a v3 row and a
+ * v2 row can disagree on the same transcript, and the version says so. That
+ * also moves `evaluationConfigHash`: a run graded before the split cannot be
+ * gated against one graded after it, by design, until it is re-baselined.
  */
-export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "2";
+export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "3";
+/** Version of the hosted tool-call arguments projection. */
+export const HOSTED_TOOL_ARGUMENTS_EVALUATOR_VERSION = "1";
 /** Version of the hosted judge projection (NOT the judge template version). */
 export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
 
@@ -68,50 +127,33 @@ export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
  */
 export const HOSTED_JUDGE_OBJECTIVE_SCORE_CAP = 0.85;
 
-/**
- * The criterion identity of one hosted predicate.
- *
- * Hosted cases author predicates, not named criteria, so the id is derived
- * from the predicate's CONTENT (plus its turn scope, which is part of what is
- * being asserted) rather than from its position. Content-derived means stable
- * across an edit elsewhere in the list — `idSource: "platform"` records that
- * the platform minted it, so a report never claims an author chose this name.
- */
-export function hostedCriterionId(
-  predicate: Predicate,
-  scope?: PredicateScope
-): string {
-  const digest = canonicalDigest(
-    scope ? { predicate, scope } : { predicate }
-  ).slice(0, 12);
-  return `${predicate.type}-${digest}`;
-}
-
-/** `predicate:<criterionId>` — deterministic, gating, threshold 1. */
+/** `predicate:<criterionId>` — deterministic; role from the check policy. */
 export function hostedPredicateScoreDefinition(args: {
   predicate: Predicate;
   scope?: PredicateScope;
 }): ScoreDefinition {
   const criterionId = hostedCriterionId(args.predicate, args.scope);
+  const criterion = stripCheckPolicy(args.predicate);
   return {
     scorerId: `predicate:${criterionId}`,
     idSource: "platform",
     scorerVersion: HOSTED_PREDICATE_EVALUATOR_VERSION,
     implementationHash: canonicalDigest({
       evaluatorVersion: HOSTED_PREDICATE_EVALUATOR_VERSION,
-      criterion: args.predicate,
+      criterion,
       ...(args.scope ? { scope: args.scope } : {}),
     }),
     label: args.predicate.type,
     deterministic: true,
     passThreshold: 1,
-    role: "gating",
+    role: checkRole(args.predicate),
     ...(args.scope ? { scope: args.scope } : {}),
   };
 }
 
 /**
- * `toolCalls:match` — deterministic, gating, threshold 1.
+ * `toolCalls:match` — deterministic, gating, threshold 1. Selection only: the
+ * arguments are `toolCalls:arguments`.
  *
  * The hash covers the RESOLVED match options and the case polarity, for the
  * same reason `toolMatchScoreDefinition` does: flipping `toolCallOrder` or
@@ -133,7 +175,36 @@ export function hostedToolMatchScoreDefinition(args: {
     label: "expected tool calls",
     deterministic: true,
     passThreshold: 1,
-    role: "gating",
+    role: authoredRequiredRole(),
+  };
+}
+
+/**
+ * `toolCalls:arguments` — deterministic, gating, threshold 1.
+ *
+ * Declared only when the case expects tool calls and compares their arguments
+ * (`argumentMatching !== "ignore"`): an ignored comparison has no verdict to
+ * report, and a gating row that could only ever pass would be a vacuous gate.
+ *
+ * The hash covers the full RESOLVED match options, not just
+ * `argumentMatching`: which actual call an expected one is compared against is
+ * decided by the pairing, and `toolCallOrder` decides the pairing.
+ */
+export function hostedToolArgumentsScoreDefinition(args: {
+  matchOptions?: Record<string, unknown>;
+}): ScoreDefinition {
+  return {
+    scorerId: HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+    idSource: "platform",
+    scorerVersion: HOSTED_TOOL_ARGUMENTS_EVALUATOR_VERSION,
+    implementationHash: canonicalDigest({
+      evaluatorVersion: HOSTED_TOOL_ARGUMENTS_EVALUATOR_VERSION,
+      matchOptions: args.matchOptions ?? {},
+    }),
+    label: "expected tool call arguments",
+    deterministic: true,
+    passThreshold: 1,
+    role: authoredRequiredRole(),
   };
 }
 
@@ -152,11 +223,32 @@ export function hostedJudgeScoreDefinition(args: {
   judgeTemplateHash?: string;
   objectiveScoreCap?: number;
   model?: string;
+  /**
+   * What the RUN's frozen config said this judge was allowed to do, read off
+   * the verdict the backend stamped. Absent, or anything the build does not
+   * recognise, is advisory — the default has to fail closed, because a role
+   * this build cannot read must never be read as licence to fail a run.
+   *
+   * BOTH spellings of the required role are recognised. The backend stamped
+   * `"gating"` before the rename and stamps `"required"` after it, and this
+   * field is read off historical evidence, so "recognised" has to mean both
+   * forever — a comparator that took only one would un-gate every judge on one
+   * side of that line, silently.
+   */
+  role?: ScorerRole;
 }): ScoreDefinition {
+  const role: ScorerRole = isRequiredRole(args.role)
+    ? authoredRequiredRole()
+    : "advisory";
   return {
     scorerId: HOSTED_JUDGE_SCORER_ID,
     idSource: "platform",
     scorerVersion: HOSTED_JUDGE_PROJECTION_VERSION,
+    // `role` is DELIBERATELY not an input here. It is already an input to
+    // `definitionHash` in the contract, so a gating judge gets a distinct
+    // digest without re-fingerprinting the implementation — and an advisory
+    // judge's implementation hash stays byte-identical to every hosted run
+    // that has ever been recorded.
     implementationHash: canonicalDigest({
       judgeTemplateVersion: args.judgeTemplateVersion ?? null,
       judgeTemplateHash: args.judgeTemplateHash ?? null,
@@ -164,12 +256,94 @@ export function hostedJudgeScoreDefinition(args: {
       objectiveScoreCap:
         args.objectiveScoreCap ?? HOSTED_JUDGE_OBJECTIVE_SCORE_CAP,
     }),
-    label: "goal completion (advisory)",
+    label: `goal completion (${role})`,
     deterministic: false,
     passThreshold: args.threshold,
-    // ADVISORY, always. See the module docblock.
-    role: "advisory",
+    role,
+    // `onError` / `onSkipped` are deliberately NOT set. `resolveScoreDefinition`
+    // defaults them to `ignore` for an advisory definition and `fail` for a
+    // gating one, which is exactly what the backend finalizer reads — stating
+    // them here would be a second copy of that rule, free to drift from it.
     ...(args.model ? { model: args.model } : {}),
+  };
+}
+
+/** Version of the hosted rubric-check projection (NOT the question template). */
+export const HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION = "1";
+
+/**
+ * The model every rubric-check DEFINITION names. The row names the rail that
+ * actually answered (Jev, or the fallback model when Jev could not be
+ * reached), outside `definitionHash`, so a fallback on one trial never forks a
+ * criterion's identity across the run.
+ */
+export const HOSTED_RUBRIC_CHECKS_MODEL = "typesafe-ai/jev";
+
+/** One asked rubric-check question, as the backend's verdict describes it. */
+export type HostedRubricCheckDefinitionInput = {
+  /** `c:<criterionId>` for a suite criterion, `q:<questionId>` if authored. */
+  key: string;
+  kind: "boolean" | "choice" | "score";
+  label: string;
+  /** Digest of the rendered question and its pass line, from the backend. */
+  contentDigest: string;
+  passThreshold: number;
+  templateVersion?: number;
+  templateHash?: string;
+};
+
+/**
+ * `judge:rubricChecks:<key>` — non-deterministic and ALWAYS advisory.
+ *
+ * The hash covers the question's content digest (its wording, options, levels
+ * and pass line), its kind and the question template. Rewording a criterion
+ * therefore mints a new definition under the same scorer id: a different
+ * question, honestly, and one a baseline comparison shows as removed and
+ * added. The settings page says so where the wording is edited.
+ */
+export function hostedRubricCheckScoreDefinition(
+  args: HostedRubricCheckDefinitionInput,
+): ScoreDefinition {
+  return {
+    scorerId: hostedRubricCheckScorerId(args.key),
+    idSource: "platform",
+    scorerVersion: HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION,
+    implementationHash: canonicalDigest({
+      kind: args.kind,
+      contentDigest: args.contentDigest,
+      templateVersion: args.templateVersion ?? null,
+      templateHash: args.templateHash ?? null,
+    }),
+    label: `rubric check: ${args.label}`,
+    deterministic: false,
+    passThreshold: args.passThreshold,
+    role: "advisory",
+    model: HOSTED_RUBRIC_CHECKS_MODEL,
+  };
+}
+
+/**
+ * Emitted only when the agent-activity guard fired, so a normal run's
+ * `evaluationConfigHash` stays unchanged.
+ */
+export const HOSTED_AGENT_ACTIVITY_SCORER_ID = "platform:agentActivity";
+
+export const HOSTED_AGENT_ACTIVITY_VERSION = "1";
+
+export function hostedAgentActivityScoreDefinition(): ScoreDefinition {
+  return {
+    scorerId: HOSTED_AGENT_ACTIVITY_SCORER_ID,
+    idSource: "platform",
+    scorerVersion: HOSTED_AGENT_ACTIVITY_VERSION,
+    implementationHash: canonicalDigest({
+      evaluatorVersion: HOSTED_AGENT_ACTIVITY_VERSION,
+    }),
+    label: "agent activity",
+    deterministic: true,
+    passThreshold: 1,
+    // Gating, so the row lands in `unresolvedScorerIds` ("not measured")
+    // rather than as a failed criterion.
+    role: "gating",
   };
 }
 
@@ -181,6 +355,13 @@ export type HostedScoreDefinitionInputs = {
     matchOptions?: Record<string, unknown>;
     isNegativeTest?: boolean;
   };
+  /**
+   * Present when the case authored tool-call expectations AND compares their
+   * arguments. See `hostedToolArgumentsScoreDefinition`.
+   */
+  toolArguments?: {
+    matchOptions?: Record<string, unknown>;
+  };
   /** Present only once a judge verdict exists (i.e. on the second pass). */
   judge?: {
     threshold: number;
@@ -189,7 +370,13 @@ export type HostedScoreDefinitionInputs = {
     judgeTemplateHash?: string;
     objectiveScoreCap?: number;
     model?: string;
+    /** From the run's frozen config, via the stamped verdict. Fails closed. */
+    role?: "advisory" | "gating";
   };
+  /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
+  agentActivityFired?: boolean;
+  /** One per question the rubric-check pass asked (second pass only). */
+  rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
 };
 
 /**
@@ -214,8 +401,17 @@ export function buildHostedScoreDefinitions(
   if (inputs.toolMatch) {
     definitions.push(hostedToolMatchScoreDefinition(inputs.toolMatch));
   }
+  if (inputs.toolArguments) {
+    definitions.push(hostedToolArgumentsScoreDefinition(inputs.toolArguments));
+  }
   if (inputs.judge) {
     definitions.push(hostedJudgeScoreDefinition(inputs.judge));
+  }
+  if (inputs.agentActivityFired) {
+    definitions.push(hostedAgentActivityScoreDefinition());
+  }
+  for (const question of inputs.rubricChecks ?? []) {
+    definitions.push(hostedRubricCheckScoreDefinition(question));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

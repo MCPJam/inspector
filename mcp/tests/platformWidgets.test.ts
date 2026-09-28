@@ -32,9 +32,12 @@ describe("getPlatformWidgetView", () => {
     ).toBe("eval_run");
     expect(
       getPlatformWidgetView(
+        // The view KEY is still `scenario` — it addresses a bundled HTML
+        // resource — but the payload it carries is `GetStudyResult`, whose
+        // members are `project` and `study`.
         tagPlatformWidgetPayload("scenario", {
           project: PROJECT,
-          scenario: { id: "scenario-1", name: "Support" },
+          study: { id: "study-1", name: "Support" },
         })
       )
     ).toBe("scenario");

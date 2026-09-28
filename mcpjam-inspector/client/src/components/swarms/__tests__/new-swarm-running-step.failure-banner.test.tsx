@@ -86,7 +86,22 @@ const runFixture = {
   createdAt: 1,
 } as unknown as JourneyRun;
 
+/** The counts a test can reshape — one terminal run's worth. */
+const mutableRun = runFixture as unknown as {
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  hostSummaries: Array<Record<string, unknown>>;
+  snapshot: { sessionsPerTarget: number };
+  attempts: unknown[];
+};
+
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useMutation: () => vi.fn(),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -136,8 +151,9 @@ function renderStep() {
           },
         ]}
         onLeave={vi.fn()}
+        onOpenSession={vi.fn()}
       />
-    </div>
+    </div>,
   );
 }
 
@@ -145,6 +161,22 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
   beforeEach(() => {
     streamState.sessions = {};
     streamState.cellStatus = { "environment:env-1:0": "failed" };
+    attempt.status = "failed";
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    mutableRun.summary = { total: 1, succeeded: 0, failed: 1, rateLimited: 0 };
+    mutableRun.hostSummaries = [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+        rateLimited: 0,
+      },
+    ];
+    mutableRun.snapshot.sessionsPerTarget = 1;
+    mutableRun.attempts = [attempt];
   });
 
   it("renders a re-runnable auth failure calmly, naming the server and the fix", async () => {
@@ -155,7 +187,7 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
 
     const banner = await screen.findByTestId("new-swarm-running-failure");
     expect(banner).toHaveTextContent(
-      "No sessions ran — this run's authorization needs re-running."
+      "This run's authorization needs re-running.",
     );
     expect(banner).toHaveTextContent("Billing MCP");
     expect(banner).toHaveTextContent("sign in again");
@@ -172,8 +204,120 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     renderStep();
 
     const banner = await screen.findByTestId("new-swarm-running-failure");
-    expect(banner).toHaveTextContent("No sessions ran.");
+    expect(banner).toHaveTextContent("No sessions completed successfully.");
     expect(banner).toHaveTextContent("Billing MCP");
     expect(banner.className).toContain("destructive");
   });
+
+  it("does not claim a stale run never executed sessions", async () => {
+    attempt.errorCode = "stale_runner";
+    attempt.errorMessage = "Runner heartbeat went silent; run marked stale.";
+    renderStep();
+    const banner = await screen.findByTestId("new-swarm-running-failure");
+    expect(banner).toHaveTextContent("No sessions completed successfully.");
+    expect(banner).toHaveTextContent(
+      "Sessions may have run before the interruption",
+    );
+    expect(banner).toHaveTextContent(
+      "reason contact was lost was not recorded",
+    );
+    expect(banner).not.toHaveTextContent("No sessions ran");
+  });
+
+  it("stays quiet on a mixed run, where sessions did run", async () => {
+    // Every line of this banner asserts that nothing ran. With one session
+    // throttled and one clean it contradicted the title right above it, which
+    // reads "Swarm finished 2 of 2 sessions".
+    mutableRun.summary = { total: 2, succeeded: 1, failed: 0, rateLimited: 1 };
+    mutableRun.hostSummaries = [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        total: 2,
+        succeeded: 1,
+        failed: 0,
+        rateLimited: 1,
+      },
+    ];
+    mutableRun.snapshot.sessionsPerTarget = 2;
+    mutableRun.attempts = [
+      {
+        ...attempt,
+        status: "rate_limited",
+        errorMessage: "Failed after 3 attempts. Last error: Too Many Requests",
+      },
+      { ...attempt, sessionIdx: 1, status: "succeeded" },
+    ];
+    streamState.cellStatus = {
+      "environment:env-1:0": "rate_limited",
+      "environment:env-1:1": "succeeded",
+    };
+
+    renderStep();
+
+    expect(
+      await screen.findByTestId("new-swarm-running-title"),
+    ).toHaveTextContent("Swarm finished 2 of 2 sessions");
+    expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
+  });
+
+  it("counts both failure causes once and uses the most severe tone", async () => {
+    mutableRun.summary = {
+      total: 20,
+      succeeded: 0,
+      failed: 10,
+      rateLimited: 10,
+    };
+    mutableRun.hostSummaries = [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        ...mutableRun.summary,
+      },
+    ];
+    mutableRun.snapshot.sessionsPerTarget = 20;
+    mutableRun.attempts = Array.from({ length: 20 }, (_, sessionIdx) => ({
+      ...attempt,
+      sessionIdx,
+      status: sessionIdx < 10 ? "failed" : "rate_limited",
+      errorCode: sessionIdx < 10 ? "session_failed" : "user_rate_limit",
+      errorMessage:
+        sessionIdx < 10
+          ? "Protocol mismatch"
+          : "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+    }));
+    streamState.cellStatus = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [
+        `environment:env-1:${i}`,
+        i < 10 ? "failed" : "rate_limited",
+      ]),
+    );
+    renderStep();
+    // Each cause is stated exactly once: the server failure in the banner, the
+    // model limit in its own callout (which carries the top-up path).
+    const banner = await screen.findByTestId("new-swarm-running-failure");
+    expect(banner).toHaveTextContent("10 sessions: Protocol mismatch");
+    expect(banner).not.toHaveTextContent("Daily MCPJam model limit");
+    expect(banner.className).toContain("destructive");
+    expect(
+      screen.getByTestId("new-swarm-running-account-limit"),
+    ).toHaveTextContent("10 stopped at an organization usage limit");
+  });
+
+  it("does not invent a cause for an attempt without error metadata", async () => {
+    renderStep();
+    await screen.findByTestId("new-swarm-running-title");
+    expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
+  });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
+  }),
+}));

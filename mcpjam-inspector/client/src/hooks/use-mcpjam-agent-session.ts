@@ -12,6 +12,7 @@
  * branches surface later, parameterize `useChatSession` and route the
  * agent through it instead.
  */
+import { pinEvalTurn, readEvalScope } from "@/lib/mcpjam-agent/eval-scope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
@@ -31,18 +32,20 @@ import {
   subscribeAgentRequireToolApproval,
 } from "@/lib/agent-tool-approval-storage";
 import { track } from "@/lib/analytics";
-import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
-import { usePersistedModel } from "@/hooks/use-persisted-model";
-import {
-  buildAvailableModelsFromOrgConfig,
-  getDefaultModel,
-} from "@/components/chat-v2/shared/model-helpers";
 import type { ModelDefinition } from "@/shared/types";
+import { MCPJAM_AGENT_MODEL_DEFINITION } from "@/shared/mcpjam-agent-model";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
+import { fetchArtifact } from "@/lib/artifact-urls";
+import {
+  getMessageTimestampMs,
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestampMetadata,
+} from "@mcpjam/chat-ui";
 
 /**
  * Count the `ui_*` client-fulfilled tool calls on the turn's assistant
@@ -126,7 +129,9 @@ function usageTokens(last: UIMessage | undefined): {
     last && last.role === "assistant"
       ? (
           last as {
-            metadata?: { usage?: { inputTokens?: unknown; outputTokens?: unknown } };
+            metadata?: {
+              usage?: { inputTokens?: unknown; outputTokens?: unknown };
+            };
           }
         ).metadata?.usage
       : undefined;
@@ -148,10 +153,13 @@ export interface UseMcpjamAgentSessionArgs {
   chatSessionId?: string;
   /** Project the agent session is scoped to (for persistence). */
   projectId: string | null | undefined;
-  /** Org id — used to fetch the org model config for BYOK availability. */
+  /**
+   * Org id. No longer read here — the agent's model is pinned, so there is
+   * nothing to resolve from the org's BYOK availability — but kept on the props
+   * so the several call sites that pass it do not all have to change, and so it
+   * is here if the panel ever needs an org-scoped read again.
+   */
   organizationId?: string | null;
-  /** Optional override to override the persisted default model. */
-  modelOverride?: ModelDefinition;
   /**
    * Telemetry surface — passed into PostHog lifecycle events so we can split
    * engagement/error/latency by home vs. side-panel vs. future bubble.
@@ -190,13 +198,13 @@ export interface UseMcpjamAgentSessionResult {
 }
 
 export function useMcpjamAgentSession(
-  args: UseMcpjamAgentSessionArgs
+  args: UseMcpjamAgentSessionArgs,
 ): UseMcpjamAgentSessionResult {
-  const { projectId, organizationId, chatSessionId: providedSessionId } = args;
+  const { projectId, chatSessionId: providedSessionId } = args;
   const surface = args.surface ?? "unknown";
 
   const [chatSessionId, setChatSessionId] = useState<string>(
-    () => providedSessionId ?? generateId()
+    () => providedSessionId ?? generateId(),
   );
 
   // If the consumer hands us a new id (e.g. URL param change), sync.
@@ -206,39 +214,27 @@ export function useMcpjamAgentSession(
     }
   }, [providedSessionId, chatSessionId]);
 
-  // Model resolution: use the user's persisted default, otherwise the org
-  // BYOK availability list's spec default. The agent has no model picker
-  // in v1 — the bubble + home both ride the user's last-used model.
-  const orgConfig = useHostedOrgModelConfig({
-    projectId,
-    organizationId,
-  });
-  const availableModels = useMemo(
-    () => buildAvailableModelsFromOrgConfig(orgConfig),
-    [orgConfig]
-  );
-  const { selectedModelId } = usePersistedModel();
-  const resolvedModel = useMemo<ModelDefinition | undefined>(() => {
-    if (args.modelOverride) return args.modelOverride;
-    if (availableModels.length === 0) return undefined;
-    if (selectedModelId) {
-      const found = availableModels.find((m) => m.id === selectedModelId);
-      if (found) return found;
-    }
-    return getDefaultModel(availableModels);
-  }, [args.modelOverride, availableModels, selectedModelId]);
+  // Ask MCPJam runs on ONE model, and the server ignores whatever this sends
+  // anyway: the backend only accepts the turn as MCPJam-paid for that exact id.
+  // It is still sent, and still stamped on `agent_turn_completed`, so the
+  // telemetry says what actually ran — which the old behaviour (the user's
+  // last-used Playground model) no longer would.
+  //
+  // This also removes a wait: resolution used to depend on the org model config
+  // landing, and an agent submit before it did had no model at all.
+  const resolvedModel: ModelDefinition = MCPJAM_AGENT_MODEL_DEFINITION;
 
   // "Tool Approval" preference — persisted, shared across agent surfaces
   // (hero + panel) via the storage-change subscription. Default off.
   const [requireToolApproval, setRequireToolApprovalState] = useState(
-    loadAgentRequireToolApproval
+    loadAgentRequireToolApproval,
   );
   useEffect(
     () =>
       subscribeAgentRequireToolApproval(() => {
         setRequireToolApprovalState(loadAgentRequireToolApproval());
       }),
-    []
+    [],
   );
   const setRequireToolApproval = useCallback((value: boolean) => {
     setRequireToolApprovalState(value);
@@ -285,7 +281,9 @@ export function useMcpjamAgentSession(
   // persisted transcript and seed `useChat`. Without this, reload would
   // land on an empty thread despite the session being on disk.
   const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
-  const [hydrating, setHydrating] = useState<boolean>(Boolean(providedSessionId));
+  const [hydrating, setHydrating] = useState<boolean>(
+    Boolean(providedSessionId),
+  );
 
   useEffect(() => {
     if (!providedSessionId) {
@@ -308,19 +306,22 @@ export function useMcpjamAgentSession(
           setHydrating(false);
           return;
         }
-        const transcriptRes = await fetch(blobUrl);
+        const transcriptRes = await fetchArtifact(blobUrl);
         if (!transcriptRes.ok) {
           setInitialMessages([]);
           setHydrating(false);
           return;
         }
         const transcript = (await transcriptRes.json()) as unknown[];
-        const hydrated = transcriptToUIMessages(transcript);
+        const hydrated = hydrateMessageTimestamps(
+          transcriptToUIMessages(transcript),
+          detail.turnTraces,
+        );
         if (cancelled) return;
         // preserveHydratedMessageIds keeps stable ids if anything's
         // already in the array (no-op on first mount).
         setInitialMessages((current) =>
-          preserveHydratedMessageIds(current, hydrated)
+          preserveHydratedMessageIds(current, hydrated),
         );
         setHydrating(false);
       } catch {
@@ -371,15 +372,21 @@ export function useMcpjamAgentSession(
     if (!isTerminal) return;
     const claim = claimAgentTurnCompletion(chatSessionId);
     if (!claim) return;
+    const completedAt = Date.now();
     turnStartedAtRef.current = null;
     const startedAt = claim.startedAt;
-    const durationMs = startedAt != null ? Date.now() - startedAt : null;
+    const durationMs = startedAt != null ? completedAt - startedAt : null;
     // Only attribute tool counts / usage to an assistant message THIS turn
     // produced. On an error before the SDK appended the turn's assistant
     // message, `last` is the previous turn's answer — attributing its tools
     // to the failed turn would corrupt the experiment. A new message has an
     // id different from the pre-submit boundary.
     const turnAssistant = turnAssistantMessage(last, claim.boundaryMessageId);
+    if (turnAssistant && getMessageTimestampMs(turnAssistant) === undefined) {
+      setMessages((current) =>
+        timestampMessageById(current, turnAssistant.id, completedAt),
+      );
+    }
     // Observation-only: a throwing analytics client must never break the
     // session's effect.
     try {
@@ -410,9 +417,10 @@ export function useMcpjamAgentSession(
           turnAssistant.role === "assistant" &&
           Array.isArray(turnAssistant.parts)
         ) {
-          toolCallCount = turnAssistant.parts.filter((p) =>
-            typeof (p as { type?: unknown }).type === "string" &&
-            (p as { type: string }).type.startsWith("tool-")
+          toolCallCount = turnAssistant.parts.filter(
+            (p) =>
+              typeof (p as { type?: unknown }).type === "string" &&
+              (p as { type: string }).type.startsWith("tool-"),
           ).length;
         }
         track("mcpjam_agent_response_finished", {
@@ -439,7 +447,7 @@ export function useMcpjamAgentSession(
     } catch {
       // swallow — telemetry is observation-only
     }
-  }, [chatSessionId, error, messages, status, surface]);
+  }, [chatSessionId, error, messages, setMessages, status, surface]);
 
   // Orphaned-defer fallback: a UI tool call deferred for approval whose
   // approval request never arrived (client/server flag disagreement for one
@@ -517,6 +525,7 @@ export function useMcpjamAgentSession(
       if (!providedSessionId) {
         config.seeded = true;
       }
+      pinEvalTurn(chatSessionId);
       turnIndexRef.current += 1;
       turnStartedAtRef.current = Date.now();
       // Turn timing/attribution lives on the shared Chat entry so a hand-off
@@ -525,7 +534,7 @@ export function useMcpjamAgentSession(
       const priorMessages = messagesForDeferRef.current;
       const boundaryMessageId =
         priorMessages.length > 0
-          ? (priorMessages[priorMessages.length - 1]?.id ?? null)
+          ? priorMessages[priorMessages.length - 1]?.id ?? null
           : null;
       markAgentTurnStarted(chatSessionId, {
         model: config.model?.id ?? null,
@@ -548,10 +557,11 @@ export function useMcpjamAgentSession(
       // Appending is free. Built here, at send time, so it reflects wherever
       // the user has navigated themselves since the last turn.
       void sendMessage({
-        parts: [buildUiContextPart(), { type: "text", text: trimmed }],
+        parts: [...(readEvalScope(chatSessionId) ? [] : [buildUiContextPart()]), { type: "text", text: trimmed }],
+        metadata: withMessageTimestampMetadata(undefined, Date.now()),
       });
     },
-    [chat, chatSessionId, config, providedSessionId, sendMessage, surface]
+    [chat, chatSessionId, config, providedSessionId, sendMessage, surface],
   );
 
   // Stopping generation abandons the turn a parked question belongs to, so

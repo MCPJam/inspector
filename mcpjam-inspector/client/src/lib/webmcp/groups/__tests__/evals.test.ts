@@ -24,6 +24,7 @@ const EVALS_TOOL_NAMES = [
   "ui_run_eval_suite",
   "ui_cancel_eval_run",
   "ui_generate_eval_tests",
+  "ui_edit_eval_case_draft",
   "ui_delete_eval_suite",
 ];
 
@@ -187,6 +188,17 @@ describe("buildEvalsUiTools", () => {
     const missing = await getTool("ui_generate_eval_tests").execute({});
     expect(missing.isError).toBe(true);
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("ui_generate_eval_tests forwards the environment a mixed suite generates for", async () => {
+    await getTool("ui_generate_eval_tests").execute({
+      suite: "Asana smoke",
+      environment: "Claude · openai/gpt-5",
+    });
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "generateEvalTests",
+      payload: { suite: "Asana smoke", environment: "Claude · openai/gpt-5" },
+    });
   });
 
   it("ui_delete_eval_suite dispatches deleteEvalSuite and requires 'suite'", async () => {

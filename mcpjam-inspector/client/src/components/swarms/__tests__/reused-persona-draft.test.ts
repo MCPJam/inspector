@@ -17,7 +17,7 @@ const ANA: ReusedPersona = {
   notes: "Closes the books monthly.",
 };
 
-const GOALS = [{ journeyId: "j-1", label: "Reconcile payouts" }];
+const GOALS = [{ journeyId: "j-1", goal: "Reconcile payouts" }];
 
 const draftOf = (overrides: Partial<Record<string, unknown>> = {}) => ({
   name: ANA.name,

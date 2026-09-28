@@ -74,6 +74,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   Project: "PlatformProject",
   ProjectServer: "PlatformProjectServer",
   ChatSession: "PlatformChatSession",
+  ChatTurn: "PlatformChatTurn",
+  ChatSessionDetail: "PlatformChatSessionDetail",
+  ChatSessionTrace: "PlatformChatSessionTrace",
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
   EvalRunCreated: "PlatformEvalRunCreated",
@@ -83,9 +86,34 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
   EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
+  // The grading configuration, extracted out of `EvalSuiteDetail.settings`
+  // into a named schema so this ratchet can reach it at all. It could not
+  // before: `settings` was an inline object, and this file pairs SCHEMAS. The
+  // extraction immediately found the gap it exists to find —
+  // `settings.qualityGate` has been on `PlatformEvalSuiteSettings` and
+  // undocumented in the spec since B2.
+  //
+  // `SuiteGatePolicyV1` is documented as its own schema and deliberately NOT
+  // paired: its SDK twin is a zod-inferred type in
+  // `sdk/src/contract/suite-gate.ts`, and this parser reads interfaces out of
+  // `platform/types.ts`. Pairing it would need a second extraction path for
+  // one schema; the `$ref` check skips an unpaired target rather than
+  // reporting a false mismatch.
+  EvalSuiteSettings: "PlatformEvalSuiteSettings",
+  EvalSuiteSettingsV2: "PlatformEvalSuiteSettingsV2",
+  EvalSuiteRevision: "PlatformEvalSuiteRevision",
   EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
+  // The vocabulary-2 twins: what a client constructed with `evalVocabulary: 2`
+  // reads back. Paired so the canonical spellings the route projects and the
+  // ones the SDK types cannot drift apart without a red test.
+  EvalCaseV2: "PlatformEvalCaseV2",
+  EvalSuiteDetailV2: "PlatformEvalSuiteDetailV2",
+  // The policy `role` lives on this schema, and it is the one field the
+  // vocabulary negotiation projects. Pinned so the published enum and the one
+  // the boundary serves cannot drift apart without a red test.
+  ResolvedScoreDefinition: "PlatformResolvedScoreDefinition",
   EvalDeleted: "PlatformEvalSuiteDeleted",
   Client: "PlatformClient",
   ClientDetail: "PlatformClientDetail",
@@ -105,10 +133,11 @@ const PAIRS: Readonly<Record<string, string>> = {
   SandboxImageBuildStarted: "PlatformImageBuildStarted",
   ComputerAttached: "PlatformComputerAttached",
   ComputerReset: "PlatformComputerReset",
-  ScenarioLink: "PlatformScenarioLink",
-  ScenarioServer: "PlatformScenarioServer",
-  Scenario: "PlatformScenario",
-  ScenarioDetail: "PlatformScenarioDetail",
+  StudyLink: "PlatformStudyLink",
+  StudyServer: "PlatformStudyServer",
+  StudySummary: "PlatformStudySummary",
+  Study: "PlatformStudy",
+  StudyDetail: "PlatformStudyDetail",
   TunnelGrant: "PlatformTunnelGrant",
   TunnelClosed: "PlatformTunnelClosed",
 
@@ -121,18 +150,18 @@ const PAIRS: Readonly<Record<string, string>> = {
   Persona: "PlatformPersona",
   PersonaDeleted: "PlatformPersonaDeleted",
   PersonaDraft: "PlatformPersonaDraft",
-  Journey: "PlatformJourney",
-  JourneyArchived: "PlatformJourneyArchived",
+  Goal: "PlatformGoal",
+  GoalArchived: "PlatformGoalArchived",
   Swarm: "PlatformSwarm",
   SwarmArchived: "PlatformSwarmArchived",
 
   // ── A2: Swarm runs ────────────────────────────────────────────────────
-  JourneyRun: "PlatformJourneyRun",
-  JourneyRunTarget: "PlatformJourneyRunTarget",
-  JourneyRunAttempt: "PlatformJourneyRunAttempt",
-  JourneyRunSession: "PlatformJourneyRunSession",
-  JourneyRunLaunched: "PlatformJourneyRunLaunched",
-  JourneyRunCanceled: "PlatformJourneyRunCanceled",
+  GoalRun: "PlatformGoalRun",
+  GoalRunTarget: "PlatformGoalRunTarget",
+  GoalRunAttempt: "PlatformGoalRunAttempt",
+  GoalRunSession: "PlatformGoalRunSession",
+  GoalRunLaunched: "PlatformGoalRunLaunched",
+  GoalRunCanceled: "PlatformGoalRunCanceled",
 
   // ── A3: Swarm insights ────────────────────────────────────────────────
   ScorecardCriterion: "PlatformScorecardCriterion",
@@ -142,21 +171,26 @@ const PAIRS: Readonly<Record<string, string>> = {
   SwarmOverviewFinding: "PlatformSwarmOverviewFinding",
   SwarmOverviewRun: "PlatformSwarmOverviewRun",
   SwarmOverview: "PlatformSwarmOverview",
-  WaveInsights: "PlatformWaveInsights",
-  WaveInsightsRequested: "PlatformWaveInsightsRequested",
-  WaveInsightsCanceled: "PlatformWaveInsightsCanceled",
+  SwarmRunInsights: "PlatformSwarmRunInsights",
+  SwarmRunInsightsRequested: "PlatformSwarmRunInsightsRequested",
+  SwarmRunInsightsCanceled: "PlatformSwarmRunInsightsCanceled",
 
   // ── A4: User testing ──────────────────────────────────────────────────
   //
-  // `ScenarioLinkRotated`, `ScenarioMemberRemoved` and the three request
-  // bodies have no SDK twin: the client returns those responses inline and
-  // takes the bodies as parameters, so there is no interface to compare.
-  Scenario: "PlatformScenario",
-  ScenarioDeleted: "PlatformScenarioDeleted",
-  UserTestingScenario: "PlatformUserTestingScenario",
-  UserTestingScenarioDetail: "PlatformUserTestingScenarioDetail",
-  UserTestingSession: "PlatformUserTestingSession",
-  UserTestingSessionDetail: "PlatformUserTestingSessionDetail",
+  // `StudyLinkRotated`, `StudyMemberRemoved`, `StudyMemberUpserted` and the
+  // three request bodies have no SDK twin: the client returns those responses
+  // inline and takes the bodies as parameters, so there is no interface to
+  // compare.
+  //
+  // The deprecated `PlatformScenario*` / `PlatformUserTesting*` interfaces are
+  // unpaired on purpose: their schemas are gone from the spec, because the
+  // routes that serve them are deliberately undocumented (see
+  // `openapi-drift.test.ts`). They are still exported, still executable, and
+  // pinned by the SDK's own tests.
+  StudyDeleted: "PlatformStudyDeleted",
+  StudyUpdated: "PlatformStudyUpdated",
+  StudySession: "PlatformStudySession",
+  StudySessionDetail: "PlatformStudySessionDetail",
   TranscriptMessage: "PlatformTranscriptMessage",
   GuestExecution: "PlatformGuestExecution",
 
@@ -176,7 +210,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   InsightsEnvelope: "PlatformInsightsEnvelope",
   ActionableFinding: "PlatformActionableFinding",
   ActionableFindingEvidence: "PlatformActionableFindingEvidence",
-  ScenarioInsightsRequested: "PlatformUserTestingInsightsRequested",
+  StudyInsightsRequested: "PlatformStudyInsightsRequested",
   EvalRunInsightsRequested: "PlatformEvalRunInsightsRequested",
   EvalRunJudgeRequested: "PlatformEvalRunJudgeRequested",
   EvalRunJudges: "PlatformEvalRunJudges",

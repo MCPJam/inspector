@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ComposerResolveError,
+  clientNameResolver,
+  composerMissingServerGroup,
+  describeSkippedModelCells,
   isAdhocUnavailable,
+  lacksEvalServerSource,
   resolveComposerEnvironments,
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
@@ -12,6 +16,7 @@ import {
   environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
+  expandModelChoices,
   type EnvironmentComposerState,
 } from "../environment-stack";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -21,7 +26,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
  * needs no arguments must be one.
  */
 function env(
-  overrides: Partial<ProjectEnvironmentView> & { environmentId: string }
+  overrides: Partial<ProjectEnvironmentView> & { environmentId: string },
 ): ProjectEnvironmentView {
   return {
     projectId: "proj-1",
@@ -34,13 +39,13 @@ function env(
 }
 
 function named(
-  overrides: Partial<ProjectEnvironmentView> & { environmentId: string }
+  overrides: Partial<ProjectEnvironmentView> & { environmentId: string },
 ): ProjectEnvironmentView {
   return env({ name: "Prod-like", origin: "named", ...overrides });
 }
 
 function composeState(
-  stack: Partial<EnvironmentComposerState["stack"]>
+  stack: Partial<EnvironmentComposerState["stack"]>,
 ): EnvironmentComposerState {
   return {
     environmentIds: [],
@@ -51,13 +56,13 @@ function composeState(
 
 function ensureReturning(
   ids: string[],
-  opts: { created?: boolean } = { created: true }
+  opts: { created?: boolean } = { created: true },
 ): EnsureAdhocEnvironmentsFn {
   return vi.fn(async () =>
     ids.map((environmentId) => ({
       environment: env({ environmentId }),
       ...(opts.created === undefined ? {} : { created: opts.created }),
-    }))
+    })),
   );
 }
 
@@ -100,7 +105,7 @@ describe("resolveComposerEnvironments — saved-environment path", () => {
         },
         liveEnvironments: [named({ environmentId: "env-a" })],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "UNRESOLVED_ENVIRONMENT" });
   });
 
@@ -115,7 +120,7 @@ describe("resolveComposerEnvironments — saved-environment path", () => {
         },
         liveEnvironments: [named({ environmentId: "env-a", archivedAt: 5 })],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "UNRESOLVED_ENVIRONMENT" });
   });
 });
@@ -229,7 +234,7 @@ describe("resolveComposerEnvironments — compose path", () => {
         state: composeState({ hostIds: [] }),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "NO_TARGETS" });
   });
 
@@ -241,8 +246,123 @@ describe("resolveComposerEnvironments — compose path", () => {
         state: composeState({ hostIds: ["h1", "h2", "h3"] }),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "TOO_MANY_TARGETS" });
+  });
+});
+
+describe("resolveComposerEnvironments — requireServerAttachment (evals)", () => {
+  it("refuses a composition with no server group before minting anything", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: composeState({ hostIds: ["h1"] }),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+        requireServerAttachment: true,
+      }),
+    ).rejects.toMatchObject({ code: "NO_SERVER_GROUP" });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("mints a composition that names a group", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: composeState({ hostIds: ["h1"], serverAttachmentId: "grp" }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+      requireServerAttachment: true,
+    });
+    expect(result.environmentIds).toEqual(["adhoc-1"]);
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h1", serverAttachmentId: "grp" }],
+    });
+  });
+
+  it("refuses a picked saved environment with no group, but accepts a plugin-only one", async () => {
+    const saved = (id: string) => ({
+      environmentIds: [id],
+      stack: emptyEnvironmentStack(),
+      customized: false,
+    });
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: saved("bare"),
+        liveEnvironments: [named({ environmentId: "bare" })],
+        ensureAdhocEnvironments: ensureReturning([]),
+        requireServerAttachment: true,
+      }),
+    ).rejects.toMatchObject({ code: "NO_SERVER_GROUP" });
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: saved("plugin-only"),
+      liveEnvironments: [
+        named({ environmentId: "plugin-only", pluginVersionIds: ["pv"] }),
+      ],
+      ensureAdhocEnvironments: ensureReturning([]),
+      requireServerAttachment: true,
+    });
+    expect(result.environmentIds).toEqual(["plugin-only"]);
+  });
+
+  it("accepts an explicitly server-free saved environment", async () => {
+    const ensure = ensureReturning([]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: {
+        environmentIds: ["none"],
+        stack: emptyEnvironmentStack(),
+        customized: false,
+      },
+      liveEnvironments: [
+        named({ environmentId: "none", serverSelection: { mode: "none" } }),
+      ],
+      ensureAdhocEnvironments: ensure,
+      requireServerAttachment: true,
+    });
+    expect(result.environmentIds).toEqual(["none"]);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("leaves non-eval surfaces free to compose without a group", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: composeState({ hostIds: ["h1"] }),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+      }),
+    ).resolves.toMatchObject({ environmentIds: ["adhoc-1"] });
+  });
+
+  it("gates submit on the same rule", () => {
+    expect(lacksEvalServerSource({})).toBe(true);
+    expect(lacksEvalServerSource({ serverAttachmentId: "g" })).toBe(false);
+    expect(lacksEvalServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
+    expect(
+      composerMissingServerGroup(composeState({ hostIds: ["h1"] }), []),
+    ).toBe(true);
+    expect(
+      composerMissingServerGroup(
+        composeState({ hostIds: ["h1"], serverAttachmentId: "g" }),
+        [],
+      ),
+    ).toBe(false);
+    expect(
+      composerMissingServerGroup(
+        {
+          environmentIds: ["bare"],
+          stack: emptyEnvironmentStack(),
+          customized: false,
+        },
+        [named({ environmentId: "bare" })],
+      ),
+    ).toBe(true);
   });
 });
 
@@ -332,11 +452,11 @@ describe("resolveComposerEnvironments — reusing a named environment", () => {
 describe("resolveComposerEnvironments — backend skew", () => {
   const missingFunction = Object.assign(
     new Error(
-      "[CONVEX M(projectEnvironments:ensureAdhocEnvironments)] Could not find public function"
+      "[CONVEX M(projectEnvironments:ensureAdhocEnvironments)] Could not find public function",
     ),
     {
       data: "Could not find public function for 'projectEnvironments:ensureAdhocEnvironments'",
-    }
+    },
   );
 
   it("classifies a missing mutation as ADHOC_UNAVAILABLE", async () => {
@@ -376,7 +496,7 @@ describe("resolveComposerEnvironments — backend skew", () => {
         state: composeState({ hostIds: ["h1", "h2"] }),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensureReturning(["adhoc-1"]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "BACKEND_REJECTED" });
   });
 });
@@ -414,7 +534,7 @@ describe("defaultComposerState", () => {
           serverAttachmentId: "grp-2",
           skillSelection: { mode: "explicit", skillIds: ["s1"] },
         }),
-      ])
+      ]),
     );
   });
 
@@ -496,7 +616,7 @@ describe("defaultComposerState", () => {
         environments: [],
         hosts: [],
         serverAttachments: [{ _id: "grp-1" }],
-      })
+      }),
     ).toBeNull();
   });
 });
@@ -564,8 +684,8 @@ describe("environmentsExceedOneStack", () => {
           named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
           named({ environmentId: "b", hostId: "h1", serverAttachmentId: "g2" }),
         ],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(true);
   });
 
@@ -576,8 +696,8 @@ describe("environmentsExceedOneStack", () => {
           named({ environmentId: "a", hostId: "h1" }),
           named({ environmentId: "b", hostId: "h2" }),
         ],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(false);
   });
 
@@ -591,8 +711,8 @@ describe("environmentsExceedOneStack", () => {
           named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
           named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g2" }),
         ],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(true);
   });
 
@@ -613,7 +733,7 @@ describe("environmentsExceedOneStack", () => {
       environmentsExceedOneStack(selection, {
         skillsEnabled: false,
         computersEnabled: false,
-      })
+      }),
     ).toBe(false);
     expect(environmentsExceedOneStack(selection, allSlots)).toBe(true);
   });
@@ -622,8 +742,8 @@ describe("environmentsExceedOneStack", () => {
     expect(
       environmentsExceedOneStack(
         [named({ environmentId: "a", hostId: "h1" })],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(false);
   });
 });
@@ -639,7 +759,7 @@ describe("environmentsCarryPluginPins", () => {
           hostId: "h1",
           pluginVersionIds: ["pv-1"],
         }),
-      ])
+      ]),
     ).toBe(true);
   });
 
@@ -648,7 +768,7 @@ describe("environmentsCarryPluginPins", () => {
       environmentsCarryPluginPins([
         named({ environmentId: "a", hostId: "h1", pluginVersionIds: [] }),
         named({ environmentId: "b", hostId: "h2" }),
-      ])
+      ]),
     ).toBe(false);
   });
 });
@@ -718,6 +838,37 @@ describe("resolveComposerEnvironments — model axis", () => {
     expect(result.environmentIds).toEqual(["a", "b", "c", "d"]);
   });
 
+  it("uses the model choices configured for each individual client", async () => {
+    const ensure = ensureReturning(["a", "b", "c"]);
+    await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1", "h2"],
+        modelSelectionsByHost: {
+          h1: {
+            includeClientDefaults: true,
+            explicitModelIds: ["openai/gpt-5.1"],
+          },
+          h2: {
+            includeClientDefaults: false,
+            explicitModelIds: ["anthropic/claude-sonnet"],
+          },
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h1" },
+        { hostId: "h1", modelId: "openai/gpt-5.1" },
+        { hostId: "h2", modelId: "anthropic/claude-sonnet" },
+      ],
+    });
+  });
+
   it("dedupes explicit model ids before minting or counting the product", async () => {
     const ensure = ensureReturning(["inherit", "override"]);
     await resolveComposerEnvironments({
@@ -727,7 +878,10 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["google/gemini-2.5-flash", "google/gemini-2.5-flash"],
+          explicitModelIds: [
+            "google/gemini-2.5-flash",
+            "google/gemini-2.5-flash",
+          ],
         },
       }),
       liveEnvironments: [],
@@ -779,7 +933,9 @@ describe("resolveComposerEnvironments — model axis", () => {
       ensureAdhocEnvironments: ensureReturning([]),
     }).catch((e) => e);
     expect(err.code).toBe("TOO_MANY_TARGETS");
-    expect(err.message).toMatch(/3 clients × 4 model choices = 12 targets; limit 10/);
+    expect(err.message).toMatch(
+      /3 clients × 4 model choices = 12 targets; limit 10/,
+    );
   });
 
   it("does not reuse a named override row for an inherit compose", async () => {
@@ -864,7 +1020,7 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
     expect(
       environmentsCarryModels([
         named({ environmentId: "a", hostId: "h1", modelId: "m1" }),
-      ])
+      ]),
     ).toBe(true);
   });
 
@@ -879,8 +1035,8 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
             modelId: "google/gemini-2.5-flash",
           }),
         ],
-        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
-      )
+        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
+      ),
     ).toBe(false);
   });
 
@@ -895,8 +1051,8 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
             modelId: "google/gemini-2.5-flash",
           }),
         ],
-        { skillsEnabled: true, computersEnabled: true }
-      )
+        { skillsEnabled: true, computersEnabled: true },
+      ),
     ).toBe(true);
   });
 
@@ -912,8 +1068,8 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
           }),
           named({ environmentId: "c", hostId: "h2" }),
         ],
-        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
-      )
+        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
+      ),
     ).toBe(true);
   });
 
@@ -933,7 +1089,7 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
           modelId: "google/gemini-2.5-flash",
         }),
       ],
-      { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
+      { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
     );
     expect(state.stack.modelSelection).toEqual({
       includeClientDefaults: true,
@@ -954,5 +1110,206 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
       includeClientDefaults: true,
       explicitModelIds: [],
     });
+  });
+});
+
+describe("expandModelChoices — harness × model support", () => {
+  it("skips, and reports, the explicit models a client's harness can't run", () => {
+    const { cells, skipped } = expandModelChoices(
+      {
+        includeClientDefaults: true,
+        explicitModelIds: [
+          "anthropic/claude-sonnet-4.5",
+          "openai/gpt-5.6-luna",
+          "anthropic/claude-fable-5",
+        ],
+      },
+      { clientId: "h-claude", harness: { harnessId: "claude-code" } },
+    );
+    // The inherit cell is the host's own configuration; never skipped here.
+    expect(cells).toEqual([
+      { modelId: undefined },
+      { modelId: "anthropic/claude-sonnet-4.5" },
+    ]);
+    expect(skipped).toEqual([
+      {
+        clientId: "h-claude",
+        modelId: "openai/gpt-5.6-luna",
+        reason: expect.stringContaining(
+          "the Claude Code harness can't run this host's model",
+        ),
+      },
+      {
+        clientId: "h-claude",
+        modelId: "anthropic/claude-fable-5",
+        reason: expect.stringMatching(/^not verified for claude-code /),
+      },
+    ]);
+  });
+
+  it("skips nothing for an emulated client or without a harness", () => {
+    for (const harness of [null, undefined]) {
+      const { cells, skipped } = expandModelChoices(
+        {
+          includeClientDefaults: false,
+          explicitModelIds: ["openai/gpt-5.6-luna"],
+        },
+        { clientId: "h", harness },
+      );
+      expect(cells).toEqual([{ modelId: "openai/gpt-5.6-luna" }]);
+      expect(skipped).toEqual([]);
+    }
+  });
+
+  it("reads the version: an unmeasured Codex runtime is unknown, not unsupported", () => {
+    const { skipped } = expandModelChoices(
+      { includeClientDefaults: false, explicitModelIds: ["openai/gpt-5.6"] },
+      {
+        clientId: "h",
+        harness: { harnessId: "codex", runtimeVersion: "0.160.0" },
+      },
+    );
+    expect(skipped[0]?.reason).toBe("not verified for codex 0.160.0");
+  });
+});
+
+describe("resolveComposerEnvironments — harness-incompatible cells", () => {
+  it("does not mint a cell the client's harness can't run, and returns it", async () => {
+    const ensure = ensureReturning(["a", "b", "c"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h-codex", "h-emulated"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["openai/gpt-5.6-luna"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+      loadHostHarness: async (hostId) =>
+        hostId === "h-codex" ? { harnessId: "codex" } : null,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h-codex" },
+        { hostId: "h-emulated" },
+        { hostId: "h-emulated", modelId: "openai/gpt-5.6-luna" },
+      ],
+    });
+    expect(result.skipped).toEqual([
+      {
+        clientId: "h-codex",
+        modelId: "openai/gpt-5.6-luna",
+        reason: expect.stringContaining("Codex harness can't run"),
+      },
+    ]);
+    expect(describeSkippedModelCells(result.skipped, () => "Codex")).toMatch(
+      /^Skipped 1 client × model pair the client can't run: Codex × openai\/gpt-5\.6-luna/,
+    );
+  });
+
+  it("drops only the client that can run nothing, keeping the others", async () => {
+    // The picker admits a model any selected client can run; the Codex client
+    // cannot run gpt-5.6-luna, the emulated one can. The resolve must mint the
+    // emulated cell and report the Codex pair, not fail the whole selection.
+    const ensure = ensureReturning(["emu-luna"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h-codex", "h-emulated"],
+        modelSelection: {
+          includeClientDefaults: false,
+          explicitModelIds: ["openai/gpt-5.6-luna"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+      loadHostHarness: async (hostId) =>
+        hostId === "h-codex" ? { harnessId: "codex" } : null,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h-emulated", modelId: "openai/gpt-5.6-luna" }],
+    });
+    expect(result.environmentIds).toEqual(["emu-luna"]);
+    expect(result.skipped).toEqual([
+      {
+        clientId: "h-codex",
+        modelId: "openai/gpt-5.6-luna",
+        reason: expect.stringContaining("Codex harness can't run"),
+      },
+    ]);
+  });
+
+  it("refuses when no client is left with anything to run", async () => {
+    const ensure = ensureReturning([]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        modelMatrixEnabled: true,
+        state: composeState({
+          hostIds: ["h-claude"],
+          modelSelection: {
+            includeClientDefaults: false,
+            explicitModelIds: ["openai/gpt-5.5"],
+          },
+        }),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+        loadHostHarness: async () => ({ harnessId: "claude-code" }),
+      }),
+    ).rejects.toMatchObject({ code: "NO_TARGETS" });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+});
+
+describe("clientNameResolver", () => {
+  it("names a skipped pair by the client's display name, else its id", () => {
+    const name = clientNameResolver([
+      { hostId: "h1", name: "Claude", displayName: "Claude (2)" },
+      { hostId: "h2", name: "Codex" },
+    ]);
+    expect(name("h1")).toBe("Claude (2)");
+    expect(name("h2")).toBe("Codex");
+    expect(name("gone")).toBe("gone");
+    expect(
+      describeSkippedModelCells(
+        [{ clientId: "h2", modelId: "openai/gpt-5.6-luna", reason: "r" }],
+        name,
+      ),
+    ).toBe(
+      "Skipped 1 client × model pair the client can't run: Codex × openai/gpt-5.6-luna (r)",
+    );
+  });
+});
+
+describe("large eval matrices", () => {
+  it("prepares all 16 targets in bounded batches and preserves order", async () => {
+    const hosts = Array.from({ length: 16 }, (_, i) => `host-${i}`);
+    const ensure = vi.fn(
+      async ({ stacks }: { stacks: Array<{ hostId: string }> }) =>
+        stacks.map((stack) => ({
+          environment: env({
+            environmentId: `env-${stack.hostId}`,
+            hostId: stack.hostId,
+          }),
+          created: true,
+        })),
+    );
+    const result = await resolveComposerEnvironments({
+      ...base,
+      max: Number.POSITIVE_INFINITY,
+      state: composeState({ hostIds: hosts, serverAttachmentId: "group-1" }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure.mock.calls.map(([args]) => args.stacks.length)).toEqual([
+      10, 6,
+    ]);
+    expect(result.environmentIds).toEqual(hosts.map((id) => `env-${id}`));
   });
 });

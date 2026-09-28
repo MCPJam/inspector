@@ -3,6 +3,9 @@ import { ArrowDown } from "lucide-react";
 
 const EASING: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
+export const POST_CONNECT_GUIDE_COPY =
+  "Try asking Excalidraw to draw something.";
+
 export function PostConnectGuide() {
   return (
     <motion.div
@@ -13,7 +16,7 @@ export function PostConnectGuide() {
       transition={{ duration: 0.35, ease: EASING }}
     >
       <p className="max-w-xl text-center text-lg font-medium text-foreground select-none">
-        Try asking Excalidraw to draw something.
+        {POST_CONNECT_GUIDE_COPY}
       </p>
       <motion.div
         className="text-foreground/50 mt-7"

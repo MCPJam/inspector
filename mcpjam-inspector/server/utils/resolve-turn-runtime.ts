@@ -21,10 +21,17 @@
  *   - local BYOK → direct engine (model built via `buildOrgModelFromResolvedConfig`)
  *     and `finalizeUsage` posts `/stream/org/local-usage` with the identical
  *     body `runLocalOrgChatTurnHeadless`'s `postLocalUsage` emitted.
+ *   - external account → REFUSED. A runtime-chosen sentinel (`cursor/auto`)
+ *     never asks the org-provider config a question, and it never runs here
+ *     either: the runtime authenticates with the customer's own vendor
+ *     credential, which reaches `runHarnessTurn` only through the caller's
+ *     materialized project secrets — a seam `runUnifiedAssistantTurn` does not
+ *     have. See the branch for what wiring it would take.
  */
 
+import { modelWorkloadFor } from "./model-workload.js";
 import type { ToolSet } from "ai";
-import type { Harness } from "@mcpjam/sdk";
+import type { Harness, ModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
   assertOrgModelAllowed,
@@ -35,7 +42,15 @@ import {
   type SyntheticModelSource,
 } from "./org-model-config.js";
 import { postLocalUsage } from "./org-model-stream-handler.js";
+import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
+import { getHarnessAdapter } from "./harness/registry.js";
+import { buildLocalExecutionRecord } from "./local-execution-record.js";
+import { ModelResolutionRefusalError } from "./model-resolution-local.js";
+import {
+  reasoningEffortProviderOptions,
+  type EffectiveModelSettings,
+} from "./model-selection-settings.js";
 import type {
   DirectRuntime,
   TurnRuntime,
@@ -74,6 +89,8 @@ export interface ResolveTurnRuntimeArgs {
    */
   requireToolApproval?: boolean;
   tools?: ToolSet;
+  /** Effective input transcript, used only to derive image admission. */
+  messages?: unknown;
   /** Harness selector — carried onto the hosted runtime (Omitted from HostedTurnOptions). */
   harness?: Harness;
   /**
@@ -84,7 +101,31 @@ export interface ResolveTurnRuntimeArgs {
   extraBodyFields?: Record<string, unknown>;
   /** Per-run attribution stamped onto the local-BYOK usage record. */
   attribution?: TurnRunAttribution;
+  /**
+   * The saved selection behind `modelDefinition`, already checked with
+   * `backendModelSelection()` (so never `local`). Sent as the body's
+   * `modelSelection` only on the rail it names: a `hosted` one on `/stream`,
+   * an `org` one on `/stream/org` and `/stream/org/resolve`. The backend
+   * re-resolves it and records it as the requested selection.
+   */
+  modelSelection?: ModelSelection;
+  /**
+   * The settings this turn runs with, already resolved once by
+   * `resolveEffectiveModelSettings` (per-run override > saved selection >
+   * host defaults). `temperature` is what the caller hands the engine; a
+   * `reasoningEffort` is applied HERE, where the rail is known: provider
+   * options on the direct engine, the forwarded selection on `/stream`, and
+   * refused on `/stream/org` (which does not apply one). Both are recorded
+   * on the local-runtime execution record.
+   */
+  settings?: EffectiveModelSettings;
 }
+
+/** How the turn ended, for the local-runtime execution record. */
+export type TurnUsageOutcome = {
+  /** The engine's terminal error, when the turn failed mid-stream. */
+  engineError?: { message: string };
+};
 
 export interface ResolvedTurnRuntime {
   runtime: TurnRuntime;
@@ -97,32 +138,18 @@ export interface ResolvedTurnRuntime {
    * Self-guards on `result.aborted`, and the writeback itself is best-effort
    * (a telemetry outage is swallowed + logged, never thrown).
    */
-  finalizeUsage(result: UnifiedTurnResult): Promise<void>;
+  finalizeUsage(
+    result: UnifiedTurnResult,
+    outcome?: TurnUsageOutcome,
+  ): Promise<void>;
   /** Map a turn-failure message to the runner's rate-limit vs failed outcome. */
   classifyFailure(message: string): "rate_limited" | "failed";
 }
 
-/**
- * The single source of truth for folding spend-cap / rate-limit errors into
- * the amber `rate_limited` outcome vs a hard `failed`. Both `runOneSession`'s
- * catch AND the per-runtime `classifyFailure` delegate here so the regex can't
- * drift between the two call sites.
- *
- * Matches provider rate-limits (`rate limit`, `429`-phrased) AND org spend-cap
- * wording (`spend`, `cap`, `quota`, `budget`) — an org cap surfaced as
- * "quota exceeded" / "budget exhausted" must land in `rate_limited` so the
- * swarm fan-out's whole-run stop can fire on it (it re-inspects the message via
- * `classifyRateLimit`). `cap`/`quota`/`budget` are word-anchored so genuine
- * spend-cap wording matches but "capacity", "recap", "escape" do NOT
- * (a provider capacity error is a hard `failed`, not a spend cap).
- */
-export function classifyTurnFailure(
-  message: string,
-): "rate_limited" | "failed" {
-  return /rate.?limit|spend|\bquota\b|\bbudget\b|\bcap\b/i.test(message)
-    ? "rate_limited"
-    : "failed";
-}
+// Re-exported because this is where every existing importer looks for it; the
+// definition moved to a leaf module so callers that want only this predicate
+// need not load the model factories behind this one.
+export { classifyTurnFailure } from "./turn-failure-classification.js";
 
 const HOSTED_NOOP_FINALIZE = async (): Promise<void> => {
   // Hosted engines (MCPJam `/stream`, cloud BYOK `/stream/org`) record usage
@@ -144,7 +171,15 @@ export async function resolveTurnRuntime(
     scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
+    modelWorkload: modelWorkloadFor(args),
+    ...(args.modelSelection?.source === "org"
+      ? { modelSelection: args.modelSelection }
+      : {}),
   });
+  const hostedSelection =
+    args.modelSelection?.source === "hosted" ? args.modelSelection : undefined;
+  const orgSelection =
+    args.modelSelection?.source === "org" ? args.modelSelection : undefined;
 
   // --- Local-runtime org BYOK → direct engine ---
   if (
@@ -152,6 +187,19 @@ export async function resolveTurnRuntime(
     resolution.orgRuntime?.runtimeLocation === "local"
   ) {
     const orgRuntime = resolution.orgRuntime;
+
+    // A HARNESS host never runs on the direct engine. This branch drops
+    // `harness` on the floor — the turn would run the emulated direct engine on
+    // the org's local key and be reported under the harness's name. Refused
+    // with the pre-flight's own sentence (a BYOK model is not MCPJam-provided).
+    if (args.harness) {
+      const name = getHarnessAdapter(args.harness).displayName;
+      throw new Error(
+        `This host runs the ${args.harness} harness, which isn't available: ` +
+          `the ${name} harness only runs MCPJam-provided models — pick one on ` +
+          "this host to run the real runtime.",
+      );
+    }
 
     // Local-runtime org providers have no approval loop yet — the direct turn
     // driver can't pause for a human, and a synthetic visitor can't approve.
@@ -171,12 +219,36 @@ export async function resolveTurnRuntime(
     assertOrgModelAllowed(orgRuntime.provider, modelId);
     const llmModel = buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId);
 
+    // The inspector calls the provider, so the effort is applied here, as
+    // provider options, or refused when this provider has no effort control.
+    const effort = args.settings?.reasoningEffort;
+    const providerOptions = effort
+      ? reasoningEffortProviderOptions({
+          providerKey: orgRuntime.provider.providerKey,
+          modelId: args.modelSelection?.modelId ?? modelId,
+          effort,
+        })
+      : undefined;
+    if (effort && !providerOptions) {
+      throw new ModelResolutionRefusalError([
+        {
+          code: "capability_missing",
+          reason: `reasoning effort "${effort}" is not supported for ${modelId} on the ${orgRuntime.provider.providerKey} connection`,
+          evidence: {
+            setting: "reasoningEffort",
+            providerKey: orgRuntime.provider.providerKey,
+          },
+        },
+      ]);
+    }
+
     const runtime: DirectRuntime = {
       kind: "direct",
       // Bridge the AI-SDK `LanguageModel` union to the engine's narrower
       // `createLlmModel` return — the same cast the local handlers use.
       llmModel: llmModel as unknown as DirectRuntime["llmModel"],
       modelId,
+      ...(providerOptions ? { providerOptions } : {}),
       // NOTE: intentionally NO `provider`. `runLocalOrgChatTurnHeadless` never
       // forwarded a provider string to `runDirectChatTurn`, so its llm/step
       // spans carried no `gen_ai.provider.name`. Setting it here would change
@@ -184,13 +256,42 @@ export async function resolveTurnRuntime(
     };
 
     const providerKey = orgRuntime.provider.providerKey;
-    const finalizeUsage = async (result: UnifiedTurnResult): Promise<void> => {
+    const finalizeUsage = async (
+      result: UnifiedTurnResult,
+      outcome?: TurnUsageOutcome,
+    ): Promise<void> => {
       // Bill on any NON-ABORTED completion, engine-error included: the old
       // `postLocalUsage` fired unconditionally on non-abort and billed the
       // consumed tokens even when the turn errored mid-stream. The caller
       // invokes this BEFORE throwing on an engine error, so a failed turn's
       // real spend is still recorded. Only abort suppresses the writeback.
       if (result.aborted) return;
+      // Provenance for a turn that ran under a saved org selection: what was
+      // requested (the selection), what ran (this connection's local rail,
+      // this wire id, these settings) and how the call ended. The backend
+      // checks it against its own resolution of the same selection.
+      const execution = buildLocalExecutionRecord({
+        selection: orgSelection,
+        providerKey,
+        wireModelId: modelId,
+        effectiveSettings: {
+          ...(args.settings?.temperature !== undefined
+            ? { temperature: args.settings.temperature }
+            : {}),
+          ...(providerOptions && effort ? { reasoningEffort: effort } : {}),
+        },
+        outcome: outcome?.engineError
+          ? {
+              kind: "error",
+              code:
+                classifyTurnFailure(outcome.engineError.message) ===
+                "rate_limited"
+                  ? "rate_limited"
+                  : "provider_error",
+            }
+          : { kind: "ok" },
+        at: Date.now(),
+      });
       // FIRE-AND-FORGET — exact parity with the OLD call site
       // (`postLocalUsage({...}).catch((err) => logger.warn(...))`, never
       // awaited). Awaiting the writeback would block the turn for up to the 5s
@@ -217,6 +318,9 @@ export async function resolveTurnRuntime(
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
         journeyRunId: args.attribution?.journeyRunId,
+        ...(orgSelection && execution
+          ? { modelSelection: orgSelection, execution }
+          : {}),
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {
           error: err instanceof Error ? err.message : String(err),
@@ -232,8 +336,75 @@ export async function resolveTurnRuntime(
     };
   }
 
+  // --- Runtime-chosen sentinel → REFUSED on this surface ---
+  //
+  // The host's model id names no provider model (`cursor/auto`), so there is no
+  // org provider to resolve and no MCPJam credential to spend. That much is
+  // what `resolveSyntheticModelSource` already decided; what is left is whether
+  // this resolver's callers can actually RUN such a turn, and none of them can.
+  //
+  // Both refusals happen BEFORE the caller marks the turn as possibly-spent, so
+  // a v1 session turn that named `cursor/auto` releases its lease and gets a
+  // sentence that explains itself — where it previously reached Convex and came
+  // back `provider_not_configured: cursor`, i.e. "go configure a key" for a
+  // provider that has no keys.
+  //
+  // WITHOUT a harness the sentinel is unrunnable by construction: nothing else
+  // reaches the runtime that would choose the model.
+  //
+  // WITH a harness it is unrunnable HERE, and the difference matters enough to
+  // say separately. An external-account runtime authenticates with the
+  // customer's own vendor credential, and `runHarnessTurn` takes that credential
+  // from ONE place — the caller's materialized project secrets
+  // (`runtimeSecretsOverride`), because delivering a value into the box and
+  // scrubbing it out of the persisted transcript are two uses of one list and
+  // only the caller can wire the second. `runUnifiedAssistantTurn` — the facade
+  // every caller of this resolver drives — has no `runtimeSecrets` seam at all,
+  // so the credential cannot arrive. Returning a "hosted + harness" runtime here
+  // would advertise a turn that then dies inside `runHarnessTurn` telling the
+  // user to add a `CURSOR_API_KEY` secret they may well have already added — a
+  // wrong diagnosis for a turn this surface was never able to run.
+  //
+  // The fix is not a bigger error message: it is wiring the secrets fetch AND
+  // the transcript scrubber into the synthetic runner, which would also start
+  // delivering project secrets to the existing harnesses' synthetic turns
+  // (today they receive none). That is a security-relevant change with its own
+  // review; see the matching note in `run-harness-turn.ts`. Until then, refuse.
+  if (resolution.source === "external-account") {
+    throw new Error(
+      args.harness
+        ? `"${modelId}" is a placeholder for a runtime that reaches its model ` +
+            "on your own account with the runtime vendor, and this turn " +
+            "surface cannot deliver that credential — it has no path for the " +
+            "project secrets the runtime authenticates with. Run this host " +
+            "from chat, which materializes them."
+        : `"${modelId}" is a placeholder for a runtime that chooses its own ` +
+            "model, not a model MCPJam can run. Send this turn to a host " +
+            "whose harness provides that runtime, or pick a real model.",
+    );
+  }
+
   // --- MCPJam-provided → hosted `/stream` ---
   if (resolution.source === "mcpjam") {
+    // `/stream` applies a reasoning effort from the forwarded selection; an
+    // effort that selection does not carry could not reach the provider.
+    const effort = args.settings?.reasoningEffort;
+    if (effort && hostedSelection?.settings?.reasoningEffort !== effort) {
+      throw new ModelResolutionRefusalError([
+        {
+          code: "capability_missing",
+          reason: `reasoning effort "${effort}" cannot be applied to ${modelId} on this route`,
+          evidence: { setting: "reasoningEffort", route: "hosted" },
+        },
+      ]);
+    }
+    const hostedExtraBodyFields =
+      args.extraBodyFields || hostedSelection
+        ? {
+            ...(args.extraBodyFields ?? {}),
+            ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+          }
+        : undefined;
     return {
       runtime: {
         kind: "hosted",
@@ -241,7 +412,9 @@ export async function resolveTurnRuntime(
         // set endpointPath; `resolvedEndpointPath = endpointPath ?? "/stream"`
         // makes passing "/stream" explicitly byte-identical on the wire.
         endpointPath: "/stream",
-        ...(args.extraBodyFields ? { extraBodyFields: args.extraBodyFields } : {}),
+        ...(hostedExtraBodyFields
+          ? { extraBodyFields: hostedExtraBodyFields }
+          : {}),
         ...(args.harness ? { harness: args.harness } : {}),
       },
       modelSource: "mcpjam",
@@ -257,6 +430,17 @@ export async function resolveTurnRuntime(
     resolution.orgRuntime?.runtimeLocation === "cloud"
       ? resolution.orgRuntime.providerKey
       : undefined;
+  if (args.settings?.reasoningEffort) {
+    // `/stream/org` applies a saved selection's temperature, not an effort:
+    // refuse rather than run the connection without it.
+    throw new ModelResolutionRefusalError([
+      {
+        code: "capability_missing",
+        reason: `reasoning effort "${args.settings.reasoningEffort}" cannot be applied on an organization cloud connection; remove it from the saved model or run the connection on the local runtime`,
+        evidence: { setting: "reasoningEffort", route: "orgCloud" },
+      },
+    ]);
+  }
   if (providerKey === undefined) {
     // Defensive: an unexpected runtime shape (neither local nor cloud) — the
     // old dispatcher fell through to the engine branch, which would then fail
@@ -276,6 +460,7 @@ export async function resolveTurnRuntime(
         ...(args.extraBodyFields ?? {}),
         providerKey,
         ...(args.serverIds?.length ? { serverIds: args.serverIds } : {}),
+        ...(orgSelection ? { modelSelection: orgSelection } : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
     },

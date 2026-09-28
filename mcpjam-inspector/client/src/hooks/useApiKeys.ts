@@ -4,7 +4,9 @@ import {
   type CreatedApiKey,
   createApiKey,
   listApiKeys,
+  listOrganizationApiKeys,
   revokeApiKey,
+  revokeOrganizationApiKey,
 } from "@/lib/apis/web/api-keys";
 
 /**
@@ -31,10 +33,21 @@ export interface UseApiKeysOptions {
    * an empty key list — never a spurious error.
    */
   enabled: boolean;
+  /**
+   * Set for the organization inventory (owners and admins): the list is every
+   * key bound to that org, and `revoke` revokes any of them as an admin.
+   * Unset: the signed-in user's own keys.
+   */
+  organizationId?: string;
 }
 
 export interface UseApiKeysResult {
   keys: ApiKey[];
+  /**
+   * The organization has more keys than one listing returns, so `keys` is
+   * not the whole inventory. Always false for the personal list.
+   */
+  truncated: boolean;
   /** True while the list request is in flight. Never true when disabled. */
   loading: boolean;
   /** Last list failure, or null. Cleared by a successful refresh. */
@@ -49,14 +62,19 @@ export interface UseApiKeysResult {
   create: (args: {
     name: string;
     organizationId: string;
+    expiresInDays?: number;
   }) => Promise<CreatedApiKey>;
   isCreating: boolean;
   revoke: (id: string) => Promise<void>;
   isRevoking: boolean;
 }
 
-export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
+export function useApiKeys({
+  enabled,
+  organizationId,
+}: UseApiKeysOptions): UseApiKeysResult {
   const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [truncated, setTruncated] = useState(false);
   // Starts true whenever the hook is (or becomes) enabled, so the gap between
   // "auth resolved" and "the effect fired the list request" reads as loading
   // rather than as an empty list. Otherwise a route mounted before auth
@@ -90,6 +108,7 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
       // not land afterwards and repopulate the list for a signed-out viewer.
       refreshGeneration.current += 1;
       setKeys([]);
+      setTruncated(false);
       setLoading(false);
       setHasLoadedOnce(false);
       setError(null);
@@ -99,9 +118,12 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
     const isCurrent = () => refreshGeneration.current === generation;
     setLoading(true);
     try {
-      const items = await listApiKeys();
+      const { items, truncated: more } = organizationId
+        ? await listOrganizationApiKeys(organizationId)
+        : { items: await listApiKeys(), truncated: false };
       if (!isCurrent()) return;
       setKeys(items);
+      setTruncated(more);
       setError(null);
     } catch (err) {
       if (!isCurrent()) return;
@@ -116,7 +138,7 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
     }
     // Stable: `enabled` is read through `enabledRef`, so a mutation's
     // trailing refresh can never be a stale, still-enabled closure.
-  }, []);
+  }, [organizationId]);
 
   // Unconditional, because `refresh` owns BOTH branches. An inline
   // `if (!enabled) { …reset… }` here instead is what let a request fired while
@@ -125,7 +147,7 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
   // is stable — it's what re-fires this on the sign-in / sign-out toggle.
   useEffect(() => {
     void refresh();
-  }, [enabled, refresh]);
+  }, [organizationId, enabled, refresh]);
 
   // Both mutations resolve on their OWN request and let the list refresh
   // settle in the background. Awaiting the refresh here would hold
@@ -135,7 +157,11 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
   // cost the user a key they can never see again. The generation guard in
   // `refresh` is what makes the un-awaited call safe.
   const create = useCallback(
-    async (args: { name: string; organizationId: string }) => {
+    async (args: {
+      name: string;
+      organizationId: string;
+      expiresInDays?: number;
+    }) => {
       setIsCreating(true);
       try {
         return await createApiKey(args);
@@ -151,17 +177,22 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
     async (id: string) => {
       setIsRevoking(true);
       try {
-        await revokeApiKey(id);
+        if (organizationId) {
+          await revokeOrganizationApiKey(organizationId, id);
+        } else {
+          await revokeApiKey(id);
+        }
       } finally {
         setIsRevoking(false);
         void refresh();
       }
     },
-    [refresh],
+    [organizationId, refresh],
   );
 
   return {
     keys,
+    truncated,
     // Enabled but never yet completed a list ⇒ still loading, even in the
     // render between the enable flip and the effect that fires the request.
     loading: loading || (enabled && !hasLoadedOnce),

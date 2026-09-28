@@ -312,6 +312,17 @@ const inputs = [
     input: { ...base(), harness: "claude-code" },
   },
   {
+    // A harness id the BACKEND's pinned @mcpjam/sdk release does not know.
+    // The backend masks it to "claude-code" past that release's HARNESS_IDS
+    // guard and overwrites the key on the way out (`withSdkSafeHarness`), so
+    // this vector is the proof that the mask/restore round-trip is
+    // byte-identical to what a cursor-aware canonicalizer emits — key position
+    // included. Without it, the shim could silently reorder the canonical JSON
+    // and every shim-era row would need a rehash at the next dep bump.
+    label: "harness-cursor",
+    input: { ...base(), harness: "cursor" },
+  },
+  {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,
     // byte-identical to base-minimal for that dimension (hash-neutral default).
     label: "builtin-tool-ids-empty-omitted",

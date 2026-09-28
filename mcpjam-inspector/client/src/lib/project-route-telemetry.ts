@@ -40,13 +40,29 @@ export function trackProjectRouteResolved(durationMs: number): void {
 }
 
 export function trackProjectRouteInaccessible(
-  reason: "malformed" | "not-a-member" | "timed-out"
+  reason: "malformed" | "not-a-member" | "timed-out",
 ): void {
   track("project_route_inaccessible", { location: LOCATION, reason });
 }
 
+export function trackProjectRouteRecovered(): void {
+  track("project_route_recovered", {
+    location: LOCATION,
+    cause: "late-ready",
+  });
+}
+
+export function trackStaleProjectReturnRecovered(
+  outcome: "switched" | "no-fallback",
+): void {
+  track("project_route_stale_return_recovered", {
+    location: "signin-return",
+    outcome,
+  });
+}
+
 export function trackProjectRouteScopeMismatch(
-  guard: "redirect-loop" | "repeated-switch"
+  guard: "redirect-loop" | "repeated-switch",
 ): void {
   track("project_route_scope_mismatch", { location: LOCATION, guard });
 }
@@ -60,7 +76,7 @@ export function trackProjectRouteScopeMismatch(
  *              precedence (scenario, billing, CLI, API keys) won.
  */
 export function trackSignInReturnRestored(
-  outcome: "restored" | "absent" | "superseded"
+  outcome: "restored" | "absent" | "superseded",
 ): void {
   track("app_signin_return_restored", { location: "signin-return", outcome });
 }

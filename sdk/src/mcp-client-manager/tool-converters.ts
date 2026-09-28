@@ -126,6 +126,11 @@ export interface ConvertOptions<
    * content. The converter never fetches linked resource URIs directly.
    */
   readResource?: McpLinkedResourceReader;
+  /**
+   * Rewrite `description` on named tools. Description ONLY — name, input
+   * schema, and `_meta` stay byte-identical to the listTools row.
+   */
+  toolDescriptionOverrides?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -270,12 +275,19 @@ export async function convertMCPToolsToVercelTools(
     includeAppOnly = false,
     modelVisibleMcpToolResults,
     readResource,
+    toolDescriptionOverrides,
   }: ConvertOptions<ToolSchemaOverrides | "automatic">
 ): Promise<ToolSet> {
   const tools: ToolSet = {};
 
   for (const toolDescription of listToolsResult.tools) {
-    const { name, description, inputSchema } = toolDescription;
+    const { name, inputSchema } = toolDescription;
+    const description = Object.prototype.hasOwnProperty.call(
+      toolDescriptionOverrides ?? {},
+      name
+    )
+      ? toolDescriptionOverrides![name]
+      : toolDescription.description;
     const toolMeta = toolDescription._meta as
       | Record<string, unknown>
       | undefined;

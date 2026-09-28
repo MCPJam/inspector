@@ -1,3 +1,7 @@
+import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * drive-hosted-eval-turn.ts — the shared per-turn body of the two hosted eval
  * runners (`runIterationViaBackendWithBrowser` — batch — and
@@ -34,6 +38,20 @@ import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
+import {
+  withDeadline,
+  type DeadlineHandle,
+} from "../../utils/run-supervisor/deadline.js";
+import {
+  reconcileTurnEvidence,
+  selectGradedToolCalls,
+  type TurnEvidenceResult,
+} from "./harness-evidence-turn.js";
+import {
+  evidenceToolCallId,
+  type CanonicalMcpCall,
+} from "./harness-evidence-merge.js";
+import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
@@ -53,7 +71,12 @@ import {
 import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 
-type ToolCall = { toolName: string; arguments: Record<string, any> };
+type ToolCall = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /** Present when the projection carried one; the evidence merge joins on it. */
+  toolCallId?: string;
+};
 
 export type HostedEvalTurnOutcome =
   | { kind: "completed" }
@@ -62,8 +85,30 @@ export type HostedEvalTurnOutcome =
   /** Turn failed; the runner records the iteration with this error. */
   | {
       kind: "failed";
+      timeout?: TimeoutMetadata;
       iterationError: string;
       iterationErrorDetails?: string;
+      /**
+       * WHICH LAYER failed, decided by the catch site rather than by reading
+       * the message.
+       *
+       * `model` means the model-call layer — the engine's stream, or a throw
+       * escaping the assistant turn. A failure there is ours or our
+       * provider's: an outage, an exhausted credit balance, a spend guardrail.
+       * It says nothing about the MCP server under test, which is exactly why
+       * the chain must not file it as an unattributed server failure.
+       *
+       * `setup` is pre-turn work that never reached the model.
+       *
+       * Deliberately NOT derived from the error text. A message classifier
+       * would be one provider's wording away from silently mis-attributing a
+       * whole class of run, and the catch site already knows the answer.
+       */
+      errorSource?: "model" | "setup";
+      /** The engine's structured code, when the failure carried one. */
+      errorCode?: string;
+      /** HTTP status, when the failure came from a non-OK response. */
+      errorHttpStatus?: number;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -137,6 +182,27 @@ export interface DriveHostedEvalTurnParams {
    *  so a harness turn there fails fast with a clear projectId error). */
   projectId?: string;
   /**
+   * The Project Environment this run launched from — the GRANT BOUNDARY for its
+   * project secrets, and the same id `resolveGrantForSandbox` derives for this
+   * iteration's box from the run's `configSnapshot.environmentRef`.
+   *
+   * Forwarded (harness turns only) so an EXTERNAL-ACCOUNT credential delivered
+   * by a BROKERED secret is checked against what THIS environment selects. A
+   * project-wide check would report a bound-but-unselected secret available and
+   * start an iteration whose box carries no egress transform — it would
+   * provision, then fail vendor auth against a placeholder.
+   *
+   * Absent for a legacy (non-environment) suite run, which grants no secrets.
+   */
+  environmentId?: string;
+  /**
+   * Why `environmentId` is absent on a run that HAS an environment — set by the
+   * REPLAY path, which inherits the source run's `environmentRef` on the
+   * backend but cannot read it back out. Copy only; see the option's docblock
+   * on `MCPJamHandlerOptions`.
+   */
+  environmentUnresolvedReason?: string;
+  /**
    * THIS iteration's disposable box, handed to the harness.
    *
    * The SAME box the tool resolver already exposes as `bash` — one box per
@@ -166,6 +232,17 @@ export interface DriveHostedEvalTurnParams {
    * iteration. Absent on the emulated path, which is gated in process.
    */
   harnessToolPolicy?: RunAssistantTurnOptions["harnessToolPolicy"];
+  /**
+   * The eval iteration this turn belongs to. Threaded to the harness turn,
+   * where it becomes the authorized claim on the proxy tokens that lets
+   * firsthand tool-call evidence be recorded against this iteration.
+   *
+   * Absent for a quick run (no run row, so nothing evidence could attach to)
+   * and for the emulated engine, which records firsthand results already.
+   */
+  evalIterationId?: RunAssistantTurnOptions["evalIterationId"];
+  /** Reports what the run FROZE about evidence, as the mint saw it. */
+  onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
   /**
    * The run's PINNED skills, delivered to the harness verbatim.
@@ -251,6 +328,12 @@ export interface DriveHostedEvalTurnParams {
   extraHeaders?: Record<string, string>;
   toolChoice: EvalToolChoice | undefined;
   abortSignal: AbortSignal | undefined;
+  /**
+   * This turn's slice of the run's frozen budget
+   * (`ResolvedExecutionBudgets.turnTimeoutMs`). Bounds ONE model call; the
+   * iteration's own clock still bounds the sum of them.
+   */
+  turnTimeoutMs: number;
   maxSteps: number;
   runStartedAt: number;
   isAborted: () => boolean;
@@ -259,14 +342,98 @@ export interface DriveHostedEvalTurnParams {
   /** The runner's `extractToolCallsFromConversation`, passed in (rather than
    *  imported) to avoid a module cycle with evals-runner.ts. */
   extractToolCalls: (messages: ModelMessage[]) => ToolCall[];
+  /** The policy gate's refused `toolCallId`s, read fresh per turn — the
+   *  evidence reconciler must exclude them (they never reached a server, so
+   *  their absence from the wire record is not a hole). */
+  policyBlockedToolCallIds?: () => ReadonlySet<string>;
   /** Shared mutable iteration state. The helper appends/rolls in place. */
   acc: {
     messageHistory: ModelMessage[];
+    /**
+     * The TRACE transcript — `messageHistory`'s evidence-enriched twin, and
+     * never called plain `messages` anywhere (that naming ambiguity is the
+     * failure mode the two-transcript contract exists to kill). Mutated at
+     * exactly the same sites as `messageHistory`, except a driven turn's
+     * slice is the evidence projection: matched calls as narrated, wire-only
+     * calls appended as reconstructed tool results. On a capture-off run the
+     * two are element-identical, which is what keeps off runs byte-equivalent.
+     */
+    traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
+    requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+    /**
+     * Wire results, keyed by the `toolCallId` the GRADED call array uses:
+     * a matched call under its narrated id, a wire-only call under
+     * `evidence:<requestId>`. Carries the per-call timing, which is the only
+     * thing that can establish availability on a harness run — the graded
+     * array appends wire-only calls, so a later POSITION proves nothing.
+     *
+     * Optional: a caller that does not collect them simply has none, and the
+     * friction deriver then falls back to the transcript.
+     */
+    evidenceResults?: Map<string, FrictionResultEntry>;
+    /**
+     * Whether ANY turn's evidence came back incomplete.
+     *
+     * A box rather than a boolean because the accumulator is shared and
+     * mutated in place. One incomplete turn taints the whole iteration's
+     * identifier claims: "no later call used this identifier" cannot be
+     * answered from a set we know has a hole in it.
+     */
+    evidenceHadHole?: { value: boolean };
     accumulatedUsage: UsageTotals;
     toolsCalledByPrompt: ToolCall[][];
   };
   buildSinks?: (ctx: HostedEvalTurnSinkContext) => HostedEvalTurnSinks;
+}
+
+/**
+ * Fold one turn's wire results into the iteration accumulator.
+ *
+ * Keyed the way the GRADED array keys its calls, because that is the array a
+ * friction signal's `callIndex` points into: a matched call keeps its narrated
+ * `toolCallId`, and a wire-only call is appended under
+ * `evidence:<requestId>`. Every entry carries the row's own
+ * `startedAtMs`/`settledAtMs` — the identifier rules refuse to claim
+ * availability from array position on a harness run, so without the timing
+ * they would report `orderingUnknown` and measure nothing.
+ *
+ * A turn whose evidence is INCOMPLETE contributes no results and sets the
+ * hole flag instead: half a wire record answers "nobody used this identifier"
+ * from calls we know are missing.
+ */
+export function collectEvidenceResults(
+  acc: {
+    evidenceResults?: Map<string, FrictionResultEntry>;
+    evidenceHadHole?: { value: boolean };
+  },
+  evidence: TurnEvidenceResult,
+): void {
+  const merge = evidence.merge;
+  if (!merge) return;
+  if (merge.completeness.status !== "complete") {
+    if (acc.evidenceHadHole) acc.evidenceHadHole.value = true;
+    return;
+  }
+  const results = acc.evidenceResults;
+  if (!results) return;
+  // `outcomeKind` travels with the result, because it is the ONLY place the
+  // failure of a JSON-RPC call is recorded: that response is the error
+  // envelope (`{code, message}`) and carries no `isError` anywhere, so a
+  // reader looking at the payload alone would take it for a success and mine
+  // it for identifiers.
+  const entry = (call: CanonicalMcpCall): FrictionResultEntry => ({
+    raw: call.response,
+    ...(call.outcomeKind !== "success" ? { isError: true } : {}),
+    startedAtMs: call.startedAtMs,
+    settledAtMs: call.settledAtMs,
+  });
+  for (const [toolCallId, call] of merge.matchedByToolCallId) {
+    results.set(toolCallId, entry(call));
+  }
+  for (const call of merge.wireOnlyCalls) {
+    results.set(evidenceToolCallId(call.requestId), entry(call));
+  }
 }
 
 const truncateError = (message: string): string =>
@@ -278,8 +445,43 @@ const truncateError = (message: string): string =>
  *  forever. Consumed by the executor (R3); this module only exports the value. */
 export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
+/**
+ * Which layer failed, from what the engine REPORTED rather than from where
+ * this was called.
+ *
+ * The first version of this decision lived inline and assumed every engine
+ * error was a stream failure. `runHarnessTurn` wraps its whole turn —
+ * preparation included — in one try, so a missing `projectId`, a missing auth
+ * bearer, or disabled broker credential delivery arrives looking exactly like
+ * a provider outage. Calling those `model` files our own setup bug as the
+ * provider's, which is the mis-attribution this work exists to remove, moved
+ * one layer over.
+ *
+ * TWO EARLIER CLAIMS HERE WERE WRONG, and both said the same comfortable
+ * thing — that the gap was narrower than it was:
+ *
+ *   - "that holds for the chat engine": it did not. `runChatEngineLoop`'s
+ *     outer catch covers its own preparation just as broadly — the
+ *     trace-payload `structuredClone`, message scrubbing, tool narrowing,
+ *     `emitTurnStart`. It was simply never given a phase to report.
+ *   - "every emitter that omits it today is a real stream failure": that
+ *     engine's three emitters ALL omitted it, so every emulated-path failure,
+ *     preparation bugs included, resolved here to `model`. On the hosted path
+ *     that also WITHDREW the eval failures a provider outage excuses.
+ *
+ * Both engines now report a phase, so the default below governs only emitters
+ * outside them. It stays `model` deliberately: with the in-repo emitters
+ * truthful, an unknown emitter is far likelier to be a stream failure, and
+ * flipping it would un-attribute the outages this work was built for.
+ */
+export function failedLayerForEngineError(
+  event: { phase?: "setup" | "stream" } | undefined,
+): "model" | "setup" {
+  return event?.phase === "setup" ? "setup" : "model";
+}
+
 export async function driveHostedEvalTurn(
-  params: DriveHostedEvalTurnParams
+  params: DriveHostedEvalTurnParams,
 ): Promise<HostedEvalTurnOutcome> {
   const {
     promptIndex,
@@ -288,6 +490,7 @@ export async function driveHostedEvalTurn(
     acc,
     isAborted,
     abortSignal,
+    turnTimeoutMs,
   } = params;
   const logSuffix = params.logSuffix ?? "";
 
@@ -315,13 +518,16 @@ export async function driveHostedEvalTurn(
       ? params.toolPolicyGate.wrap(mergedTools)
       : mergedTools,
     traceCtx,
-    promptIndex
+    promptIndex,
   );
 
   // Push the user prompt into `messageHistory` BEFORE the engine call so a
   // failed turn still persists the user side of the transcript (Cursor
   // review round-2 — the transcript stays honest about WHICH turn errored).
+  // Mirrored into the trace transcript at the same site — the two histories
+  // move together everywhere or the trace view drifts silently.
   acc.messageHistory.push({ role: "user", content: params.prompt });
+  acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
@@ -340,13 +546,73 @@ export async function driveHostedEvalTurn(
   // parent's already-committed calls end so the post-turn reconcile below
   // replaces only THIS turn's live entries (the stream runner's `onToolCall`
   // populates the array live) without wiping the parent's.
-  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[promptIndex] ??=
-    []);
+  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[
+    promptIndex
+  ] ??= []);
   const promptToolsBaseline = promptToolsCalled.length;
 
   // Built inside the pre-turn try below; `{}` until then so the failure
   // mapper can always call `sinks.onTurnFailure?.()` safely.
   let sinks: HostedEvalTurnSinks = {};
+
+  /**
+   * This turn's clock. Assigned only just before the engine call, so the turn
+   * budget does not start running during the pre-turn setup (Chromium widget
+   * dismissal and friends) that precedes it.
+   *
+   * Declared HERE rather than there because `mapThrownTurnError` below reads
+   * it, and the pre-turn setup calls that mapper — with a `const` beside the
+   * engine call, a setup throw hit the temporal dead zone and raised a
+   * `ReferenceError` in place of the outcome it was supposed to map.
+   */
+  let turnDeadline: DeadlineHandle | undefined;
+  /**
+   * True once THIS turn's bound tripped — not the run's, not the user's, and
+   * never before the clock is armed.
+   */
+  const turnTimedOut = () => turnDeadline?.firedClock() === "turn";
+  /**
+   * Was this turn cancelled — as opposed to having run out of its own clock?
+   *
+   * Reads the COMPOSED signal as well as the caller's, because the composed
+   * one is what the engine actually observed. The two agree whenever the
+   * caller's fires (composition forwards it), but the engine can also be
+   * handed an abort that never reached the caller's handle, and a turn the
+   * engine saw cancelled is cancelled whatever the parent says.
+   *
+   * Only meaningful AFTER `turnTimedOut()` has been ruled out: the turn clock
+   * aborts this same signal.
+   */
+  const cancelledMidTurn = () =>
+    isAborted() || turnDeadline?.signal.aborted === true;
+  const turnTimeoutFailure = (): HostedEvalTurnOutcome => {
+    acc.capturedSpans.push(...traceCtx.recordedSpans);
+    const failure = {
+      timeout: {
+        clock: "turn" as const,
+        budgetMs: turnTimeoutMs,
+        elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
+      },
+      iterationError: truncateError(
+        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${
+          turnDeadline?.elapsedMs() ?? turnTimeoutMs
+        }ms)`,
+      ),
+    };
+    logger.error(
+      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`,
+    );
+    sinks.onTurnFailure?.(failure);
+    // `failed`, never `cancelled`. A turn that ran out of clock produced a
+    // real result — a failure — and the iteration still deserves its verdict.
+    // Reporting it as cancellation would discard the turn and leave a budget
+    // cut looking like a run that never happened.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource: "model" as const,
+    };
+  };
 
   // Shared throw → outcome mapping for the pre-turn setup AND the engine
   // call. Cancellation: AbortError can surface either as a thrown exception
@@ -362,14 +628,19 @@ export async function driveHostedEvalTurn(
   // failure branches below (CodeRabbit, PR 2610).
   const mapThrownTurnError = (
     error: unknown,
-    failedStage: string
+    failedStage: string,
   ): HostedEvalTurnOutcome => {
+    // Ahead of the cancellation arm, and that order is the whole point: a
+    // turn-budget abort reaches here as an AbortError on the same composed
+    // signal a user cancel does. `firedClock()` reports only THIS handle's own
+    // clock, which is the only thing that tells the two apart.
+    if (turnTimedOut()) return turnTimeoutFailure();
     if (
-      isAborted() ||
+      cancelledMidTurn() ||
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug(
-        `[evals] backend iteration${logSuffix} aborted due to cancellation`
+        `[evals] backend iteration${logSuffix} aborted due to cancellation`,
       );
       return { kind: "cancelled" };
     }
@@ -395,7 +666,16 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    // `failedStage` already names the layer; "pre-turn setup" is the one call
+    // site that never reached the model.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource:
+        failedStage === "pre-turn setup"
+          ? ("setup" as const)
+          : ("model" as const),
+    };
   };
 
   // Pre-turn setup that can genuinely throw: the Chromium widget dismissal
@@ -428,6 +708,21 @@ export async function driveHostedEvalTurn(
   // gives the parsed `{ code?, message, details? }` so failure branches can
   // surface the actual reason instead of the generic fallback.
   let lastEngineError: MCPJamEngineErrorEvent | undefined;
+  /**
+   * What the run FROZE about evidence, as the mint reported it on this turn.
+   *
+   * Undefined until the harness turn mints — and on the emulated path, never.
+   * Read rather than derived: this is the decision the control plane recorded
+   * at RUN CREATION, so a flag flipped mid-run cannot change what this turn
+   * does.
+   */
+  let harnessEvidence:
+    | {
+        captureEnabled: boolean;
+        gradingSource: "narration" | "evidence";
+        turnId: string;
+      }
+    | undefined;
 
   // Cursor + Codex review fix: thread `toolChoice` AND `maxOutputTokens`
   // through `extraBodyFields` since the engine options don't expose them as
@@ -438,6 +733,13 @@ export async function driveHostedEvalTurn(
     ...(params.extraBodyFields ?? {}),
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
+
+  // This turn's own clock, nested under the iteration's. `withDeadline`
+  // COMPOSES rather than replaces: the engine still sees a single signal and
+  // it fires on whichever bound trips first. Without it, one wedged hosted
+  // turn holds the iteration until the ITERATION's budget expires — the whole
+  // remaining allowance spent on a turn that was never coming back.
+  turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
 
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
@@ -455,7 +757,7 @@ export async function driveHostedEvalTurn(
       systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
         ? withWidgetContextSystemPrompt(
             prepared.enhancedSystemPrompt,
-            browser.browserInteractionSteps
+            browser.browserInteractionSteps,
           )
         : prepared.enhancedSystemPrompt,
       ...(prepared.resolvedTemperature != null
@@ -487,6 +789,17 @@ export async function driveHostedEvalTurn(
             // (authHeader already rides authContext.token). Harness-gated so
             // emulated evals stay byte-identical.
             ...(params.projectId ? { projectId: params.projectId } : {}),
+            // The run's environment — the grant boundary the brokered
+            // external-account credential check is scoped to.
+            ...(params.environmentId
+              ? { environmentId: params.environmentId }
+              : {}),
+            ...(!params.environmentId && params.environmentUnresolvedReason
+              ? {
+                  environmentUnresolvedReason:
+                    params.environmentUnresolvedReason,
+                }
+              : {}),
             // THIS iteration's box, so the harness runs on it instead of
             // reserving the acting member's personal computer.
             ...(params.harnessSandboxBinding
@@ -499,6 +812,9 @@ export async function driveHostedEvalTurn(
               : {}),
             // Policied harness run: the sealed snapshot rides the `.mcp.json`
             // proxy token, and refusals come back through this sink.
+            ...(params.evalIterationId
+              ? { evalIterationId: params.evalIterationId }
+              : {}),
             ...(params.harnessToolPolicy
               ? { harnessToolPolicy: params.harnessToolPolicy }
               : {}),
@@ -529,8 +845,7 @@ export async function driveHostedEvalTurn(
             // opt-out and a truthy check would erase it.
             ...(params.modelVisibleMcpToolResults !== undefined
               ? {
-                  modelVisibleMcpToolResults:
-                    params.modelVisibleMcpToolResults,
+                  modelVisibleMcpToolResults: params.modelVisibleMcpToolResults,
                 }
               : {}),
             ...(params.respectToolVisibility !== undefined
@@ -542,7 +857,7 @@ export async function driveHostedEvalTurn(
       endpointPath: params.endpointPath,
       extraBodyFields: mergedExtraBodyFields,
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
-      ...(abortSignal ? { abortSignal } : {}),
+      abortSignal: turnDeadline.signal,
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,
@@ -568,22 +883,38 @@ export async function driveHostedEvalTurn(
       onEngineError: (event) => {
         lastEngineError = event;
       },
+      // The run's FROZEN evidence decision, as the mint reported it. Captured
+      // here as well as forwarded to the caller: this turn needs it to decide
+      // whether to read evidence at all, and the caller needs it to decide how
+      // the iteration is graded.
+      onHarnessEvidenceDecision: (decision) => {
+        harnessEvidence = decision;
+        params.onHarnessEvidenceDecision?.(decision);
+      },
       ...(browser.prepareAdvertisedTools
         ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
         : {}),
     });
   } catch (error) {
     return mapThrownTurnError(error, "runAssistantTurn");
+  } finally {
+    turnDeadline?.dispose();
   }
+
+  // The engine's SILENT path: it catches AbortError, omits the `turnTrace` and
+  // returns normally, so a blown turn budget arrives here looking exactly like
+  // a cancel. Same discrimination as in `mapThrownTurnError`, and the same
+  // reason it comes first.
+  if (turnTimedOut()) return turnTimeoutFailure();
 
   // Cancellation that fired DURING `runAssistantTurn` without surfacing as a
   // throw: the engine catches AbortError, sets its internal `aborted` flag,
   // omits the `turnTrace`, and returns normally. Without this check we'd
   // fall through to the silent-cycle-failure branch below and record an
   // aborted run as a verdict failure.
-  if (isAborted()) {
+  if (cancelledMidTurn()) {
     logger.debug(
-      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`
+      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`,
     );
     return { kind: "cancelled" };
   }
@@ -597,10 +928,41 @@ export async function driveHostedEvalTurn(
   // spans land with `stepIndex: -1` (no `prepareStep` bridge to the engine);
   // the engine's own LLM-step spans land on `turnTrace.spans` with correct
   // per-step indices. Merge both.
-  acc.capturedSpans.push(...traceCtx.recordedSpans);
-  if (turnResult.turnTrace?.spans?.length) {
-    acc.capturedSpans.push(...turnResult.turnTrace.spans);
-  }
+  //
+  // EVIDENCE runs BEFORE the drain, not after: the spans it annotates are the
+  // ones being pushed here, and annotating a copy the accumulator already
+  // holds would leave the persisted trace unprovenanced while the in-memory
+  // one looked right.
+  const turnSpans = [
+    ...traceCtx.recordedSpans,
+    ...(turnResult.turnTrace?.spans ?? []),
+  ];
+  // The turn's OWN messages: the engine returns the full transcript, and
+  // reconciling against all of it would try to match this turn's evidence
+  // to earlier turns' calls. ONE slice, consumed by the reconciler, the
+  // grading projection and the trace roll below — three slices could
+  // disagree if the engine ever mutated the array between them.
+  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
+  const evidence = await reconcileTurnEvidence({
+    ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
+    ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
+    captureEnabled: harnessEvidence?.captureEnabled === true,
+    spans: turnSpans,
+    newMessages,
+    // Policy-refused calls never reached a server; without this the
+    // reconciler would count each one as a narrated MCP call with no wire
+    // row and degrade every policy-exercising turn to narration grading.
+    ...(params.policyBlockedToolCallIds
+      ? { policyBlockedToolCallIds: params.policyBlockedToolCallIds() }
+      : {}),
+  });
+  acc.capturedSpans.push(...evidence.spans);
+  (acc.requestPayloads ??= []).push(
+    ...expandPersistedRequestPayloads(
+      turnResult.turnTrace?.requestPayloads ?? [],
+    ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
+  );
+  collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink
   // rolls `accumulatedUsage` per step for live snapshots; this final
@@ -615,21 +977,34 @@ export async function driveHostedEvalTurn(
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
   }
 
-  // Per-turn tool calls — rebuild from the new messages only (the engine
-  // returns the FULL transcript; slice from `messageCountBeforeTurn` so
-  // prior turns' calls aren't double-counted). Replaces whatever the live
-  // `onToolCall` sink accumulated so the grader sees the canonical shape.
-  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
-  const canonicalPromptToolsCalled = params.extractToolCalls(newMessages);
+  // Per-turn tool calls — rebuilt from the new messages only, then run
+  // through the GRADING-SOURCE selection: under frozen evidence grading a
+  // complete turn's set comes from the canonical wire record (matched calls
+  // carry server-received arguments, wire-only calls join, narration-only
+  // MCP calls stop counting), and everything else — narration grading,
+  // capture off, an incomplete turn — is exactly the narrated projection.
+  // Replaces whatever the live `onToolCall` sink accumulated so the grader
+  // sees the canonical shape.
+  const canonicalPromptToolsCalled = selectGradedToolCalls({
+    narration: params.extractToolCalls(newMessages),
+    evidence,
+    gradingSource: harnessEvidence?.gradingSource,
+  }) as ToolCall[];
   // Truncate to the baseline (NOT 0) so a follow-up turn sharing the parent's
   // `promptIndex` drops only its own live entries and keeps the parent's
   // committed calls; for a fresh authored turn the baseline is 0 (unchanged).
   promptToolsCalled.length = promptToolsBaseline;
   promptToolsCalled.push(...canonicalPromptToolsCalled);
 
-  // Roll the engine's transcript forward as the next turn's starting point.
+  // Roll the engine's transcript forward as the next turn's starting point —
+  // and the TRACE transcript alongside it. The model history is replaced
+  // wholesale with the engine's full transcript; the trace history appends
+  // this turn's evidence-enriched slice (identical to `newMessages` plus any
+  // reconstructed wire-only tool results), so prior turns' enrichment is
+  // never lost to the wholesale roll.
   acc.messageHistory.length = 0;
   acc.messageHistory.push(...turnResult.messages);
+  acc.traceMessageHistory.push(...(evidence.traceMessages ?? newMessages));
 
   // Failure detection (ordered most-specific → least-specific). Three engine
   // failure shapes the runner must catch:
@@ -650,7 +1025,7 @@ export async function driveHostedEvalTurn(
   // generic fallbacks.
   const failTurn = (
     fallbackError: string,
-    logLine: string
+    logLine: string,
   ): HostedEvalTurnOutcome => {
     const failure = lastEngineError
       ? {
@@ -660,47 +1035,45 @@ export async function driveHostedEvalTurn(
       : { iterationError: fallbackError };
     logger.error(logLine);
     sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    // WHICH LAYER, from the engine's own report rather than from this call
+    // site's position.
+    //
+    // The first version of this said "every path through here is the engine's
+    // stream failing". That is true of the chat engine and false of the
+    // HARNESS: `runHarnessTurn` wraps its entire turn — preparation included —
+    // in one try, so a missing projectId, a missing auth bearer or disabled
+    // broker credential delivery arrives here exactly like a provider outage.
+    // Calling those `model` would file our own setup bug as the provider's,
+    // which is the mis-attribution this whole change exists to remove, just
+    // moved one layer over.
+    //
+    // So the engine's `phase` decides when it is reported, and `model` remains
+    // the default only for emitters that do not report one — every such
+    // emitter today is a real stream failure.
+    const failedLayer = failedLayerForEngineError(lastEngineError);
+    // The structured code and status ride along when the engine captured them
+    // — they are diagnostics, never the basis for the classification.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource: failedLayer,
+      ...(lastEngineError?.code ? { errorCode: lastEngineError.code } : {}),
+      ...(typeof lastEngineError?.httpStatus === "number"
+        ? { errorHttpStatus: lastEngineError.httpStatus }
+        : {}),
+    };
   };
 
-  if (!turnResult.turnTrace) {
+  const turnFailure = getHostedTurnFailure({
+    turnTrace: turnResult.turnTrace,
+    newMessageCount: newMessages.length,
+  });
+  if (turnFailure) {
     return failTurn(
-      "Backend stream failed during iteration (engine caught an error mid-turn)",
-      `[evals] runAssistantTurn${logSuffix} returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
-        newMessages.length > 0
-      }, engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
-      })`
-    );
-  }
-  if (newMessages.length === 0) {
-    return failTurn(
-      "Backend step returned no content (stream error or empty response)",
-      `[evals] runAssistantTurn${logSuffix} produced no new messages this turn; treating as cycle failure (engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
-      })`
-    );
-  }
-  // Cursor / Codex review fix: filter to backend step / LLM failure spans
-  // only — exclude `category: "tool"` AND any span carrying a `toolCallId`
-  // (the child error span `wrapToolSetForEvalTrace` emits alongside a failed
-  // tool span). Tool-category error spans flow through the configured
-  // `failOnToolError` gate; treating them as cycle failures here would
-  // defeat that policy.
-  const stepErrorSpan = turnResult.turnTrace.spans.find(
-    (span) =>
-      span.status === "error" &&
-      span.category !== "tool" &&
-      !(span as { toolCallId?: string }).toolCallId
-  );
-  if (stepErrorSpan) {
-    return failTurn(
-      `Backend step failed mid-turn: ${stepErrorSpan.name}`,
-      `[evals] runAssistantTurn${logSuffix} turnTrace has non-tool error-status span; treating as cycle failure (span=${
-        stepErrorSpan.name
-      } category=${stepErrorSpan.category} engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
-      })`
+      turnFailure,
+      `[evals] runAssistantTurn${logSuffix} failed: ${turnFailure} (engineError=${
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
+      })`,
     );
   }
 

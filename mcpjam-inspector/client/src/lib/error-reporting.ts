@@ -1,16 +1,19 @@
+import {
+  createQueryRequestCache,
+  queryFailureTags,
+  queryPageLocation,
+  safeQueryError,
+} from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
-import { ConvexError } from "convex/values";
+import { isAuthorizationRefusal } from "./authorization-refusal";
 import {
   describeError,
   isNormalizedError,
   originOf,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
-import {
-  isCredentialBearingPath,
-  isErrorCaptureSurface,
-} from "./PosthogUtils";
+import { isCredentialBearingPath, isErrorCaptureSurface } from "./PosthogUtils";
 
 export type ReportLevel = "fatal" | "error" | "warning" | "info";
 
@@ -22,6 +25,8 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+  /** Captured from the observed Convex client, never query arguments. */
+  queryBackend?: string;
 }
 
 /**
@@ -113,6 +118,8 @@ export function reportPossiblyOurFailure(
   }
 }
 
+const duplicateQueryReport = createQueryRequestCache();
+
 function toError(error: unknown): Error {
   if (error instanceof Error) return error;
   try {
@@ -120,30 +127,6 @@ function toError(error: unknown): Error {
   } catch {
     return new Error(String(error));
   }
-}
-
-/**
- * Did the backend refuse, or did it fail?
- *
- * A `ConvexError` carrying `kind: 'forbidden'` is the server declining to
- * answer — the caller is not a member, the role is too low. The UI already
- * handles that (it hides the surface), so it is not a defect and must not reach
- * the error sinks: an expected refusal that pages the team trains everyone to
- * ignore the channel.
- *
- * This is deliberately narrow. Only the explicit `forbidden` shape is quiet;
- * every other `ConvexError`, and every plain throw, still reports. Convex masks
- * plain throws as `Server Error` on production, so a backend that wants silence
- * here has to say so.
- */
-function isAuthorizationRefusal(error: unknown): boolean {
-  if (!(error instanceof ConvexError)) return false;
-  const data: unknown = error.data;
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { kind?: unknown }).kind === "forbidden"
-  );
 }
 
 /**
@@ -161,13 +144,35 @@ function isAuthorizationRefusal(error: unknown): boolean {
 export function reportCaught(error: unknown, options: ReportOptions): void {
   if (isAuthorizationRefusal(error)) return;
 
-  const normalized = toError(error);
+  const normalized = safeQueryError(toError(error));
+  const queryTags = queryFailureTags(normalized.message);
+  if (queryTags && options.queryBackend)
+    queryTags.convex_backend = options.queryBackend;
+  if (
+    queryTags &&
+    duplicateQueryReport(queryTags.convex_backend, queryTags.request_id)
+  )
+    return;
+  const page =
+    queryTags && typeof window !== "undefined"
+      ? queryPageLocation(window.location.href)
+      : undefined;
 
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source },
-      ...(options.extra ? { extra: options.extra } : {}),
+      tags: { source: options.source, ...queryTags },
+      ...(queryTags
+        ? {
+            extra: {
+              boundary: options.extra?.boundary,
+              componentStack: options.extra?.componentStack,
+              page_location: page,
+            },
+          }
+        : options.extra
+          ? { extra: options.extra }
+          : {}),
     });
   } catch {
     // ignore — see doc comment
@@ -189,7 +194,9 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       posthog.captureException(normalized, {
         source: options.source,
         level: options.level ?? "error",
-        ...(options.extra ?? {}),
+        ...(queryTags
+          ? { ...queryTags, page_location: page }
+          : (options.extra ?? {})),
       });
     }
   } catch {

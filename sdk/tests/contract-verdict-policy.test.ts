@@ -42,6 +42,7 @@ import {
   evalRunVerdictSchema,
   evalVerdictDecisionSchema,
   evalVerdictPolicyVersionSchema,
+  casePassesNeeded,
   isEvalRunVerdict,
   isEvalTrialExclusionReason,
   isEvalValidityDecisionReason,
@@ -853,7 +854,9 @@ describe("verdict policy — thresholds at 0, 0.5 and 1, equality included", () 
 
 describe("verdict policy — effective thresholds come from the resolved suite file", () => {
   const SUITE: EvalSuiteFile = {
-    schemaVersion: 1,
+    // The dialect the resolver reads `repetitions` from. This fixture bypasses
+    // validation (see the cast), so the version has to be the real string.
+    schemaVersion: "1",
     mode: "local",
     reportingMode: "standard",
     suite: { id: "s_inheritance", name: "inheritance" },
@@ -884,9 +887,9 @@ describe("verdict policy — effective thresholds come from the resolved suite f
     const resolved = resolveEvalSuiteFile(SUITE);
     const [inherited, overridden] = resolved.cases;
     expect(inherited?.passThreshold).toBe(0.5);
-    expect(inherited?.repetitions).toBe(2);
+    expect(inherited?.iterations).toBe(2);
     expect(overridden?.passThreshold).toBe(1);
-    expect(overridden?.repetitions).toBe(1);
+    expect(overridden?.iterations).toBe(1);
 
     // The fixture's two cases carry exactly those resolved values, which is
     // what `effectivePassThreshold` and `configuredTrials` mean: a decision
@@ -901,6 +904,27 @@ describe("verdict policy — effective thresholds come from the resolved suite f
     );
     expect(byId.get("c_inherited")?.effectivePassThreshold).toBe(0.5);
     expect(byId.get("c_override")?.effectivePassThreshold).toBe(1);
+  });
+});
+
+describe("casePassesNeeded restates the case decision rule as a count", () => {
+  it("uses equality: k/n >= threshold, including 0 and 1", () => {
+    expect(casePassesNeeded(5, 0.8)).toBe(4);
+    expect(casePassesNeeded(3, 0.8)).toBe(3);
+    expect(casePassesNeeded(2, 0.5)).toBe(1);
+    expect(casePassesNeeded(10, 0.3)).toBe(3);
+    expect(casePassesNeeded(1, 1)).toBe(1);
+    expect(casePassesNeeded(10, 1)).toBe(10);
+    expect(casePassesNeeded(1, 0)).toBe(0);
+    expect(casePassesNeeded(10, 0)).toBe(0);
+    expect(casePassesNeeded(3, 0.5)).toBe(2);
+  });
+
+  it("does not invent a verdict for an empty or non-finite case", () => {
+    expect(casePassesNeeded(0, 0.8)).toBe(0);
+    expect(casePassesNeeded(-1, 0.8)).toBe(0);
+    expect(casePassesNeeded(Number.NaN, 0.8)).toBe(0);
+    expect(casePassesNeeded(3, Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
 

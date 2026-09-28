@@ -103,7 +103,7 @@ describe("LocalComputerView", () => {
       expect(screen.getByTestId("consent-error")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("consent-error").textContent).toMatch(
-      /Couldn't enable the local computer/i,
+      /Couldn't authorize this machine/i,
     );
     expect(setEngine).not.toHaveBeenCalled();
   });

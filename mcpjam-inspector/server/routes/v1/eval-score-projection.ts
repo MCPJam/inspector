@@ -13,6 +13,10 @@ import {
   evaluationConfigSnapshotSchema,
   scoreResultArraySchema,
 } from "@mcpjam/sdk/contract";
+import {
+  projectRoleForVocabulary,
+  type EvalVocabulary,
+} from "./eval-vocabulary.js";
 
 /** Iteration-level integrity verdicts the backend may stamp. */
 export const ITERATION_SCORE_INTEGRITY = new Set(["score_integrity_invalid"]);
@@ -43,7 +47,10 @@ export const RUN_SCORE_INTEGRITY = new Set(["valid", "invalid"]);
  * Fields are OMITTED rather than nulled, so the DTO is byte-identical for
  * every iteration predating scores.
  */
-export function toScoreProjection(metadata: unknown): Record<string, unknown> {
+export function toScoreProjection(
+  metadata: unknown,
+  vocabulary: EvalVocabulary = 1,
+): Record<string, unknown> {
   if (!metadata || typeof metadata !== "object") return {};
   const record = metadata as Record<string, unknown>;
 
@@ -61,7 +68,20 @@ export function toScoreProjection(metadata: unknown): Record<string, unknown> {
   );
   if (!scores.success || !config.success) return {};
 
-  return { scores: scores.data, evaluationConfig: config.data };
+  return {
+    scores: scores.data,
+    // The definitions carry the policy role, and this DTO is what an installed
+    // `mcpjam cloud eval gate` reads to decide which scorers gate a run. Its
+    // `role === "gating"` filter must keep matching under vocabulary 1, whatever
+    // spelling the runner that produced the contract happened to store.
+    evaluationConfig: {
+      ...config.data,
+      definitions: config.data.definitions.map((definition) => {
+        const role = projectRoleForVocabulary(definition.role, vocabulary);
+        return role === definition.role ? definition : { ...definition, role };
+      }),
+    },
+  };
 }
 
 /** Project a run's integrity verdict, omitted when the backend produced none. */

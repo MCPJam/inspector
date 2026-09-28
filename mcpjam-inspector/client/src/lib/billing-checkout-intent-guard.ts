@@ -5,11 +5,12 @@ import type {
 
 const PLAN_RANK: Record<OrganizationPlan, number> = {
   free: 0,
-  team: 1,
-  enterprise: 2,
+  pro: 1,
+  team: 2,
+  enterprise: 3,
 };
 
-export type CheckoutPlanTier = "team";
+export type CheckoutPlanTier = "pro" | "team";
 
 export type CheckoutIntentGuardResult =
   | { proceed: true }

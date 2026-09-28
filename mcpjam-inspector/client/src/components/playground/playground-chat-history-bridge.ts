@@ -26,7 +26,9 @@ export interface PlaygroundChatHistoryBridge {
   onSelectThread: (session: ChatHistorySession) => void | Promise<void>;
   /** Hover prefetch — warms detail + blob caches so click is near-instant. */
   onPrefetchThread?: (session: ChatHistorySession) => void;
-  onNewChat: (options?: { shared?: boolean }) => void | Promise<void>;
+  onNewChat: (options?: {
+    shared?: boolean;
+  }) => boolean | void | Promise<boolean | void>;
   beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
   onArchiveAllComplete?: (hadActiveHistorySelection: boolean) => void;
   onSessionAction?: (event: {

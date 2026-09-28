@@ -162,10 +162,37 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+// `setting` is the MEMBER's stored answer, the one `useBrowserToolIds` reads
+// from `hosts:getLocalBrowserSettings` (see the convex mock below). A guest
+// never reaches that query, so guest rows drive the host config's
+// `localBrowserEnabled` instead.
+const browserFixture = vi.hoisted(() => ({
+  guest: false,
+  granted: false,
+  setting: null as boolean | null,
+}));
+const browserConsent = vi.hoisted(() => () => ({
+  status: browserFixture.granted ? "granted" : "absent",
+  granted: browserFixture.granted,
+  token: browserFixture.granted ? "device-consent" : null,
+  grant: async () => true,
+  revoke: async () => {},
+}));
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: "local", selectedEngine: "local", localAvailable: true,
+    consent: browserConsent(),
+  }),
+}));
+// The same store the engine hook reads — `useBrowserToolIds` subscribes to it
+// directly, and the two must not be able to disagree about one device grant.
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => browserConsent(),
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     signUp: vi.fn(),
-    user: { id: "u1" },
+    user: browserFixture.guest ? null : { id: "u1" },
     isLoading: false,
   }),
 }));
@@ -175,12 +202,29 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-  useQuery: (_name: string, args: unknown) =>
-    args === "skip" ? undefined : null,
+  useQuery: (name: string, args: unknown) => {
+    if (args === "skip") return undefined;
+    // Shaped like the real query: an object whose `enabled` is null when the
+    // member has stored nothing. Returning a bare null would read as "still
+    // loading" and mask what these tests are asserting.
+    if (name === "hosts:getLocalBrowserSettings")
+      return { enabled: browserFixture.setting };
+    return null;
+  },
   useMutation: () => () => Promise.resolve(),
   // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
   // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
   useAction: () => () => Promise.resolve({ token: "test-token" }),
+}));
+
+// Client creation is project-admin only; default to an admin so the seed tests
+// exercise the seed itself. The member case opts out explicitly.
+const clientsRoleFixture = vi.hoisted(() => ({
+  value: { canManage: true, isLoading: false },
+}));
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
+  useCanManageProjectClients: () => clientsRoleFixture.value,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -469,6 +513,48 @@ const mockHostMutations = vi.hoisted(() => ({
 }));
 mockHostMutations.createHost = mockCreateHost;
 
+// Local Claude Code execution, forced ON so the per-column wiring is
+// observable. Left to the real controller this would settle to "unavailable"
+// under jsdom, every column would read `requested: false`, and a test asserting
+// that would pass just as happily with the bug in place.
+const localHarnessFixture = vi.hoisted(() => ({
+  requestedTarget: "local-native" as string | null,
+}));
+vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+  // ONLY `requestedTarget` is meaningful here — it is what the per-column
+  // derivation reads, and it is what these tests assert on. The rest is filler
+  // to satisfy the shape. `needs-consent` rather than `ready` because `ready`
+  // means a verified runtime AND a live grant, and `consent: null` below would
+  // make that an impossible state for anyone who later renders the dialog from
+  // this file.
+  useLocalHarnessController: () => ({
+    requestedTarget: localHarnessFixture.requestedTarget,
+    effectiveTarget: "hosted",
+    phase: "needs-consent",
+    reason: null,
+    availability: null,
+    loading: false,
+    availabilityError: null,
+    runtimeStatus: { state: "ready", packVersion: "3.4.0" },
+    statusFetchFailed: false,
+    consent: null,
+    workspace: { workspaceGrantId: "ws_1", displayRoot: "~/code/project" },
+    pendingApproval: null,
+    hostedAvailable: false,
+    select: vi.fn(),
+    refresh: vi.fn(),
+    chooseWorkspace: vi.fn(),
+    adoptWorkspace: vi.fn(),
+    captureApproval: vi.fn(),
+    cancelApproval: vi.fn(),
+    startInstall: vi.fn(),
+    authorize: vi.fn(),
+    revoke: vi.fn(),
+    resolveSendTarget: vi.fn(() => null),
+  }),
+  useLocalHarnessRunsHere: () => false,
+}));
+
 vi.mock("@/hooks/use-persisted-host", () => ({
   usePersistedHost: (projectId: string | null) => {
     usePersistedHostProjectIds.push(projectId);
@@ -626,6 +712,9 @@ describe("PlaygroundMain — multi-host render path", () => {
   };
 
   beforeEach(() => {
+    browserFixture.guest = false;
+    browserFixture.granted = false;
+    browserFixture.setting = null;
     vi.clearAllMocks();
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     useHostContextStore.setState({
@@ -669,6 +758,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = [];
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
+    localHarnessFixture.requestedTarget = "local-native";
     // Reset shared-app-state to the default project; the shared-project
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
@@ -678,6 +768,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     environmentsFlag.value = false;
     environmentPreviewFixture.value = null;
     environmentPreviewLoading.value = false;
+    clientsRoleFixture.value = { canManage: true, isLoading: false };
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -691,6 +782,19 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("does not seed clients for a project member who can't create them", async () => {
+    clientsRoleFixture.value = { canManage: false, isLoading: false };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
@@ -1197,6 +1301,36 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
+  // EVERY COLUMN ANSWERS LIKE THE SINGLE PANE. The grid resolves each column
+  // through `useBrowserToolIds` — the same hook the pane uses — so the rule
+  // itself is pinned at that hook's altitude (a member's stored setting needs
+  // a queryable project scope, which this harness deliberately does not have).
+  // What matters here is that the grid asks the question at all, per column,
+  // and does not re-answer it with a copy that drifts.
+  it.each([
+    { guest: true, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: true, granted: false, enabled: undefined, expected: [] },
+    { guest: true, granted: true, enabled: false, expected: [] },
+    { guest: false, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: false, granted: true, enabled: false, expected: [] },
+  ])("resolves comparison Browser tools: guest=$guest consent=$granted host=$enabled", ({ guest, granted, enabled, expected }) => {
+    browserFixture.guest = guest;
+    browserFixture.granted = granted;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "A" }, { hostId: "h-B", name: "B" }];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "A", { builtInToolIds: [], localBrowserEnabled: enabled }),
+      "h-B": makeHost("h-B", "B", { builtInToolIds: ["web_search"], localBrowserEnabled: enabled }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.executionConfig.builtInToolIds).toEqual(
+        props.compareId === "h-B" ? ["web_search", ...expected] : expected,
+      );
+    }
+  });
+
   it("renders one card per resolved host in a multi-host grid", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
@@ -1229,6 +1363,70 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-host-style")).toBe("chatgpt");
     expect(cards[1].getAttribute("data-host-style")).toBe("claude");
     expect(cards[0].getAttribute("data-compare-kind")).toBe("host");
+  });
+
+  // ── Local execution is per-LANE ────────────────────────────────────────
+  //
+  // The regression: `localHarnessExecution` was computed once from the
+  // PREVIEWED host and handed to every column. In a grid whose lead runs
+  // Claude Code, a Codex column inherited `requested: true` — a local
+  // authorization it can never satisfy, because the local target is not a
+  // thing a Codex turn can have. `use-chat-session` then refuses the send,
+  // and the only screen that could clear it authorizes a different host.
+  //
+  // Each column runs its own host, so each answers this for itself.
+  it("asks the local-execution question per column, not once per page", () => {
+    const claudeCode = makeHost("h-cc", "Claude Code", {
+      hostStyle: "claude",
+      harness: "claude-code",
+    } as Partial<HostConfigDtoV2>);
+    const codex = makeHost("h-codex", "Codex", {
+      hostStyle: "chatgpt",
+      harness: "codex",
+    } as Partial<HostConfigDtoV2>);
+    multiHostFixture.hostList = [
+      { hostId: "h-cc", name: "Claude Code" },
+      { hostId: "h-codex", name: "Codex" },
+    ];
+    multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
+    multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const byColumn = new Map<string, boolean>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      byColumn.set(props.compareId, props.localHarnessExecution?.requested);
+    }
+    expect(byColumn.get("h-cc")).toBe(true);
+    expect(byColumn.get("h-codex")).toBe(false);
+  });
+
+  // The other half of the same rule: nothing is local when nothing asked for
+  // it, so a Claude Code column is not special-cased into running here.
+  it("leaves every column non-local when local execution is not requested", () => {
+    localHarnessFixture.requestedTarget = "hosted";
+    const claudeCode = makeHost("h-cc", "Claude Code", {
+      hostStyle: "claude",
+      harness: "claude-code",
+    } as Partial<HostConfigDtoV2>);
+    const codex = makeHost("h-codex", "Codex", {
+      hostStyle: "chatgpt",
+      harness: "codex",
+    } as Partial<HostConfigDtoV2>);
+    multiHostFixture.hostList = [
+      { hostId: "h-cc", name: "Claude Code" },
+      { hostId: "h-codex", name: "Codex" },
+    ];
+    multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
+    multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.localHarnessExecution?.requested).toBe(false);
+    }
   });
 
   it("shares selectedServers across all columns (project-scoped invariant)", () => {
@@ -2032,7 +2230,7 @@ describe("PlaygroundMain — environment mode", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
-      undefined
+      undefined,
     );
   });
 

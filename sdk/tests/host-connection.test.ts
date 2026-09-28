@@ -117,20 +117,31 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "firstPageOnly",
           mrtrSupport: "none",
+          toolCallCancellation: { legacy: false, modern: false },
         },
       });
       expect(p.firstPageOnly).toBe(true);
       expect(p.supportsMrtr).toBe(false);
+      expect(p.toolCallCancellation).toEqual({ legacy: false, modern: false });
     });
 
     it("collapses default literals AND absent fields to no wire field", () => {
       for (const mcpProfile of [
-        { profileVersion: 1, paginationTraversal: "full", mrtrSupport: "full" },
+        {
+          profileVersion: 1,
+          paginationTraversal: "full",
+          mrtrSupport: "full",
+          toolCallCancellation: { legacy: true, modern: true },
+        },
         { profileVersion: 1 },
         undefined,
       ]) {
         const p = hostConnectionProfile(mcpProfile ? { mcpProfile } : {});
-        for (const key of ["firstPageOnly", "supportsMrtr"]) {
+        for (const key of [
+          "firstPageOnly",
+          "supportsMrtr",
+          "toolCallCancellation",
+        ]) {
           expect(key in p).toBe(false);
         }
       }
@@ -174,6 +185,41 @@ describe("hostConnectionProfile", () => {
       }
     });
 
+    it("forwards only the degraded leaves, never resolving the era here", () => {
+      // Resolution is the SDK's job at request time: on an unpinned host the
+      // era does not exist yet, and picking one here made the other era's
+      // toggle unreachable.
+      const forward = (toolCallCancellation: Record<string, unknown>) =>
+        hostConnectionProfile({
+          mcpProfile: { profileVersion: 1, toolCallCancellation },
+        }).toolCallCancellation;
+
+      expect(forward({ legacy: false })).toEqual({ legacy: false });
+      expect(forward({ modern: false })).toEqual({ modern: false });
+      // Conforming and malformed leaves are dropped, so an all-good host emits
+      // nothing and keeps hashing as it did before the field existed.
+      expect(forward({ legacy: true, modern: false })).toEqual({
+        modern: false,
+      });
+      expect(forward({ legacy: "false" })).toBeUndefined();
+    });
+
+    it("is unaffected by the version pin", () => {
+      // The pin used to decide the leaf here. It must not any more — a pinned
+      // and an unpinned host forward the same thing.
+      for (const mcpProtocolVersion of ["2026-07-28", "2025-11-25", "auto"]) {
+        expect(
+          hostConnectionProfile({
+            mcpProfile: {
+              profileVersion: 1,
+              mcpProtocolVersion,
+              toolCallCancellation: { legacy: false },
+            },
+          }).toolCallCancellation
+        ).toEqual({ legacy: false });
+      }
+    });
+
     it("fails closed on unrecognized literals", () => {
       // A future mode this SDK build does not know must not read as the
       // non-default value.
@@ -182,8 +228,12 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "everyOtherPage",
           mrtrSupport: "partial",
+          // Not a record at all, and a record with an unknown leaf: neither
+          // may read as the degraded value.
+          toolCallCancellation: "sometimes",
         },
       });
+      expect("toolCallCancellation" in p).toBe(false);
       expect("firstPageOnly" in p).toBe(false);
       expect("supportsMrtr" in p).toBe(false);
     });

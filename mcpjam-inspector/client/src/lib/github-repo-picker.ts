@@ -1,5 +1,6 @@
 import type {
   GithubCheckOutagePolicy,
+  GithubInstallationBinding,
   InstallationRepo,
 } from "@/hooks/useGithubChecksSettings";
 
@@ -7,12 +8,51 @@ import type {
  * The repository-picker rules, in one place.
  *
  * Two surfaces offer the same picker — the settings page and the suite's own
- * section — and all three rules below are a CONTRACT WITH THE BACKEND rather
- * than a presentation detail: which value selects a repository, and what the
- * verified connect is told about it. Written twice, they drift the first time
- * either side gains a field, and the failure mode is not a broken build but a
- * connect that names the wrong installation.
+ * section — and the rules below are a CONTRACT WITH THE BACKEND rather than a
+ * presentation detail: which value selects a repository, what the verified
+ * connect is told about it, and when the offered list has gone stale. Written
+ * twice, they drift the first time either side gains a field, and the failure
+ * mode is not a broken build but a connect that names the wrong installation.
  */
+
+/**
+ * A STABLE description of the installations an organization holds.
+ *
+ * Both surfaces fetch the offerable repositories through an ACTION, which is a
+ * one-shot read: nothing re-runs it on its own. What changes its answer is the
+ * set of installations bound to the organization, and that arrives on a live
+ * query — so this is the signal an effect watches to know the listing on screen
+ * has gone stale. Without it, a page that was open across a bind keeps
+ * rendering the empty listing it fetched before the account was connected.
+ *
+ * It cannot be the bindings ARRAY. That comes from a Convex subscription, whose
+ * identity changes on every delivery including one that re-sends byte-identical
+ * rows, so an effect keyed on it would ask GitHub again on every update. Two
+ * things, and only these two, change which repositories the App can reach:
+ *
+ *   - WHICH installations are bound (`installationRef`), and
+ *   - WHAT STATE each one is in (`status`) — `suspended`, `removed` and
+ *     `unbound` each stop an installation answering for its repositories, so a
+ *     status change matters even though the set is unchanged.
+ *
+ * Sorted, so row ORDER cannot masquerade as a change. `accountLogin`, `boundAt`
+ * and `statusChangedAt` are excluded deliberately: none of them changes what
+ * the App can reach, and a key that moves for a reason the listing does not
+ * care about is a refetch nobody asked for.
+ *
+ * `undefined` — the query has not answered yet — returns `null` rather than the
+ * empty-set key. "We have not been told" is not "there are none", and a caller
+ * that cannot tell them apart would read the first answer as a change.
+ */
+export function installationBindingsKey(
+  bindings: readonly GithubInstallationBinding[] | undefined,
+): string | null {
+  if (bindings === undefined) return null;
+  return bindings
+    .map((binding) => `${binding.installationRef}:${binding.status}`)
+    .sort()
+    .join("|");
+}
 
 /**
  * Find the entry a picker value refers to.
@@ -24,9 +64,22 @@ import type {
  */
 export function findRepoByPickerValue(
   repos: readonly InstallationRepo[],
-  value: string
+  value: string,
 ): InstallationRepo | undefined {
-  return repos.find((repo) => String(repo.repositoryId) === value);
+  return repos.find(
+    (repo) =>
+      isSelectableGithubRepo(repo) && String(repo.repositoryId) === value,
+  );
+}
+
+/** Reject stale responses from a backend that omitted installation identity. */
+export function isSelectableGithubRepo(repo: InstallationRepo): boolean {
+  return (
+    typeof repo.installationRef === "string" &&
+    repo.installationRef.trim().length > 0 &&
+    Number.isSafeInteger(repo.repositoryId) &&
+    repo.repositoryId > 0
+  );
 }
 
 /** The value a picker option carries for one entry. */
@@ -43,12 +96,12 @@ export function pickerValueFor(repo: InstallationRepo): string {
  * which is which.
  */
 export function shouldShowAccountLabels(
-  repos: readonly InstallationRepo[]
+  repos: readonly InstallationRepo[],
 ): boolean {
   const logins = new Set(
     repos
       .map((repo) => repo.accountLogin)
-      .filter((login): login is string => Boolean(login))
+      .filter((login): login is string => Boolean(login)),
   );
   return logins.size > 1;
 }
@@ -56,7 +109,7 @@ export function shouldShowAccountLabels(
 /** What one option reads as. */
 export function pickerLabelFor(
   repo: InstallationRepo,
-  showAccountLabels: boolean
+  showAccountLabels: boolean,
 ): string {
   return showAccountLabels && repo.accountLogin
     ? `${repo.fullName} · ${repo.accountLogin}`
@@ -69,10 +122,7 @@ export function pickerLabelFor(
  * `installationRef` and `repositoryId` come STRAIGHT OFF the listing entry and
  * are never reassembled: the reference says which installation the repository
  * was enumerated through, the id says which repository it is, and the server
- * re-verifies both. The reference is omitted — not sent as `undefined` — when
- * the entry carries none, which is how an organization still being listed
- * through the backend's pinned installation keeps the compatibility connect
- * reachable.
+ * re-verifies both. Missing identity is rejected, including stale responses.
  */
 export function verifiedConnectArgs(
   repo: InstallationRepo,
@@ -80,21 +130,24 @@ export function verifiedConnectArgs(
     projectId: string;
     suiteId: string;
     outagePolicy: GithubCheckOutagePolicy;
-  }
+  },
 ): {
   repoFullName: string;
   projectId: string;
   suiteId: string;
   outagePolicy: GithubCheckOutagePolicy;
-  installationRef?: string;
+  installationRef: string;
   repositoryId: number;
 } {
+  if (!isSelectableGithubRepo(repo)) {
+    throw new Error("Connect a GitHub account and reload the repository list.");
+  }
   return {
     repoFullName: repo.fullName,
     projectId: target.projectId,
     suiteId: target.suiteId,
     outagePolicy: target.outagePolicy,
-    ...(repo.installationRef ? { installationRef: repo.installationRef } : {}),
+    installationRef: repo.installationRef,
     repositoryId: repo.repositoryId,
   };
 }

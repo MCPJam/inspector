@@ -8,6 +8,7 @@ import {
   classifySetupAttribution,
   connectSpanId,
   createRunSetupObserver,
+  describeSetupFailure,
   SETUP_AUDIT_METADATA_KEY,
   toolsListSpanId,
   type SetupAuditRecord,
@@ -412,5 +413,162 @@ describe("createRunSetupObserver canary + spans", () => {
     expect(capped.truncated).toBe(true);
     expect(capped.signals.connection?.spanIds).toBeUndefined();
     expect(JSON.stringify(capped).length).toBeLessThan(JSON.stringify(raw).length);
+  });
+});
+
+describe("describeSetupFailure", () => {
+  const credentialError = (
+    status: number,
+    source: "oauth_refresh" | "xaa_mint" | "authorization_required",
+    details = {},
+  ) =>
+    Object.assign(httpError(status), { setupFailureSource: source, details });
+
+  it("uses explicit provenance, not route-error shape or authored-looking messages", () => {
+    const tagged = credentialError(503, "oauth_refresh", {
+      authorizationServerUnreachable: true,
+    });
+    expect(classifySetupAttribution(tagged)).toBe("ours");
+    expect(
+      describeSetupFailure(tagged, { serverLabel: "Linear" }),
+    ).toMatchObject({
+      attribution: "ours",
+      normalized: { slug: "auth/authorization_server_unreachable" },
+    });
+    for (const error of [
+      Object.assign(httpError(503), {
+        name: "WebRouteError",
+        code: "X",
+        details: {},
+      }),
+      Object.assign(new Error("Could not reach the authorization server"), {
+        status: 502,
+      }),
+    ]) {
+      expect(classifySetupAttribution(error)).toBe("theirs");
+    }
+    expect(
+      classifySetupAttribution(new Error("wrapped", { cause: tagged })),
+    ).toBe("ours");
+    expect(
+      classifySetupAttribution({
+        code: "ERA_NEGOTIATION_FAILED",
+        data: { cause: tagged },
+      }),
+    ).toBe("ours");
+  });
+
+  it("preserves an existing normalized error and tagged authorization messages", async () => {
+    const { describeError } = await import("@mcpjam/sdk");
+    const normalized = describeError(
+      new Error("The enterprise handshake needs to be repeated."),
+    );
+    const error = Object.assign(credentialError(502, "xaa_mint"), {
+      normalized,
+    });
+    const detail = describeSetupFailure(error, { serverLabel: "Linear" });
+    expect(detail.normalized).toBe(normalized);
+    expect(detail.line).toContain("enterprise handshake");
+    expect(detail.attribution).toBe("ours");
+    expect(
+      describeSetupFailure(credentialError(401, "authorization_required"), {
+        challenge: { scheme: "none" },
+      }).attribution,
+    ).toBe("ours");
+  });
+
+  it("uses shared challenge diagnoses and conservative attribution", () => {
+    expect(
+      describeSetupFailure(httpError(401), { challenge: { scheme: "none" } }),
+    ).toMatchObject({
+      attribution: "unknown",
+      normalized: { slug: "oauth/no_bearer_challenge" },
+    });
+    expect(
+      describeSetupFailure(httpError(401), {
+        challenge: { scheme: "bearer", error: "invalid_token" },
+      }).line,
+    ).toContain("invalid_token");
+    expect(
+      describeSetupFailure(httpError(403), {
+        challenge: {
+          scheme: "bearer",
+          error: "insufficient_scope",
+          scopes: ["read"],
+        },
+      }).line,
+    ).toContain("Required scopes: read");
+    expect(
+      describeSetupFailure(httpError(403), {
+        challenge: { scheme: "none", bodyKind: "html" },
+      }),
+    ).toMatchObject({
+      attribution: "unknown",
+      normalized: { slug: "auth/proxy_rejected" },
+    });
+  });
+
+  it("redacts and bounds reasons including server labels", () => {
+    const detail = describeSetupFailure(
+      new Error("Authorization: Bearer secret-token"),
+      { serverLabel: "Bearer label-secret" },
+    );
+    expect(detail.line).not.toContain("secret-token");
+    expect(detail.line).not.toContain("label-secret");
+    expect(
+      describeSetupFailure(httpError(500), { serverLabel: "x".repeat(500) })
+        .line.length,
+    ).toBeLessThanOrEqual(240);
+  });
+});
+
+describe("reason folding and audit limits", () => {
+  it("keeps reasons on signals without another persisted failure schema", () => {
+    const observer = createRunSetupObserver({
+      expectedServerIds: ["a", "b"],
+      context: (serverId) => ({ serverLabel: serverId.toUpperCase() }),
+    });
+    observer.recordConnect("b", {
+      outcome: "failed",
+      error: nodeError("ECONNREFUSED"),
+      startedAt: 0,
+      endedAt: 1,
+    });
+    observer.recordConnect("a", {
+      outcome: "failed",
+      error: httpError(401),
+      startedAt: 0,
+      endedAt: 1,
+    });
+    expect(observer.buildSignals()?.connection?.reasons?.[0]).toContain('"A"');
+    expect(observer.buildSignals()?.connection?.reasons).toHaveLength(2);
+    const audit = observer.buildAuditMetadata()?.[
+      SETUP_AUDIT_METADATA_KEY
+    ] as SetupAuditRecord;
+    expect(Object.keys(audit).sort()).toEqual(["egressCanary", "signals"]);
+    expect(audit.signals.connection?.reasons).toEqual(
+      observer.buildSignals()?.connection?.reasons,
+    );
+  });
+
+  it("sheds Unicode reasons before span ids using serialized bytes", () => {
+    const raw: SetupAuditRecord = {
+      signals: {
+        connection: {
+          outcome: "failed",
+          attribution: "ours",
+          spanIds: ["run-connect-a"],
+          reasons: ["界".repeat(240)],
+        },
+      },
+      egressCanary: { ran: false },
+    };
+    expect(JSON.stringify(raw).length).toBeLessThan(500);
+    const capped = capSetupAuditMetadata(raw, 500);
+    expect(capped.signals.connection?.reasons).toBeUndefined();
+    expect(capped.signals.connection?.spanIds).toEqual(["run-connect-a"]);
+    expect(capped.truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(capped))).toBeLessThanOrEqual(500);
+    expect(raw.signals.connection?.reasons).toHaveLength(1);
   });
 });

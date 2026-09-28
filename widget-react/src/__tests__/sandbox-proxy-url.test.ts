@@ -93,3 +93,107 @@ describe("resolveSandboxProxyUrl — local dev", () => {
     expect(url.pathname).toBe("/api/apps/mcp-apps/sandbox-proxy");
   });
 });
+
+describe("resolveSandboxProxyUrl — per-server view origins", () => {
+  const LABEL = "0123456789abcdef";
+  const CHROME =
+    "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
+  const SAFARI =
+    "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+
+  function hosted(overrides: Record<string, unknown> = {}) {
+    return new URL(
+      resolveSandboxProxyUrl({
+        hostedMode: true,
+        sandboxOrigin: "https://sandbox.mcpjam.test",
+        location: locationOf(APP_ORIGIN),
+        viewOriginLabel: LABEL,
+        viewSubdomainsEnabled: true,
+        userAgent: CHROME,
+        ...overrides,
+      })
+    ).origin;
+  }
+
+  it("prefixes the sandbox host with the label", () => {
+    expect(hosted()).toBe(`https://${LABEL}.sandbox.mcpjam.test`);
+  });
+
+  it("stays on the shared origin when the deploy has not enabled it", () => {
+    // Off means off: without wildcard DNS and a certificate, a labelled host
+    // does not resolve and every widget would fail to load.
+    expect(hosted({ viewSubdomainsEnabled: false })).toBe(
+      "https://sandbox.mcpjam.test"
+    );
+  });
+
+  it("stays on the shared origin without a label", () => {
+    expect(hosted({ viewOriginLabel: undefined })).toBe(
+      "https://sandbox.mcpjam.test"
+    );
+  });
+
+  it("ignores a label this code did not derive", () => {
+    // The label reaches the browser through a server response. Anything but
+    // the exact derived shape could name a host we do not control.
+    for (const bogus of [
+      "evil.example.com",
+      "0123456789ABCDEF",
+      "0123456789abcde",
+      "0123456789abcdef0",
+      "../etc",
+      "",
+    ]) {
+      expect(hosted({ viewOriginLabel: bogus })).toBe(
+        "https://sandbox.mcpjam.test"
+      );
+    }
+  });
+
+  it("labels *.localhost in local dev, keeping the port", () => {
+    const url = new URL(
+      resolveSandboxProxyUrl({
+        hostedMode: false,
+        sandboxOrigin: "",
+        location: locationOf("http://localhost:5173"),
+        viewOriginLabel: LABEL,
+        viewSubdomainsEnabled: true,
+        userAgent: CHROME,
+      })
+    );
+    // The local swap lands on 127.0.0.1, which has no subdomains — so the
+    // label goes on `localhost`, which Chromium resolves to loopback.
+    expect(url.origin).toBe(`http://${LABEL}.localhost:5173`);
+  });
+
+  it("keeps the plain host on a browser that will not resolve *.localhost", () => {
+    // Safari does not. A view that simply fails to load is worse than one
+    // sharing an origin, so local dev degrades instead.
+    const url = new URL(
+      resolveSandboxProxyUrl({
+        hostedMode: false,
+        sandboxOrigin: "",
+        location: locationOf("http://localhost:5173"),
+        viewOriginLabel: LABEL,
+        viewSubdomainsEnabled: true,
+        userAgent: SAFARI,
+      })
+    );
+    expect(url.origin).toBe("http://127.0.0.1:5173");
+  });
+
+  it("still points at the proxy path", () => {
+    const url = new URL(
+      resolveSandboxProxyUrl({
+        hostedMode: true,
+        sandboxOrigin: "https://sandbox.mcpjam.test",
+        location: locationOf(APP_ORIGIN),
+        viewOriginLabel: LABEL,
+        viewSubdomainsEnabled: true,
+        userAgent: CHROME,
+      })
+    );
+    expect(url.pathname).toBe(PROXY_PATH);
+    expect(url.searchParams.get("v")).toBeTruthy();
+  });
+});

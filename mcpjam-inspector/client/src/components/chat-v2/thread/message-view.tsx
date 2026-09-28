@@ -6,7 +6,10 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Button } from "@mcpjam/design-system/button";
 import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-action";
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
+import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
+import { UserContextCard } from "./user-context-card";
+import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
 import { ModelDefinition } from "@/shared/types";
@@ -31,9 +34,18 @@ import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assist
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { CopilotMessageHeader } from "./copilot-message-header";
+import { ExecutionProvenance } from "@/components/evals/execution-provenance";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
+
+/** `message.metadata.execution`, raw — `ExecutionProvenance` validates it. */
+function readMessageExecution(message: UIMessage): unknown {
+  const metadata = message.metadata;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as { execution?: unknown }).execution
+    : undefined;
+}
 type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
@@ -49,7 +61,7 @@ interface MessageViewProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    }
+    },
   ) => void;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
@@ -67,6 +79,7 @@ interface MessageViewProps {
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   claudeFooterMode?: ClaudeFooterMode;
@@ -108,7 +121,7 @@ interface MessageViewProps {
    */
   onEditUserMessage?: (
     message: UIMessage,
-    text: string
+    text: string,
   ) => void | boolean | Promise<void | boolean>;
   /** Blocks the edit affordance while a response is streaming. */
   editDisabled?: boolean;
@@ -131,7 +144,12 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
     prevMessage === nextMessage ||
     (prevMessage.id === nextMessage.id &&
       prevMessage.role === nextMessage.role &&
-      prevMessage.parts === nextMessage.parts)
+      prevMessage.parts === nextMessage.parts &&
+      // The finish chunk delivers the turn's metadata (usage, execution
+      // record) after the last part, so an unchanged `parts` array is not
+      // enough to skip a render.
+      prevMessage.metadata === nextMessage.metadata &&
+      getMessageTimestampMs(prevMessage) === getMessageTimestampMs(nextMessage))
   );
 }
 
@@ -173,7 +191,7 @@ function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
 
 function isSameSenderAvatar(
   prev: ProjectThreadOwnerAvatar | undefined,
-  next: ProjectThreadOwnerAvatar | undefined
+  next: ProjectThreadOwnerAvatar | undefined,
 ) {
   if (prev === next) return true;
   if (!prev || !next) return false;
@@ -188,7 +206,7 @@ function isSameSenderAvatar(
 
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
-  next: Readonly<MessageViewProps>
+  next: Readonly<MessageViewProps>,
 ) {
   return (
     !shouldRerenderMessage(prev.message, next.message) &&
@@ -215,6 +233,7 @@ function areMessageViewPropsEqual(
     prev.showInlineEdit === next.showInlineEdit &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
+    prev.widgetPolicy === next.widgetPolicy &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.mcpToolResultImageRendering === next.mcpToolResultImageRendering &&
     prev.claudeFooterMode === next.claudeFooterMode &&
@@ -257,7 +276,7 @@ function extractEditableUserMessageText(message: UIMessage): string {
   return parts
     .filter(
       (part): part is { type: string; text: string } =>
-        part.type === "text" && typeof part.text === "string"
+        part.type === "text" && typeof part.text === "string",
     )
     .map((part) => part.text)
     .join("\n\n");
@@ -285,7 +304,7 @@ function UserMessageRow({
   actions: React.ReactNode;
   onEditUserMessage?: (
     message: UIMessage,
-    text: string
+    text: string,
   ) => void | boolean | Promise<void | boolean>;
   editDisabled: boolean;
   senderAvatar?: ProjectThreadOwnerAvatar;
@@ -411,7 +430,8 @@ function UserMessageRow({
           {/* Text and other parts inside the bubble */}
           {bubble}
           {showActionRow ? (
-            <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+            <div className="flex max-w-[min(100%,48rem)] items-center justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+              <MessageTimestamp message={message} />
               <CopyMessageAction getText={() => originalText} />
               {onEditUserMessage ? (
                 <EditMessageAction
@@ -453,6 +473,7 @@ function MessageViewImpl({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   claudeFooterMode = "none",
@@ -485,6 +506,11 @@ function MessageViewImpl({
   if (role !== "user" && role !== "assistant") return null;
 
   if (role === "user") {
+    // Context the user added (a skill, a tool run, a prompt's example turn,
+    // an app's widget state) is not something they typed: no bubble, no edit.
+    const contextBlocks = getUserContextBlocks(message);
+    if (contextBlocks) return <UserContextCard blocks={contextBlocks} />;
+
     // Separate file parts from other parts - files render above the bubble
     const fileParts =
       message.parts?.filter((part) => part.type === "file") ?? [];
@@ -520,6 +546,7 @@ function MessageViewImpl({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
             />
@@ -556,6 +583,7 @@ function MessageViewImpl({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
             />
@@ -587,8 +615,9 @@ function MessageViewImpl({
     (part) =>
       part.type === "text" &&
       typeof part.text === "string" &&
-      part.text.length > 0
+      part.text.length > 0,
   );
+  const hasTimestamp = getMessageTimestampMs(message) !== undefined;
   return (
     <article
       className={
@@ -659,6 +688,7 @@ function MessageViewImpl({
                   showInlineEdit={showInlineEdit}
                   minimalMode={minimalMode}
                   interactive={interactive}
+                  widgetPolicy={widgetPolicy}
                   reasoningDisplayMode={reasoningDisplayMode}
                   mcpToolResultImageRendering={mcpToolResultImageRendering}
                   {...recorder}
@@ -680,12 +710,25 @@ function MessageViewImpl({
             <ClaudeLoadingIndicator mode={claudeFooterMode} />
           </div>
         ) : null}
-        {hasAssistantText ? (
-          <div className="flex gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
-            <CopyMessageAction
-              getText={() => extractEditableUserMessageText(message)}
-            />
+        {hasAssistantText || hasTimestamp ? (
+          <div className="flex items-center gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+            {hasAssistantText ? (
+              <CopyMessageAction
+                getText={() => extractEditableUserMessageText(message)}
+              />
+            ) : null}
+            <MessageTimestamp message={message} />
           </div>
+        ) : null}
+        {/* What this turn ran on, from the execution record MCPJam's /stream
+            puts on the finish message. Nothing for a turn without one (local
+            keys, older backends, turns still streaming). */}
+        {!minimalMode ? (
+          <ExecutionProvenance
+            execution={readMessageExecution(message)}
+            className="pt-2"
+            testIdPrefix="chat-turn-execution"
+          />
         ) : null}
         {renderAssistantTurnFooter?.(message)}
       </div>

@@ -9,6 +9,7 @@ import {
 import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,7 @@ import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -113,6 +115,7 @@ function InvokingIndicator({
 }
 
 interface MultiModelPlaygroundCardProps {
+  browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode `compareId === String(model.id)`; in host mode it's the host id.
@@ -144,9 +147,29 @@ interface MultiModelPlaygroundCardProps {
    * comparison column runs bash on the same engine ("This machine") the tab
    * root does — omitted ⇒ cloud, like every other surface.
    */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   personalComputerEngine?: {
     engine: "local" | "cloud";
     consentToken: string | null;
+  };
+  /**
+   * Local Claude Code execution for this LANE.
+   *
+   * Threaded like `personalComputerEngine` and for the same reason, with one
+   * extra rule: `requested` is answered per lane by the shared scope
+   * predicate, so a compare view whose columns run different hosts does not
+   * hand a Codex lane a Claude Code lane's local requirement. The controller
+   * itself lives once, in PlaygroundMain.
+   */
+  localHarnessExecution?: {
+    requested: boolean;
+    resolveSendTarget: () => {
+      target: LocalHarnessTargetIds;
+      token: string;
+    } | null;
   };
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
@@ -219,6 +242,7 @@ interface MultiModelPlaygroundCardProps {
 }
 
 export function MultiModelPlaygroundCard({
+  browserWorkspace,
   compareId,
   compareLabel,
   compareKind,
@@ -234,6 +258,8 @@ export function MultiModelPlaygroundCard({
   hostedContext,
   hostedOrgModelConfig,
   personalComputerEngine,
+  personalBrowserEngine,
+  localHarnessExecution,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -353,6 +379,8 @@ export function MultiModelPlaygroundCard({
     hostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
+    ...(personalBrowserEngine ? { personalBrowserEngine } : {}),
+    ...(localHarnessExecution ? { localHarnessExecution } : {}),
     executionConfig: {
       ...executionConfig,
       modelId: String(model.id),
@@ -373,6 +401,23 @@ export function MultiModelPlaygroundCard({
       setInjectedToolRenderOverrides({});
     },
   });
+
+  useComparisonBrowser(
+    browserWorkspace && hostedContext?.projectId
+      ? {
+          workspaceId: browserWorkspace.id,
+          projectId: hostedContext.projectId,
+          sessionId: chatSessionId,
+          clientId: compareId,
+          name: compareLabel,
+          logo: logoSrc,
+          order: browserWorkspace.order,
+          clientCount: browserWorkspace.clientCount,
+          engine: personalBrowserEngine?.engine ?? "cloud",
+        }
+      : null,
+    messages,
+  );
 
   const isThreadEmpty = !messages.some(
     (message) => message.role === "user" || message.role === "assistant",

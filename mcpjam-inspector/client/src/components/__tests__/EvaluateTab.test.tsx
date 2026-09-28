@@ -1,3 +1,5 @@
+import { buildEvalServerPreview } from "../evaluate/eval-server-preview-model";
+import { readEvalServerPreviewDraft } from "../evaluate/eval-server-preview-state";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
@@ -16,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   useEvalQueries: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   toSuiteOverview: vi.fn(),
+  toTestEdit: vi.fn(),
   createTestSuiteMutation: vi.fn(),
   createSuitePage: vi.fn(() => null),
   suiteIterationsView: vi.fn(),
@@ -25,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   handleGenerateTests: vi.fn(),
   handleRerun: vi.fn(),
   handleCancelRun: vi.fn(),
+  useEvalHandlers: vi.fn(),
   confirmDelete: vi.fn(async () => true),
   setSuiteToDelete: vi.fn(),
   getEffectiveSuiteServers: vi.fn((..._args: unknown[]): string[] => []),
@@ -41,6 +45,15 @@ const mocks = vi.hoisted(() => ({
     | undefined,
 }));
 
+vi.mock("../evaluate/suite-list-run-review", () => ({
+  SuiteListRunReview: ({ suite, onClose, onStart }: any) => (
+    <div role="dialog" aria-label={`Run ${suite.name}`}>
+      <button onClick={onClose}>Close run review</button>
+      <button onClick={() => onStart(suite, { iterationOverride: 3 })}>Start reviewed run</button>
+    </div>
+  ),
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     user: { id: "user-1" },
@@ -48,7 +61,12 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({ hosts: [], isLoading: false }),
+}));
+
 vi.mock("convex/react", () => ({
+  useAction: () => vi.fn(),
   useConvexAuth: () => ({
     isAuthenticated: mocks.isAuthenticated,
     isLoading: false,
@@ -68,8 +86,7 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
-// `useEvaluateEnabled` resolves `evaluate-enabled` here. The canonical
-// decision-summary read rides that same flag, so these specs can flip it.
+// Decision summaries remain enabled regardless of the legacy flag.
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
@@ -127,7 +144,10 @@ vi.mock("@/lib/eval-route-url", () => ({
   useEvaluateRouteFromUrl: () => mocks.route.current,
 }));
 
-vi.mock("../evals/helpers", () => ({
+vi.mock("../evals/helpers", async (importOriginal) => ({
+  // The generation-target helpers are pure and read the suite passed in;
+  // the real ones keep a legacy suite (no environmentIds) on its old path.
+  ...(await importOriginal<typeof import("../evals/helpers")>()),
   aggregateSuite: () => null,
   // EvaluateTab's `generateState` memo and the agent bridge's generate handler
   // call this to compute the effective server set. Configurable so the
@@ -145,7 +165,7 @@ vi.mock("../evaluate/create-suite-navigation", () => ({
     toSuiteOverview: (...args: unknown[]) => mocks.toSuiteOverview(...args),
     toRunDetail: vi.fn(),
     toTestDetail: vi.fn(),
-    toTestEdit: vi.fn(),
+    toTestEdit: mocks.toTestEdit,
     toSuiteEdit: vi.fn(),
   }),
 }));
@@ -214,33 +234,36 @@ vi.mock("../evals/use-eval-mutations", () => ({
 }));
 
 vi.mock("../evals/use-eval-handlers", () => ({
-  useEvalHandlers: () => ({
-    deletingSuiteId: null,
-    suiteToDelete: null,
-    setSuiteToDelete: mocks.setSuiteToDelete,
-    runToDelete: null,
-    setRunToDelete: vi.fn(),
-    testCaseToDelete: null,
-    setTestCaseToDelete: vi.fn(),
-    deletingRunId: null,
-    deletingTestCaseId: null,
-    rerunningSuiteId: null,
-    cancellingRunId: null,
-    runningTestCaseId: null,
-    isGeneratingTests: false,
-    handleGenerateTests: mocks.handleGenerateTests,
-    handleCreateTestCase: vi.fn(),
-    handleRerun: mocks.handleRerun,
-    handleCancelRun: mocks.handleCancelRun,
-    handleDelete: vi.fn(),
-    handleDeleteRun: vi.fn(),
-    directDeleteRun: vi.fn().mockResolvedValue(undefined),
-    directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
-    handleRunTestCase: vi.fn().mockResolvedValue(undefined),
-    confirmDelete: mocks.confirmDelete,
-    confirmDeleteRun: vi.fn(),
-    confirmDeleteTestCase: vi.fn(),
-  }),
+  useEvalHandlers: (props: unknown) => {
+    mocks.useEvalHandlers(props);
+    return {
+      deletingSuiteId: null,
+      suiteToDelete: null,
+      setSuiteToDelete: mocks.setSuiteToDelete,
+      runToDelete: null,
+      setRunToDelete: vi.fn(),
+      testCaseToDelete: null,
+      setTestCaseToDelete: vi.fn(),
+      deletingRunId: null,
+      deletingTestCaseId: null,
+      rerunningSuiteId: null,
+      cancellingRunId: null,
+      runningTestCaseId: null,
+      isGeneratingTests: false,
+      handleGenerateTests: mocks.handleGenerateTests,
+      handleCreateTestCase: vi.fn(),
+      handleRerun: mocks.handleRerun,
+      handleCancelRun: mocks.handleCancelRun,
+      handleDelete: vi.fn(),
+      handleDeleteRun: vi.fn(),
+      directDeleteRun: vi.fn().mockResolvedValue(undefined),
+      directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
+      handleRunTestCase: vi.fn().mockResolvedValue(undefined),
+      confirmDelete: mocks.confirmDelete,
+      confirmDeleteRun: vi.fn(),
+      confirmDeleteTestCase: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("../evals/use-eval-queries", () => ({
@@ -254,6 +277,7 @@ function makeSuiteEntry(
   suiteId: string,
   overrides?: {
     source?: "ui" | "sdk";
+    declaredSuiteId?: string;
     latestRun?: { _id: string; completedAt: number } | null;
   },
 ) {
@@ -268,6 +292,9 @@ function makeSuiteEntry(
       createdAt: 1,
       updatedAt: 1,
       source: overrides?.source ?? ("ui" as const),
+      ...(overrides?.declaredSuiteId
+        ? { declaredSuiteId: overrides.declaredSuiteId }
+        : {}),
       tags: ["explore"],
     },
     latestRun: overrides?.latestRun ?? null,
@@ -307,6 +334,83 @@ function makeQueryState(selectedSuiteId: string | null) {
   };
 }
 
+/**
+ * Make the suite every agent-command spec addresses ("Suite suite-a") CI-owned,
+ * by the row alone — no capability query, which is also what an older backend
+ * answers forever.
+ */
+function withCiOwnedSuiteA() {
+  mocks.useEvalQueries.mockImplementation(
+    ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+      const state = makeQueryState(selectedSuiteId);
+      const ciOwned = makeSuiteEntry(["server-a"], "suite-a", {
+        source: "sdk",
+      });
+      const sortedSuites = state.sortedSuites.map((entry) =>
+        entry.suite._id === "suite-a" ? ciOwned : entry,
+      );
+      const selectedSuiteEntry =
+        sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
+        null;
+      return {
+        ...state,
+        suiteOverview: sortedSuites,
+        sortedSuites,
+        selectedSuiteEntry,
+        selectedSuite: selectedSuiteEntry?.suite ?? null,
+      };
+    },
+  );
+}
+
+/** Make "Suite suite-a" an environment suite whose environments differ. */
+function withMixedEnvironmentSuiteA() {
+  mocks.useEvalQueries.mockImplementation(
+    ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+      const state = makeQueryState(selectedSuiteId);
+      const base = makeSuiteEntry([], "suite-a");
+      const mixed = {
+        ...base,
+        suite: {
+          ...base.suite,
+          environmentIds: ["env-a", "env-b"],
+          environmentTargets: [
+            {
+              environmentId: "env-a",
+              hostName: "Claude",
+              modelId: "opus",
+              serverAttachmentId: "group-1",
+              serverNames: ["billing"],
+              pluginVersionCount: 0,
+            },
+            {
+              environmentId: "env-b",
+              hostName: "Cursor",
+              modelId: "sonnet",
+              serverAttachmentId: "group-2",
+              serverNames: ["search"],
+              pluginVersionCount: 0,
+            },
+          ],
+        },
+      };
+      const sortedSuites = state.sortedSuites.map((entry) =>
+        entry.suite._id === "suite-a" ? mixed : entry,
+      );
+      const selectedSuiteEntry =
+        sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
+        null;
+      return {
+        ...state,
+        suiteOverview: sortedSuites,
+        sortedSuites,
+        selectedSuiteEntry,
+        selectedSuite: selectedSuiteEntry?.suite ?? null,
+      };
+    },
+  );
+}
+
 describe("EvaluateTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -317,16 +421,50 @@ describe("EvaluateTab", () => {
     mocks.evaluateFlag.enabled = undefined;
     mocks.evalIterationQuota = undefined;
     mocks.getEffectiveSuiteServers.mockImplementation(() => []);
-    mocks.useQuery.mockImplementation((name: unknown) =>
-      name === "billing:getEvalIterationQuota"
-        ? mocks.evalIterationQuota
-        : undefined
-    );
+    mocks.useQuery.mockImplementation((name: unknown) => {
+      if (name === "billing:getEvalIterationQuota")
+        return mocks.evalIterationQuota;
+      if (name === "evalPreparations:get")
+        return {
+          status: "ready",
+          suites: buildEvalServerPreview({ id: "srv-a", name: "server-a" })
+            .suites,
+          dueAt: 0,
+        };
+      if (name === "evalPreparations:getReview") {
+        const draft = readEvalServerPreviewDraft("srv-a");
+        return draft ? { revision: 1, draft } : null;
+      }
+      return undefined;
+    });
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+    sessionStorage.clear();
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
-        makeQueryState(selectedSuiteId)
+        makeQueryState(selectedSuiteId),
     );
+  });
+
+  it("opens and closes run review over the list without navigating", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
+    render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
+    expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Close run review" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+  });
+
+  it("opens a test definition without selecting the run comparison view", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0];
+    props.onEditTestCase("case-a");
+    expect(mocks.toTestEdit).toHaveBeenCalledWith("suite-a", "case-a");
   });
 
   it("renders from suite-driven route state without depending on an active server", () => {
@@ -334,14 +472,14 @@ describe("EvaluateTab", () => {
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
-    expect(screen.getByRole("button", { name: /^evaluate$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^evaluate$/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText("/")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Suite suite-a", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(
       screen.queryByRole("navigation", { name: "Evaluate view" }),
@@ -355,50 +493,73 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it("keeps the bare eval list route on the suites overview instead of jumping into a suite", () => {
+  it.each([false, true])("leaves grading of launched case runs to the backend (skipJudge: %s)", async (skipJudge) => {
+    mocks.handleRerun.mockResolvedValueOnce({
+      status: "started",
+      runIds: ["new-a", "new-b"],
+      failedCount: 0,
+    });
+    const view = render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
+    await act(async () => {
+      await props.onRerun(props.suite, { caseIds: ["case-a"], skipJudge });
+    });
+    const runQueries = () => mocks.useQuery.mock.calls
+      .filter(([name]) => name === "testSuites:getTestSuiteRun")
+      .map(([, args]) => (args as { runId: string }).runId);
+    expect(runQueries()).toEqual([]);
+    mocks.useQuery.mockClear();
     mocks.route.current = { type: "list" };
-    render(<EvaluateTab projectId="ws-1" />);
-
-    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Evaluate" })).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "We generate cases from live discovery, or describe behaviors in chat, or import your existing tests.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: /Switch suite \(current: Suite suite-a\)/,
-      }),
-    ).toBeNull();
-    expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
-    expect(screen.getByText("Suite suite-a")).toBeInTheDocument();
-    expect(screen.getByText("Suite suite-b")).toBeInTheDocument();
-    expect(screen.queryByTestId("project-runs-table")).toBeNull();
-    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
-    expect(screen.getByRole("button", { name: /^suites$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    expect(runQueries()).toEqual([]);
   });
 
-  /**
-   * The canonical run decision summary rides `evaluate-enabled` and is
-   * threaded down as a prop, so a flag-off render reaches the shared
-   * `/evals` components with the read switched off — which is what keeps
-   * those components' behaviour on the shipped tab unchanged.
-   */
-  describe("canonical decision summary flag", () => {
-    it("is off for both surfaces while the flag is off", async () => {
+  it("does not request judging for a refused launch or ordinary suite rerun", async () => {
+    mocks.handleRerun
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        status: "started",
+        runIds: ["full-suite-run"],
+        failedCount: 0,
+      });
+    render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
+    await act(async () => {
+      await props.onRerun(props.suite, { caseIds: ["case-a"] });
+      await props.onRerun(props.suite);
+    });
+    expect(mocks.useQuery.mock.calls.some(([name]) => name === "testSuites:getTestSuiteRun")).toBe(false);
+  });
+
+  it("keeps handler-driven navigation on /evaluate", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+
+    expect(mocks.useEvalHandlers.mock.calls.at(-1)?.[0]).toMatchObject({
+      evalsNavigationContext: "evaluate",
+    });
+  });
+
+  it("defaults the bare Evaluate route to Runs, with Runs first", () => {
+    mocks.route.current = { type: "list" };
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
+    const tabs = screen.getByRole("navigation", { name: "Evaluate view" });
+    expect(tabs.querySelector("button")).toHaveTextContent("Overview");
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute("aria-current", "page");
+  });
+
+  describe("public decision summaries", () => {
+    it("enables run summaries even when the legacy flag is off", async () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
-        decisionSummaryEnabled: false,
+        decisionSummaryEnabled: true,
       });
     });
 
@@ -407,7 +568,7 @@ describe("EvaluateTab", () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
@@ -426,32 +587,35 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("leaves the suite surface's read off while the flag is off", () => {
+    it("enables suite summaries even when the legacy flag is off", () => {
       render(<EvaluateTab projectId="ws-1" />);
 
       expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
-        evaluateDecisionSummary: false,
+        evaluateDecisionSummary: true,
       });
     });
   });
 
-  it("switches the list landing to the runs table via the header tabs", async () => {
+  it("switches between Suites and Runs via the header tabs", async () => {
     mocks.route.current = { type: "list" };
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
 
-    await user.click(screen.getByRole("button", { name: /^runs$/i }));
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
+    expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
     expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
     expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
       "aria-current",
       "page",
     );
   });
 
-  it("does not auto-navigate to the most recently run suite on the list route", () => {
+  it("does not auto-navigate to the most recently run suite on the list route", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => {
       const suiteA = makeSuiteEntry(["server-a"], "suite-a");
@@ -463,6 +627,7 @@ describe("EvaluateTab", () => {
     });
 
     render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
@@ -473,6 +638,7 @@ describe("EvaluateTab", () => {
     mocks.route.current = { type: "list" };
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
 
     await user.click(screen.getByText("Suite suite-a"));
 
@@ -482,7 +648,23 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it("shows the empty hero on the list route when there are no suites", () => {
+  it("reviews a run requested from the suite list before executing it", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+    const user = userEvent.setup();
+    render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    expect(mocks.handleRerun).not.toHaveBeenCalled();
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
+    expect(mocks.handleRerun).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "suite-a" }),
+      { iterationOverride: 3 },
+    );
+  });
+
+  it("shows the empty hero on the list route when there are no suites", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -491,11 +673,12 @@ describe("EvaluateTab", () => {
     }));
 
     render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.getByTestId("evals-empty-hero")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Create suite from server-a" }),
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     expect(screen.queryByTestId("project-runs-table")).toBeNull();
@@ -508,7 +691,7 @@ describe("EvaluateTab", () => {
     );
   });
 
-  it("shows the runs table from the empty landing when Runs is selected", async () => {
+  it("shows the empty hero on Runs when there are no suites", () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -516,17 +699,21 @@ describe("EvaluateTab", () => {
       suiteOverview: [],
     }));
 
-    const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
 
-    await user.click(screen.getByRole("button", { name: /^runs$/i }));
-
-    expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
-    expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
-    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+    expect(screen.getByTestId("evals-empty-hero")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+    expect(screen.queryByTestId("project-runs-table")).toBeNull();
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
-  it("opens create-suite from an empty-hero server card with that server prefilled", async () => {
+  it("opens Create suite from Eval my server with that server prefilled, and header Create suite stays blank", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -536,11 +723,11 @@ describe("EvaluateTab", () => {
 
     const user = userEvent.setup();
     const view = render(<EvaluateTab projectId="ws-1" />);
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
 
     await user.click(
-      screen.getByRole("button", { name: "Create suite from server-a" }),
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
     );
-
     expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
       type: "create",
     });
@@ -550,12 +737,81 @@ describe("EvaluateTab", () => {
 
     expect(screen.getByTestId("create-suite-page")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
-    await waitFor(() => {
-      expect(mocks.createSuitePage.mock.calls.at(-1)?.[0]).toMatchObject({
+    expect(mocks.createSuitePage).toHaveBeenCalledWith(
+      expect.objectContaining({
         initialName: "server-a",
         initialServerId: "srv-a",
-      });
+      }),
+    );
+
+    mocks.route.current = { type: "list" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
+    await user.click(screen.getByRole("button", { name: /^create suite$/i }));
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "create",
+    });
+
+    mocks.route.current = { type: "create" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.createSuitePage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialName: null,
+        initialServerId: null,
+      }),
+    );
+  });
+
+  it("opens today's case editor from a first-run case and can return", async () => {
+    const { writeEvalServerPreviewDraft } =
+      await import("../evaluate/eval-server-preview-state");
+    const { buildEvalServerPreview } =
+      await import("../evaluate/eval-server-preview-model");
+    const preview = buildEvalServerPreview({
+      id: "srv-a",
+      name: "server-a",
+    });
+    const suiteId = preview.suites[0]!.id;
+    const caseId = preview.suites[0]!.cases[0]!.id;
+    writeEvalServerPreviewDraft("srv-a", {
+      suites: preview.suites,
+      openSuiteIds: [suiteId],
+      step: "suites",
+      clients: [],
+      iterationsPerCase: 10,
+    });
+
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId,
+      testId: caseId,
+      fromEvalServer: "srv-a",
+    };
+    mocks.useEvalQueries.mockImplementation(() => ({
+      ...makeQueryState(null),
+      sortedSuites: [],
+      suiteOverview: [],
+    }));
+
+    const user = userEvent.setup();
+    render(<EvaluateTab projectId="ws-1" />);
+
+    // Preview IDs must never reach queries that validate persisted suite IDs.
+    for (const [args] of mocks.useEvalQueries.mock.calls) {
+      expect(args.selectedSuiteId).toBeNull();
+    }
+    expect(screen.getByTestId("eval-server-case-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: preview.suites[0]!.cases[0]!.title,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "eval-server",
+      serverId: "srv-a",
     });
   });
 
@@ -593,7 +849,7 @@ describe("EvaluateTab", () => {
               : undefined,
           suiteRuns: selectedSuiteId === "suite-sdk" ? [] : undefined,
         };
-      }
+      },
     );
 
     render(<EvaluateTab projectId="ws-1" />);
@@ -638,9 +894,7 @@ describe("EvaluateTab", () => {
     expect(
       screen.getByRole("link", { name: "Test case", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Suite suite-a" }));
     expect(mocks.toSuiteOverview).toHaveBeenCalledWith("suite-a");
@@ -660,9 +914,100 @@ describe("EvaluateTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "list" },
-        { replace: true }
+        { replace: true },
       );
     });
+  });
+
+  it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
+    // "Promote to test case" into a NEW suite runs as an action; its result
+    // can arrive before the overview subscription's update, so the page
+    // mounts on an overview that does not list the suite yet — while the
+    // suite's own query is still in flight.
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId: "new-suite",
+      testId: "case-1",
+    } as any;
+    let caughtUp = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (caughtUp) {
+          const created = makeSuiteEntry([], "new-suite");
+          const sortedSuites = [...state.sortedSuites, created];
+          const selectedSuiteEntry =
+            selectedSuiteId === "new-suite" ? created : null;
+          return {
+            ...state,
+            suiteOverview: sortedSuites,
+            sortedSuites,
+            selectedSuiteEntry,
+            selectedSuite: selectedSuiteEntry?.suite ?? null,
+            suiteDetails: selectedSuiteEntry
+              ? { testCases: [], iterations: [] }
+              : undefined,
+            isSuiteDetailsLoading: false,
+          };
+        }
+        return {
+          ...state,
+          // The stale overview: no "new-suite". Its own query has not
+          // answered yet.
+          isSuiteDetailsLoading: selectedSuiteId === "new-suite",
+        };
+      },
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    // The suite's query answers in the same transition that brings the
+    // overview up to date.
+    caughtUp = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+  });
+
+  it("bounces a missing suite once its own query answers empty", async () => {
+    // The real shape of a deleted (or unauthorized) suite: its query is in
+    // flight first, then `listTestCases` answers []. The existing "invalid
+    // suite routes" spec starts at the answer; this one walks through the
+    // wait, so a guard that also held on an empty answer would fail here
+    // instead of stranding the user on a spinner.
+    mocks.route.current = { type: "suite-overview", suiteId: "gone-suite" };
+    let answered = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+        ...makeQueryState(selectedSuiteId),
+        suiteDetails:
+          answered && selectedSuiteId
+            ? { testCases: [], iterations: [] }
+            : undefined,
+        isSuiteDetailsLoading: !answered && selectedSuiteId === "gone-suite",
+      }),
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    answered = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    await waitFor(() =>
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+        { type: "list" },
+        { replace: true },
+      ),
+    );
   });
 
   it("passes eval iteration limit disabled state into the suite view", () => {
@@ -678,7 +1023,7 @@ describe("EvaluateTab", () => {
     expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       evalRunsDisabledReason: expect.stringMatching(
-        /^Eval iteration limit reached\. Resets /
+        /^Eval iteration limit reached\. Resets /,
       ),
     });
   });
@@ -690,7 +1035,7 @@ describe("EvaluateTab", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "billing:getEvalIterationQuota",
-      { organizationId: "org-1" }
+      { organizationId: "org-1" },
     );
   });
 
@@ -701,7 +1046,7 @@ describe("EvaluateTab", () => {
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error"
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
         );
       });
 
@@ -709,7 +1054,7 @@ describe("EvaluateTab", () => {
 
       expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Try again" })
+        screen.getByRole("button", { name: "Try again" }),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
@@ -768,8 +1113,7 @@ describe("EvaluateTab", () => {
         status: "error",
         error: { code: "execution_failed" },
       });
-      const message =
-        response.status === "error" ? response.error.message : "";
+      const message = response.status === "error" ? response.error.message : "";
       expect(message).toMatch(/Eval iteration limit reached/);
       expect(message).toMatch(/25\/25 eval iterations used/);
       // The raw un-gated run path must not have been touched.
@@ -836,9 +1180,9 @@ describe("EvaluateTab", () => {
       );
       expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
       // Staged before committed, and the staging dialog is closed after.
-      expect(
-        mocks.setSuiteToDelete.mock.invocationCallOrder[0],
-      ).toBeLessThan(mocks.confirmDelete.mock.invocationCallOrder[0]);
+      expect(mocks.setSuiteToDelete.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.confirmDelete.mock.invocationCallOrder[0],
+      );
       expect(mocks.setSuiteToDelete).toHaveBeenLastCalledWith(null);
     });
 
@@ -926,6 +1270,47 @@ describe("EvaluateTab", () => {
       });
     });
 
+    it("generateEvalTests asks a mixed environment suite which environment to use", async () => {
+      withMixedEnvironmentSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: {
+          code: "invalid_request",
+          message: expect.stringMatching(/Claude · opus, Cursor · sonnet/),
+        },
+      });
+      expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    it("generateEvalTests generates for the named environment, not the legacy servers", async () => {
+      withMixedEnvironmentSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a", environment: "cursor · sonnet" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "generation_started", suiteId: "suite-a" },
+      });
+      await waitFor(() => {
+        expect(mocks.handleGenerateTests).toHaveBeenCalledWith(
+          "suite-a",
+          [],
+          expect.objectContaining({ environmentId: "env-b" }),
+        );
+      });
+    });
+
     it("generateEvalTests rejects a suite with no servers attached", async () => {
       render(<EvaluateTab projectId="ws-1" />);
 
@@ -939,6 +1324,71 @@ describe("EvaluateTab", () => {
         error: { code: "invalid_request" },
       });
       expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    /*
+     * AN AGENT COMMAND IS A SECOND DOOR INTO THE SAME MUTATIONS.
+     *
+     * The CI-owned lock lives in the rendered controls — withheld callbacks and
+     * a disabled fieldset. An agent command passes none of them: it resolves a
+     * suite by name and calls the handler directly. So a lock that only hides
+     * affordances leaves `case.create` — in the platform's locked set —
+     * reachable, and the agent gets a `409` it can do nothing with.
+     *
+     * `resolveSuiteEntry` takes a REQUIRED intent, so a command added later
+     * cannot compile without deciding which of the two groups it is in:
+     * `"edit_config"` writes what CI owns, `"lifecycle"` does not.
+     */
+    it("generateEvalTests refuses a CI-owned suite instead of earning a 409", async () => {
+      mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+      withCiOwnedSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    it("deleteEvalSuite deletes a CI-owned suite — removing a row is not editing it", async () => {
+      // The other side of the same rule. Generation above writes cases the
+      // next sync owns; deleting writes nothing CI owns, and it is the only
+      // cleanup a suite minted by `createEvalRunReporter()` has (issue #5381).
+      withCiOwnedSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "deleteEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({ status: "success" });
+      expect(mocks.setSuiteToDelete).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-a" }),
+      );
+      expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it("still runs a CI-owned suite — the lock is on edits, not on the suite", async () => {
+      mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+      withCiOwnedSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      // The guard against over-refusing, and the reason the refusal above
+      // means something: `"lifecycle"` is not a weaker check, it is a
+      // different question.
+      expect(response).toMatchObject({ status: "success" });
     });
 
     it("openEvalSuiteForm opens the create page with a name-only prefill — no suite is created", async () => {
@@ -1007,5 +1457,73 @@ describe("EvaluateTab", () => {
         },
       });
     });
+  });
+});
+
+/**
+ * A suite whose configuration lives in a repository reaches the detail view
+ * already locked.
+ *
+ * The TAB is the only place that can answer this: it holds the suite row, and
+ * the row is where both halves of the predicate live (`declaredSuiteId` from a
+ * committed suite file, `source: 'sdk'` from ingest). Getting it wrong here
+ * means every control below is offered against a backend that will refuse it.
+ */
+describe("EvaluateTab — CI-managed suites", () => {
+  // This describe sits OUTSIDE the suite that owns the shared `beforeEach`, so
+  // it restores the two pieces of module state its tests depend on itself —
+  // otherwise a `selectedSuite` override from one case leaks into the next and
+  // the unlocked assertion reads a locked suite.
+  beforeEach(() => {
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+  });
+
+  function lockedQueryState(overrides: {
+    source?: "ui" | "sdk";
+    declaredSuiteId?: string;
+  }) {
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (!state.selectedSuite) return state;
+        return {
+          ...state,
+          selectedSuite: { ...state.selectedSuite, ...overrides },
+        };
+      },
+    );
+  }
+
+  function lastProps(): Record<string, unknown> {
+    return (mocks.suiteIterationsView.mock.calls.at(-1)?.[0] ?? {}) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it("locks a file-declared suite and wires the way out", () => {
+    lockedQueryState({ declaredSuiteId: "s_from_file" });
+    render(<EvaluateTab projectId="ws-1" />);
+
+    expect(lastProps().configLocked).toBe(true);
+    // The escape hatch has to be WIRED, not merely rendered: `duplicateTestSuite`
+    // stamps the copy `source: 'ui'` and drops the declared id, which is what
+    // makes the copy editable.
+    expect(typeof lastProps().onDuplicateSuite).toBe("function");
+  });
+
+  it("locks an SDK-created suite the same way", () => {
+    lockedQueryState({ source: "sdk" });
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(lastProps().configLocked).toBe(true);
+  });
+
+  it("leaves an app-authored suite unlocked", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(lastProps().configLocked).toBe(false);
   });
 });

@@ -14,6 +14,8 @@
 
 import {
   isAssertStep,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
   isToolCallStep,
   isWidgetAssertion,
   type StageAuthoredCase,
@@ -49,22 +51,55 @@ export function buildStageAuthoredCase(args: {
   const steps = args.steps ?? [];
   const turns = args.turns ?? [];
 
+  const assertSteps = steps.filter(isAssertStep);
+
+  /** The predicate `type` an assertion carries, when it is a transcript one. */
+  const predicateKind = (assertion: unknown): string | undefined =>
+    isWidgetAssertion(assertion as never)
+      ? undefined
+      : (assertion as { type?: unknown })?.type as string | undefined;
+
+  const assertedPredicateKinds = [
+    ...assertSteps.map((s) => predicateKind(s.assertion)),
+    ...(args.test.successPredicates ?? []).map(predicateKind),
+  ];
+
+  // UVH-IN1. A case asserting "call tool X" expects a call just as surely as
+  // one authoring `expectedToolCalls` does, and before this its assertion set
+  // `call` to `notApplicable` — a stage the case plainly exercises reported as
+  // one it does not.
+  //
+  // `toolNeverCalled` is deliberately NOT among them: a case whose only tool
+  // assertion forbids a call expects none, and turning `call` on for it would
+  // demand evidence of the very thing the case exists to rule out.
   const expectsToolCall =
     (args.test.expectedToolCalls?.length ?? 0) > 0 ||
     turns.some((t) => (t.expectedToolCalls?.length ?? 0) > 0) ||
-    steps.some(isToolCallStep);
+    steps.some(isToolCallStep) ||
+    assertedPredicateKinds.some(isPositiveToolCallPredicateKind);
 
-  const assertSteps = steps.filter(isAssertStep);
   const expectsWidgetRender =
     args.test.caseType === "widget_probe" ||
     assertSteps.some((s) => isWidgetAssertion(s.assertion));
 
   // What could speak to "the user's actual request was satisfied": authored
   // predicates, an expected output to compare against, and assert steps.
+  //
+  // Tool-call assertions are EXCLUDED, because UVH-IN1 routes their results to
+  // `selection`. Counting them here would leave `userValue` applicable with
+  // nothing left to grade it, so a case whose only assertion is
+  // "never call the admin tool" would report a permanent `notMeasured`
+  // user-value gap that no author could ever close.
+  const gradesUserValue = (kind: string | undefined) =>
+    !isSelectionPredicateKind(kind);
+
   const assertionCount =
-    (args.test.successPredicates?.length ?? 0) +
+    (args.test.successPredicates ?? []).filter((p) =>
+      gradesUserValue(predicateKind(p))
+    ).length +
     (args.test.expectedOutput !== undefined ? 1 : 0) +
-    assertSteps.length;
+    assertSteps.filter((s) => gradesUserValue(predicateKind(s.assertion)))
+      .length;
 
   return {
     mode: args.caseNeedsModel ? "model_driven" : "model_free",

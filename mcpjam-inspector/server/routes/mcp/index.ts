@@ -7,6 +7,7 @@ import resourceTemplates from "./resource-templates";
 import prompts from "./prompts";
 import chatV2 from "./chat-v2";
 import computers from "./computers";
+import localHarness from "./local-harness";
 import oauth from "./oauth";
 import exporter from "./export";
 import evals from "./evals";
@@ -14,6 +15,7 @@ import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
 import mrtr from "./mrtr";
 import models from "./models";
+import byokModels from "./byok-models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
@@ -50,6 +52,7 @@ mcp.route("/chat-v2", chatV2);
 
 // Local computer engine — consent capability (grant/verify/revoke)
 mcp.route("/computers", computers);
+mcp.route("/local-harness", localHarness);
 
 // Speech-to-text endpoint
 mcp.route("/audio", audioTranscriptions);
@@ -111,6 +114,9 @@ mcp.route("/manager-http", managerHttp);
 
 // Models endpoints - fetch model metadata from Convex backend
 mcp.route("/models", models);
+
+// BYOK model discovery through the provider adapters (local mode only)
+mcp.route("/byok-models", byokModels);
 
 // Tokenizer endpoints - count tokens for MCP tools
 mcp.route("/tokenizer", tokenizer);

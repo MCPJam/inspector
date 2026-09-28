@@ -3,6 +3,8 @@ import {
   mergeMcpToolOriginMetadata,
   readMcpToolOriginServerId,
 } from "@/shared/mcp-tool-origin-metadata";
+import { readHydratedToolOutput } from "@/shared/hydrated-tool-output";
+import { getMessageTimestampMs, withMessageTimestamp } from "@mcpjam/chat-ui";
 
 /**
  * Convert a persisted transcript blob (array of message objects from the
@@ -89,7 +91,7 @@ function getUiMessageContinuityKey(message: UIMessage): string {
   }
 
   return `${message.role}:parts:${stableHash(
-    (message.parts ?? []).map(normalizeUiPartForContinuity)
+    (message.parts ?? []).map(normalizeUiPartForContinuity),
   )}`;
 }
 
@@ -98,14 +100,14 @@ function getStableMessageId(msg: TranscriptMessage, index: number): string {
     return msg.id;
   }
   return `transcript-${index}-${msg.role ?? "unknown"}-${stableHash(
-    msg.content
+    msg.content,
   )}`;
 }
 
 function getStableToolCallId(
   part: TranscriptPart,
   messageIndex: number,
-  partIndex: number
+  partIndex: number,
 ): string {
   const explicitId = readToolCallId(part);
   if (explicitId) return explicitId;
@@ -127,7 +129,7 @@ function readToolCallId(part: TranscriptPart): string | undefined {
 }
 
 function readToolOriginMetadata(
-  part: TranscriptPart
+  part: TranscriptPart,
 ): Record<string, unknown> | undefined {
   const metadataCandidates = [
     part.providerOptions,
@@ -139,7 +141,7 @@ function readToolOriginMetadata(
     (candidate) =>
       candidate !== null &&
       typeof candidate === "object" &&
-      !Array.isArray(candidate)
+      !Array.isArray(candidate),
   );
   const directServerId =
     typeof part.serverId === "string" && part.serverId.length > 0
@@ -153,67 +155,34 @@ function readToolOriginMetadata(
   return mergeMcpToolOriginMetadata(providerMetadata, serverId);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * A text UI part, keeping the provider options stored with the part as its
+ * provider metadata. The server's provenance signature rides there (MJ-009):
+ * it is what lets a reopened conversation's earlier replies verify as the
+ * server's own when they are sent back.
+ */
+function textPartWithProvenance(
+  part: TranscriptPart,
+  text: string,
+): UIMessage["parts"][number] {
+  const metadata = isPlainObject(part.providerOptions)
+    ? part.providerOptions
+    : isPlainObject(part.providerMetadata)
+    ? part.providerMetadata
+    : undefined;
+  return {
+    type: "text",
+    text,
+    ...(metadata ? { providerMetadata: metadata } : {}),
+  } as UIMessage["parts"][number];
+}
+
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type !== "json" || !hasOwn(record, "value")) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
-}
-
-function isModelVisibleImageOutput(value: unknown): boolean {
-  const output = unwrapJsonEnvelope(value);
-  if (!output || typeof output !== "object" || Array.isArray(output)) {
-    return false;
-  }
-  const record = output as Record<string, unknown>;
-  if (record.type !== "content" || !Array.isArray(record.value)) {
-    return false;
-  }
-  return record.value.some((part) => {
-    if (!part || typeof part !== "object" || Array.isArray(part)) {
-      return false;
-    }
-    const partRecord = part as Record<string, unknown>;
-    if (partRecord.type === "text" && typeof partRecord.text === "string") {
-      return (
-        partRecord.text.startsWith("[image omitted:") ||
-        partRecord.text.startsWith("[resource link omitted:") ||
-        partRecord.text.startsWith("[embedded image resource omitted:")
-      );
-    }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
-  });
-}
-
-function readHydratedToolOutput(part: TranscriptPart): unknown {
-  const hasResult = hasOwn(part, "result");
-  const hasOutput = hasOwn(part, "output");
-  if (
-    hasResult &&
-    hasOutput &&
-    isModelVisibleImageOutput(part.output)
-  ) {
-    return part.result;
-  }
-  if (hasOutput) return part.output;
-  if (hasResult) return part.result;
-  return {};
 }
 
 function cloneTranscriptMessage(msg: TranscriptMessage): TranscriptMessage {
@@ -321,7 +290,7 @@ function extractTextContent(content: unknown): string {
 
 function convertParts(
   content: unknown,
-  messageIndex: number
+  messageIndex: number,
 ): UIMessage["parts"] {
   if (typeof content === "string") {
     return [{ type: "text", text: content }];
@@ -340,7 +309,7 @@ function convertParts(
 
     const partType = part?.type;
     if (partType === "text" && typeof part.text === "string") {
-      parts.push({ type: "text", text: part.text });
+      parts.push(textPartWithProvenance(part, part.text));
     } else if (partType === "tool-call") {
       const providerMetadata = readToolOriginMetadata(part);
       // A tool-call with no merged tool-result row is UNRESOLVED — a turn
@@ -367,15 +336,15 @@ function convertParts(
               output: readHydratedToolOutput(part),
             }
           : { state: "input-available" as const }),
-        ...(providerMetadata
-          ? { callProviderMetadata: providerMetadata }
-          : {}),
+        ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
       } as any);
     } else if (partType === "tool-result") {
       // Tool results are typically already captured via tool-call results
       // in the AI SDK format, so we skip standalone tool-result parts.
     } else if (typeof part.text === "string") {
-      parts.push({ type: "text", text: part.text });
+      // A stored reasoning part lands here, and is signed as the text it
+      // becomes.
+      parts.push(textPartWithProvenance(part, part.text));
     } else if (typeof part.value === "string") {
       parts.push({ type: "text", text: part.value });
     }
@@ -428,27 +397,33 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
 
 export function preserveHydratedMessageIds(
   currentMessages: UIMessage[],
-  hydratedMessages: UIMessage[]
+  hydratedMessages: UIMessage[],
 ): UIMessage[] {
   if (currentMessages.length === 0 || hydratedMessages.length === 0) {
     return hydratedMessages;
   }
 
-  const currentIdsByContinuityKey = new Map<string, string[]>();
+  const currentMessagesByContinuityKey = new Map<string, UIMessage[]>();
   for (const message of currentMessages) {
     const key = getUiMessageContinuityKey(message);
-    const ids = currentIdsByContinuityKey.get(key);
-    if (ids) {
-      ids.push(message.id);
+    const matchingMessages = currentMessagesByContinuityKey.get(key);
+    if (matchingMessages) {
+      matchingMessages.push(message);
     } else {
-      currentIdsByContinuityKey.set(key, [message.id]);
+      currentMessagesByContinuityKey.set(key, [message]);
     }
   }
 
   return hydratedMessages.map((message) => {
     const key = getUiMessageContinuityKey(message);
-    const existingId = currentIdsByContinuityKey.get(key)?.shift();
-    if (!existingId || existingId === message.id) return message;
-    return { ...message, id: existingId };
+    const existing = currentMessagesByContinuityKey.get(key)?.shift();
+    if (!existing) return message;
+
+    const withStableId =
+      existing.id === message.id ? message : { ...message, id: existing.id };
+    const timestampMs = getMessageTimestampMs(existing);
+    return timestampMs === undefined
+      ? withStableId
+      : withMessageTimestamp(withStableId, timestampMs);
   });
 }

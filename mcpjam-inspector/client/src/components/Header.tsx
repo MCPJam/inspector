@@ -3,23 +3,18 @@ import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { useHeaderIpc } from "./ipc/use-header-ipc";
 import { ActiveServerSelectorProps } from "./ActiveServerSelector";
 
-export interface GlobalHostBarProps {
+export interface ClientBootstrapProps {
   projectId: string;
-  onEditHost: (hostId: string) => void;
-  // Provided only while the host canvas is open. Re-targets it when the
-  // dropdown's active host changes, so picking a host updates the diagram
-  // instead of only the preview pointer used by chat/evals.
-  onCanvasReplaceHost?: (hostId: string) => void;
 }
 
 interface HeaderProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
-  globalHostBarProps?: GlobalHostBarProps;
+  clientBootstrapProps?: ClientBootstrapProps;
 }
 
 export const Header = ({
   activeServerSelectorProps,
-  globalHostBarProps,
+  clientBootstrapProps,
 }: HeaderProps) => {
   const { activeIpc, dismissActiveIpc } = useHeaderIpc();
   const { isMobile } = useSidebar();
@@ -37,7 +32,7 @@ export const Header = ({
         ) : null}
         <AuthUpperArea
           activeServerSelectorProps={activeServerSelectorProps}
-          globalHostBarProps={globalHostBarProps}
+          clientBootstrapProps={clientBootstrapProps}
         />
       </div>
       {activeIpc && activeIpc.render({ dismiss: dismissActiveIpc })}

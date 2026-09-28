@@ -29,6 +29,7 @@ import {
   MRTR_RESUME_STATE_MAX_BYTES,
 } from "../config.js";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 import type {
   MrtrElicitationResponse,
   MrtrOperationMethod,
@@ -206,10 +207,12 @@ async function postContinuation(
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `continuation/${pathSuffix} failed (${response.status})`,
+      error: backendFailureText({
+        source: "mrtr-continuation",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: `continuation/${pathSuffix} failed (${response.status})`,
+      }),
     };
   }
   return { ok: true, payload };

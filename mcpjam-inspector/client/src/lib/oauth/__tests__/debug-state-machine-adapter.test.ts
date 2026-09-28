@@ -317,4 +317,15 @@ describe("Inspector OAuth adapter SSRF loopback opt-in", () => {
     }) as unknown as Record<string, unknown>;
     expect(config.allowLoopbackMetadataFetch).toBe(false);
   });
+
+  // The loopback-literal test above cannot recognise the case that prompted
+  // this: an authorization server on a custom hostname (`auth.local`) that
+  // resolves to 127.0.0.1. Outside hosted mode the wider allowance covers it,
+  // whatever the server URL happens to look like.
+  it("allows private metadata fetches outside hosted mode", () => {
+    const config = buildMachineConfig({
+      serverUrl: "https://mcp.example.com/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowPrivateMetadataFetch).toBe(true);
+  });
 });

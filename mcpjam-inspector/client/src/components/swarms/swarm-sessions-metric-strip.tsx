@@ -1,6 +1,6 @@
 /**
  * Metric strip for the Swarms Sessions tab, scoped to the current session
- * scope (project-wide, or narrowed to a persona).
+ * scope (a run wave, project-wide, or narrowed to a persona).
  *
  * Query + scope only; the tiles live in the shared
  * {@link SessionMetricsStripView} because User Testing renders the same
@@ -16,20 +16,55 @@
 import { useQuery } from "convex/react";
 import { SWARM_QUERIES, type SwarmSessionMetrics } from "@/lib/swarm-api";
 import { SessionMetricsStripView } from "@/components/shared/session-metric-strip";
+import {
+  CollapsibleSessionMetricsShell,
+  collapsibleSessionMetricsStorageKey,
+} from "@/components/shared/collapsible-session-metrics-shell";
+import { usePersistedBoolean } from "@/hooks/use-persisted-boolean";
 
 export function SwarmSessionsMetricStrip({
   projectId,
   personaRefId,
+  journeyRunIds,
 }: {
   projectId: string;
   personaRefId: string | null;
+  /**
+   * The wave being displayed. Without it the strip aggregates every swarm
+   * session in the project and labels the total "N sessions in scope", which
+   * is a count of a cohort the page is not showing.
+   */
+  journeyRunIds?: readonly string[];
 }) {
   const metrics = useQuery(
     SWARM_QUERIES.getSwarmSessionMetrics as any,
     (projectId
-      ? { projectId, ...(personaRefId ? { personaRefId } : {}) }
+      ? {
+          projectId,
+          ...(personaRefId ? { personaRefId } : {}),
+          ...(journeyRunIds?.length ? { journeyRunIds } : {}),
+        }
       : "skip") as any
   ) as SwarmSessionMetrics | undefined;
+  const [expanded, setExpanded] = usePersistedBoolean(
+    collapsibleSessionMetricsStorageKey(),
+    true,
+  );
 
-  return <SessionMetricsStripView metrics={metrics} testIdPrefix="swarm" />;
+  if (!metrics || metrics.sessionCount === 0) return null;
+
+  return (
+    <CollapsibleSessionMetricsShell
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      metrics={metrics}
+      testIdPrefix="swarm"
+    >
+      <SessionMetricsStripView
+        metrics={metrics}
+        testIdPrefix="swarm"
+        embedded
+      />
+    </CollapsibleSessionMetricsShell>
+  );
 }

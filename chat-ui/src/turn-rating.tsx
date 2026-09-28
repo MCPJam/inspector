@@ -20,6 +20,28 @@ export type TurnRatingStatus = "idle" | "pending" | "submitted" | "error";
  */
 export type TurnRatingVariant = "stars" | "thumbs";
 
+/**
+ * What a screen reader hears for a RECORDED rating. Spelled out, because the
+ * read-only row is a single image: five separate star icons would otherwise
+ * announce as five things, none of which says what the tester chose.
+ */
+function readOnlyRatingLabel(
+  variant: TurnRatingVariant,
+  value: number | undefined
+): string {
+  if (value === undefined) return "No rating left";
+  if (variant === "thumbs") {
+    // Only 0 and 1 are thumbs. Anything else is a value from the other
+    // variant, and the icon row — which matches on equality — renders nothing
+    // for it, so claiming a thumb here would narrate a rating that is not on
+    // screen and was never left.
+    if (value !== 0 && value !== 1) return "No rating left";
+    return value === 1 ? "Tester rated thumbs up" : "Tester rated thumbs down";
+  }
+  if (!STARS.includes(value as (typeof STARS)[number])) return "No rating left";
+  return `Tester rated ${value} of 5`;
+}
+
 export interface TurnRatingProps {
   /**
    * Current rating: 1–5 for `stars`, or 0|1 for `thumbs`. Absent ⇒ nothing
@@ -150,77 +172,126 @@ export function TurnRating({
       )}
       data-status={status}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {title !== "" ? (
           <span className="text-muted-foreground">
             {title || (readOnly ? "Tester rating" : "Rate this response")}
           </span>
         ) : null}
-        <div
-          role="radiogroup"
-          aria-label={title || "Rate this response"}
-          className="flex items-center gap-0.5"
-          onMouseLeave={() => setHovered(null)}
-        >
-          {variant === "thumbs"
-            ? THUMBS.map(({ value: thumbValue, label, Icon }) => {
-                // Compared against the DRAFT, not `effective`: a thumb is
-                // picked, not accumulated, so there is no "fills up to here"
-                // hover preview to mirror — hovering 👍 must not light 👎.
-                const selected = draftValue === thumbValue;
-                return (
-                  <button
+        {readOnly ? (
+          /**
+           * A RECORD, not a control.
+           *
+           * The version this replaces rendered the same `<button role="radio">`
+           * row with `disabled` — visually identical to the live widget, so a
+           * PM reading a recorded session tried to click it: "it looks like
+           * I'm selecting because it's the same design as these guys, but I
+           * can't select it" (BB-198). `disabled` is invisible when the only
+           * difference it makes is a hover colour nobody hovers for.
+           *
+           * Icons in a labelled group instead: same shapes, same amber, no
+           * button affordance and nothing focusable. `aria-checked` is gone
+           * too — a checkbox that cannot be checked is a lie to a screen
+           * reader as much as to a mouse.
+           */
+          <span
+            role="img"
+            aria-label={readOnlyRatingLabel(variant, value)}
+            className="flex items-center gap-0.5"
+            data-testid="turn-rating-readonly"
+          >
+            {variant === "thumbs"
+              ? THUMBS.filter(
+                  ({ value: thumbValue }) => thumbValue === value
+                ).map(({ value: thumbValue, Icon }) => (
+                  <Icon
                     key={thumbValue}
+                    className="h-4 w-4 text-amber-500"
+                    fill="currentColor"
+                    aria-hidden
+                  />
+                ))
+              : STARS.map((star) => (
+                  <Star
+                    key={star}
+                    className={cn(
+                      "h-4 w-4",
+                      star <= (value ?? 0)
+                        ? "text-amber-500"
+                        : "text-muted-foreground/40"
+                    )}
+                    fill={star <= (value ?? 0) ? "currentColor" : "none"}
+                    aria-hidden
+                  />
+                ))}
+          </span>
+        ) : (
+          <div
+            role="radiogroup"
+            aria-label={title || "Rate this response"}
+            className="flex items-center gap-0.5"
+            onMouseLeave={() => setHovered(null)}
+          >
+            {variant === "thumbs"
+              ? THUMBS.map(({ value: thumbValue, label, Icon }) => {
+                  // Compared against the DRAFT, not `effective`: a thumb is
+                  // picked, not accumulated, so there is no "fills up to here"
+                  // hover preview to mirror — hovering 👍 must not light 👎.
+                  const selected = draftValue === thumbValue;
+                  return (
+                    <button
+                      key={thumbValue}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={label}
+                      disabled={disabled}
+                      className={cn(
+                        "rounded-sm p-0.5 text-muted-foreground transition-colors",
+                        !disabled &&
+                          "hover:text-amber-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                        selected && "text-amber-500",
+                        disabled && "cursor-default"
+                      )}
+                      onClick={() => selectValue(thumbValue)}
+                    >
+                      <Icon
+                        className="h-4 w-4"
+                        fill={selected ? "currentColor" : "none"}
+                        aria-hidden
+                      />
+                    </button>
+                  );
+                })
+              : STARS.map((star) => (
+                  <button
+                    key={star}
                     type="button"
                     role="radio"
-                    aria-checked={selected}
-                    aria-label={label}
+                    aria-checked={draftValue === star}
+                    aria-label={`${star} of 5`}
                     disabled={disabled}
                     className={cn(
                       "rounded-sm p-0.5 text-muted-foreground transition-colors",
                       !disabled &&
                         "hover:text-amber-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                      selected && "text-amber-500",
+                      star <= effective && "text-amber-500",
                       disabled && "cursor-default"
                     )}
-                    onClick={() => selectValue(thumbValue)}
+                    onMouseEnter={() => !disabled && setHovered(star)}
+                    onClick={() => selectValue(star)}
                   >
-                    <Icon
+                    <Star
                       className="h-4 w-4"
-                      fill={selected ? "currentColor" : "none"}
+                      // Fill tracks hover as well as selection, so the row reads
+                      // as "clicking here gives 3 stars" before the click.
+                      fill={star <= effective ? "currentColor" : "none"}
                       aria-hidden
                     />
                   </button>
-                );
-              })
-            : STARS.map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  role="radio"
-                  aria-checked={draftValue === star}
-                  aria-label={`${star} of 5`}
-                  disabled={disabled}
-                  className={cn(
-                    "rounded-sm p-0.5 text-muted-foreground transition-colors",
-                    !disabled &&
-                      "hover:text-amber-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                    star <= effective && "text-amber-500",
-                    disabled && "cursor-default"
-                  )}
-                  onMouseEnter={() => !disabled && setHovered(star)}
-                  onClick={() => selectValue(star)}
-                >
-                  <Star
-                    className="h-4 w-4"
-                    // Fill tracks hover as well as selection, so the row reads
-                    // as "clicking here gives 3 stars" before the click.
-                    fill={star <= effective ? "currentColor" : "none"}
-                    aria-hidden
-                  />
-                </button>
-              ))}
-        </div>
+                ))}
+          </div>
+        )}
         {status === "pending" ? (
           <span className="text-muted-foreground">Saving…</span>
         ) : null}
@@ -239,7 +310,17 @@ export function TurnRating({
           <p className="text-muted-foreground italic">“{comment}”</p>
         ) : null
       ) : expanded ? (
-        <div className="flex items-center gap-2">
+        /**
+         * WIDTH-CAPPED, so Send stays next to what you typed.
+         *
+         * `flex-1` on the input alone let this row grow to the transcript's
+         * measure — on a wide session that put the button most of a screen
+         * away from the stars that opened it: "it's all the way to the right,
+         * I never even saw it until you mentioned it" (BB-198). The cap keeps
+         * the pair together under the response being rated, and `w-full`
+         * keeps it honest on a narrow one.
+         */
+        <div className="flex w-full max-w-md items-center gap-2">
           <input
             type="text"
             value={draftComment}

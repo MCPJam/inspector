@@ -28,6 +28,23 @@ export interface HarnessMcpProxyClaims {
   orgId: string;
   projectId: string;
   serverId: string;
+  /**
+   * The eval scope this token was authorized for, when it carries one.
+   *
+   * The evidence write path requires it: a proxied `tools/call` is recorded
+   * against an iteration only because the CONTROL PLANE put that iteration on
+   * the token, having checked the run is this caller's, running, on a
+   * proxy-delivering harness. Absent means playground traffic — nothing to
+   * record, and nothing claiming otherwise.
+   *
+   * The pair is surfaced only when BOTH claims are well-formed. A half-present
+   * pair is dropped rather than partly returned: a caller seeing an iteration
+   * id treats it as authorized scope, so handing one back without the run it
+   * was checked against is the single shape that could turn a malformed token
+   * into a trusted claim.
+   */
+  runId?: string;
+  iterationId?: string;
 }
 
 function getSecret(): string {
@@ -98,11 +115,22 @@ export function verifyHarnessProxyToken(
   // JWT NumericDate semantics: the token is expired AT `exp`, not after it.
   if (Math.floor((opts.nowMs ?? Date.now()) / 1000) >= payload.exp) return null;
 
+  const runId = payload.runId;
+  const iterationId = payload.iterationId;
+  const evalScope =
+    typeof runId === "string" &&
+    runId.length > 0 &&
+    typeof iterationId === "string" &&
+    iterationId.length > 0
+      ? { runId, iterationId }
+      : {};
+
   return {
     userId: payload.sub as string,
     externalId: payload.ext as string,
     orgId: payload.org as string,
     projectId: payload.projectId as string,
     serverId: payload.serverId as string,
+    ...evalScope,
   };
 }

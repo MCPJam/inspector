@@ -1,4 +1,4 @@
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 
 /**
  * What a promote call hands back. Both promote actions
@@ -22,6 +22,10 @@ export type PromotedTestCaseTarget = {
  * case is the artifact just created, and the editor is where it can be
  * reviewed and adjusted.
  *
+ * Lands in the redesigned Evaluate tab (`/evaluate`) unconditionally, NOT
+ * behind `evaluate-enabled`: the redesign is where eval work is going, and
+ * promoting is not the moment to fork a user onto the tab being retired.
+ *
  * Returns whether it navigated, so a caller whose ids didn't resolve (an
  * older backend, a shape change) can fall back to its toast instead of
  * navigating somewhere arbitrary.
@@ -34,6 +38,6 @@ export function navigateToPromotedTestCase(
   if (!suiteId || !testId) {
     return false;
   }
-  navigateApp(buildEvalsPath({ type: "test-edit", suiteId, testId }));
+  navigateApp(buildEvaluatePath({ type: "test-edit", suiteId, testId }));
   return true;
 }

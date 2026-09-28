@@ -64,6 +64,9 @@ describe("first-page-only pagination (firstPageOnly: true)", () => {
     const { manager } = await connect({ firstPageOnly: true });
     const result = await manager.listTools("fixture");
 
+    expect(manager.getCapturedToolDeclarations("fixture")?.capture).toBe(
+      "partial"
+    );
     expect(result.tools).toHaveLength(4);
     expect(result.tools.map((t) => t.name)).toEqual([
       "tool-0",
@@ -79,8 +82,39 @@ describe("first-page-only pagination (firstPageOnly: true)", () => {
     const { manager } = await connect({});
     const result = await manager.listTools("fixture");
 
+    expect(manager.getCapturedToolDeclarations("fixture")).toMatchObject({
+      capture: "complete",
+      tools: result.tools,
+    });
     expect(result.tools).toHaveLength(12);
     expect(listRequests("tools/list").length).toBeGreaterThan(1);
+  });
+
+  it("preserves duplicate raw names before ToolSet conversion", async () => {
+    const { manager } = await connect({
+      fixtureOptions: { duplicateToolName: true },
+    });
+    await manager.getToolsForAiSdk(["fixture"]);
+    const raw = manager.getCapturedToolDeclarations("fixture");
+    expect(raw?.capture).toBe("complete");
+    expect(raw?.tools.filter((tool) => tool.name === "tool-0")).toHaveLength(2);
+    await manager.listTools("fixture");
+    expect(manager.getCapturedToolDeclarations("fixture")?.tools).toHaveLength(
+      12
+    );
+    await manager.disconnectServer("fixture");
+    expect(manager.getCapturedToolDeclarations("fixture")).toBeUndefined();
+  });
+
+  it("does not call a repeated-cursor aggregate complete", async () => {
+    const { manager } = await connect({
+      fixtureOptions: { malformedCursor: true },
+    });
+    const result = await manager.listTools("fixture");
+    expect(result.nextCursor).toBeUndefined();
+    expect(manager.getCapturedToolDeclarations("fixture")?.capture).toBe(
+      "partial"
+    );
   });
 
   it("truncates the other paginated primitives too", async () => {

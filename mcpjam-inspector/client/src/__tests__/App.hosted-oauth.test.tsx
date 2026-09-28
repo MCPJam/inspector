@@ -7,7 +7,16 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast as sonnerToast } from "sonner";
+import { RouterProvider } from "react-router";
 import App from "../App";
+import {
+  markSignOutInProgress,
+  resetSignOutLatchForTests,
+  SIGN_OUT_SUPPRESSION_WINDOW_MS,
+} from "../lib/auth/sign-out-latch";
+import { createAppRouter } from "../router";
+import { setAppRouter } from "../router-ref";
 import {
   clearHostedOAuthPendingState,
   writeHostedOAuthPendingMarker,
@@ -28,6 +37,15 @@ import {
   writeScenarioSignInReturnPath,
   writeScenarioSession,
 } from "../lib/scenario-session";
+import {
+  readAppSignInReturnPath,
+  writeAppSignInReturnPath,
+} from "../lib/app-signin-return-path";
+import { getGuestSessionRefusal } from "../lib/guest-session";
+
+/** Convex-shaped project ids for the cross-organization switch cases. */
+const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
+const ORG_B_PROJECT_ID = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";
 
 const existingConvexUser = {
   _id: "user-1",
@@ -48,9 +66,11 @@ const {
   mockPlaygroundTabProps,
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
+  mockDbUserState,
   mockHandleOAuthCallback,
   mockHeader,
   mockHostedShellGateState,
+  mockListTools,
   mockMCPSidebar,
   mockOAuthFlowTabState,
   mockOrganizationsTab,
@@ -82,16 +102,31 @@ const {
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
+    handleRuntimeDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
+    ensureServersReady: vi.fn().mockResolvedValue({
+      connected: [],
+      failed: [],
+      missing: [],
+      reauth: [],
+    }),
+    isConnectionPreflightPending: false,
     handleUpdate: vi.fn().mockResolvedValue({
       ok: true,
       serverName: "test-server",
     }),
     handleRemoveServer: vi.fn(),
     setSelectedServer: vi.fn(),
+    setSelectedMCPConfigs: vi.fn(),
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
-    projects: {},
+    projects: {
+      ws_local: {
+        id: "ws_local",
+        name: "Default",
+        sharedProjectId: "project-1",
+      },
+    },
     activeProjectId: "ws_local",
     handleSwitchProject: vi.fn(),
     handleCreateProject: vi.fn(),
@@ -106,6 +141,7 @@ const {
     setActiveOrganizationId: vi.fn(),
     clearConvexActiveProjectSelection: vi.fn(),
     clearLocalFallbackProjectSelection: vi.fn(),
+    pendingDashboardOAuth: null,
     isCloudSyncActive: false,
   });
 
@@ -118,14 +154,16 @@ const {
       isLoading: false,
     },
     mockCompleteHostedOAuthCallback: vi.fn(),
+    mockDbUserState: {
+      isEnsuringUser: false,
+      isUserReady: true,
+    },
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        | "ready"
-        | "auth-loading"
-        | "project-loading"
-        | "logged-out",
+        "ready" | "auth-loading" | "project-loading" | "logged-out",
     },
+    mockListTools: vi.fn().mockResolvedValue({ tools: [] }),
     mockMCPSidebar: vi.fn(() => <div />),
     mockOAuthFlowTabState: {
       shouldThrow: false,
@@ -169,7 +207,9 @@ const {
   };
 });
 
-function mockFreshGuestUser() {
+function mockFreshGuestUser(
+  allProjects?: Array<{ _id: string; organizationId?: string }>,
+) {
   mockUseQuery.mockImplementation((ref: string) =>
     ref === "users:getCurrentUser"
       ? {
@@ -181,7 +221,9 @@ function mockFreshGuestUser() {
           // Fresh guest cookie/user rows have not seen first-run NUX yet.
           hasSeenOnboarding: false,
         }
-      : undefined
+      : ref === "projects:getMyProjects"
+        ? allProjects
+        : undefined,
   );
 }
 
@@ -196,12 +238,13 @@ function mockSeenGuestUser() {
           isAnonymous: true,
           hasSeenOnboarding: true,
         }
-      : undefined
+      : undefined,
   );
 }
 
 function mockUnseenOnboardingState() {
   localStorage.removeItem("mcp-onboarding-state");
+  localStorage.removeItem("mcp-first-run-server-choice-state");
 }
 
 vi.mock("convex/react", () => ({
@@ -223,6 +266,10 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({ query: vi.fn() }),
 }));
 
+vi.mock("@/lib/apis/mcp-tools-api", () => ({
+  listTools: (...args: unknown[]) => mockListTools(...args),
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
@@ -235,6 +282,9 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+  // MCPJamLimitDialog (mounted app-wide) reads the guest credit-wall variant.
+  // These tests don't exercise that wall, so control (undefined) is fine.
+  useFeatureFlagVariantKey: () => undefined,
 }));
 
 vi.mock("@/lib/analytics", () => ({
@@ -266,11 +316,8 @@ vi.mock("../hooks/useElectronOAuth", () => ({
 }));
 
 vi.mock("../contexts/db-user-ready-context", () => ({
-  useDbUserBootstrapStatus: vi.fn(() => ({
-    isEnsuringUser: false,
-    isUserReady: true,
-  })),
-  useDbUserReady: vi.fn(() => true),
+  useDbUserBootstrapStatus: vi.fn(() => mockDbUserState),
+  useDbUserReady: vi.fn(() => mockDbUserState.isUserReady),
 }));
 
 vi.mock("../hooks/usePostHogIdentify", () => ({
@@ -311,6 +358,7 @@ vi.mock("../lib/guest-session", () => ({
   }),
   getGuestBearerToken: mockGetGuestBearerToken,
   getCachedGuestSession: vi.fn(() => null),
+  getGuestSessionRefusal: vi.fn(() => null),
   getOrCreateGuestSession: vi.fn(async () => null),
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
@@ -353,6 +401,10 @@ vi.mock("../components/ChatTabV2", () => ({
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));
+vi.mock("../components/EvaluateTab", () => ({
+  EvaluateTab: () => <div data-testid="evaluate-tab">Evaluate</div>,
+}));
+
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
@@ -387,6 +439,8 @@ vi.mock("../components/playground/PlaygroundTab", () => ({
     isWorkOsAuthLoading?: boolean;
     isConvexAuthenticated?: boolean;
     hasSeenFirstRunOnboarding?: boolean;
+    firstRunPrompt?: string | null;
+    onFirstRunPromptConsumed?: () => void;
   }) => {
     mockPlaygroundTabProps(props);
     const { onOnboardingChange } = props;
@@ -433,7 +487,8 @@ vi.mock("../components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  useSidebar: () => ({ isMobile: false }),
+  // `setOpen` is what `SidebarAutoCollapse` drives the open state through.
+  useSidebar: () => ({ isMobile: false, setOpen: () => {} }),
 }));
 vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
@@ -481,12 +536,21 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    resetSignOutLatchForTests();
     clearHostedOAuthPendingState();
     clearScenarioSession();
     localStorage.clear();
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "completed", completedAt: Date.now() })
+      JSON.stringify({ status: "completed", completedAt: Date.now() }),
+    );
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        shownAt: Date.now(),
+        completedAt: Date.now(),
+      }),
     );
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
@@ -495,6 +559,8 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAuth.mockReturnValue(mockWorkOsAuthState);
     mockUseAppState.mockReset();
     mockUseAppState.mockImplementation(createAppStateMock);
+    mockListTools.mockReset();
+    mockListTools.mockResolvedValue({ tools: [] });
     mockUseConvexAuth.mockReset();
     mockUseConvexAuth.mockReturnValue(mockConvexAuthState);
     mockPosthogState.featureFlags.hasLoadedFlags = true;
@@ -504,15 +570,18 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser" ? existingConvexUser : undefined
+      ref === "users:getCurrentUser" ? existingConvexUser : undefined,
     );
     mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = true;
     mockConvexAuthState.isLoading = false;
+    mockDbUserState.isEnsuringUser = false;
+    mockDbUserState.isUserReady = true;
     mockWorkOsAuthState.getAccessToken = vi.fn();
     mockWorkOsAuthState.signIn = vi.fn();
     mockWorkOsAuthState.user = null;
     mockWorkOsAuthState.isLoading = false;
+    vi.mocked(getGuestSessionRefusal).mockReturnValue(null);
     mockCompleteHostedOAuthCallback.mockReset();
     mockHandleOAuthCallback.mockReset();
     mockGetGuestBearerToken.mockReset();
@@ -532,13 +601,15 @@ describe("App hosted OAuth callback handling", () => {
     mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
     mockTrack.mockReset();
+    vi.mocked(sonnerToast.error).mockReset();
+    vi.mocked(sonnerToast.success).mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {})
+      () => new Promise<never>(() => {}),
     );
     mockHandleOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {})
+      () => new Promise<never>(() => {}),
     );
 
     writeScenarioSession({
@@ -586,15 +657,45 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   afterEach(() => {
+    resetSignOutLatchForTests();
+    if (vi.isMockFunction(window.history.replaceState)) {
+      vi.mocked(window.history.replaceState).mockRestore();
+    }
     vi.unstubAllGlobals();
   });
 
+  it.each(["signing out", "missing user", "expired sign-out"] as const)(
+    "handles a revoked or missing user while %s",
+    (state) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", "/servers");
+      mockWorkOsAuthState.user = { id: "user-1" };
+      mockUseQuery.mockImplementation((ref: string) =>
+        ref === "users:getCurrentUser" ? null : undefined,
+      );
+      if (state === "signing out") markSignOutInProgress();
+      if (state === "expired sign-out") {
+        markSignOutInProgress(Date.now() - SIGN_OUT_SUPPRESSION_WINDOW_MS - 1);
+      }
+      render(<App />);
+      if (state === "signing out") {
+        expect(
+          screen.queryByTestId("user-setup-error"),
+        ).not.toBeInTheDocument();
+        expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      } else {
+        expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      }
+    },
+  );
+
   it("shows loading before any hosted authorize CTA can render", async () => {
-    render(<App />);
+    const view = render(<App />);
 
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" })
+      screen.queryByRole("button", { name: "Authorize" }),
     ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
@@ -605,7 +706,7 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -618,7 +719,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/oauth-flow");
     mockOAuthFlowTabState.shouldThrow = true;
     mockOAuthFlowTabState.error = new Error(
-      "token exchange failed client_secret=super-secret Bearer access-token"
+      "token exchange failed client_secret=super-secret Bearer access-token",
     );
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", {
@@ -629,13 +730,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      await screen.findByText("OAuth Debugger crashed")
+      await screen.findByText("OAuth Debugger crashed"),
     ).toBeInTheDocument();
     expect(mockTrack).toHaveBeenCalledWith(
       "oauth_debugger_error_boundary",
       expect.objectContaining({
         message: expect.stringContaining("[redacted]"),
-      })
+      }),
     );
     expect(JSON.stringify(mockTrack.mock.calls)).not.toContain("super-secret");
 
@@ -643,7 +744,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
-        expect.not.stringContaining("super-secret")
+        expect.not.stringContaining("super-secret"),
       );
     });
     expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
@@ -668,7 +769,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: "Bearer guest-bearer",
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -705,7 +806,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: undefined,
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -718,7 +819,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(readHostedOAuthResumeMarker("scenario")?.errorMessage).toBe(
-        "Your guest session expired. Reopen the swarm link and try again."
+        "Your guest session expired. Reopen the swarm link and try again.",
       );
     });
     expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
@@ -748,7 +849,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: "Bearer workos-token",
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
     expect(mockGetGuestBearerToken).not.toHaveBeenCalled();
@@ -772,7 +873,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      screen.queryByTestId("hosted-oauth-loading")
+      screen.queryByTestId("hosted-oauth-loading"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
@@ -801,11 +902,11 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("callback-auth-timeout")
+      screen.queryByTestId("callback-auth-timeout"),
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
     expect(readScenarioSignInReturnPath()).toBe(
-      "/user-testing/asana/token-123"
+      "/user-testing/asana/token-123",
     );
   });
 
@@ -833,7 +934,7 @@ describe("App hosted OAuth callback handling", () => {
           guestId: "guest_123",
           token: "guest-token",
           expiresAt: Date.now() + 60_000,
-        })
+        }),
       );
       writeHostedOAuthPendingMarker({
         surface: "project",
@@ -860,7 +961,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Try sign in again" })
+        screen.getByRole("button", { name: "Try sign in again" }),
       );
 
       await act(async () => {
@@ -890,19 +991,17 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements"
-    );
-    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness"
-    );
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+    // Status, entitlements, both premiumness states and the plan catalog now
+    // ride on one bundled subscription. Every one of its calls must be
+    // skipped, not just the first App happens to issue.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(entitlementsCall?.[1]).toBe("skip");
-    expect(orgPremiumnessCall?.[1]).toBe("skip");
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs).toBe("skip");
+    }
   });
 
   it("skips billing queries while a project org id is still unvalidated", () => {
@@ -922,19 +1021,17 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements"
-    );
-    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness"
-    );
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+    // Status, entitlements, both premiumness states and the plan catalog now
+    // ride on one bundled subscription. Every one of its calls must be
+    // skipped, not just the first App happens to issue.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(entitlementsCall?.[1]).toBe("skip");
-    expect(orgPremiumnessCall?.[1]).toBe("skip");
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs).toBe("skip");
+    }
   });
 
   it("skips project billing and clears stale synced selection when the active project is missing", async () => {
@@ -969,11 +1066,16 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+    // The bundle may still run for the organization, but it must not carry a
+    // projectId while the project's org is unvalidated.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs === "skip" || !("projectId" in bundleArgs)).toBe(true);
+    }
     await waitFor(() => {
       expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
@@ -1029,11 +1131,16 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+    // The bundle may still run for the organization, but it must not carry a
+    // projectId while the project's org is unvalidated.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs === "skip" || !("projectId" in bundleArgs)).toBe(true);
+    }
     await waitFor(() => {
       expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
@@ -1090,7 +1197,7 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
 
@@ -1143,10 +1250,10 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("keeps the sidebar-selected org active when navigating back to servers", async () => {
+  it("keeps the sidebar-selected org active when returning from settings to the app", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
@@ -1207,24 +1314,24 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
-      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
       expect(window.location.pathname).toBe("/organizations/org-b");
     });
 
-    act(() => {
-      getLastSidebarProps().onNavigate?.("servers");
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
 
     await waitFor(() => {
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
   it("preserves the newly selected org when navigating away immediately", async () => {
+    // The switch is carried by the URL, not by hidden state set before it:
+    // navigating to Servers in the same tick inherits the project the switch
+    // just put in the pathname, so it stays a project in the new org.
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
@@ -1262,6 +1369,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1287,7 +1407,8 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      // Servers, still scoped to the project the switch landed on.
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
   });
 
@@ -1328,10 +1449,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#settings");
   });
 
-  it("lands on servers when switching active organization from org models", async () => {
+  it("lands on the target org's project when switching from the main sidebar", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a/models");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     (mockUseAppState as any).mockImplementation(() => {
@@ -1369,6 +1490,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1384,32 +1518,280 @@ describe("App hosted OAuth callback handling", () => {
         mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
       return lastCall?.[0] as unknown as {
         activeOrganizationId?: string;
-        onSwitchActiveOrganization?: (organizationId: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
       };
     };
 
     act(() => {
-      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
     });
 
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
   });
 
-  it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
+  it("moves the URL out of the old org's project when switching organization", async () => {
+    // The regression this replaces: the handler set the active organization
+    // and asked for `/servers`, which is already the logical path — so the
+    // navigation no-opped, the pathname kept org A's project, and the route
+    // coordinator read it back as "go to org A", silently undoing the switch.
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-3");
+    window.history.replaceState({}, "", `/p/${ORG_A_PROJECT_ID}/servers`);
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId: ORG_A_PROJECT_ID,
+        projects: {
+          [ORG_A_PROJECT_ID]: {
+            id: ORG_A_PROJECT_ID,
+            name: "Org A Project",
+            sharedProjectId: ORG_A_PROJECT_ID,
+            organizationId: "org-a",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    (mockUseQuery as any).mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_A_PROJECT_ID,
+            name: "Org A Project",
+            organizationId: "org-a",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 5,
+          },
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 9,
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
+    });
+
+    // `useAppState` is mocked here, so the route never reaches `ready`; what
+    // this asserts is the pair that used to disagree — the URL names org B's
+    // project, and the coordinator switched the active org to match it.
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+    });
+  });
+
+  it("creating from the switcher navigates rather than pre-selecting", async () => {
+    // Same contract as a project row: the URL performs the switch. Passing
+    // `switchTo` would be the state-then-URL ordering this surface stopped
+    // using, and for a cross-organization create the write is undone on the
+    // next render anyway — `activeProjectId` is derived from the
+    // organization-FILTERED map, which cannot contain the new project yet.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const handleCreateProjectSpy = vi.fn(async () => ORG_B_PROJECT_ID);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-a",
+      isCloudSyncActive: true,
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Payments", "org-b");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Payments", false, {
+      organizationId: "org-b",
+    });
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+  });
+
+  it("creating a local project selects it through the create itself", async () => {
+    // The one case the URL cannot carry: a local-fallback id is a UUID, which
+    // `buildProjectPath` refuses to put in the canonical position. The
+    // selection has to happen inside `handleCreateProject`, atomically with
+    // the create — `handleSwitchProject` afterwards validates against the
+    // project map from the render it was created in, which cannot contain a
+    // project dispatched a moment ago, and answers "Project not found".
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const localProjectId = "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const handleCreateProjectSpy = vi.fn(async () => localProjectId);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: false,
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Scratch");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Scratch", true, {
+      organizationId: undefined,
+    });
+    // Never through `handleSwitchProject`: its stale-map check would reject
+    // the id and leave the user on the project they were already in.
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/servers");
+  });
+
+  it("keeps sidebar project creation enabled for uncapped free selected orgs", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      activeOrganizationId: "org-1",
+      activeOrganizationId: "org-3",
     }));
+    const orgThreeBillingStatus = {
+      organizationId: "org-3",
+      organizationName: "Org Three",
+      plan: "free",
+      effectivePlan: "free",
+      source: "free",
+      billingInterval: null,
+      billingConfigured: true,
+      subscriptionStatus: null,
+      canManageBilling: true,
+      isOwner: true,
+      hasCustomer: false,
+      stripeCurrentPeriodEnd: null,
+      stripePriceId: null,
+      trialStatus: "none",
+      trialPlan: null,
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialDaysRemaining: null,
+      decisionRequired: false,
+      trialDecision: null,
+    };
+    const orgThreePremiumness = {
+      plan: "free",
+      effectivePlan: "free",
+      billingInterval: null,
+      source: "free",
+      enforcementState: "active",
+      decisionRequired: false,
+      gates: [
+        {
+          gateKey: "maxProjects",
+          kind: "limit",
+          scope: "organization",
+          canAccess: true,
+          shouldShowUpsell: false,
+          upgradePlan: null,
+          reason: "within_limit",
+          currentValue: 1,
+          allowedValue: null,
+        },
+      ],
+    };
     mockUseQuery.mockImplementation((name: string, args?: any) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -1431,58 +1813,21 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
-      if (
-        name === "billing:getOrganizationBillingStatus" &&
-        args?.organizationId === "org-3"
-      ) {
-        return {
-          organizationId: "org-3",
-          organizationName: "Org Three",
-          plan: "free",
-          effectivePlan: "free",
-          source: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
-          canManageBilling: true,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-          trialStatus: "none",
-          trialPlan: null,
-          trialStartedAt: null,
-          trialEndsAt: null,
-          trialDaysRemaining: null,
-          decisionRequired: false,
-          trialDecision: null,
-        };
-      }
-      if (
-        name === "billing:getOrganizationPremiumness" &&
-        args?.organizationId === "org-3"
-      ) {
-        return {
-          plan: "free",
-          effectivePlan: "free",
-          billingInterval: null,
-          source: "free",
-          enforcementState: "active",
-          decisionRequired: false,
-          gates: [
-            {
-              gateKey: "maxProjects",
-              kind: "limit",
-              scope: "organization",
-              canAccess: true,
-              shouldShowUpsell: false,
-              upgradePlan: null,
-              reason: "within_limit",
-              currentValue: 1,
-              allowedValue: null,
-            },
-          ],
-        };
+      if (args?.organizationId === "org-3") {
+        // `useOrganizationBillingStatus` is still its own subscription; the
+        // rest of the billing reads arrive together in the bundle.
+        if (name === "billing:getOrganizationBillingStatus") {
+          return orgThreeBillingStatus;
+        }
+        if (name === "billing:getOrganizationBillingBundle") {
+          return {
+            billingStatus: orgThreeBillingStatus,
+            entitlements: undefined,
+            organizationPremiumness: orgThreePremiumness,
+            projectPremiumness: null,
+            planCatalog: undefined,
+          };
+        }
       }
 
       return undefined;
@@ -1503,6 +1848,7 @@ describe("App hosted OAuth callback handling", () => {
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
+    mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     const signIn = vi.fn();
@@ -1512,22 +1858,32 @@ describe("App hosted OAuth callback handling", () => {
       user: null,
       isLoading: false,
     });
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
     mockUseConvexAuth.mockReturnValue({
-      isAuthenticated: false,
+      // Hosted guests have a real Convex identity. WorkOS user presence, not
+      // this flag, must decide whether paid checkout needs sign-in.
+      isAuthenticated: true,
       isLoading: false,
     });
+    mockFreshGuestUser();
 
-    render(<App />);
+    const view = render(<App />);
 
     expect(screen.getByTestId("billing-handoff-loading")).toBeInTheDocument();
     await waitFor(() => {
       expect(signIn).toHaveBeenCalled();
     });
+    view.rerender(<App />);
+    expect(signIn).toHaveBeenCalledTimes(1);
     expect(readPersistedCheckoutIntent()).toEqual({
       plan: "team",
       interval: "annual",
     });
     expect(readBillingSignInReturnPath()).toBe("/billing");
+    expect(window.location.pathname).toBe("/billing");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
   });
 
@@ -1535,12 +1891,13 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "team", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "monthly" });
     writeBillingSignInReturnPath("/billing");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1570,6 +1927,51 @@ describe("App hosted OAuth callback handling", () => {
     expect(readBillingSignInReturnPath()).toBeNull();
   });
 
+  it("waits for the WorkOS user before restoring a guest billing callback", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    sessionStorage.clear();
+    persistCheckoutIntent({ plan: "team", interval: "monthly" });
+    writeBillingSignInReturnPath("/billing");
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      return name === "users:getCurrentUser" ? existingConvexUser : undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/callback");
+    expect(readBillingSignInReturnPath()).toBe("/billing");
+
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    view.rerender(<App />);
+
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/organizations/org-1/plans"),
+    );
+    expect(readPersistedCheckoutIntent()).toEqual({
+      plan: "team",
+      interval: "monthly",
+    });
+  });
+
   it("falls back to the default callback destination when billing session intent is missing", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -1592,15 +1994,464 @@ describe("App hosted OAuth callback handling", () => {
     expect(readBillingSignInReturnPath()).toBeNull();
   });
 
+  it("recovers a stale scoped sign-in return without painting the unavailable screen", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/evals?view=runs#case-3`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Default Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Default Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        `/p/${currentProjectId}/evaluate?view=runs`,
+      );
+      expect(window.location.hash).toBe("#case-3");
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
+    expect(
+      replaceStateSpy.mock.calls.filter(
+        ([, , target]) =>
+          target === `/p/${currentProjectId}/evals?view=runs#case-3`,
+      ),
+    ).toHaveLength(1);
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("opens a valid scoped sign-in return unchanged", async () => {
+    clearScenarioSession();
+    const projectId = "k5700000000000000000000000b";
+    const savedPath = `/p/${projectId}/servers?view=grid#tools`;
+    writeAppSignInReturnPath(savedPath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: projectId,
+      projects: {
+        [projectId]: {
+          id: projectId,
+          name: "Current Project",
+          sharedProjectId: projectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: projectId,
+            name: "Current Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(savedPath);
+    });
+    expect(
+      replaceStateSpy.mock.calls.filter(([, , target]) => target === savedPath),
+    ).toHaveLength(1);
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      expect.anything(),
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("keeps a scoped callback loading until the database user is ready", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockDbUserState.isEnsuringUser = true;
+    mockDbUserState.isUserReady = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Current Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Current Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+    expect(window.location.pathname).toBe("/callback");
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+
+    mockDbUserState.isEnsuringUser = false;
+    mockDbUserState.isUserReady = true;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/p/${currentProjectId}/servers`);
+    });
+  });
+
+  it("does not automatically recover a stale URL outside the callback", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", stalePath);
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Default Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Default Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    render(<App />);
+
+    expect(
+      `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    ).toBe(stalePath);
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      expect.anything(),
+    );
+  });
+
+  it("keeps recovery armed while a cached active project waits for membership", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/playground?model=test#chat`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+
+    let projectsLoaded = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isLoadingRemoteProjects: !projectsLoaded,
+      activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+      projects: projectsLoaded
+        ? {
+            [currentProjectId]: {
+              id: currentProjectId,
+              name: "Default Project",
+              sharedProjectId: currentProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
+        : {
+            [staleProjectId]: {
+              id: staleProjectId,
+              name: "Cached Project",
+              sharedProjectId: staleProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return projectsLoaded
+          ? [
+              {
+                _id: currentProjectId,
+                name: "Default Project",
+                organizationId: "org-1",
+                ownerId: "user-1",
+                servers: {},
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            ]
+          : undefined;
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/callback");
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+
+    projectsLoaded = true;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(`/p/${currentProjectId}/playground?model=test#chat`);
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("preserves the scoped return through a membership timeout and retry", async () => {
+    vi.useFakeTimers();
+    try {
+      clearScenarioSession();
+      const staleProjectId = "k5700000000000000000000000a";
+      const currentProjectId = "k5700000000000000000000000b";
+      const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+      let projectsLoaded = false;
+      writeAppSignInReturnPath(stalePath);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        isLoadingRemoteProjects: !projectsLoaded,
+        activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+        projects: projectsLoaded
+          ? {
+              [currentProjectId]: {
+                id: currentProjectId,
+                name: "Current Project",
+                sharedProjectId: currentProjectId,
+                organizationId: "org-1",
+                servers: {},
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }
+          : {},
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projects:getMyProjects") {
+          return projectsLoaded
+            ? [
+                {
+                  _id: currentProjectId,
+                  name: "Current Project",
+                  organizationId: "org-1",
+                  ownerId: "user-1",
+                  servers: {},
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              ]
+            : undefined;
+        }
+        return undefined;
+      });
+
+      const view = render(<App />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+
+      expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
+      expect(window.location.pathname).toBe("/callback");
+      expect(mockTrack).not.toHaveBeenCalledWith(
+        "project_route_stale_return_recovered",
+        expect.anything(),
+      );
+      expect(mockTrack).not.toHaveBeenCalledWith(
+        "project_route_inaccessible",
+        expect.anything(),
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try sign in again" }),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+      expect(readAppSignInReturnPath()).toBe(stalePath);
+      expect(window.location.pathname).toBe("/");
+
+      view.unmount();
+      projectsLoaded = true;
+      vi.useRealTimers();
+      window.history.replaceState({}, "", "/callback?code=retry-code");
+      render(<App />);
+
+      await waitFor(() => {
+        expect(
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+      });
+      expect(readAppSignInReturnPath()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns a no-project account home without claiming it switched projects", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/playground?model=test#chat`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: "none",
+      projects: {},
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") return [];
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "no-fallback" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
   it("keeps a persisted billing resume alive when /billing returns without query params", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     sessionStorage.clear();
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     window.history.replaceState({}, "", "/billing");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1641,14 +2492,41 @@ describe("App hosted OAuth callback handling", () => {
               checkoutIntent?: { plan?: string; interval?: string };
             }
           ).organizationId === "org-1" &&
-          (props as { section?: string }).section === "billing" &&
+          (props as { section?: string }).section === "plans" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual"
-      )
+            ?.interval === "annual",
+      ),
     ).toBe(true);
   });
+
+  it.each(["", "?surface=preview"])(
+    "waits for the account before restoring a scenario return: %s",
+    async (query) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      sessionStorage.clear();
+      const destination = `/user-testing/demo/token-123${query}`;
+      writeScenarioSignInReturnPath(destination);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockConvexAuthState.isAuthenticated = true;
+      mockConvexAuthState.isLoading = false;
+      mockWorkOsAuthState.user = null;
+      mockWorkOsAuthState.isLoading = true;
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+      const view = render(<App />);
+      expect(window.location.pathname).toBe("/callback");
+      expect(readScenarioSignInReturnPath()).toBe(destination);
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
+      mockWorkOsAuthState.isLoading = false;
+      view.rerender(<App />);
+      await waitFor(() => {
+        expect(replaceStateSpy).toHaveBeenCalledWith({}, "", destination);
+      });
+      expect(readScenarioSignInReturnPath()).toBeNull();
+    },
+  );
 
   it("prefers scenario callback restoration over billing callback restoration", async () => {
     clearHostedOAuthPendingState();
@@ -1658,6 +2536,7 @@ describe("App hosted OAuth callback handling", () => {
     writeBillingSignInReturnPath("/billing");
     writeScenarioSignInReturnPath("/user-testing/demo/token-123");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     const replaceStateSpy = vi.spyOn(window.history, "replaceState");
 
@@ -1667,7 +2546,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(replaceStateSpy).toHaveBeenCalledWith(
         {},
         "",
-        "/user-testing/demo/token-123"
+        "/user-testing/demo/token-123",
       );
     });
   });
@@ -1676,9 +2555,10 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1705,6 +2585,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
       expect(mockOrganizationsTab).toHaveBeenCalled();
     });
+    expect(window.location.pathname).toBe("/organizations/org-1/plans");
 
     expect(
       mockOrganizationsTab.mock.calls.some(
@@ -1721,22 +2602,113 @@ describe("App hosted OAuth callback handling", () => {
               checkoutIntent?: { plan?: string; interval?: string };
             }
           ).organizationId === "org-1" &&
-          (props as { section?: string }).section === "billing" &&
+          (props as { section?: string }).section === "plans" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual"
-      )
+            ?.interval === "annual",
+      ),
     ).toBe(true);
+  });
+
+  it("stays on /billing until signed-in organization data is ready", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    let organizationsLoaded = false;
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "organizations:getMyOrganizations") {
+        return organizationsLoaded
+          ? [
+              {
+                _id: "org-1",
+                name: "Org One",
+                updatedAt: 1,
+                createdAt: 1,
+                createdBy: "user-1",
+                myRole: "owner",
+              },
+            ]
+          : undefined;
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/billing");
+    expect(screen.getByTestId("billing-handoff-loading")).toBeInTheDocument();
+
+    organizationsLoaded = true;
+    view.rerender(<App />);
+
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/organizations/org-1/plans"),
+    );
+  });
+
+  it("retries checkout when another route interrupts billing navigation", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      return name === "users:getCurrentUser" ? existingConvexUser : undefined;
+    });
+
+    const router = createAppRouter();
+    const view = render(<RouterProvider router={router} />);
+    try {
+      await waitFor(() =>
+        expect(window.location.pathname).toBe("/organizations/org-1/plans"),
+      );
+
+      await act(async () => {
+        await router.navigate("/home");
+      });
+
+      await waitFor(() =>
+        expect(window.location.pathname).toBe("/organizations/org-1/plans"),
+      );
+      expect(readPersistedCheckoutIntent()).toEqual({
+        plan: "team",
+        interval: "annual",
+      });
+    } finally {
+      view.unmount();
+      router.dispose();
+      setAppRouter(null);
+    }
   });
 
   it("drops the billing overlay when checkout intent is consumed", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1763,7 +2735,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Consume checkout intent
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1777,73 +2749,19 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay")
+        screen.queryByTestId("billing-handoff-overlay"),
       ).not.toBeInTheDocument();
     });
-  });
-
-  it("drops the billing overlay when checkout navigation starts", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
-
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
-    );
-    mockUseQuery.mockImplementation((name: string) => {
-      if (name === "organizations:getMyOrganizations") {
-        return [
-          {
-            _id: "org-1",
-            name: "Org One",
-            updatedAt: 1,
-            createdAt: 1,
-            createdBy: "user-1",
-            myRole: "owner",
-          },
-        ];
-      }
-
-      return undefined;
-    });
-    mockOrganizationsTab.mockImplementation(
-      (props: { onCheckoutIntentNavigationStarted?: () => void }) => (
-        <button
-          type="button"
-          data-testid="start-checkout-navigation"
-          onClick={() => props.onCheckoutIntentNavigationStarted?.()}
-        >
-          Start checkout navigation
-        </button>
-      )
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
-      expect(
-        screen.getByTestId("start-checkout-navigation")
-      ).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId("start-checkout-navigation"));
-
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("billing-handoff-overlay")
-      ).not.toBeInTheDocument();
-    });
-    expect(readPersistedCheckoutIntent()).toBeNull();
   });
 
   it("clears billing handoff state when no organization is available", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1856,16 +2774,46 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("billing-handoff-loading"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("billing-handoff-overlay"),
+      ).not.toBeInTheDocument();
     });
-
-    expect(
-      screen.queryByTestId("billing-handoff-loading")
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId("billing-handoff-overlay")
-    ).not.toBeInTheDocument();
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
+  });
+
+  it("clears billing handoff state when billing is unavailable", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-handoff-loading"),
+      ).not.toBeInTheDocument();
+      expect(readPersistedCheckoutIntent()).toBeNull();
+    });
+    expect(sonnerToast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves billing usable when checkout parameters are invalid", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=weekly");
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(readPersistedCheckoutIntent()).toBeNull();
+    expect(
+      screen.queryByTestId("billing-handoff-loading"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the organization route from the hash even before active org state catches up", async () => {
@@ -1980,7 +2928,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1994,7 +2942,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      "org-owned"
+      "org-owned",
     );
     expect(window.location.pathname).toBe("/servers");
   });
@@ -2055,7 +3003,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org with no owner fallback
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2140,7 +3088,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete non-current org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2152,12 +3100,12 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
         "org-deleted",
-        "org-owner"
+        "org-owner",
       );
     });
 
     const postDeleteCalls = setActiveOrganizationId.mock.calls.slice(
-      activeOrgCallsBeforeDelete
+      activeOrgCallsBeforeDelete,
     );
     expect(postDeleteCalls).not.toContainEqual(["org-owner"]);
     expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
@@ -2219,7 +3167,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete last org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2233,7 +3181,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      undefined
+      undefined,
     );
     expect(window.location.pathname).toBe("/servers");
   });
@@ -2248,6 +3196,16 @@ describe("App hosted OAuth callback handling", () => {
   it("navigates back to the User Testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
+    // This suite runs as a WorkOS guest by default, and since REEV-6 that
+    // means `/user-testing` renders the gated preview rather than the tab.
+    // The actor here is a project owner who has just authorized a server for
+    // their own scenario — a signed-in action by definition — so give the
+    // test the identity its scenario actually has. The subject under test is
+    // the return-path routing, not the gate.
+    mockUseAuth.mockReturnValue({
+      ...mockWorkOsAuthState,
+      user: { id: "user_owner" },
+    });
     writeHostedOAuthPendingMarker({
       surface: "scenario",
       projectId: "ws_1",
@@ -2263,7 +3221,7 @@ describe("App hosted OAuth callback handling", () => {
     // User Testing is flag-gated at the route, not just in the sidebar — the
     // callback can only land back on it for a user who has the flag.
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "sandboxes-enabled"
+      (flag: string) => flag === "sandboxes-enabled",
     );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
@@ -2291,7 +3249,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) => flag === "playground-enabled",
     );
 
     render(<App />);
@@ -2321,7 +3279,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) => flag === "playground-enabled",
     );
 
     render(<App />);
@@ -2345,7 +3303,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest into Playground onboarding once startup is ready", async () => {
+  it("routes a Convex-authenticated hosted guest to Home and shows first-run onboarding once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -2359,19 +3317,15 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        isSignedInWithWorkOs: false,
-        isWorkOsAuthLoading: false,
-        isConvexAuthenticated: true,
-        hasSeenFirstRunOnboarding: false,
-      })
-    );
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
@@ -2408,7 +3362,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
+  it("shows first-run onboarding on Home from the default route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -2422,14 +3376,938 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not auto-route a guest row already marked as having seen onboarding", async () => {
+  it("shows Welcome once and resumes at server choice after a refresh", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    await waitFor(() => {
+      expect(
+        JSON.parse(
+          localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+    });
+
+    view.unmount();
+    appState.projectServers = {
+      savedServer: {
+        name: "savedServer",
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://saved.example/mcp",
+        },
+      },
+    };
+    render(<App />);
+
+    await screen.findByRole("heading", {
+      name: "Connect to your MCP server",
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("restores the onboarding server and pending prompt after a refresh", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        startedAt: Date.now() - 2_000,
+        shownAt: Date.now() - 2_000,
+        completedAt: Date.now() - 1_000,
+        attemptedServerName: "Excalidraw (App)",
+        playgroundPromptPending: true,
+      }),
+    );
+    window.history.replaceState({}, "", "/playground");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projectServers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        connectionStatus: "disconnected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(appState.setSelectedServer).toHaveBeenCalledWith(
+        "Excalidraw (App)",
+      );
+      expect(appState.setSelectedMCPConfigs).toHaveBeenCalledWith([
+        "Excalidraw (App)",
+      ]);
+      expect(appState.ensureServersReady).toHaveBeenCalledWith([
+        "Excalidraw (App)",
+      ]);
+    });
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+      }),
+    );
+
+    appState.setSelectedServer.mockClear();
+    appState.setSelectedMCPConfigs.mockClear();
+    appState.appState.selectedServer = "Another server";
+    appState.appState.selectedMultipleServers = ["Another server"];
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(mockPlaygroundTabProps).toHaveBeenCalled();
+    });
+    expect(appState.setSelectedServer).not.toHaveBeenCalled();
+    expect(appState.setSelectedMCPConfigs).not.toHaveBeenCalled();
+  });
+
+  it("does not restore a consumed onboarding prompt or reconnect its server", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        shownAt: Date.now() - 2_000,
+        completedAt: Date.now() - 1_000,
+        attemptedServerName: "Excalidraw (App)",
+        playgroundPromptPending: false,
+      }),
+    );
+    window.history.replaceState({}, "", "/playground");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projectServers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        connectionStatus: "disconnected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+    expect(appState.ensureServersReady).not.toHaveBeenCalled();
+    expect(appState.setSelectedServer).not.toHaveBeenCalled();
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ firstRunPrompt: null }),
+    );
+  });
+
+  it("restores the connected handoff until Open Playground is pressed", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 2_000,
+        shownAt: Date.now() - 2_000,
+        attemptedServerName: "Excalidraw (App)",
+        connectedServerKind: "demo",
+        connectedToolCount: 6,
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Connected to Excalidraw (App)",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
+  });
+
+  it("keeps onboarding open when a saved server hydrates after Welcome", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+
+    appState.projectServers = {
+      savedServer: {
+        name: "savedServer",
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://saved.example/mcp",
+        },
+      },
+    };
+    view.rerender(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("keeps the active onboarding step open through a readiness flicker", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+
+    window.history.replaceState({}, "", "/tools");
+    view.rerender(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows first-run onboarding from a project-scoped Home route", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/p/k5700000000000000000000000a/home");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser([{ _id: "k5700000000000000000000000a" }]);
+    const appState = createAppStateMock();
+    appState.activeProjectId = "k5700000000000000000000000a";
+    appState.projects = {
+      k5700000000000000000000000a: {
+        id: "k5700000000000000000000000a",
+        sharedProjectId: "k5700000000000000000000000a",
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe(
+      "/p/k5700000000000000000000000a/home",
+    );
+  });
+
+  it("shows first-run onboarding over a project-scoped Servers route", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/p/k5700000000000000000000000a/servers",
+    );
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser([{ _id: "k5700000000000000000000000a" }]);
+    const appState = createAppStateMock();
+    appState.activeProjectId = "k5700000000000000000000000a";
+    appState.projects = {
+      k5700000000000000000000000a: {
+        id: "k5700000000000000000000000a",
+        sharedProjectId: "k5700000000000000000000000a",
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe(
+      "/p/k5700000000000000000000000a/servers",
+    );
+  });
+
+  it("does not cover an inaccessible project route with onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/p/k57missing000000000000000001/servers",
+    );
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? {
+            ...existingConvexUser,
+            _id: "guest-1",
+            externalId: "guest-1",
+            email: "guest@example.com",
+            isAnonymous: true,
+            hasSeenOnboarding: false,
+          }
+        : ref === "projects:getMyProjects"
+          ? []
+          : undefined,
+    );
+
+    render(<App />);
+
+    await screen.findByTestId("app-shell");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe(
+      "/p/k57missing000000000000000001/servers",
+    );
+  });
+
+  it("does not cover a legacy project query while its project resolves", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/servers?project=k57missing000000000000000001",
+    );
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? {
+            ...existingConvexUser,
+            _id: "guest-1",
+            externalId: "guest-1",
+            email: "guest@example.com",
+            isAnonymous: true,
+            hasSeenOnboarding: false,
+          }
+        : ref === "projects:getMyProjects"
+          ? []
+          : undefined,
+    );
+
+    render(<App />);
+
+    await screen.findByTestId("app-shell");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes a fresh Playground visitor through the explicit server-choice flow", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/playground");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps a first-run guest in onboarding while their server connects", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Connecting to Example" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(appState.handleConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Example",
+        type: "http",
+        url: "https://mcp.example.com/mcp",
+        useOAuth: true,
+        authMethod: "auto",
+      }),
+      { suppressErrorToast: true, suppressSuccessToast: true },
+    );
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "started" }));
+
+    appState.appState.servers = {
+      Example: {
+        name: "Example",
+        config: { transportType: "http", url: "https://mcp.example.com/mcp" },
+        connectionStatus: "failed",
+        lastError: "Connection refused",
+      },
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Set up your server" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to connect to MCP server",
+      );
+    });
+  });
+
+  it("preserves quoted arguments in a first-run stdio command", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: 'node server.js --config "My Files/config.json" ""' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "stdio",
+          command: "node",
+          args: ["server.js", "--config", "My Files/config.json", ""],
+        }),
+        { suppressErrorToast: true, suppressSuccessToast: true },
+      );
+    });
+  });
+
+  it("keeps the Excalidraw demo in onboarding while it connects", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockListTools.mockResolvedValueOnce({
+      tools: Array.from({ length: 6 }, (_, index) => ({
+        name: `tool-${index + 1}`,
+      })),
+    });
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Connecting to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(appState.handleConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      }),
+      { suppressErrorToast: true, suppressSuccessToast: true },
+    );
+
+    appState.appState.servers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Connected to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(mockListTools).toHaveBeenCalledWith({
+      serverId: "Excalidraw (App)",
+      refresh: true,
+    });
+    expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/home");
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        status: "started",
+        connectedServerKind: "demo",
+        connectedToolCount: 6,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+    expect(window.location.pathname).toBe("/playground");
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+      }),
+    );
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        playgroundPromptPending: true,
+      }),
+    );
+  });
+
+  it("uses the same real tool-count success handoff for a personal server", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockListTools.mockResolvedValueOnce({
+      tools: [{ name: "draw" }, { name: "export" }],
+    });
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://personal.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await screen.findByRole("heading", {
+      name: "Connecting to Personal",
+    });
+    appState.appState.servers = {
+      Personal: {
+        name: "Personal",
+        config: {
+          transportType: "http",
+          url: "https://personal.example/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await screen.findByRole("heading", {
+      name: "Connected to Personal",
+    });
+    expect(mockListTools).toHaveBeenCalledWith({
+      serverId: "Personal",
+      refresh: true,
+    });
+    expect(screen.getByText("2 tools ready to use.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/home");
+  });
+
+  it("keeps a successful connection when initial tool discovery fails", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockListTools.mockRejectedValueOnce(new Error("Tool listing timed out"));
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://personal.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    appState.appState.servers = {
+      Personal: {
+        name: "Personal",
+        config: {
+          transportType: "http",
+          url: "https://personal.example/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await screen.findByRole("heading", { name: "Connected to Personal" });
+    expect(
+      screen.getByText("Connected. Tools can finish loading in Playground."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Set up your server" }),
+    ).not.toBeInTheDocument();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        status: "started",
+        connectedServerKind: "personal",
+        connectedToolCount: null,
+      }),
+    );
+  });
+
+  it("cancels first-run connection progress without completing onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+    await screen.findByRole("heading", {
+      name: "Connecting to Excalidraw (App)",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(appState.handleRuntimeDisconnect).toHaveBeenCalledWith(
+      "Excalidraw (App)",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "started" }));
+  });
+
+  it("waits for project provisioning before starting the first-run handshake", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projects.ws_local = { id: "ws_local" };
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Preparing your MCPJam workspace",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+
+    appState.projects.ws_local = {
+      id: "ws_local",
+      sharedProjectId: "project-1",
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Excalidraw (App)",
+          url: "https://mcp.excalidraw.com/mcp",
+        }),
+        { suppressErrorToast: true, suppressSuccessToast: true },
+      );
+      expect(
+        screen.getByRole("heading", {
+          name: "Connecting to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("waits for client configuration sync before starting the first-run handshake", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.isConnectionPreflightPending = true;
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Preparing your MCPJam workspace",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+
+    appState.isConnectionPreflightPending = false;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Excalidraw (App)" }),
+        { suppressErrorToast: true, suppressSuccessToast: true },
+      );
+    });
+  });
+
+  it("dismisses first-run onboarding when a guest skips it", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual({ status: "dismissed" });
+  });
+
+  it("does not let the legacy remote seen flag hide server choice", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -2443,14 +4321,17 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes an unseen guest when the only saved server is the incomplete first-run Excalidraw row", async () => {
+  it("shows onboarding when the only saved server is the incomplete first-run Excalidraw row", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -2480,10 +4361,174 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
+  });
+
+  it("repairs a stale started record when its server is already connected", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "Excalidraw (App)",
+      }),
+    );
+    window.history.replaceState({}, "", "/playground");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      projectServers: {
+        "Excalidraw (App)": {
+          name: "Excalidraw (App)",
+          connectionStatus: "connected",
+          enabled: true,
+          retryCount: 0,
+          lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+          config: {
+            transportType: "http",
+            url: "https://mcp.excalidraw.com/mcp",
+          },
+        },
+      },
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(
+        JSON.parse(
+          localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+        ),
+      ).toEqual(expect.objectContaining({ status: "completed" }));
+    });
+    expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+  });
+
+  it("restores the connected handoff after a first-run OAuth callback", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const server = {
+      name: "OAuth server",
+      connectionStatus: "connected" as const,
+      enabled: true,
+      retryCount: 0,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      config: {
+        transportType: "http" as const,
+        url: "https://oauth.example/mcp",
+      },
+    };
+    const appState = createAppStateMock();
+    appState.appState.servers = { "OAuth server": server };
+    appState.projectServers = { "OAuth server": server };
+    appState.pendingDashboardOAuth = {
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      startedAt: Date.now() - 1_000,
+    };
+    mockUseAppState.mockReturnValue(appState);
+    mockListTools.mockResolvedValueOnce({ tools: [{ name: "search" }] });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Connected to OAuth server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1 tool ready to use.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open Playground" }),
+    ).toBeInTheDocument();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        status: "started",
+        connectedServerKind: "personal",
+        connectedToolCount: 1,
+      }),
+    );
+  });
+
+  it("restores the editable failure form after a denied first-run OAuth callback", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const server = {
+      name: "OAuth server",
+      connectionStatus: "failed" as const,
+      enabled: true,
+      retryCount: 0,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      lastError: "OAuth access was denied",
+      config: {
+        transportType: "http" as const,
+        url: "https://oauth.example/mcp",
+      },
+    };
+    const appState = createAppStateMock();
+    appState.appState.servers = { "OAuth server": server };
+    appState.projectServers = { "OAuth server": server };
+    appState.pendingDashboardOAuth = {
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      startedAt: Date.now() - 1_000,
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Set up your server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "View technical details" }),
+    );
+    expect(screen.getByText("OAuth access was denied")).toBeInTheDocument();
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
@@ -2603,7 +4648,9 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not flash Home while hosted guest auth is unresolved on the default route", async () => {
+  // Auth finished with no WorkOS user and no guest (refused, retries used up,
+  // or token rejected) is terminal, not loading: holding it spun forever.
+  it("renders Home for a signed-out visitor once hosted auth has settled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -2617,12 +4664,70 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
     expect(window.location.pathname).toBe("/");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("shows the sign-in banner on Home when the guest session was refused", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+    // One stable object: the banner reads it as a useSyncExternalStore snapshot.
+    const refusal = { until: Date.now() + 540_000 };
+    vi.mocked(getGuestSessionRefusal).mockReturnValue(refusal);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("guest-session-refused-banner"),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
+  });
+
+  it("keeps holding Home for a signed-in user whose Convex auth has not landed", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    // Derive the gate from the real resolver so this state is one production
+    // can actually reach, not a hand-picked "ready".
+    const { resolveHostedShellGateState } = await vi.importActual<
+      typeof import("../components/hosted/hosted-shell-gate-state")
+    >("../components/hosted/hosted-shell-gate-state");
+    mockHostedShellGateState.value = resolveHostedShellGateState({
+      hostedMode: true,
+      isConvexAuthLoading: mockConvexAuthState.isLoading,
+      isConvexAuthenticated: mockConvexAuthState.isAuthenticated,
+      isWorkOsLoading: mockWorkOsAuthState.isLoading,
+      hasWorkOsUser: !!mockWorkOsAuthState.user,
+    });
+    expect(mockHostedShellGateState.value).toBe("auth-loading");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
   });
 
   it("does not flash Home while hosted project and server state hydrate on the default route", async () => {
@@ -2672,13 +4777,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not let localStorage hide NUX for a fresh guest user row", async () => {
+  it("does not let a local seen state hide NUX for a fresh guest user row", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "seen", shownAt: Date.now() })
+      JSON.stringify({ status: "seen", shownAt: Date.now() }),
     );
+    localStorage.removeItem("mcp-first-run-server-choice-state");
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
     mockHostedShellGateState.value = "ready";
@@ -2688,10 +4794,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
@@ -2712,13 +4821,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Suites mode on /evals", async () => {
+  it("renders legacy Suites mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
@@ -2731,16 +4840,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Runs mode on /evals/runs with no flag gate", async () => {
-    // Runs used to sit behind `evaluate-ci` at its own /ci-evals tab. It is a
-    // mode under Evaluate now and ships to everyone, so there is no flag read,
-    // no "Loading Runs..." spinner, and no redirect back to Suites.
+  it("renders legacy Runs mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
@@ -2816,22 +4922,22 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-        ? [
-            {
-              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-              name: "Slack",
-              hostConfigId: "host-config-slack",
-              modelId: "claude-sonnet-4",
-              serverCount: 0,
-              createdAt: 0,
-              updatedAt: 0,
-            },
-          ]
-        : undefined
+          ? [
+              {
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+                name: "Slack",
+                hostConfigId: "host-config-slack",
+                modelId: "claude-sonnet-4",
+                serverCount: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              },
+            ]
+          : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
-      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" })
+      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" }),
     );
     window.history.replaceState({}, "", "/hosts/m17b6q9xw2tv4kz8p3r5s0dc");
 
@@ -2839,7 +4945,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}")
+        JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"),
       ).toEqual({
         project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
       });
@@ -2869,7 +4975,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
+      flag === "xaa" ? true : false,
     );
 
     render(<App />);
@@ -2888,7 +4994,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
+      flag === "xaa" ? true : false,
     );
     const appStateMock = createAppStateMock();
     const currentProjectServers = {
@@ -2926,7 +5032,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: true,
             autoSelectFilteredServer: "when-empty",
           }),
-        })
+        }),
       );
     });
 
@@ -2934,7 +5040,7 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentProjectServers
+      currentProjectServers,
     );
   });
 
@@ -2980,7 +5086,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: true,
             autoSelectFilteredServer: "when-empty",
           }),
-        })
+        }),
       );
     });
 
@@ -2988,11 +5094,11 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentProjectServers
+      currentProjectServers,
     );
     expect(
       (mockOAuthFlowTabState.lastProps as { serverConfigs?: unknown })
-        .serverConfigs
+        .serverConfigs,
     ).toBe(currentProjectServers);
   });
 
@@ -3011,7 +5117,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: false,
             autoSelectFilteredServer: true,
           }),
-        })
+        }),
       );
     });
   });
@@ -3039,7 +5145,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
@@ -3059,25 +5165,31 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getProjectPremiumness") {
+      if (name === "billing:getOrganizationBillingBundle") {
         return {
-          plan: "free",
-          enforcementState: "active",
-          effectivePlan: "free",
-          billingInterval: null,
-          source: "free",
-          decisionRequired: false,
-          gates: [
-            {
-              gateKey: "evals",
-              kind: "feature",
-              scope: "organization",
-              canAccess: false,
-              shouldShowUpsell: true,
-              upgradePlan: "team",
-              reason: "feature_not_included",
-            },
-          ],
+          billingStatus: undefined,
+          entitlements: undefined,
+          organizationPremiumness: undefined,
+          projectPremiumness: {
+            plan: "free",
+            enforcementState: "active",
+            effectivePlan: "free",
+            billingInterval: null,
+            source: "free",
+            decisionRequired: false,
+            gates: [
+              {
+                gateKey: "evals",
+                kind: "feature",
+                scope: "organization",
+                canAccess: false,
+                shouldShowUpsell: true,
+                upgradePlan: "team",
+                reason: "feature_not_included",
+              },
+            ],
+          },
+          planCatalog: undefined,
         };
       }
 
@@ -3086,11 +5198,11 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+    const bundleCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(wsPremiumnessCall?.[1]).toEqual({
+    expect(bundleCall?.[1]).toEqual({
       organizationId: "org-1",
       projectId: "shared-ws-1",
     });

@@ -7,6 +7,7 @@ import {
   getTemplateKey,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
+import type { RunMetricsByRun } from "./run-metrics";
 import {
   EvalCase,
   EvalIteration,
@@ -440,6 +441,105 @@ export function useSuiteData(
     caseGroups,
     templateGroups,
   };
+}
+
+/**
+ * `useSuiteData`'s trend and per-model rows for the Evaluate suite page, read
+ * from per-run metrics (`run-metrics.ts`) instead of the whole suite's
+ * iterations. Same row shapes and the same counting rules; quick runs (no
+ * `suiteRunId`) and iterations with no model are not in any run's metrics, so
+ * they no longer appear in the model breakdown.
+ */
+export function useSuiteDataFromMetrics(
+  runs: EvalSuiteRun[],
+  metricsByRun: RunMetricsByRun,
+) {
+  const runTrendData = useMemo(() => {
+    const data = [...runs]
+      .slice()
+      .reverse()
+      .map((run) => {
+        // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
+        if (run.result === "inconclusive") return null;
+        const metrics = metricsByRun.get(run._id);
+        // Only decided iterations count - exclude pending/cancelled/timeouts.
+        const realTimePassed = metrics?.results.passed ?? 0;
+        const realTimeTotal = realTimePassed + (metrics?.results.failed ?? 0);
+
+        let passRate: number;
+        if (realTimeTotal > 0) {
+          passRate = Math.round((realTimePassed / realTimeTotal) * 100);
+        } else if (run.summary) {
+          passRate = Math.round(run.summary.passRate * 100);
+        } else {
+          return null;
+        }
+
+        return {
+          runId: run._id,
+          runIdDisplay: formatRunId(run._id),
+          passRate,
+          passed: realTimeTotal > 0 ? realTimePassed : (run.summary?.passed ?? 0),
+          total: realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0),
+          label: formatTime(run.completedAt ?? run.createdAt),
+          runNumber: run.runNumber,
+          judgeScore: computeRunJudgeScore(run),
+          judgeOffConfig: run.judgeConfigOverride !== undefined,
+        };
+      })
+      .filter(
+        (
+          item,
+        ): item is {
+          runId: string;
+          runIdDisplay: string;
+          passRate: number;
+          passed: number;
+          total: number;
+          label: string;
+          runNumber: number;
+          judgeScore: number | null;
+          judgeOffConfig: boolean;
+        } => item !== null,
+      );
+    return data;
+  }, [runs, metricsByRun]);
+
+  const modelStats = useMemo(() => {
+    const modelMap = new Map<
+      string,
+      { passed: number; failed: number; total: number }
+    >();
+    for (const run of runs) {
+      for (const row of metricsByRun.get(run._id)?.models ?? []) {
+        // Terminal pass/fail only; a timeout counts as a failure.
+        const failed = row.failed + row.timedOut;
+        const total = row.passed + failed;
+        if (total === 0) continue;
+        const stats = modelMap.get(row.model) ?? {
+          passed: 0,
+          failed: 0,
+          total: 0,
+        };
+        stats.passed += row.passed;
+        stats.failed += failed;
+        stats.total += total;
+        modelMap.set(row.model, stats);
+      }
+    }
+    return Array.from(modelMap.entries())
+      .map(([model, stats]) => ({
+        model,
+        passRate:
+          stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
+        passed: stats.passed,
+        failed: stats.failed,
+        total: stats.total,
+      }))
+      .sort((a, b) => a.model.localeCompare(b.model));
+  }, [runs, metricsByRun]);
+
+  return { runTrendData, modelStats };
 }
 
 export function useRunDetailData(

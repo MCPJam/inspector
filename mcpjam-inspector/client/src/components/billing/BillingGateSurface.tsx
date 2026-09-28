@@ -22,6 +22,7 @@ export function BillingGateSurface({
   if (gate.isDenied && gate.gate.feature) {
     return (
       <BillingUpsellGate
+        organizationId={gate.organizationId}
         feature={gate.gate.feature}
         currentPlan={gate.currentPlan}
         upgradePlan={gate.upgradePlan}

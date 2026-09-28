@@ -19,7 +19,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { EvalTraceBrowserInteractionStepView } from "@/shared/eval-trace";
+import {
+  handleArtifactMediaError,
+  handleArtifactMediaLoad,
+  useFreshArtifactUrl,
+} from "@/lib/artifact-urls";
+import { ArtifactImage } from "@/components/ui/artifact-image";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceVideoMeta,
+} from "@/shared/eval-trace";
 
 /** Verdict for an interaction step: asserts use `assertion`, actions use `ok`. */
 export type BrowserStepStatus = "ok" | "error" | "unknown";
@@ -41,8 +50,8 @@ export const BROWSER_STEP_STATUS_BADGE_CLASS: Record<
   BrowserStepStatus,
   string
 > = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  error: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+  ok: "border-success/30 bg-success/10 text-success",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
   unknown: "border-border/50 bg-muted/40 text-muted-foreground",
 };
 
@@ -95,6 +104,58 @@ export function browserStepKey(
   step: EvalTraceBrowserInteractionStepView,
 ): string {
   return `${step.toolCallId}:${step.stepIndex}`;
+}
+
+/** What the recording says about itself, as the player reads it. */
+export type ReplayVideoMeta = EvalTraceVideoMeta;
+
+/**
+ * One line describing the recording, built only from what it actually reports.
+ *
+ * NOTHING IS DERIVED. A duration is shown only when the recorder gave one, and
+ * `distinctFrames` sits in a tooltip rather than beside the duration because
+ * the honest number looks broken next to it: `mpdecimate` drops frames
+ * identical to the last, so a static ten-minute run holds a handful of frames
+ * against six hundred seconds. Putting it in the open would read as a fault.
+ * The local widget harness reports none of this, and gets no line at all —
+ * better than a made-up one.
+ */
+// NOTE for the row that renders this: an empty list does NOT mean there is
+// nothing to say. A take can report `truncated` and nothing else — the
+// recorder knows it stopped at the cap without knowing how long it ran — and
+// that badge is the one thing the header must never swallow.
+export function summarizeRecording(
+  meta: ReplayVideoMeta | null | undefined,
+): Array<{ key: string; label: string; title?: string }> {
+  if (!meta) return [];
+  const parts: Array<{ key: string; label: string; title?: string }> = [];
+  if (typeof meta.durationMs === "number" && meta.durationMs > 0) {
+    parts.push({
+      key: "duration",
+      label: formatRecordingDuration(meta.durationMs),
+      ...(typeof meta.distinctFrames === "number"
+        ? {
+            title: `${meta.distinctFrames.toLocaleString()} distinct frames — identical frames are dropped, so an idle page costs none`,
+          }
+        : {}),
+    });
+  }
+  if (typeof meta.fps === "number" && meta.fps > 0) {
+    parts.push({ key: "fps", label: `${meta.fps} fps` });
+  }
+  return parts;
+}
+
+/** `m:ss`, or `h:mm:ss` past an hour. Wall clock, as the recorder measured it. */
+function formatRecordingDuration(durationMs: number): string {
+  const total = Math.round(durationMs / 1000);
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  const mm = String(minutes).padStart(hours > 0 ? 2 : 1, "0");
+  return hours > 0
+    ? `${hours}:${mm}:${String(seconds).padStart(2, "0")}`
+    : `${mm}:${String(seconds).padStart(2, "0")}`;
 }
 
 /**
@@ -182,11 +243,11 @@ export function BrowserStepDetail({
       </div>
 
       {step.assertion && !step.assertion.passed && step.assertion.reason ? (
-        <p className="text-xs text-red-500">{step.assertion.reason}</p>
+        <p className="text-xs text-destructive">{step.assertion.reason}</p>
       ) : null}
 
       {step.screenshotUrl ? (
-        <img
+        <ArtifactImage
           src={step.screenshotUrl}
           alt={browserStepLabel(step)}
           className="max-h-72 w-full rounded-md border border-border/50 object-contain"
@@ -206,13 +267,13 @@ export function BrowserStepDetail({
               <span
                 className={cn(
                   "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-                  call.ok ? "bg-emerald-500" : "bg-destructive",
+                  call.ok ? "bg-success" : "bg-destructive",
                 )}
                 aria-hidden
               />
               <span className="font-mono text-foreground">{call.name}</span>
               {call.error ? (
-                <span className="truncate text-red-500">{call.error}</span>
+                <span className="truncate text-destructive">{call.error}</span>
               ) : null}
             </div>
           ))}
@@ -278,12 +339,19 @@ export function stepAtVideoOffset(
 export function BrowserStepFilmstrip({
   steps,
   videoUrl,
+  videoMeta,
   /** True while the run is still going, so a missing video isn't yet a loss. */
   isRunning = false,
   className,
 }: {
   steps: EvalTraceBrowserInteractionStepView[];
   videoUrl?: string | null;
+  /**
+   * What the recording says about itself. Absent for every run made before
+   * recordings reported anything, and for anything it genuinely does not know
+   * — the header simply shows less rather than guessing.
+   */
+  videoMeta?: ReplayVideoMeta | null;
   isRunning?: boolean;
   className?: string;
 }) {
@@ -299,8 +367,17 @@ export function BrowserStepFilmstrip({
   // Cleared by `seeked` — the browser's own signal that the seek is done.
   const pendingSeekTargetRef = useRef<number | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
+  // A failed load that could not ask for a new link yet: the link to load
+  // again, and after how long (see the effect below).
+  const [videoRetry, setVideoRetry] = useState<{
+    url: string;
+    delayMs: number;
+  } | null>(null);
 
-  const resolvedVideoUrl = replayVideoUrl(videoUrl);
+  // An artifact link expires; the freshest one known for the recording is
+  // played, and a failed load asks for a new one (see `onError` below).
+  const resolvedVideoUrl = useFreshArtifactUrl(replayVideoUrl(videoUrl));
+  const videoSummary = useMemo(() => summarizeRecording(videoMeta), [videoMeta]);
 
   const ordered = useMemo(
     () =>
@@ -375,10 +452,24 @@ export function BrowserStepFilmstrip({
   }, [ordered, selectedKey]);
 
   // A run whose steps arrive before its video (mid-run, or a dropped upload)
-  // must not keep showing a stale failure state once the video lands.
+  // must not keep showing a stale failure state once the video lands — or
+  // once a renewed link for it does.
   useEffect(() => {
     setVideoFailed(false);
-  }, [videoUrl]);
+  }, [resolvedVideoUrl]);
+
+  // A failure while link refreshes were throttled asked for nothing. Load the
+  // same link again once a refresh may start; if that load fails too, it asks
+  // for one. Bound to the link it was scheduled for, so a renewed link or an
+  // unmount cancels it.
+  useEffect(() => {
+    if (!videoRetry || videoRetry.url !== resolvedVideoUrl) return;
+    const timer = setTimeout(() => {
+      setVideoRetry(null);
+      setVideoFailed(false);
+    }, videoRetry.delayMs);
+    return () => clearTimeout(timer);
+  }, [videoRetry, resolvedVideoUrl]);
 
   if (ordered.length === 0 && !resolvedVideoUrl) {
     return (
@@ -405,6 +496,34 @@ export function BrowserStepFilmstrip({
             screen recording of the app interactions in this run
           </span>
         </h3>
+        {resolvedVideoUrl &&
+        !videoFailed &&
+        (videoSummary.length > 0 || videoMeta?.truncated) ? (
+          <p
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground"
+            data-testid="browser-replay-video-meta"
+          >
+            {videoSummary.map((part) => (
+              <span key={part.key} title={part.title}>
+                {part.label}
+              </span>
+            ))}
+            {videoMeta?.truncated ? (
+              // A take that hit its size cap is a complete, playable PREFIX of
+              // the run — and without saying so, a reader takes twelve minutes
+              // of a forty-minute run as the whole thing. Said in the header
+              // rather than as a toast, because it qualifies everything the
+              // player below shows.
+              <span
+                className="rounded-sm border border-warning/30 bg-warning/10 px-1.5 py-px font-medium text-warning-foreground"
+                data-testid="browser-replay-truncated-badge"
+                title="The recorder stopped at its size limit, so this video covers the beginning of the run and not the end of it."
+              >
+                Stopped at the size limit
+              </span>
+            ) : null}
+          </p>
+        ) : null}
         {resolvedVideoUrl && !videoFailed ? (
           <video
             ref={videoRef}
@@ -413,7 +532,17 @@ export function BrowserStepFilmstrip({
             preload="metadata"
             onTimeUpdate={onTimeUpdate}
             onSeeked={onSeeked}
-            onError={() => setVideoFailed(true)}
+            onError={() => {
+              const retryInMs = handleArtifactMediaError(resolvedVideoUrl);
+              setVideoFailed(true);
+              setVideoRetry(
+                retryInMs !== null && retryInMs > 0
+                  ? { url: resolvedVideoUrl, delayMs: retryInMs }
+                  : null,
+              );
+            }}
+            // `preload="metadata"`: metadata is the load that always happens.
+            onLoadedMetadata={() => handleArtifactMediaLoad(resolvedVideoUrl)}
             className="w-full rounded-md border border-border/60 bg-black"
             data-testid="browser-replay-video"
           />
@@ -463,7 +592,7 @@ export function BrowserStepFilmstrip({
                   )}
                 >
                   {step.screenshotUrl ? (
-                    <img
+                    <ArtifactImage
                       src={step.screenshotUrl}
                       alt={browserStepLabel(step)}
                       loading="lazy"
@@ -481,7 +610,7 @@ export function BrowserStepFilmstrip({
                     className={cn(
                       "truncate text-[10px]",
                       status === "error"
-                        ? "text-red-500"
+                        ? "text-destructive"
                         : "text-muted-foreground",
                     )}
                   >

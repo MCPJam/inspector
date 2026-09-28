@@ -12,14 +12,17 @@ import { logger } from "../../../utils/logger";
 import { getRequestLogger } from "../../../utils/request-logger";
 import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
-import { RECORDER_SHIM_JS } from "./recorder-shim";
+import {
+  buildSandboxProxyFrameAncestors,
+  renderSandboxProxyHtml,
+} from "./sandbox-proxy-html";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 import {
   canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
 } from "../../../utils/ui-resource-meta";
+import { viewOriginLabelForConfig } from "../../../utils/view-origin-label";
 
 const apps = new Hono();
 
@@ -251,8 +254,14 @@ apps.post("/widget-content", async (c) => {
             })
         );
 
-    const { csp, permissions, prefersBorder, metadataSources, metadataSource } =
-      resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
+    const {
+      csp,
+      permissions,
+      prefersBorder,
+      domain: declaredDomain,
+      metadataSources,
+      metadataSource,
+    } = resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
@@ -338,6 +347,13 @@ apps.post("/widget-content", async (c) => {
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
+      declaredDomain,
+      // The subdomain this server's views get once per-app origins are on.
+      // Optional-called: the route tests stand up managers that expose no
+      // config accessor, and an absent label just means the default origin.
+      viewOriginLabel: viewOriginLabelForConfig(
+        mcpClientManager.getServerConfig?.(serverId),
+      ),
       // Echoed for trace clarity. The renderer's reload-key already
       // uses the flag it sent (not this echoed value), but persisting
       // the server-confirmed value alongside cached HTML makes saved
@@ -378,23 +394,14 @@ apps.post("/widget-content", async (c) => {
   }
 });
 
-// Inject the Tier 2 recorder shim (a JS string from recorder-shim.ts) into the
-// proxy's `RECORDER_SHIM` placeholder at serve time, so the heavy, unit-tested
-// shim source lives in one TS module and never drifts from a copy in the HTML.
-const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
-  '"__MCPJAM_RECORDER_SHIM__"',
-  () => JSON.stringify(RECORDER_SHIM_JS)
-);
-
 apps.get("/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  c.header(
-    "Content-Security-Policy",
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-  );
+  // Same list the proxy pins its host origin against — see
+  // sandbox-proxy-html.ts for why these two must not drift.
+  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(SANDBOX_PROXY_HTML_WITH_RECORDER);
+  return c.body(renderSandboxProxyHtml());
 });
 
 export default apps;

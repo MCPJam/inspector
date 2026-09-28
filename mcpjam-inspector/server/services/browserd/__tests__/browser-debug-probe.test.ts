@@ -51,13 +51,16 @@ describe("runBrowserProbe", () => {
   it("reserves a desktop, boots, navigates, screenshots, and returns proof", async () => {
     const { deps, stop, disconnect, writeBundle } = makeDeps();
     const result = await runBrowserProbe(deps, INPUT);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       computerId: "comp-1",
       bootId: "boot-1",
       url: "https://x.test/",
       settled: true,
       screenshotBytes: "PNGDATA".length,
     });
+    // The number prelaunch exists to move, measured around the BOOT alone —
+    // the reserve and the connect cost the same either way.
+    expect(typeof result.msToBoot).toBe("number");
     expect(writeBundle).toHaveBeenCalledWith("/opt/mcpjam/mcpjam-browserd.mjs", INPUT.bundle);
     // cleanup runs even on the happy path
     expect(stop).toHaveBeenCalledOnce();

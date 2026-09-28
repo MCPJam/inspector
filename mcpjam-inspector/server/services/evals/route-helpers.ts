@@ -8,8 +8,11 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   buildServerToolSnapshotDebug,
   exportConnectedServerToolSnapshotForEvalAuthoring,
+  type ServerCatalogBytes,
 } from "../../utils/export-helpers.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { backendFailureText } from "../../utils/backend-failure-text.js";
 
 export type ReplayConfig = {
   runId: string;
@@ -22,11 +25,17 @@ export async function captureToolSnapshotForEvalAuthoring(
   serverIds: string[],
   options?: { logPrefix?: string; promptSectionMaxChars?: number },
 ) {
+  // Collected DURING capture, because that is the only moment the assembled
+  // catalog exists in full — the snapshot below drops and rewrites fields, so
+  // measuring it afterwards answers a different question. Rides on
+  // `toolSnapshotDebug`, which is `v.any()`, so this needs no schema change.
+  const catalogBytes: ServerCatalogBytes[] = [];
   const toolSnapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
     clientManager,
     serverIds,
     {
       logPrefix: options?.logPrefix,
+      catalogBytes,
     },
   );
 
@@ -34,6 +43,7 @@ export async function captureToolSnapshotForEvalAuthoring(
     toolSnapshot,
     toolSnapshotDebug: buildServerToolSnapshotDebug(toolSnapshot, {
       maxChars: options?.promptSectionMaxChars,
+      catalogBytes,
     }),
   };
 }
@@ -101,7 +111,14 @@ export async function fetchReplayConfig(
   };
 
   if (!response.ok || !body.ok) {
-    throw new Error(body.error || "Failed to fetch replay config");
+    throw new Error(
+      backendFailureText({
+        source: "evals-replay-config",
+        status: response.status,
+        detail: body.error,
+        fallback: "Failed to fetch replay config",
+      }),
+    );
   }
 
   return body.replayConfig ?? null;
@@ -151,7 +168,14 @@ export async function storeReplayConfig(
   };
 
   if (!response.ok || !body.ok) {
-    throw new Error(body.error || "Failed to store replay config");
+    throw new Error(
+      backendFailureText({
+        source: "evals-replay-config",
+        status: response.status,
+        detail: body.error,
+        fallback: "Failed to store replay config",
+      }),
+    );
   }
 }
 
@@ -181,6 +205,10 @@ export function buildReplayManager(replayConfig: ReplayConfig) {
     {
       defaultTimeout: WEB_CALL_TIMEOUT_MS,
       lazyConnect: true,
+      // Replay dials the server configs a caller stored, so this one is the
+      // MJ-001 fix rather than uniformity: without it an eval replay was a
+      // second unguarded route to the same egress.
+      baseFetch: hostedMcpBaseFetch(),
       retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     },
   );

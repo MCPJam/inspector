@@ -52,6 +52,7 @@ export type HarnessMcpDelivery = "native" | "host-executed";
 export const HARNESS_MCP_DELIVERY = {
   "claude-code": "native",
   codex: "host-executed",
+  cursor: "native",
 } as const satisfies Record<Harness, HarnessMcpDelivery>;
 
 /** Delivery mode for `harness`. Callers holding a narrower union (the client's

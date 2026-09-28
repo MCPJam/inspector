@@ -24,6 +24,10 @@ const chatUiThreadHelpersEntry = resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = resolve(__dirname, "../chat-ui/src/trace.ts");
+const chatUiJsonTokensEntry = resolve(
+  __dirname,
+  "../chat-ui/src/json-tokens.ts",
+);
 const widgetReactEntry = resolve(__dirname, "../widget-react/src/index.ts");
 
 // https://vitejs.dev/config
@@ -42,6 +46,12 @@ export default defineConfig(({ mode }) => {
         "@/shared": resolve(__dirname, "./shared"),
         "@": resolve(__dirname, "./client/src"),
         // More specific subpaths must precede the bare alias (first match wins).
+        // A subpath missing here does NOT fail to resolve — it falls through to
+        // the bare alias and becomes `chat-ui/src/index.ts/<subpath>`, which
+        // only breaks at `vite build`. This map is a fourth copy (client's
+        // vite/vitest configs and tsconfig hold the others); every subpath
+        // belongs in all four.
+        "@mcpjam/chat-ui/json-tokens": chatUiJsonTokensEntry,
         "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,

@@ -73,6 +73,20 @@ function isNamedEnvironmentRow(row: {
   return typeof row.name === "string" && row.name.trim().length > 0;
 }
 
+/**
+ * Which PROJECT SECRETS a run launched from this environment receives. Ids
+ * only — the DTO carries no name and certainly no value, and the secret rows
+ * behind these ids are readable (metadata-only) through `/v1/projects/:id/secrets`.
+ *
+ * No version pins, unlike `SkillSelection`: a secret has exactly one current
+ * value by definition, and "pin the previous value" is the opposite of what
+ * rotation is for.
+ */
+type SecretSelection = {
+  mode: "explicit";
+  secretIds: string[];
+};
+
 type EnvironmentRow = {
   environmentId: string;
   projectId: string;
@@ -86,6 +100,7 @@ type EnvironmentRow = {
   /** The stored model OVERRIDE. Absent ⇒ the environment inherits its host's. */
   modelId?: string;
   skillSelection?: SkillSelection;
+  secretSelection?: SecretSelection;
   pluginVersionIds?: string[];
   /** Internal (Convex) name for the sandbox-image pin — public DTOs expose it
    *  as `sandboxImageId`, matching the SDK's `PlatformImage` vocabulary. */
@@ -145,6 +160,13 @@ function toEnvironmentDto(row: EnvironmentRow) {
     ...(row.modelId !== undefined ? { modelId: row.modelId } : {}),
     ...(row.skillSelection !== undefined
       ? { skillSelection: row.skillSelection }
+      : {}),
+    // The GRANT, as ids. Which of these a given run actually receives is
+    // decided live at launch against that session's owner (a personal secret
+    // reaches only its owner's sessions), so this is what the environment ASKS
+    // FOR, not a promise about any one run.
+    ...(row.secretSelection !== undefined
+      ? { secretSelection: row.secretSelection }
       : {}),
     ...(row.pluginVersionIds !== undefined
       ? { pluginVersionIds: row.pluginVersionIds }
@@ -389,6 +411,18 @@ const skillSelectionSchema = z.strictObject({
 
 const pluginVersionIdsSchema = z.array(z.string().trim().min(1)).min(1);
 
+/**
+ * `.min(1)` for the same reason every other selection has it: the backend
+ * rejects an empty selection with "clear the selection instead", so `[]` is a
+ * 400 rather than a silent revoke. Revoking a grant is `null` on PATCH, and
+ * that distinction is worth a validation error — an accidental `[]` that read
+ * as "remove every credential" would break a workflow with no error to look at.
+ */
+const secretSelectionSchema = z.strictObject({
+  mode: z.literal("explicit"),
+  secretIds: z.array(z.string().trim().min(1)).min(1),
+});
+
 const createEnvironmentSchema = z.strictObject({
   name: z.string().trim().min(1),
   description: z.string().optional(),
@@ -401,6 +435,7 @@ const createEnvironmentSchema = z.strictObject({
    */
   modelId: z.string().trim().min(1).optional(),
   skillSelection: skillSelectionSchema.optional(),
+  secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   /** Public name for the internal `computerEnvironmentId` pin; must be a
    *  project-shared image (backend rejects personal drafts). */
@@ -409,10 +444,14 @@ const createEnvironmentSchema = z.strictObject({
 
 /**
  * `.nullable().optional()` on every clearable field (`serverAttachmentId`,
- * `skillSelection`, `pluginVersionIds`, `sandboxImageId`) encodes the backend's
- * tri-state: omitted = unchanged, `null` = clear, value = set. A new clearable
- * field must join BOTH that shape and the `.refine` below, or it silently
- * becomes unclearable / unable to be the only field in a PATCH.
+ * `skillSelection`, `secretSelection`, `pluginVersionIds`, `sandboxImageId`)
+ * encodes the backend's tri-state: omitted = unchanged, `null` = clear, value =
+ * set. A new clearable field must join BOTH that shape and the `.refine` below,
+ * or it silently becomes unclearable / unable to be the only field in a PATCH.
+ *
+ * `secretSelection` is the field where that would hurt most: unclearable means
+ * an environment's credential grant can only ever grow, and revoking it would
+ * require deleting the environment.
  */
 const updateEnvironmentSchema = z
   .strictObject({
@@ -423,6 +462,7 @@ const updateEnvironmentSchema = z
     serverAttachmentId: z.string().trim().min(1).nullable().optional(),
     modelId: z.string().trim().min(1).nullable().optional(),
     skillSelection: skillSelectionSchema.nullable().optional(),
+    secretSelection: secretSelectionSchema.nullable().optional(),
     pluginVersionIds: pluginVersionIdsSchema.nullable().optional(),
     sandboxImageId: z.string().trim().min(1).nullable().optional(),
   })
@@ -434,11 +474,12 @@ const updateEnvironmentSchema = z
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
       value.skillSelection !== undefined ||
+      value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     },
   );
 
@@ -456,6 +497,7 @@ const ensureAdhocEnvironmentSchema = z.strictObject({
   serverAttachmentId: z.string().trim().min(1).optional(),
   modelId: z.string().trim().min(1).optional(),
   skillSelection: skillSelectionSchema.optional(),
+  secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   sandboxImageId: z.string().trim().min(1).optional(),
 });
@@ -502,6 +544,8 @@ environments.get(
       modelOverrides?: boolean;
       modelMatrix?: boolean;
       ephemeralEnvironmentLaunch?: boolean;
+      skillVersionPins?: boolean;
+      secretGrants?: boolean;
     } = {};
     try {
       capabilities =
@@ -532,6 +576,13 @@ environments.get(
       modelMatrix: capabilities.modelMatrix === true,
       ephemeralEnvironmentLaunch:
         capabilities.ephemeralEnvironmentLaunch === true,
+      skillVersionPins: capabilities.skillVersionPins === true,
+      // Whether an environment may carry a CREDENTIAL GRANT. Same reason as
+      // its neighbours: a backend that predates `secretSelection` rejects the
+      // unknown field with a validator error that names nothing, so a client
+      // has to ask before offering it. `=== true` for the same reason too —
+      // absence is a no, never an assumption.
+      secretGrants: capabilities.secretGrants === true,
     });
   },
 );
@@ -806,6 +857,11 @@ environments.patch(
     if (body.modelId !== undefined) updateArgs.modelId = body.modelId;
     if (body.skillSelection !== undefined)
       updateArgs.skillSelection = body.skillSelection;
+    // `null` REVOKES the environment's credential grant; a value replaces it;
+    // omission leaves it alone. The one field here where "unchanged" and
+    // "cleared" have materially different security consequences.
+    if (body.secretSelection !== undefined)
+      updateArgs.secretSelection = body.secretSelection;
     if (body.pluginVersionIds !== undefined)
       updateArgs.pluginVersionIds = body.pluginVersionIds;
     // Boundary rename (public sandboxImageId ↔ internal computerEnvironmentId);

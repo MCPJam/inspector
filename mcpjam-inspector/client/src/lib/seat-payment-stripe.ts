@@ -7,7 +7,20 @@ type StripeConfirmCardPaymentResult = {
   };
 };
 
+export type StripeCardElement = {
+  mount: (element: HTMLElement) => void;
+  destroy: () => void;
+};
+
 type StripeClient = {
+  elements?: () => { create: (type: "card") => StripeCardElement };
+  confirmCardSetup?: (
+    secret: string,
+    data: { payment_method: { card: StripeCardElement } },
+  ) => Promise<{
+    error?: { message?: string };
+    setupIntent?: { id: string; status: string };
+  }>;
   confirmCardPayment: (
     clientSecret: string,
   ) => Promise<StripeConfirmCardPaymentResult>;
@@ -21,7 +34,7 @@ declare global {
 
 let stripeJsPromise: Promise<void> | null = null;
 
-function loadStripeJs(): Promise<void> {
+export function loadStripeJs(): Promise<void> {
   if (typeof window === "undefined") {
     return Promise.reject(new Error("Stripe is only available in the browser"));
   }
@@ -49,7 +62,7 @@ function loadStripeJs(): Promise<void> {
         () => rejectAndReset(existingScript),
         {
           once: true,
-        }
+        },
       );
       return;
     }

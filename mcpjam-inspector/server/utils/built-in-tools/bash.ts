@@ -23,6 +23,7 @@
  * problems conversationally instead of breaking the turn.
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 import { HOSTED_MODE } from "../../config.js";
 import { type ExecutionScope } from "../execution-scope.js";
@@ -124,11 +125,16 @@ export function buildBashTool(
           `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`
         ),
     }),
-    // A root shell on a personal machine must honor the host's approval
-    // policy exactly like MCP/skill tools do. The LOCAL engine goes further:
-    // approval is ALWAYS on — a model-driven shell on the user's real machine
-    // has no auto-approve in v1, whatever the host config says.
-    needsApproval: isLocal ? true : opts.requireToolApproval === true,
+    // A root shell honors the host's approval policy exactly like MCP tools
+    // do, on both engines. The local engine used to go further and ask
+    // unconditionally — a model-driven shell on someone's real machine is the
+    // sharpest tool here — but a switch that some families ignore is a switch
+    // people stop believing, and the person who turned it off is the same
+    // person whose machine this is.
+    needsApproval: needsApprovalFor(
+      "setting",
+      opts.requireToolApproval === true,
+    ),
     execute: async (
       { command, timeoutSeconds },
       { toolCallId, abortSignal }

@@ -3,9 +3,11 @@ import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
+import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -17,8 +19,15 @@ import webRoutes from "./routes/web/index.js";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
+import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
+import {
+  createComputerBrowserFramesWsHandler,
+  killBrowserFrameSockets,
+  shutdownBrowserFrameSockets,
+} from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -29,6 +38,7 @@ import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js"
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
 import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
+import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -36,7 +46,7 @@ import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
-import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
@@ -60,15 +70,22 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
-import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import {
+  documentScriptNonce,
+  securityHeadersMiddleware,
+  withScriptNonce,
+} from "./middleware/security-headers.js";
+import { indexingHeadersMiddleware } from "./middleware/indexing-headers.js";
 import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
+import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
@@ -88,6 +105,20 @@ import {
   killLocalComputerTerminals,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
+import {
+  createLocalBrowserFramesWsHandler,
+  killLocalBrowserFrameSockets,
+  shutdownLocalBrowserFrameSockets,
+} from "./routes/web/local-browser-frames.js";
+import {
+  killLocalBrowserSessions,
+  shutdownLocalBrowserSessions,
+} from "./services/browserd/local/local-browser-session.js";
+import {
+  createWebMcpFramesWsHandler,
+  killWebMcpFrameSockets,
+  shutdownWebMcpFrameSockets,
+} from "./routes/web/webmcp-frames.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 import { buildHealthMeta } from "./utils/health-payload.js";
 
@@ -123,9 +154,17 @@ export async function createHonoApp() {
   // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
   // dispatch classifies newly-added hosted models correctly. Memoized.
   startHostedModelCatalogRefresh();
+  // The revoked-session list (MJ-011). Mirror of the call in server/index.ts:
+  // loads in the background, idempotent, a no-op without the service token.
+  startRevokedSessionCache();
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Reports whether a local-harness runtime pack is present. Deliberately
+  // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+  // kill switch and a consent grant is installed when the user asks, never
+  // at startup and never during a session start.
+  reportLocalHarnessRuntimeStatusInBackground();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
@@ -147,7 +186,7 @@ export async function createHonoApp() {
         code: "FEATURE_NOT_SUPPORTED",
         message: `${path} is disabled in hosted mode`,
       },
-      410
+      410,
     );
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
@@ -207,7 +246,7 @@ export async function createHonoApp() {
       cacheEventLogger,
       // Auto-negotiation outcome telemetry (always-on negotiation).
       negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
-    }
+    },
   );
 
   // Initialize elicitation callback immediately so tasks/result calls work
@@ -236,6 +275,10 @@ export async function createHonoApp() {
   // 1. Security headers (always applied)
   app.use("*", securityHeadersMiddleware);
 
+  // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
+  // than another line in the security headers — see indexing-headers.ts.
+  app.use("*", indexingHeadersMiddleware);
+
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
@@ -261,16 +304,13 @@ export async function createHonoApp() {
       "*",
       logger((message) => {
         appLogger.info(scrubTokenFromUrl(message));
-      })
+      }),
     );
   }
-  app.use(
-    "*",
-    cors({
-      origin: CORS_ORIGINS,
-      credentials: true,
-    })
-  );
+  // Load-bearing for the header middleware above, not only for CORS. See the
+  // same mount in server/index.ts: raw-`Response` handlers only carry the
+  // headers prepared by `c.header()` because `cors()` materializes `c.res`.
+  app.use("*", cors(CORS_OPTIONS));
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
   // folder upload, which is multipart and bounded by the service caps. Audio
@@ -307,12 +347,16 @@ export async function createHonoApp() {
   // judge doorbell above — the ring is a wake-up, and the pass claims from the
   // backend's own queue rather than from anything the caller named.
   app.route("/api/internal/chat-stage", internalChatStageDerivations);
+  app.route("/api/internal/agent-turns", internalAgentTurns);
   // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
   // provisions a desktop and boots browserd end to end — and, like the other
   // internal routes, gated by the service token. Mirror of the mount in
   // server/index.ts.
   if (process.env.COMPUTER_BROWSER_DEBUG_ENABLED === "1") {
-    app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
+    app.route(
+      "/api/internal/computer-browser-debug",
+      internalComputerBrowserDebug,
+    );
   }
   app.route("/api/web", webRoutes);
   // Browser Panel data plane (W4): watch the browser an agent is driving, and
@@ -332,14 +376,39 @@ export async function createHonoApp() {
   // the handlers return a clean 503 (not a raw 404).
   app.get(
     "/api/web/computers/terminal",
-    createComputerTerminalWsHandler(upgradeWebSocket)
+    createComputerTerminalWsHandler(upgradeWebSocket),
+  );
+  // Browser panel stream (W4b). Mirror of the mount in server/index.ts — see
+  // there for why the RFB proxy exists and why it is not hosted-only.
+  app.get(
+    "/api/web/computers/browser/stream",
+    createComputerBrowserStreamWsHandler(upgradeWebSocket),
+  );
+  // The PAGE, from the daemon's own screencast — the rail's pane. The
+  // stream above is the whole DESKTOP over RFB, and both stay: one is for
+  // watching alongside the local engine, the other for taking the machine.
+  app.get(
+    "/api/web/computers/browser/frames",
+    createComputerBrowserFramesWsHandler(upgradeWebSocket),
   );
   // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted.
   // Mirror of the mount in server/index.ts.
   if (!HOSTED_MODE) {
     app.get(
       "/api/web/computers/local-terminal",
-      createLocalComputerTerminalWsHandler(upgradeWebSocket)
+      createLocalComputerTerminalWsHandler(upgradeWebSocket),
+    );
+    app.get(
+      "/api/web/computers/local-browser/frames",
+      createLocalBrowserFramesWsHandler(upgradeWebSocket),
+    );
+  }
+  // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
+  // local browser there to stream. Mirror of the mount in server/index.ts.
+  if (!HOSTED_MODE) {
+    app.get(
+      "/api/web/webmcp/sessions/:id/frames",
+      createWebMcpFramesWsHandler(upgradeWebSocket),
     );
   }
   app.post(
@@ -349,35 +418,29 @@ export async function createHonoApp() {
       onError: (c) =>
         c.json(
           { ok: false, error: "Upload exceeds the 30MB request limit." },
-          413
+          413,
         ),
     }),
-    createComputerUploadHandler()
+    createComputerUploadHandler(),
   );
 
-  // Hosted public API (v1). Same 1MB JSON cap as /api/web; the canonical
+  // Hosted public API (v1). Same 1MB JSON cap as /api/web (with the eval
+  // artifact upload carved out; see `v1BodyLimit`); the canonical
   // resource-oriented routes wrap the same core helpers and emit the v1
   // envelope. Read-only diagnostics first; mutating ops land behind the
   // X-MCPJam-Approval flow in a follow-up.
-  app.use(
-    "/api/v1/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400
-        ),
-    })
-  );
+  app.use("/api/v1/*", v1BodyLimit());
   app.route("/api/v1", v1Routes);
 
-  if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
-    app.route("/user_management", workosAuthkitRoutes);
-  }
+  // Fail the deploy, not the user's first sign-in: `WORKOS_API_BASE_URL` is a
+  // loopback-only test hook, and this is the earliest point that can refuse a
+  // value which would otherwise send the admin API key to another host. Unset
+  // (every deployment) this is a no-op.
+  resolveWorkosApiBaseUrl(process.env);
+
+  // Mounted in every runtime, hosted included — see the mirror of this mount
+  // in server/index.ts for why the gate had to go.
+  app.route("/user_management", workosAuthkitRoutes);
 
   // CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
   // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
@@ -439,7 +502,7 @@ export async function createHonoApp() {
             "Cache-Control": "no-store",
             "Content-Type": "application/json",
           },
-        }
+        },
       );
     }
 
@@ -455,7 +518,8 @@ export async function createHonoApp() {
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost or allowed hosts (in hosted mode)
+  // Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
+  // in BOTH hosted and self-hosted mode); tunnel hosts are always vetoed.
   app.get("/api/session-token", (c) => {
     if (HOSTED_MODE) {
       return strictModeResponse(c, "/api/session-token");
@@ -474,14 +538,13 @@ export async function createHonoApp() {
         host,
         forwardedHost,
         allowedHosts: ALLOWED_HOSTS,
-        hostedMode: HOSTED_MODE,
         activeTunnelDomains: getActiveTunnelDomains(),
       })
     ) {
       appLogger.warn(
         `[Security] Token request denied - Host not allowed: ${
           forwardedHost || host
-        }`
+        }`,
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -507,7 +570,16 @@ export async function createHonoApp() {
 
     // Serve all static files from client root (images, svgs, etc.)
     // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-    app.use("/*", serveStatic({ root }));
+    //
+    // Document requests fall THROUGH to the injecting handler below — mirror
+    // of the guard in server/index.ts. See isSpaDocumentRequest.
+    const clientStaticFiles = serveStatic({ root });
+    app.use("/*", async (c, next) => {
+      if (isSpaDocumentRequest(c.req.path)) {
+        return next();
+      }
+      return clientStaticFiles(c, next);
+    });
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", async (c) => {
@@ -522,10 +594,14 @@ export async function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
+        // SECURITY: Only inject token for localhost or hosts in
+        // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
         // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
+        // Every inline script written into the document carries this
+        // response's nonce (see middleware/security-headers.ts).
+        const scriptNonce = documentScriptNonce(c);
 
         // Same invariant as the /api/session-token route above, and the same
         // bug: this path already captured `forwardedHost` for the guest
@@ -537,25 +613,33 @@ export async function createHonoApp() {
             host,
             forwardedHost,
             allowedHosts: ALLOWED_HOSTS,
-            hostedMode: HOSTED_MODE,
             activeTunnelDomains: getActiveTunnelDomains(),
           })
         ) {
           const token = getSessionToken();
-          const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
+          const tokenScript = withScriptNonce(
+            `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`,
+            scriptNonce,
+          );
           html = html.replace("</head>", `${tokenScript}</head>`);
         } else {
           // Host not allowed - no token (security measure)
           appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`
+            `[Security] Token not injected - Host not allowed: ${host}`,
           );
-          const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
+          const warningScript = withScriptNonce(
+            `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`,
+            scriptNonce,
+          );
           html = html.replace("</head>", `${warningScript}</head>`);
         }
 
         const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
         if (runtimeConfigScript) {
-          html = html.replace("</head>", `${runtimeConfigScript}</head>`);
+          html = html.replace(
+            "</head>",
+            `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
+          );
         }
 
         // Guest bootstrap blob: mint a guest bearer server-side and inject it
@@ -571,16 +655,18 @@ export async function createHonoApp() {
             host,
             forwardedHost,
             allowedHosts: ALLOWED_HOSTS,
-            hostedMode: HOSTED_MODE,
             activeTunnelDomains: getActiveTunnelDomains(),
           })
         ) {
           try {
             const { session, setCookies } = await mintGuestSessionForDocument(
-              c
+              c,
             );
             if (session && session.expiresAt > Date.now()) {
-              const bootstrapScript = buildGuestBootstrapScript(session);
+              const bootstrapScript = withScriptNonce(
+                buildGuestBootstrapScript(session),
+                scriptNonce,
+              );
               html = html.replace("</head>", `${bootstrapScript}</head>`);
               for (const cookie of setCookies) {
                 appendGuestSessionSetCookie(c, cookie);
@@ -589,7 +675,7 @@ export async function createHonoApp() {
           } catch (error) {
             appLogger.warn(
               "[guest-bootstrap] document mint failed; serving without blob",
-              { error: error instanceof Error ? error.message : String(error) }
+              { error: error instanceof Error ? error.message : String(error) },
             );
           }
         }
@@ -638,5 +724,20 @@ export async function createHonoApp() {
     injectWebSocket,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
+    // A local agent browser is a real Chromium this process started. Nothing
+    // else will close it: it is not a child of the request that opened it, and
+    // `server.close()` knows nothing about it. Same latching/non-latching pair
+    // and same reason as the PTYs above.
+    shutdownLocalBrowserSessions,
+    killLocalBrowserSessions,
+    shutdownLocalBrowserFrameSockets,
+    killLocalBrowserFrameSockets,
+    // The frame sockets need the same pair for the same reason: an established
+    // WebSocket outlives `server.close()`, and `window-all-closed` on macOS is
+    // followed by a RESTART, so its variant must not latch.
+    shutdownWebMcpFrameSockets,
+    killWebMcpFrameSockets,
+    shutdownBrowserFrameSockets,
+    killBrowserFrameSockets,
   };
 }

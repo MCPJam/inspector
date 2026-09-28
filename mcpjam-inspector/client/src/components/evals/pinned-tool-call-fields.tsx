@@ -207,7 +207,7 @@ export function PinnedToolCallFields({
         <Label className="text-[11px]">Arguments (JSON)</Label>
         <textarea
           className={`min-h-[88px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
-            "error" in parsedArgs ? "border-red-500/60" : "border-border/60"
+            "error" in parsedArgs ? "border-destructive/60" : "border-border/60"
           }`}
           value={argsJson}
           onChange={(e) => setArgsJson(e.target.value)}
@@ -216,7 +216,7 @@ export function PinnedToolCallFields({
           aria-label="Arguments (JSON)"
         />
         {"error" in parsedArgs ? (
-          <div className="text-[11px] text-red-600 dark:text-red-400">
+          <div className="text-[11px] text-destructive">
             {parsedArgs.error}
           </div>
         ) : null}

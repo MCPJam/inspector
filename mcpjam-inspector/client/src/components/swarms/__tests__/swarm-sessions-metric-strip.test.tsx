@@ -1,4 +1,11 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -24,6 +31,7 @@ vi.mock("convex/react", () => ({
 
 import { SwarmSessionsMetricStrip } from "../swarm-sessions-metric-strip";
 import { SWARM_QUERIES, type SwarmSessionMetrics } from "@/lib/swarm-api";
+import { collapsibleSessionMetricsStorageKey } from "@/components/shared/collapsible-session-metrics-shell";
 
 function fullMetrics(
   overrides: Partial<SwarmSessionMetrics> = {},
@@ -94,6 +102,49 @@ describe("SwarmSessionsMetricStrip", () => {
     });
   });
 
+  it("scopes the cohort to the run ids the panel is showing", () => {
+    metricsFixture = fullMetrics();
+    render(
+      <SwarmSessionsMetricStrip
+        projectId="proj-1"
+        personaRefId={null}
+        journeyRunIds={["run-1", "run-2"]}
+      />,
+    );
+    expect(metricsCall()!.args).toEqual({
+      projectId: "proj-1",
+      journeyRunIds: ["run-1", "run-2"],
+    });
+  });
+
+  it("composes the run scope with an active persona filter", () => {
+    metricsFixture = fullMetrics();
+    render(
+      <SwarmSessionsMetricStrip
+        projectId="proj-1"
+        personaRefId="persona-9"
+        journeyRunIds={["run-1"]}
+      />,
+    );
+    expect(metricsCall()!.args).toEqual({
+      projectId: "proj-1",
+      personaRefId: "persona-9",
+      journeyRunIds: ["run-1"],
+    });
+  });
+
+  it("omits the arg entirely when there is no run scope", () => {
+    metricsFixture = fullMetrics();
+    render(
+      <SwarmSessionsMetricStrip
+        projectId="proj-1"
+        personaRefId={null}
+        journeyRunIds={[]}
+      />,
+    );
+    expect(metricsCall()!.args).toEqual({ projectId: "proj-1" });
+  });
+
   it("renders all four metric tiles including both latency percentiles", () => {
     metricsFixture = fullMetrics();
     render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
@@ -150,5 +201,51 @@ describe("SwarmSessionsMetricStrip", () => {
     expect(
       screen.queryByTestId("swarm-metric-sparkline-tool-errors"),
     ).toBeNull();
+  });
+
+  it("renders a collapsible shell with a metrics toggle", () => {
+    metricsFixture = fullMetrics();
+    render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
+    expect(screen.getByTestId("swarm-sessions-metric-shell")).toBeTruthy();
+    expect(screen.getByTestId("swarm-sessions-metric-toggle")).toBeTruthy();
+  });
+
+  it("collapses on click and persists the preference", async () => {
+    metricsFixture = fullMetrics();
+    window.localStorage.removeItem(collapsibleSessionMetricsStorageKey());
+    render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
+
+    const toggle = screen.getByTestId("swarm-sessions-metric-toggle");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("swarm-sessions-metric-toggle"),
+      ).toHaveAttribute("aria-expanded", "false");
+    });
+    expect(screen.getByTestId("swarm-sessions-metric-shell")).toHaveAttribute(
+      "data-expanded",
+      "false",
+    );
+    await waitFor(() => {
+      expect(
+        window.localStorage.getItem(collapsibleSessionMetricsStorageKey()),
+      ).toBe("false");
+    });
+  });
+
+  it("opens collapsed when storage says so", () => {
+    metricsFixture = fullMetrics();
+    window.localStorage.setItem(
+      collapsibleSessionMetricsStorageKey(),
+      "false",
+    );
+    render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
+    expect(
+      screen.getByTestId("swarm-sessions-metric-toggle"),
+    ).toHaveAttribute("aria-expanded", "false");
+    window.localStorage.removeItem(collapsibleSessionMetricsStorageKey());
   });
 });

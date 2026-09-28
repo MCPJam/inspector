@@ -4,6 +4,8 @@ import type {
   WidgetMount,
   WidgetSandboxApplied,
 } from "@/stores/widget-debug-store";
+import { copyToClipboard } from "@/lib/clipboard";
+import type { RecordedWidgetPolicy } from "./CspWorkbench";
 
 interface SandboxStackTabProps {
   applied?: WidgetSandboxApplied;
@@ -11,6 +13,7 @@ interface SandboxStackTabProps {
   mounts?: WidgetMount[];
   hostInfo?: { name: string; version: string } | null;
   protocol?: "openai-apps" | "mcp-apps";
+  recordedPolicy?: RecordedWidgetPolicy;
 }
 
 /** Compact label/value chip — the workbench's atomic unit. */
@@ -58,6 +61,51 @@ function lifecycleStatus(events: WidgetLifecycleEvent[] | undefined): {
   return { tone: "muted", text: "loading" };
 }
 
+/**
+ * The origin the view's document actually runs at — the value a developer
+ * pastes into a third-party allowlist that keys on the page URL (a
+ * referrer-restricted API key, an OAuth redirect URI). Renders nothing until
+ * the proxy has reported a mount, and says plainly when there is no origin to
+ * copy because the view fell back to `srcdoc`.
+ */
+function ViewOriginChip({ applied }: { applied?: WidgetSandboxApplied }) {
+  const [copied, setCopied] = useState(false);
+  const viewMode = applied?.viewMode;
+  const origin = applied?.assignedOrigin;
+
+  if (!viewMode) return null;
+  if (viewMode !== "url" || !origin) {
+    return (
+      <Chip label="View origin" value="about:srcdoc · no origin" tone="muted" />
+    );
+  }
+
+  const handleCopy = async () => {
+    if (await copyToClipboard(origin)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
+  return (
+    <Chip
+      label="View origin"
+      value={
+        <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
+          <span className="truncate">{origin}</span>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="shrink-0 text-[10.5px] text-muted-foreground hover:text-foreground"
+          >
+            {copied ? "copied" : "copy"}
+          </button>
+        </span>
+      }
+    />
+  );
+}
+
 /** Wrap a comma-joined list so the chip can show "N, M, …" + "+K more". */
 function TruncatedList({ items, max = 2 }: { items: string[]; max?: number }) {
   const [expanded, setExpanded] = useState(false);
@@ -90,19 +138,31 @@ export function SandboxStackTab({
   lifecycle,
   mounts,
   protocol,
+  recordedPolicy,
 }: SandboxStackTabProps) {
+  const isRecorded = !!recordedPolicy;
   const sandboxAttrs =
     applied?.sandboxAttrs && applied.sandboxAttrs.length > 0
       ? applied.sandboxAttrs
       : ["allow-scripts", "allow-same-origin"];
 
-  const permissionsList = applied?.permissions
-    ? Object.keys(applied.permissions).map((p) =>
-        p.replace(/([A-Z])/g, "-$1").toLowerCase(),
-      )
-    : applied?.allowFeatures
-      ? Object.keys(applied.allowFeatures)
+  const recordedPermissions =
+    recordedPolicy?.permissions &&
+    typeof recordedPolicy.permissions === "object" &&
+    !Array.isArray(recordedPolicy.permissions)
+      ? Object.keys(recordedPolicy.permissions).map((permission) =>
+          permission.replace(/([A-Z])/g, "-$1").toLowerCase(),
+        )
       : [];
+  const permissionsList = isRecorded
+    ? recordedPermissions
+    : applied?.permissions
+      ? Object.keys(applied.permissions).map((p) =>
+          p.replace(/([A-Z])/g, "-$1").toLowerCase(),
+        )
+      : applied?.allowFeatures
+        ? Object.keys(applied.allowFeatures)
+        : [];
 
   const lc = lifecycleStatus(lifecycle);
   const mountCount = mounts?.length ?? 0;
@@ -122,7 +182,15 @@ export function SandboxStackTab({
         <div className="grid grid-cols-2 gap-x-4 gap-y-3">
           <Chip
             label="Sandbox attributes"
-            value={<TruncatedList items={sandboxAttrs} max={2} />}
+            value={
+              isRecorded ? (
+                <span className="text-muted-foreground italic">
+                  not recorded
+                </span>
+              ) : (
+                <TruncatedList items={sandboxAttrs} max={2} />
+              )
+            }
           />
           <Chip
             label="Permissions"
@@ -149,20 +217,64 @@ export function SandboxStackTab({
 
           <div className="grid grid-cols-2 gap-x-4 gap-y-3">
             <Chip
-              label="Lifecycle"
+              label={isRecorded ? "Resource URI" : "Lifecycle"}
               value={
-                <span
-                  className={
-                    lc.tone === "muted"
-                      ? "text-muted-foreground italic"
-                      : "text-foreground"
-                  }
-                >
-                  {lc.text}
-                </span>
+                isRecorded ? (
+                  (recordedPolicy.resourceUri ?? "not recorded")
+                ) : (
+                  <span
+                    className={
+                      lc.tone === "muted"
+                        ? "text-muted-foreground italic"
+                        : "text-foreground"
+                    }
+                  >
+                    {lc.text}
+                  </span>
+                )
               }
-              tone={lc.tone === "muted" ? "muted" : "neutral"}
+              tone={
+                isRecorded && !recordedPolicy.resourceUri
+                  ? "muted"
+                  : !isRecorded && lc.tone === "muted"
+                    ? "muted"
+                    : "neutral"
+              }
             />
+            {isRecorded ? (
+              <Chip
+                label="Mode"
+                value={
+                  recordedPolicy.permissive === undefined
+                    ? "not recorded"
+                    : recordedPolicy.permissive
+                      ? "permissive"
+                      : "restricted"
+                }
+                tone={
+                  recordedPolicy.permissive === undefined ? "muted" : "neutral"
+                }
+              />
+            ) : (
+              <ViewOriginChip applied={applied} />
+            )}
+            {isRecorded && (
+              <Chip
+                label="Prefers border"
+                value={
+                  recordedPolicy.prefersBorder === undefined
+                    ? "not recorded"
+                    : recordedPolicy.prefersBorder
+                      ? "yes"
+                      : "no"
+                }
+                tone={
+                  recordedPolicy.prefersBorder === undefined
+                    ? "muted"
+                    : "neutral"
+                }
+              />
+            )}
             {mountCount > 1 && (
               <Chip
                 label="Mount count"

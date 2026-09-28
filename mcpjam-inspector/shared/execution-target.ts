@@ -252,3 +252,37 @@ export function normalizeExecutionTarget(
   if (hostId) return { ok: true, target: { kind: "host", hostId } };
   return { ok: true, target: { kind: "adhoc", projectId } };
 }
+
+/** Last successful direct-chat destination. Absence means legacy/unknown;
+ * adhoc explicitly records that no named host or environment was used. */
+export type ResumeExecutionTarget = HostedExecutionTarget | { kind: "adhoc" };
+
+export function toResumeExecutionTarget(
+  target: InternalExecutionTarget,
+): ResumeExecutionTarget | undefined {
+  switch (target.kind) {
+    case "host":
+      return { kind: "host", hostId: target.hostId };
+    case "environment":
+      return { kind: "environment", environmentId: target.environmentId };
+    case "adhoc":
+      return { kind: "adhoc" };
+    case "scenario":
+      return undefined;
+  }
+}
+
+export function parseResumeExecutionTarget(
+  value: unknown,
+): ResumeExecutionTarget | undefined {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as { kind?: unknown }).kind === "adhoc"
+  ) {
+    return { kind: "adhoc" };
+  }
+  const parsed = parseHostedExecutionTarget(value);
+  return parsed.ok ? parsed.target : undefined;
+}

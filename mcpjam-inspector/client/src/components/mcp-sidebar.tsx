@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Hammer,
   House,
@@ -46,10 +46,14 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
+import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
-import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
+import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
+import { InviteTeamMembersDialog } from "@/components/organization/InviteTeamMembersDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -63,7 +67,7 @@ import {
   isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -72,7 +76,6 @@ import {
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;
@@ -124,7 +127,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "project-environments-enabled",
   "unified-sessions-enabled",
   "evaluate-enabled",
-  "webmcp-inspector-enabled",
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -248,41 +251,47 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      {
-        // Labeled "Acceptance Testing" in the nav; the route stays
-        // /user-testing so existing links and hash tabs keep working.
-        title: "Acceptance Testing",
-        url: "/user-testing",
-        icon: Users,
-        featureFlag: "sandboxes-enabled",
-        billingFeature: "scenarios",
-      },
+      // Both are behind `sandboxes-enabled`, which is the rollout control.
+      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
+      // signed-out visitor sees the items too, and the route decides what they
+      // get — a signed-out visitor gets the preview, a member the real tab.
+      //
+      // Swarms before User Testing (Vig): less set-up is required to get value
+      // out of it, so it is the better first stop.
       {
         title: "Swarms",
         url: "/swarms",
         icon: Network,
         featureFlag: "sandboxes-enabled",
+        // Same pill XAA Debugger carries. It marks a NEW feature, not an
+        // access state: the earlier LOG IN / UPGRADE markers described who the
+        // reader was, and there is no longer a plan to report on.
+        badge: "New",
         billingFeature: "scenarios",
       },
       {
-        title: "Evaluate",
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
+        featureFlag: "sandboxes-enabled",
+        badge: "New",
+        billingFeature: "scenarios",
+      },
+      {
+        title: "Evaluate (Legacy)",
         url: "/evals",
+        featureFlag: "evaluate-enabled",
         icon: FlaskConical,
         billingFeature: "evals",
       },
       {
-        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
-        // is dogfooded — the point of a second tab is being able to compare
-        // them. When the redesign wins, this item takes the "Evaluate" name
-        // and the one above is deleted.
-        title: "Evaluate (New)",
+        title: "Evaluate",
         url: "/evaluate",
         icon: FlaskConical,
-        featureFlag: "evaluate-enabled",
         billingFeature: "evals",
       },
       {
-        // Cross-surface session feed (Playground + Acceptance Testing + Evals +
+        // Cross-surface session feed (Playground + User Testing + Evals +
         // Swarms). Route-guarded on the same flag (`SessionsRoute`).
         title: "Sessions",
         url: "/sessions",
@@ -306,7 +315,6 @@ export const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
-        badge: "New",
         featureFlag: "xaa",
       },
       {
@@ -361,7 +369,8 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        featureFlag: "webmcp-inspector-enabled",
+        badge: "New",
+        featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
   },
@@ -385,7 +394,7 @@ export const navigationSections: NavSection[] = [
 const signedOutUtilityItems: NavItem[] = [
   {
     title: "Support",
-    url: "/support",
+    url: "/settings/support",
     icon: MessageCircleQuestionIcon,
   },
   {
@@ -461,16 +470,22 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * whatever the settings route resolves to afterwards.
    */
   onOpenProjectSettings?: (projectId: string) => void;
-  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  /**
+   * Creates a project and lands the user in it. The optional organization is
+   * the one chosen in the create dialog; omitted means the active one.
+   */
+  onCreateProject: (name: string, organizationId?: string) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
   activeOrganizationId?: string;
   activeOrganizationName?: string;
-  onSwitchOrganization?: (
-    organizationId: string,
-    section?: OrganizationRouteSection,
-  ) => void;
-  onSwitchActiveOrganization?: (organizationId: string) => void;
+  /**
+   * Switches the active organization. The handler NAVIGATES into that
+   * organization (see `buildOrganizationSwitchTarget`) rather than writing
+   * hidden state, so there is no section to open — the switcher's gears are
+   * gone with the old layout.
+   */
+  onSwitchOrganization?: (organizationId: string) => void;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
@@ -493,8 +508,6 @@ export function MCPSidebar({
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onSwitchActiveOrganization,
-  onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -530,34 +543,66 @@ export function MCPSidebar({
     HOSTED_MODE && !user && (isWorkOsAuthLoading || isConvexAuthLoading);
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { status: updateStatus, restartAndInstall } = useUpdateNotification();
-  const showUpdateButton =
-    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
-  const updateInstalling =
-    updateStatus.kind === "pending" && updateStatus.installRequested;
+  const {
+    status: updateStatus,
+    restartRequested,
+    showUpdateError,
+    retryUpdate,
+    restartAndInstall,
+  } = useUpdateNotification();
+  const showUpdateButton = updateStatus.kind !== "idle";
+  const updateFailed = updateStatus.kind === "failed";
+  const updateRecovering = updateStatus.kind === "recovering";
+  const updateInstalling = updateRecovering || restartRequested;
+  const updateBusy =
+    updateInstalling ||
+    updateStatus.kind === "pending" ||
+    updateStatus.kind === "retry-waiting";
+  const updateLabel = updateRecovering
+    ? "Restarting to retry update…"
+    : restartRequested
+      ? "Updating…"
+      : updateStatus.kind === "pending"
+        ? "Downloading…"
+        : updateStatus.kind === "retry-waiting"
+          ? "Retrying download…"
+          : updateStatus.kind === "failed"
+            ? updateStatus.action === "retry-download"
+              ? "Retry download"
+              : updateStatus.action === "relaunch-retry"
+                ? "Relaunch to retry"
+                : "Update failed"
+            : "Relaunch to update";
   const handleUpdateClick = () => {
-    if (!updateInstalling) {
-      restartAndInstall();
-    }
+    if (updateBusy) return;
+    if (updateFailed) {
+      if (updateStatus.action === "instructions") showUpdateError();
+      else retryUpdate();
+    } else restartAndInstall();
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
   const learnMore = useLearnMore();
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
-  const inviteableProjects = useMemo(() => {
-    if (!activeProject?.organizationId) {
-      return projects;
-    }
-
-    return Object.fromEntries(
-      Object.entries(projects).filter(
-        ([, project]) =>
-          project.organizationId === activeProject.organizationId,
-      ),
-    );
-  }, [activeProject?.organizationId, projects]);
-  const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
+  const canOpenInviteDialog =
+    isAuthenticated && !!user && !!activeOrganizationId;
+  // Guests get the CTA too (hosted only — a local/self-hosted install has no
+  // WorkOS to sign up through). The click opens a sign-up nudge instead of the
+  // share dialog, and the nudge's marker reopens it after the round trip.
+  // Hidden while auth resolves so signed-in users never see a guest control.
+  const showGuestInviteCta = HOSTED_MODE && !user && !authResolving;
+  const shouldShowInviteCta = canOpenInviteDialog || showGuestInviteCta;
+  // Reopen the invite dialog for a guest who left through the sign-up nudge:
+  // the marker outlives the WorkOS page reload in sessionStorage, and this
+  // effect holds off consuming it until everything the dialog needs (authed
+  // user + active project) has actually resolved.
+  useEffect(() => {
+    if (!canOpenInviteDialog) return;
+    if (!consumePendingInviteDialog()) return;
+    setShowInviteDialog(true);
+  }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
     { enabled: billingUiEnabled && !!activeProject?.organizationId },
@@ -586,7 +631,9 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
+      // reach the REEV-6 preview once the flag is on.
+      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
@@ -604,11 +651,9 @@ export function MCPSidebar({
       // Project-scoped like the rows above: every screen behind it needs a
       // project to resolve suites against.
       "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
-      // Not auth-scoped, unlike the rows above: the browser and the page run
-      // on this machine, so a signed-out local user has everything the surface
-      // needs. It is hostedBlocked, so hosted builds drop it before this map
-      // is consulted.
-      "webmcp-inspector-enabled": webmcpInspectorEnabled === true,
+      // Deployment-specific Browser rollout; local guests are eligible too.
+      // Hosted execution retains its server-side sign-in/entitlement checks.
+      [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
     }),
     [
       learningEnabled,
@@ -754,23 +799,22 @@ export function MCPSidebar({
             }
             activeOrganizationId={activeOrganizationId}
             onSwitchOrganization={onSwitchOrganization}
-            onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
           {showUpdateButton && (
             <div className="px-3 pt-2">
               <Button
                 size="sm"
                 onClick={handleUpdateClick}
-                aria-disabled={updateInstalling}
+                disabled={updateBusy}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary",
+                  updateBusy && "pointer-events-none hover:bg-primary",
                 )}
               >
-                {updateInstalling && (
+                {updateBusy && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateInstalling ? "Updating…" : "Update"}
+                {updateLabel}
               </Button>
             </div>
           )}
@@ -830,12 +874,27 @@ export function MCPSidebar({
               ))}
             </div>
           ) : null}
+          {isAuthenticated && user && activeOrganizationId ? (
+            <SidebarCredits
+              organizationId={activeOrganizationId}
+              billingUiEnabled={billingUiEnabled}
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+            />
+          ) : null}
           {shouldShowInviteCta ? (
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="Invite team members"
-                  onClick={() => setShowInviteDialog(true)}
+                  onClick={() =>
+                    showGuestInviteCta
+                      ? setShowInviteSignUpNudge(true)
+                      : setShowInviteDialog(true)
+                  }
                 >
                   <UserPlus className="h-4 w-4" />
                   <span className="group-data-[collapsible=icon]:hidden">
@@ -845,7 +904,7 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          {shouldShowInviteCta && trialActive && trialBilling?.trialEndsAt ? (
+          {canOpenInviteDialog && trialActive && trialBilling?.trialEndsAt ? (
             <SidebarTrialCountdown
               trialEndsAt={trialBilling.trialEndsAt}
               trialStartedAt={trialBilling.trialStartedAt}
@@ -856,20 +915,25 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
-      {shouldShowInviteCta && user && activeProject ? (
-        <ShareProjectDialog
-          isOpen={showInviteDialog}
-          onClose={() => setShowInviteDialog(false)}
-          projectName={activeProject.name}
-          projectServers={activeProject.servers}
-          sharedProjectId={activeProject.sharedProjectId}
-          organizationId={activeProject.organizationId}
-          visibility={activeProject.visibility}
+      {!authResolving && (
+        <PlatformLaunchAnnouncement
+          onNavigate={appNavigate}
+          audience={user ? "signed_in" : "guest"}
+          sandboxesEnabled={sandboxesEnabled === true}
+        />
+      )}
+      {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
+        <InviteTeamMembersDialog
+          key={activeOrganizationId}
+          organizationId={activeOrganizationId}
           organizationName={activeOrganizationName}
-          currentUser={user}
-          onProjectShared={onProjectShared}
-          availableProjects={inviteableProjects}
-          activeProjectId={activeProjectId}
+          onClose={() => setShowInviteDialog(false)}
+        />
+      ) : null}
+      {showGuestInviteCta ? (
+        <InviteTeamSignUpDialog
+          isOpen={showInviteSignUpNudge}
+          onClose={() => setShowInviteSignUpNudge(false)}
         />
       ) : null}
       {learnMoreEnabled && (

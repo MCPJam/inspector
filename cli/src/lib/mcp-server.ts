@@ -820,6 +820,8 @@ export function createMcpJamMcpServer(
           url,
           accessToken,
           headers,
+          // See the `server probe` command: this runs on the user's machine.
+          allowPrivateNetwork: true,
           timeoutMs: timeoutMs ?? defaultTimeoutMs,
         });
         return redactForTelemetry(result);

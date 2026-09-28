@@ -314,14 +314,24 @@ export function createLocalComputerTerminalWsHandler(
             });
             ws.send(JSON.stringify({ type: "ready", sessionId }));
           } catch (error) {
+            const reason =
+              error instanceof Error ? error.message : String(error);
             logger.warn("[local-computer-terminal] PTY open failed", {
-              error: error instanceof Error ? error.message : String(error),
+              error: reason,
             });
             if (!closed) {
+              // Include the underlying reason: this machine belongs to the
+              // person reading the pane, and a bare "failed" turned a
+              // one-line diagnosis (`posix_spawnp failed.`) into a
+              // server-log hunt. Bounded so a pathological message can't
+              // flood the status line.
+              const detail = reason.trim().slice(0, 200);
               ws.send(
                 JSON.stringify({
                   type: "error",
-                  message: "Failed to open a terminal on this machine.",
+                  message: detail
+                    ? `Failed to open a terminal on this machine. (${detail})`
+                    : "Failed to open a terminal on this machine.",
                 })
               );
               ws.close(CLOSE_UNAVAILABLE, "PTY open failed");

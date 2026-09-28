@@ -1,3 +1,5 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { resolveRestoredModel } from "@/lib/model-selection";
 import {
   FormEvent,
   useMemo,
@@ -44,6 +46,7 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
@@ -55,6 +58,7 @@ import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link"
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
+import { applyWidgetStateUpdates } from "@/shared/user-context-message";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -65,9 +69,10 @@ import {
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
   STARTER_PROMPTS,
+  shouldShowStarterPrompts,
   formatErrorMessage,
   buildMcpPromptMessages,
-  buildSkillToolMessages,
+  buildSkillContextMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
@@ -92,6 +97,7 @@ import {
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
+import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
@@ -497,6 +503,11 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
     },
   });
+  useEffect(() => {
+    if (chatSessionId) {
+      useActiveChatSessionStore.getState().setApprovalSetting(chatSessionId, requireToolApproval);
+    }
+  }, [chatSessionId, requireToolApproval]);
 
   // Chat history handlers
   const showHistoryRail = Boolean(
@@ -787,8 +798,12 @@ export function ChatTabV2({
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
-        const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId
+        // By `modelSource` as well as id: an OpenRouter id can also be a
+        // hosted row, and this thread must reopen on the one it ran on (#5472).
+        const matchingModel = resolveRestoredModel(
+          availableModels,
+          detail.modelId,
+          detail.modelSource
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -1535,66 +1550,8 @@ export function ChatTabV2({
     onHasMessagesChange?.(effectiveHasMessages);
   }, [effectiveHasMessages, onHasMessagesChange]);
 
-  // Widget state management
-  const applyWidgetStateUpdates = useCallback(
-    (
-      prevMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[]
-    ) => {
-      let nextMessages = prevMessages;
-
-      for (const { toolCallId, state } of updates) {
-        const messageId = `widget-state-${toolCallId}`;
-
-        if (state === null) {
-          const filtered = nextMessages.filter((msg) => msg.id !== messageId);
-          nextMessages = filtered;
-          continue;
-        }
-
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
-          state
-        )}`;
-        const existingIndex = nextMessages.findIndex(
-          (msg) => msg.id === messageId
-        );
-
-        if (existingIndex !== -1) {
-          const existingMessage = nextMessages[existingIndex];
-          const existingText =
-            existingMessage.parts?.[0]?.type === "text"
-              ? (existingMessage.parts[0] as { text?: string }).text
-              : null;
-
-          if (existingText === stateText) {
-            continue;
-          }
-
-          const updatedMessages = [...nextMessages];
-          updatedMessages[existingIndex] = {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          };
-          nextMessages = updatedMessages;
-          continue;
-        }
-
-        nextMessages = [
-          ...nextMessages,
-          {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          },
-        ];
-      }
-
-      return nextMessages;
-    },
-    []
-  );
-
+  // Widget state reaches the model as user-role context (MJ-009); see
+  // `applyWidgetStateUpdates`.
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
@@ -1605,7 +1562,7 @@ export function ChatTabV2({
         setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
       }
     },
-    [status, setMessages, applyWidgetStateUpdates]
+    [status, setMessages],
   );
 
   useEffect(() => {
@@ -1615,7 +1572,7 @@ export function ChatTabV2({
       applyWidgetStateUpdates(prevMessages, widgetStateQueue)
     );
     setWidgetStateQueue([]);
-  }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
+  }, [status, widgetStateQueue, setMessages]);
 
   const handleModelContextUpdate = useCallback(
     (
@@ -1766,6 +1723,11 @@ export function ChatTabV2({
   const canShowTopupCta =
     isConvexAuthenticated &&
     errorMessage?.canTopUp === true &&
+    // Explicit even though the positive test below already excludes it: a
+    // spend-budget refusal must never offer credits, because buying them
+    // does not raise the cap. Stated here so loosening the code check
+    // cannot silently reintroduce a "buy credits" button for it.
+    !isSpendBudgetReachedCode(errorMessage?.code) &&
     errorMessage?.code === "user_rate_limit";
 
   const handleOpenTopupDialog = useCallback(() => {
@@ -1777,11 +1739,12 @@ export function ChatTabV2({
     }
     track("credit_topup_cta_clicked", {
       location: "chat_tab",
+      organization_id: organizationId,
       source: "chat_banner",
     });
     setPendingResendMessage(text);
     setIsTopupDialogOpen(true);
-  }, []);
+  }, [organizationId]);
 
   const handleTopupDialogOpenChange = useCallback((open: boolean) => {
     setIsTopupDialogOpen(open);
@@ -2122,7 +2085,9 @@ export function ChatTabV2({
       ) as UIMessage[];
 
       // Build messages from skills
-      const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
+      const skillMessages = buildSkillContextMessages(
+        skillResults,
+      ) as UIMessage[];
       const prependMessages = [...promptMessages, ...skillMessages];
 
       const files =
@@ -2214,9 +2179,20 @@ export function ChatTabV2({
     setFileAttachments([]);
   };
 
+  /**
+   * What Up/Down walk through in the composer (BB-183): this thread's own user
+   * messages, newest first. Derived from what is already on screen — no store,
+   * no query, and it follows a session restored from the history rail for free.
+   */
+  const chatInputHistory = useMemo(
+    () => collectInputHistory(messages),
+    [messages],
+  );
+
   const sharedChatInputProps = {
     value: input,
     onChange: setInput,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
@@ -2284,8 +2260,13 @@ export function ChatTabV2({
     onManageOrgProviders: manageOrgProviders,
   };
 
-  const showStarterPrompts =
-    !showDisabledCallout && !effectiveHasMessages && !isAuthLoading;
+  // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
+  const showStarterPrompts = shouldShowStarterPrompts({
+    hasMessages: effectiveHasMessages,
+    isAuthLoading,
+    showDisabledCallout,
+    hostedScenarioId,
+  });
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -2411,6 +2392,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -2680,6 +2662,7 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                               onTopUp={handleOpenTopupDialog}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
@@ -2827,6 +2810,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -3088,6 +3072,7 @@ export function ChatTabV2({
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
           organizationId={organizationId}
+          organizationName={sortedOrganizations.find((org) => org._id === organizationId)?.name}
           source="chat_banner"
         />
       )}

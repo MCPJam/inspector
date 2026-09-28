@@ -271,9 +271,9 @@ describe("reportPossiblyOurFailure — server-attached normalization", () => {
       },
     });
 
-    expect(
-      reportPossiblyOurFailure(error, { source: "execute_tool" }),
-    ).toBe(true);
+    expect(reportPossiblyOurFailure(error, { source: "execute_tool" })).toBe(
+      true,
+    );
   });
 
   it("reports a refusal as NOT sent, even when the block claims it is ours", () => {
@@ -308,9 +308,9 @@ describe("reportPossiblyOurFailure — server-attached normalization", () => {
       normalized: { slug: "internal/unknown", origin: "mcpjam" },
     });
 
-    expect(
-      reportPossiblyOurFailure(error, { source: "execute_tool" }),
-    ).toBe(false);
+    expect(reportPossiblyOurFailure(error, { source: "execute_tool" })).toBe(
+      false,
+    );
   });
 
   it("falls back to describeError when the normalized getter throws", () => {
@@ -326,5 +326,41 @@ describe("reportPossiblyOurFailure — server-attached normalization", () => {
     expect(() =>
       reportPossiblyOurFailure(error, { source: "execute_tool" }),
     ).not.toThrow();
+  });
+});
+
+describe("query correlation", () => {
+  it("enriches and sanitizes both sinks and suppresses repeat boundary reports", () => {
+    captureException.mockReset();
+    posthogCaptureException.mockReset();
+    const error = new Error(
+      "[CONVEX Q(scenarios:listScenarios)] [Request ID: c0ffee] Server Error\nArguments: SECRET",
+    );
+    reportCaught(error, {
+      source: "convex_query_subscription",
+      queryBackend: "example.convex.cloud",
+      extra: { args: "SECRET" },
+    });
+    reportCaught(error, {
+      source: "route_error_element",
+      queryBackend: "example.convex.cloud",
+    });
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).toHaveBeenCalledTimes(1);
+    expect(captureException.mock.calls[0][1].tags).toMatchObject({
+      request_id: "c0ffee",
+      convex_function: "scenarios:listScenarios",
+      convex_backend: "example.convex.cloud",
+    });
+    expect(captureException.mock.calls[0][0].message).not.toContain("SECRET");
+    expect(JSON.stringify(captureException.mock.calls)).not.toContain("SECRET");
+    expect(JSON.stringify(posthogCaptureException.mock.calls)).not.toContain(
+      "SECRET",
+    );
+    reportCaught(error, {
+      source: "convex_query_subscription",
+      queryBackend: "another.convex.cloud",
+    });
+    expect(captureException).toHaveBeenCalledTimes(2);
   });
 });

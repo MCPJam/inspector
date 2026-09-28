@@ -1,3 +1,4 @@
+import { useEvalAgentScopes, pinEvalTurn } from "../eval-scope";
 /**
  * The hoisted agent Chat instance store: identity, config freshness, LRU
  * pinning, and the home → side-panel handoff fired by navigation-capable
@@ -47,6 +48,12 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
+const limitMocks = vi.hoisted(() => ({
+  notifyMCPJamLimitError: vi.fn(),
+  notifyMCPJamLimitErrorFromResponse: vi.fn(),
+}));
+vi.mock("@/lib/mcpjam-limit", () => limitMocks);
+
 const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/analytics", () => ({
   track: trackMock,
@@ -76,6 +83,7 @@ import {
   useUiToolsRegistry,
   type UiToolDefinition,
 } from "@/lib/webmcp/ui-tools-registry";
+import { authFetch } from "@/lib/session-token";
 
 function registerTool(extra?: Partial<UiToolDefinition>): UiToolDefinition {
   const def: UiToolDefinition = {
@@ -122,6 +130,42 @@ describe("agent-chat-instances", () => {
     expect(mockState.chatInstances).toHaveLength(2);
   });
 
+  it("raises the limit dialog for a pre-stream refusal and passes the response through", async () => {
+    getOrCreateAgentChat("s1");
+    const refused = { ok: false, status: 429 } as Response;
+    vi.mocked(authFetch).mockResolvedValueOnce(refused);
+    await expect(
+      mockState.lastTransportOptions.fetch("/api/web/mcpjam-agent", {
+        method: "POST",
+      }),
+    ).resolves.toBe(refused);
+    expect(limitMocks.notifyMCPJamLimitErrorFromResponse).toHaveBeenCalledWith(
+      refused,
+    );
+
+    const okResponse = { ok: true, status: 200 } as Response;
+    vi.mocked(authFetch).mockResolvedValueOnce(okResponse);
+    await expect(
+      mockState.lastTransportOptions.fetch("/api/web/mcpjam-agent", {
+        method: "POST",
+      }),
+    ).resolves.toBe(okResponse);
+    expect(limitMocks.notifyMCPJamLimitErrorFromResponse).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it("raises the limit dialog for a refusal streamed as an error", () => {
+    getOrCreateAgentChat("s1");
+    const error = new Error(
+      '{"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached."}',
+    );
+    mockState.chatInstances[0].init.onError(error);
+    expect(limitMocks.notifyMCPJamLimitError).toHaveBeenCalledWith({
+      message: error.message,
+    });
+  });
+
   it("transport body reads the mutable config at POST time", () => {
     const { config } = getOrCreateAgentChat("s1");
     config.projectId = "p1";
@@ -134,6 +178,19 @@ describe("agent-chat-instances", () => {
     });
     config.projectId = "p2";
     expect(mockState.lastTransportOptions.body().projectId).toBe("p2");
+  });
+
+  it("offers only eval capabilities to scoped sessions and keeps general sessions separate", () => {
+    registerTool();
+    registerTool({ name: "ui_eval_context", readOnly: true, mayNavigate: false });
+    const scope = { kind: "evals" as const, version: 1 as const, id: "scope", projectId: "p1", suiteId: "s1", suiteName: "Support" };
+    useEvalAgentScopes.getState().set("eval-scoped", scope);
+    pinEvalTurn("eval-scoped");
+    getOrCreateAgentChat("eval-scoped");
+    expect(mockState.lastTransportOptions.body().uiTools.map((tool: any) => tool.name)).toEqual(["ui_eval_context"]);
+    expect(mockState.lastTransportOptions.body().evalScope).toEqual(scope);
+    getOrCreateAgentChat("general");
+    expect(mockState.lastTransportOptions.body().uiTools.map((tool: any) => tool.name)).toEqual(["ui_navigate"]);
   });
 
   it("body carries the tour system prompt for tour sessions only", () => {
@@ -250,6 +307,10 @@ describe("agent-chat-instances", () => {
       const def = registerTool();
       const entry = getOrCreateAgentChat("s1");
       entry.config.requireToolApproval = true;
+      // SEND the turn. `onToolCall` only ever fires while a response is
+      // streaming, which is always after a POST — and the POST is what stamps
+      // the approval value this turn's tools were built from.
+      mockState.lastTransportOptions.body();
 
       await entry.chat.init.onToolCall({
         toolCall: {
@@ -263,6 +324,54 @@ describe("agent-chat-instances", () => {
       expect((entry.chat as any).addToolOutput).not.toHaveBeenCalled();
       // Deferral must also not hand off — nothing navigated yet.
       expect(useAgentPanelStore.getState().isOpen).toBe(false);
+    });
+
+    it("honours the turn's approval value when the switch flips mid-stream", async () => {
+      // The switch is a live control and the response is a stream. The server
+      // built this turn's `ui_*` tools with `needsApproval: true` and its pill
+      // is already on the way; the tool-input event arrives first. Reading the
+      // mutable config here would execute a destructive action — a computer
+      // deletion, a billed swarm launch — straight past that pill.
+      const def = registerTool();
+      const entry = getOrCreateAgentChat("s1");
+      entry.config.requireToolApproval = true;
+      mockState.lastTransportOptions.body();
+
+      // The user turns it off while the response streams.
+      entry.config.requireToolApproval = false;
+
+      await entry.chat.init.onToolCall({
+        toolCall: {
+          toolName: "ui_navigate",
+          toolCallId: "tc-flip-off",
+          input: { target: "servers" },
+        },
+      });
+
+      expect(def.execute).not.toHaveBeenCalled();
+      expect((entry.chat as any).addToolOutput).not.toHaveBeenCalled();
+    });
+
+    it("does not wait for a pill the turn never asked for", async () => {
+      // The other direction: sent with the switch off, so the server declared
+      // the tool ungated and emits nothing. Deferring on the newer value would
+      // wait for a decision nobody will be asked for.
+      const def = registerTool();
+      const entry = getOrCreateAgentChat("s1");
+      entry.config.requireToolApproval = false;
+      mockState.lastTransportOptions.body();
+
+      entry.config.requireToolApproval = true;
+
+      await entry.chat.init.onToolCall({
+        toolCall: {
+          toolName: "ui_navigate",
+          toolCallId: "tc-flip-on",
+          input: { target: "servers" },
+        },
+      });
+
+      expect(def.execute).toHaveBeenCalled();
     });
 
     it("handleToolApprovalResponse: approve executes + ships result; deny sends the response", async () => {

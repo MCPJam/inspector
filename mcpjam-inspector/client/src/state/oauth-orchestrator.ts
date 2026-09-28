@@ -14,7 +14,9 @@ import {
   type BuiltOAuthRequest,
 } from "@/lib/oauth/oauth-request";
 import {
+  describeAsSlug,
   resolveStepUpAction,
+  type NormalizedError,
   type StepUpAction,
   type StepUpAuthMode,
 } from "@mcpjam/sdk/browser";
@@ -41,6 +43,13 @@ export type OAuthRedirect = { kind: "redirect" };
 export type OAuthReauthRequired = {
   kind: "reauth_required";
   error: string;
+  /**
+   * Typed form of `error`, so the ErrorCard renders the consent state from
+   * the catalog instead of re-classifying the prose. Without it the message
+   * matched nothing in the describer and every consent prompt rendered as
+   * "Unknown error" with file-an-issue advice.
+   */
+  normalized: NormalizedError;
   oauthTrace?: OAuthTrace;
 };
 export type OAuthError = { kind: "error"; error: string; oauthTrace?: OAuthTrace };
@@ -54,9 +63,19 @@ function buildOAuthReauthRequired(
   serverName: string,
   oauthTrace?: OAuthTrace,
 ): OAuthReauthRequired {
+  const error = `OAuth consent is required for ${serverName}. Click Reconnect to continue.`;
   return {
     kind: "reauth_required",
-    error: `OAuth consent is required for ${serverName}. Click Reconnect to continue.`,
+    error,
+    // Named slug rather than `describeError(error)`: this call site KNOWS
+    // what happened, and leaving the describer to infer it from wording is
+    // how the state ended up unclassified in the first place.
+    //
+    // No raw error attached on purpose. `error` above is MCPJam's own
+    // sentence, not something that came off the wire, so surfacing it as
+    // "RAW ERROR" would print our own "Click Reconnect" a second time under
+    // a heading that promises underlying evidence.
+    normalized: describeAsSlug("auth/consent_required"),
     oauthTrace,
   };
 }

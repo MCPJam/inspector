@@ -321,7 +321,9 @@ export type WidgetAssertion = z.infer<typeof widgetAssertionSchema>;
  * — whose `v.object` predicate validators reject the extra keys outright —
  * agree with this one about the same payload.
  */
-const notAWidgetAssertion = z.object({ kind: z.never().optional() });
+const notAWidgetAssertion = z
+  .object({ kind: z.never().optional() })
+  .catchall(z.unknown());
 export const stepAssertionPayloadSchema = z.union([
   widgetAssertionSchema,
   z.intersection(predicateSchema, notAWidgetAssertion),

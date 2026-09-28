@@ -20,22 +20,27 @@ icon: "rocket"
   </Card>
 </CardGroup>
 
-## 2. Draw something
+## 2. Connect a server
 
-On first launch, MCPJam connects the Excalidraw sample server (diagramming MCP app) and opens the **Playground** with this prompt:
+On first launch, MCPJam shows a **Welcome** overlay that guides you through connecting your first server. You can:
+
+- **Enter your own server** — paste an HTTPS URL (e.g. `https://your-server.example/mcp`) or a STDIO command (Desktop and Terminal only).
+- **Try the Excalidraw demo** — a hosted diagramming MCP app, no setup required.
+
+After connecting, MCPJam shows the server name and tool count, then offers an **Open Playground** button that seeds the chat with the prompt:
 
 ```
-Draw me an MCP architecture diagram
+What can this server do?
 ```
 
-Press **Send**. The diagram renders in the app: tool call, then widget, then inspect. No API key, ngrok, or ChatGPT/Claude subscription needed.
+Press **Send** to explore your server's tools. No API key, ngrok, or ChatGPT/Claude subscription needed.
 
 <Check>
-You should see a tool call to `create_view` followed by a rendered diagram inline in the chat. If you don't, check that the Excalidraw server shows **Connected** in the **Connect** tab.
+You should see your server show **Connected** and its tools listed in the Playground's left rail.
 </Check>
 
 <Tip>
-  Use the widget debug icons to open tool input/output, CSP activity, widget state, and JSON-RPC for that result.
+  Use the widget debug icons to open tool input/output, CSP activity, widget state, and JSON-RPC for each result.
 </Tip>
 
 ## 3. Connect your own server

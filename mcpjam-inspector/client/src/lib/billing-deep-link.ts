@@ -1,6 +1,6 @@
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 
-export type CheckoutPlanTier = "team";
+export type CheckoutPlanTier = "pro" | "team";
 
 export interface CheckoutIntent {
   plan: CheckoutPlanTier;
@@ -15,7 +15,7 @@ export type CheckoutIntentWithOrganization = CheckoutIntent & {
 const STORAGE_KEY = "mcpjam:checkout-intent";
 const SIGN_IN_RETURN_PATH_STORAGE_KEY = "mcpjam:billing-signin-return-path";
 
-const VALID_PLANS = new Set<CheckoutPlanTier>(["team"]);
+const VALID_PLANS = new Set<CheckoutPlanTier>(["pro", "team"]);
 const VALID_INTERVALS = new Set<BillingInterval>(["monthly", "annual"]);
 
 function parseSearchParams(search: string): URLSearchParams {
@@ -114,6 +114,14 @@ export function clearCheckoutIntentFromUrl(): void {
   }
 }
 
+/**
+ * How long a deep-link checkout intent may sit unconsumed. A stored intent
+ * resurrects itself on the next `/billing` visit, so without a bound an
+ * abandoned `?plan=team` link stays armed for the rest of the session and
+ * fires under an unrelated navigation.
+ */
+const CHECKOUT_INTENT_TTL_MS = 30 * 60 * 1000;
+
 export function persistCheckoutIntent(intent: CheckoutIntent): void {
   if (typeof sessionStorage === "undefined") {
     return;
@@ -121,7 +129,11 @@ export function persistCheckoutIntent(intent: CheckoutIntent): void {
   try {
     sessionStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ plan: intent.plan, interval: intent.interval }),
+      JSON.stringify({
+        plan: intent.plan,
+        interval: intent.interval,
+        storedAt: Date.now(),
+      }),
     );
   } catch {
     // ignore quota / private mode
@@ -152,6 +164,17 @@ export function readPersistedCheckoutIntent(): CheckoutIntent | null {
       return null;
     }
     if (typeof interval !== "string" || !isValidInterval(interval)) {
+      return null;
+    }
+    const storedAt = (parsed as { storedAt?: unknown }).storedAt;
+    // An intent written before this field existed has no age to judge, so it
+    // is treated as expired rather than replayed.
+    if (typeof storedAt !== "number" || !Number.isFinite(storedAt)) {
+      clearPersistedCheckoutIntent();
+      return null;
+    }
+    if (Date.now() - storedAt > CHECKOUT_INTENT_TTL_MS) {
+      clearPersistedCheckoutIntent();
       return null;
     }
     return { plan, interval };

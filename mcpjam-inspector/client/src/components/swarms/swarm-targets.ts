@@ -53,6 +53,54 @@ export function summaryTargetKey(row: {
   return row.targetId;
 }
 
+/** {@link summaryTargetKey} for an execution-plane attempt row, whose
+ * `targetId` is nullable rather than optional. */
+export function attemptTargetKey(attempt: {
+  hostId: string;
+  targetId?: string | null;
+}): string {
+  return summaryTargetKey({
+    hostId: attempt.hostId,
+    ...(attempt.targetId ? { targetId: attempt.targetId } : {}),
+  });
+}
+
+/**
+ * The attempt row behind a selected cell: the exact `chatSessionId` the runner
+ * claimed with, then the target's own slot. `(hostId, sessionIdx)` alone
+ * resolves the sibling's attempt when two environments share a host, which is
+ * how a session ends up reading another target's outcome and provider.
+ */
+export function findAttemptForSelection<
+  T extends {
+    chatSessionId: string | null;
+    hostId: string;
+    targetId: string | null;
+    sessionIdx: number;
+  },
+>(
+  attempts: T[] | undefined,
+  selection: {
+    targetKey: string;
+    sessionIndex: number;
+    chatSessionId?: string | null;
+  }
+): T | null {
+  if (!attempts?.length) return null;
+  const claimed = selection.chatSessionId
+    ? attempts.find((entry) => entry.chatSessionId === selection.chatSessionId)
+    : undefined;
+  return (
+    claimed ??
+    attempts.find(
+      (entry) =>
+        attemptTargetKey(entry) === selection.targetKey &&
+        entry.sessionIdx === selection.sessionIndex
+    ) ??
+    null
+  );
+}
+
 // `disambiguateLabels` moved to `@/lib/environment-label` — ad-hoc environments
 // derive their label from the client name, so label collisions became the norm
 // rather than the exception and the Environments surfaces need it too.

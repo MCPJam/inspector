@@ -61,6 +61,91 @@ export type AppRouteEntry =
     };
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
+  {
+    path: "settings/appearance",
+    kind: "screen",
+    surfaceId: "settings",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/integrations",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "settings/about",
+    kind: "screen",
+    surfaceId: "settings",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/members",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/sharing",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/billing/byok",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/billing/usage",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/models/usage",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/api-keys",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/plans",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/data-management",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/audit-log",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "project-settings/members",
+    kind: "screen",
+    surfaceId: "project-settings",
+    scope: "project",
+  },
+  {
+    path: "project-settings/secrets",
+    kind: "screen",
+    surfaceId: "project-settings",
+    scope: "project",
+  },
+
   { path: "/", kind: "screen", surfaceId: "home", scope: "project" },
   { path: "home", kind: "screen", surfaceId: "home", scope: "project" },
   { path: "servers", kind: "screen", surfaceId: "servers", scope: "project" },
@@ -278,7 +363,18 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "playground",
     scope: "project",
   },
-  { path: "support", kind: "screen", surfaceId: "support", scope: "global" },
+  {
+    path: "settings/support",
+    kind: "screen",
+    surfaceId: "support",
+    scope: "global",
+  },
+  {
+    path: "support",
+    kind: "redirect",
+    note: "Support moved to Settings",
+    scope: "global",
+  },
   { path: "settings", kind: "screen", surfaceId: "settings", scope: "global" },
   {
     path: "settings/api-keys",
@@ -374,6 +470,21 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "organizations",
     scope: "global",
   },
+  // Observability — where this organization's traces are streamed. An
+  // `organizations` section on the same terms as the two above: org-scoped
+  // admin configuration, one segment, no `?tab=`.
+  {
+    path: "organizations/:orgId/observability",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/budget",
+    kind: "redirect",
+    note: "Spend budget was removed; auto-reload limits live under Billing",
+    scope: "global",
+  },
   {
     path: "evals/shared/:token",
     kind: "special",
@@ -462,12 +573,18 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
-  // Evaluate (New) — the flag-gated redesign. A sibling tree of `/evals`, so
+  // Public Evaluate. A sibling tree of `/evals`, so
   // the original tab's URLs are untouched. Suites lens only: the new landing's
   // Runs view is in-page state, and the commit lens stays on /evals/runs.
   { path: "evaluate", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
     path: "evaluate/create",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
+  {
+    path: "evaluate/eval-server/:serverId",
     kind: "screen",
     surfaceId: "evaluate",
     scope: "project",
@@ -490,6 +607,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  // The run page's "Compare runs" destination. `buildEvalRoutePath` has
+  // emitted this path and `parseEvalRouteFromUrl` has parsed it back to
+  // `comparison: true` since the compare page landed, but nothing registered
+  // it here — so the URL fell through to `"*"` and the link 404'd.
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId/compare",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
   {
     path: "evaluate/suite/:suiteId/test/:testId",
     kind: "screen",
@@ -505,13 +632,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   {
     path: "ci-evals",
     kind: "redirect",
-    note: "Legacy: Runs moved under Evaluate; redirects to /evals/runs.",
+    note: "Legacy: redirects to public Evaluate.",
     scope: "project",
   },
   {
     path: "ci-evals/*",
     kind: "redirect",
-    note: "Legacy Runs deep links (commit SHAs, suites, runs). These shipped in CI logs, bookmarks, and the SDK quickstart's post-sign-in return path, so the whole sub-tree is rewritten onto /evals/runs with query and hash intact.",
+    note: "Legacy CI links open Evaluate. Run links preserve context; commit links open the unfiltered run table.",
     scope: "project",
   },
   {
@@ -561,7 +688,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
  */
 function matchSegments(
   pattern: string,
-  segments: readonly string[]
+  segments: readonly string[],
 ): "exact" | "param" | "splat" | null {
   if (pattern === "*") return "splat";
   if (pattern === "/") return segments.length === 0 ? "exact" : null;
@@ -618,7 +745,7 @@ export function matchAppRoute(logicalPathname: string): AppRouteEntry | null {
  * registered), and the caller can see the difference.
  */
 export function getAppRouteScope(
-  logicalPathname: string
+  logicalPathname: string,
 ): AppRouteScope | null {
   return matchAppRoute(logicalPathname)?.scope ?? null;
 }
@@ -629,7 +756,7 @@ export function isProjectScopedRoutePath(logicalPathname: string): boolean {
 }
 
 export function listAppRoutesByScope(
-  scope: AppRouteScope
+  scope: AppRouteScope,
 ): readonly AppRouteEntry[] {
   return APP_ROUTES.filter((route) => route.scope === scope);
 }

@@ -35,7 +35,7 @@ describe("sidebar section grouping", () => {
       expect.arrayContaining(["Home", "Connect", "Playground"])
     );
     expect(titlesIn("Measure")).toEqual(
-      expect.arrayContaining(["Acceptance Testing", "Swarms", "Evaluate"])
+      expect.arrayContaining(["User Testing", "Swarms", "Evaluate"])
     );
     expect(titlesIn("Verify")).toEqual(
       expect.arrayContaining([
@@ -70,17 +70,38 @@ describe("sidebar section grouping", () => {
     expect(sectionOf("Compatibility")).toBe("Verify");
   });
 
-  it("labels User Testing as Acceptance Testing while keeping its route", () => {
+  it("labels the /user-testing item User Testing", () => {
     const item = navigationSections
       .flatMap((section) => section.items)
       .find((entry) => entry.url === "/user-testing");
 
-    expect(item?.title).toBe("Acceptance Testing");
+    expect(item?.title).toBe("User Testing");
     expect(
       navigationSections
         .flatMap((section) => section.items)
         .map((entry) => entry.title)
-    ).not.toContain("User Testing");
+    ).not.toContain("Acceptance Testing");
+  });
+
+  it("points the New pill at exactly the surfaces that are new", () => {
+    // The pill is editorial, not structural: it marks whichever surfaces are
+    // newest, so it has to be moved by hand as tabs age out of being new.
+    // Nothing type-errors when it is left behind on a long-shipped item, or
+    // when a second item quietly picks one up, so assert the whole set.
+    //
+    // Swarms and User Testing joined WebMCP in REEV-6. They are not new
+    // features, but REEV-6 is the first release in which a signed-out visitor
+    // can SEE them: the `sandboxes-enabled` flag used to hide both items
+    // outright, so to most of the people who now get a nav row, the row is
+    // new. The pill replaced a LOG IN / UPGRADE marker that described who the
+    // reader was rather than what the tab is, which is the distinction this
+    // set is guarding.
+    const badged = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.badge === "New")
+      .map((item) => item.title);
+
+    expect(badged).toEqual(["Swarms", "User Testing", "WebMCP"]);
   });
 
   it("never lists the same title twice across sections", () => {

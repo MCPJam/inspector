@@ -47,7 +47,7 @@ function describeHttpTarget(url: string): string {
 }
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
-export type McpServerLogKind = "rpc" | "oauth" | "http";
+export type McpServerLogKind = "rpc" | "oauth" | "http" | "webmcp";
 
 export interface UiLogEvent {
   id: string;

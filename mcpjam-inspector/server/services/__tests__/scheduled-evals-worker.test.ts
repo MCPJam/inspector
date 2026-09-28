@@ -110,6 +110,28 @@ describe("classifyFailure", () => {
     ).toBe("quota_exhausted");
   });
 
+  it("maps the org spend-budget refusal to quota_exhausted", () => {
+    // Both canonical markers reach this classifier: the `/stream` wire code
+    // and the launch mutation's ConvexError code. Either one must pause the
+    // schedule rather than retry into the same cap next window.
+    expect(classifyFailure(new Error("spend_budget_reached"))).toBe(
+      "quota_exhausted",
+    );
+    expect(
+      classifyFailure(
+        new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}'),
+      ),
+    ).toBe("quota_exhausted");
+  });
+
+  it("does not pause on an unrelated error that merely mentions a budget", () => {
+    // The loose-substring failure mode this classifier exists to avoid: an
+    // MCP server error naming "budget" is a plain failure, not a cap.
+    expect(classifyFailure(new Error("tool failed: budget lookup"))).toMatch(
+      /^run_create_failed:/,
+    );
+  });
+
   it("maps delegated-mint 401/403 failures to auth (pauses the schedule)", () => {
     expect(
       classifyFailure(new Error("Delegated token exchange failed (403)")),

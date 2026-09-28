@@ -1,5 +1,8 @@
+import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
+import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
 import type {
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
@@ -9,6 +12,7 @@ import type {
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
+import { evalSnapshotUploadTarget } from "../../utils/snapshot-upload-target.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
@@ -18,7 +22,14 @@ import {
   toBrowserStepPayload,
   toObservationPayload,
 } from "./finalize-iteration-browser-artifacts.js";
-import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import {
+  buildIterationUsageMetadata,
+  buildIterationUsagePayload,
+} from "./iteration-usage-metadata.js";
+import {
+  extractFinalAssistantMessage,
+  finalMessageEndsWithQuestion,
+} from "@mcpjam/sdk/predicates";
 import { buildIterationMetadata } from "./iteration-metadata.js";
 import {
   buildHostIterationMetadata,
@@ -26,14 +37,18 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  buildResultsByToolCallIdFromMessages,
+  deriveTrialFrictionSignalsFromCalls,
   deriveStageResults,
   attachStageMeasurements,
   stageDerivationToMetadata,
   type EvalSuiteFileToolPolicy,
   type StageAuthoredCase,
   type StageEvidence,
+  type StagePredicateResultLike,
   type StageResultRow,
   type StageSetupSignals,
+  type FrictionResultEntry,
   type IterationStatus as ContractIterationStatus,
   allGatingScorersPassed,
 } from "@mcpjam/sdk/contract";
@@ -47,6 +62,7 @@ import {
   buildHostedScoreContract,
   shadowVerdictFromScores,
   type HostedEvaluationLike,
+  type HostedMatcherTurnLike,
   type HostedPredicateResultLike,
 } from "./score-rows.js";
 import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
@@ -59,6 +75,7 @@ import {
   buildSelectionToolCatalog,
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
+import type { AgentActivityAssessment } from "./agent-activity.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -91,7 +108,7 @@ type PolicyBlockRecord = { reason?: unknown };
  * summary reason when multiple policy blocks occur.
  */
 function getIterationPolicyReason(
-  policyBlocks: ReadonlyArray<PolicyBlockRecord>
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>,
 ): string | undefined {
   const reason = policyBlocks[0]?.reason;
   return typeof reason === "string" ? reason : undefined;
@@ -124,6 +141,8 @@ function buildStageEvidence(args: {
    * failure would leave `call`/`response` looking unmeasured.
    */
   toolErrors?: unknown[];
+  /** Which layer raised a fatal step error, when the runner classified it. */
+  stepError?: StageEvidence["stepError"];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
   /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
@@ -139,10 +158,12 @@ function buildStageEvidence(args: {
     ...(hasPrompts ? { prompts: args.prompts } : {}),
     ...(args.predicateResults?.length
       ? {
-          predicateResults: args.predicateResults as ReadonlyArray<{
-            passed?: boolean;
-            reason?: string;
-          }>,
+          // The `predicate` discriminator crosses with the row. It was always
+          // present at runtime — `PredicateResult` carries the whole predicate
+          // — and this cast used to drop it, which is why UVH-IN1's routing
+          // could not tell a tool-selection assertion from a user-value one.
+          predicateResults:
+            args.predicateResults as ReadonlyArray<StagePredicateResultLike>,
         }
       : {}),
     ...(args.widgetRenderObservations?.length
@@ -156,6 +177,7 @@ function buildStageEvidence(args: {
           }>,
         }
       : {}),
+    ...(args.stepError ? { stepError: args.stepError } : {}),
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
@@ -195,6 +217,12 @@ export function buildStageMetadata(args: {
   predicateResults?: unknown[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   stageToolErrors?: unknown[];
+  /**
+   * Which layer raised a fatal step error, when the runner classified it.
+   * Reported by the catch site, never parsed out of `error` — see
+   * `StageStepErrorLike`.
+   */
+  stepError?: StageEvidence["stepError"];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
   /**
@@ -221,6 +249,26 @@ export function buildStageMetadata(args: {
 }): Record<string, unknown> {
   const { stageCase, status, error } = args;
   if (!stageCase) return {};
+  /**
+   * The classification itself, recorded beside the chain it produced.
+   *
+   * `stepError` is transient runner state, so a re-derivation that does not
+   * receive it derives from strictly less evidence than the first pass did.
+   * The judge second pass used to recover it by looking for a `providerError`
+   * row, on the stated grounds that the chain "already says it" — but it does
+   * not always: `categoryFor` returns `setup` for a model-call failure where
+   * NOTHING failed, and in that case no row is relabelled at all. The
+   * re-derivation then lost the category with no row missing to show for it.
+   *
+   * One key, written only for the classification that has a consequence.
+   * `code` and `httpStatus` stay out: they are diagnostics, were never part of
+   * the classification, and persisting them would invite a reader to treat
+   * them as evidence.
+   */
+  const stepErrorSource =
+    args.stepError?.source === "model"
+      ? { stageStepErrorSource: "model" as const }
+      : {};
   const metadata = stageDerivationToMetadata(
     deriveStageResults({
       authored: stageCase,
@@ -231,6 +279,7 @@ export function buildStageMetadata(args: {
         predicateResults: args.predicateResults,
         widgetRenderObservations: args.widgetRenderObservations,
         toolErrors: args.stageToolErrors,
+        ...(args.stepError ? { stepError: args.stepError } : {}),
         toolSignals: args.toolSignals,
         setupSignals: args.setupSignals,
         ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
@@ -242,12 +291,15 @@ export function buildStageMetadata(args: {
       policy: args.policy,
     }),
   );
-  return attachStageMeasurements(metadata, args.spans);
+  return {
+    ...attachStageMeasurements(metadata, args.spans),
+    ...stepErrorSource,
+  };
 }
 
 /** A predicate row the score projection can key a criterion off. */
 function isHostedPredicateResult(
-  value: unknown
+  value: unknown,
 ): value is HostedPredicateResultLike {
   if (typeof value !== "object" || value === null) return false;
   const row = value as { predicate?: unknown; passed?: unknown };
@@ -259,16 +311,16 @@ function isHostedPredicateResult(
 }
 
 /** Read only the matcher fields the projection needs, typed rather than cast. */
-function narrowEvaluation(
-  evaluation: Record<string, unknown>
-): HostedEvaluationLike {
+function narrowMatcherTurn(
+  turn: Record<string, unknown>,
+): HostedMatcherTurnLike {
   const list = (key: string): readonly unknown[] | undefined => {
-    const value = evaluation[key];
+    const value = turn[key];
     return Array.isArray(value) ? value : undefined;
   };
   return {
-    ...(typeof evaluation.passed === "boolean"
-      ? { passed: evaluation.passed }
+    ...(typeof turn.promptIndex === "number"
+      ? { promptIndex: turn.promptIndex }
       : {}),
     ...(list("expectedToolCalls")
       ? { expectedToolCalls: list("expectedToolCalls") }
@@ -278,6 +330,28 @@ function narrowEvaluation(
     ...(list("argumentMismatches")
       ? { argumentMismatches: list("argumentMismatches") }
       : {}),
+  };
+}
+
+function narrowEvaluation(
+  evaluation: Record<string, unknown>,
+): HostedEvaluationLike {
+  // Per turn, because the matcher applies the extras cap per turn and the
+  // selection verdict has to read it the same way.
+  const promptSummaries = Array.isArray(evaluation.promptSummaries)
+    ? evaluation.promptSummaries
+        .filter(
+          (turn): turn is Record<string, unknown> =>
+            typeof turn === "object" && turn !== null,
+        )
+        .map(narrowMatcherTurn)
+    : undefined;
+  return {
+    ...(typeof evaluation.passed === "boolean"
+      ? { passed: evaluation.passed }
+      : {}),
+    ...narrowMatcherTurn(evaluation),
+    ...(promptSummaries?.length ? { promptSummaries } : {}),
   };
 }
 
@@ -333,6 +407,7 @@ function narrowEvaluation(
  */
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
+  agentActivity?: AgentActivityAssessment;
   predicateResults?: unknown[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
@@ -350,13 +425,14 @@ function buildScoreMetadata(args: {
 } {
   if (args.mode === "off") return { keys: {} };
   const predicateResults = (args.predicateResults ?? []).filter(
-    isHostedPredicateResult
+    isHostedPredicateResult,
   );
   const { scores, evaluationConfig } = buildHostedScoreContract({
     ...(predicateResults.length ? { predicateResults } : {}),
     evaluation: narrowEvaluation(args.evaluation),
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
+    ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -416,7 +492,7 @@ function buildScoreMetadata(args: {
         ...(typeof args.stageMetadata.stageAnalyzerVersion === "number"
           ? { stageAnalyzerVersion: args.stageMetadata.stageAnalyzerVersion }
           : {}),
-      }
+      },
     );
     // The emitter is only REACHED on disagreement, so a spy on it counts
     // mismatches rather than comparisons — that is what makes
@@ -438,14 +514,20 @@ function buildScoreMetadata(args: {
  * first-pass mismatch means the score projection disagrees with `passed`.
  */
 function readUserValueRow(
-  stageMetadata: Record<string, unknown>
-): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
+  stageMetadata: Record<string, unknown>,
+):
+  | { state: StageResultRow["state"]; reason: StageResultRow["reason"] }
+  | undefined {
   const rows = stageMetadata.stageResults;
   if (!Array.isArray(rows)) return undefined;
   for (const row of rows) {
     if (typeof row !== "object" || row === null) continue;
     const candidate = row as Partial<StageResultRow>;
-    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
+    if (
+      candidate.stage === "userValue" &&
+      candidate.state &&
+      candidate.reason
+    ) {
       return { state: candidate.state, reason: candidate.reason };
     }
   }
@@ -470,7 +552,9 @@ function buildSelectionToolCatalogMetadata(args: {
   if (!Array.isArray(rows)) return {};
   const selectionRow = rows.find(
     (row): row is Partial<StageResultRow> =>
-      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+      typeof row === "object" &&
+      row !== null &&
+      (row as { stage?: unknown }).stage === "selection",
   );
   if (selectionRow?.state !== "failed") return {};
 
@@ -480,12 +564,14 @@ function buildSelectionToolCatalogMetadata(args: {
   // and folding them in could fill the catalog's cap before the turn that
   // actually caused the failure is ever considered.
   const failingPrompts = prompts.filter(
-    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0,
   );
   const expectedToolNames = failingPrompts
     .flatMap((p) => p.missing ?? [])
     .map((t) => t.toolName)
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
   // `unexpected` names FIRST, then the rest of the turn's actual calls:
   // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
   // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
@@ -500,11 +586,15 @@ function buildSelectionToolCatalogMetadata(args: {
   const unexpectedToolNames = failingPrompts
     .flatMap((p) => p.unexpected ?? [])
     .map((t) => t.toolName)
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
   const otherActualToolNames = failingPrompts
     .flatMap((p) => p.actualToolCalls ?? [])
     .map((t) => t.toolName)
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
   const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
   if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
     return {};
@@ -535,6 +625,8 @@ function buildSelectionToolCatalogMetadata(args: {
 export function buildIterationFinishParams(args: {
   iterationId: string | undefined;
   passed: boolean;
+  /** @see assessAgentActivity */
+  agentActivity?: AgentActivityAssessment;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
@@ -543,6 +635,7 @@ export function buildIterationFinishParams(args: {
   modelId?: string;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -591,6 +684,11 @@ export function buildIterationFinishParams(args: {
    * them unless they are threaded here.
    */
   stageToolErrors?: unknown[];
+  /**
+   * Which layer raised the fatal step error, forwarded from the executor.
+   * Absent when nothing fatal happened, or when the caller could not say.
+   */
+  stepError?: StageEvidence["stepError"];
   /** Execution-layer policy blocks; persisted as metadata, never a failure. */
   policyBlocks?: PolicyBlockRecord[];
   /** Non-fatal policy configuration warnings, persisted for run consumers. */
@@ -605,7 +703,8 @@ export function buildIterationFinishParams(args: {
    * blocked run for real the second time.
    */
   toolPolicy?: EvalSuiteFileToolPolicy;
-  iterationMetadataBase: Record<string, string | number | boolean>;
+  // Metadata includes structured timeout and experiment attribution.
+  iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
   /**
@@ -652,6 +751,27 @@ export function buildIterationFinishParams(args: {
    * itself — a caller with no live registry cannot say what the model saw.
    */
   selectionTools?: Record<string, SelectionCatalogToolLike>;
+  /**
+   * Where this iteration's TOOL RESULTS come from, for the friction signals.
+   *
+   * ABSENT ⇒ the map is built from `messages`, which is the emulated engine's
+   * whole record and the harness fallback when capture is off. A harness turn
+   * with capture ON supplies `harnessEvidence` instead, because the wire
+   * results — and the per-call timing the identifier rules need to establish
+   * availability — live on the evidence rows and never reach the transcript.
+   * A harness turn whose evidence read came back with a HOLE supplies
+   * `notMeasured`: a partial evidence set would let "no later call used this
+   * identifier" be answered from calls we know we are missing.
+   *
+   * Threaded rather than derived here because only the runner knows which of
+   * the three it is in.
+   */
+  frictionEvidence?:
+    | {
+        kind: "harnessEvidence";
+        resultsByToolCallId: ReadonlyMap<string, FrictionResultEntry>;
+      }
+    | { kind: "notMeasured"; reason: "evidenceIncomplete" };
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -662,6 +782,7 @@ export function buildIterationFinishParams(args: {
     modelId,
     systemPrompt,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -690,10 +811,7 @@ export function buildIterationFinishParams(args: {
     selectionTools,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
-  const persistedSpans = [
-    ...(setupSpans ?? []),
-    ...(spans ?? []),
-  ];
+  const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
     spans,
@@ -702,6 +820,7 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     widgetRenderObservations,
     stageToolErrors,
+    ...(args.stepError ? { stepError: args.stepError } : {}),
     toolSignals,
     setupSignals,
     policy:
@@ -723,6 +842,7 @@ export function buildIterationFinishParams(args: {
     evaluation,
     passed,
     stageMetadata,
+    ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     ...(args.runId ? { runId: args.runId } : {}),
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
@@ -738,14 +858,13 @@ export function buildIterationFinishParams(args: {
   // would silently switch D7's catalog capture back OFF for the cohort that
   // has progressed furthest. The predicate is what keeps "dual_write and
   // above" in one place.
-  const selectionToolCatalogMetadata =
-    isDualWrite(gradingMode)
-      ? buildSelectionToolCatalogMetadata({
-          stageMetadata,
-          prompts,
-          selectionTools,
-        })
-      : {};
+  const selectionToolCatalogMetadata = isDualWrite(gradingMode)
+    ? buildSelectionToolCatalogMetadata({
+        stageMetadata,
+        prompts,
+        selectionTools,
+      })
+    : {};
 
   // THE FLIP, and the ONE DIRECTION IT MAY MOVE.
   //
@@ -788,6 +907,42 @@ export function buildIterationFinishParams(args: {
   // `"reported"` either way — the inspector is still the thing reporting the
   // verdict, it has changed what it derives it from.
   const effectivePassed = derived ? passed && derived.passed : passed;
+
+  // FRICTION SIGNALS — observable patterns in this trial's tool calls.
+  //
+  // Deliberately computed AFTER the verdict and passed to nothing that
+  // produces one: not `buildEvalIterationVerdict`, not `buildScoreMetadata`,
+  // not `buildStageMetadata`. They are a report beside the verdict, and the
+  // one way that stays true is for the verdict to be finished before they
+  // exist.
+  //
+  // A throw omits the key rather than failing the finalize. The deriver
+  // already turns every EVIDENCE problem into a `notMeasured` document, so a
+  // throw here means a bug in the deriver — and a trial that loses its
+  // report-only signals is a strictly better outcome than a run that loses
+  // its verdict.
+  let frictionSignals: ReturnType<
+    typeof deriveTrialFrictionSignalsFromCalls
+  > | null = null;
+  try {
+    frictionSignals = deriveTrialFrictionSignalsFromCalls({
+      toolsCalled: evaluation.toolsCalled,
+      resultsByToolCallId:
+        args.frictionEvidence?.kind === "harnessEvidence"
+          ? args.frictionEvidence.resultsByToolCallId
+          : buildResultsByToolCallIdFromMessages(messages),
+      ...(args.frictionEvidence?.kind === "notMeasured"
+        ? { evidenceHole: args.frictionEvidence.reason }
+        : {}),
+    });
+  } catch (error) {
+    logger.warn(
+      `[evals] friction signals could not be derived: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
   return {
     iterationId,
     passed: effectivePassed,
@@ -797,6 +952,7 @@ export function buildIterationFinishParams(args: {
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
+    ...(requestPayloads?.length ? { requestPayloads } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -809,6 +965,19 @@ export function buildIterationFinishParams(args: {
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation as never),
+      // Written for EVERY trial, from the same helper the `noEndingQuestion`
+      // check uses — not only when somebody authored that check.
+      //
+      // Route facts have consumed `endedWithQuestion` since they shipped and
+      // have reported `notMeasured` the whole time, because nothing produced
+      // it. A fact that exists only where a check happens to be authored is
+      // not a run-level rate; it is a rate over the suites that opted in. So
+      // the producer is unconditional and the check is optional, and the two
+      // cannot disagree because there is one implementation of "ends with a
+      // question".
+      endedWithQuestion: finalMessageEndsWithQuestion(
+        extractFinalAssistantMessage(messages),
+      ),
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
@@ -821,6 +990,11 @@ export function buildIterationFinishParams(args: {
       ...(policyWarnings?.length ? { policyWarnings } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
+      ...(frictionSignals ? { frictionSignals } : {}),
+      // Only when the guard fired, so normal iterations gain no new key.
+      ...(args.agentActivity?.status === "no_agent_activity"
+        ? { agentActivity: args.agentActivity }
+        : {}),
       ...scoreMetadata,
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
@@ -838,6 +1012,12 @@ export function buildIterationFinishParams(args: {
 
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
+  /**
+   * The Convex bearer `convexClient` writes with. Screenshots and the replay
+   * video are uploaded as this identity (MJ-006); without it they are left out
+   * and the rows still persist.
+   */
+  convexAuthToken?: string;
   iterationId?: string;
   passed: boolean;
   toolsCalled: ToolCallRecord[];
@@ -846,6 +1026,7 @@ export type FinalizeEvalIterationParams = {
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -873,6 +1054,26 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
+  /**
+   * The container `videoBytes` is in.
+   *
+   * EXPLICIT rather than sniffed, and defaulted to `video/webm` by the
+   * uploader so every existing caller is unchanged. It matters because Convex
+   * serves back exactly the content type the bytes were posted with: an MP4
+   * announced as `video/webm` is a file a browser refuses to play, and the
+   * only symptom is an empty player on the trace page.
+   */
+  videoMime?: string;
+  /**
+   * What the recording itself reports — duration, rate, how many distinct
+   * frames it actually holds, and whether it was cut short at the size cap.
+   *
+   * Beside the bytes rather than derived from them: the daemon is the only
+   * thing that knows a take stopped early, and re-deriving a duration by
+   * demuxing the file here would be work that answers a question already
+   * answered.
+   */
+  videoMeta?: EvalTraceVideoMeta;
   /** Explicit harness lifecycle status; never infer it from the verdict. */
   status: IterationStatus;
   startedAt?: number;
@@ -921,6 +1122,7 @@ export async function finalizeEvalIteration(
 ): Promise<void> {
   const {
     convexClient,
+    convexAuthToken,
     iterationId,
     passed,
     toolsCalled,
@@ -928,12 +1130,15 @@ export async function finalizeEvalIteration(
     messages,
     modelId,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
     widgetRenderObservations,
     browserInteractionSteps,
     videoBytes,
+    videoMime,
+    videoMeta,
     status,
     startedAt,
     error,
@@ -1010,8 +1215,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-        ? "eval_failed"
-        : "eval_completed";
+      ? "eval_failed"
+      : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -1022,24 +1227,27 @@ export async function finalizeEvalIteration(
   // through the convex sanitizer) so the W2 fanout and the W1 fallback share a
   // single upload pass. Owning this in the shared finalize step is what keeps
   // recorder + direct quick-run callers from double-uploading.
+  const uploadTarget = evalSnapshotUploadTarget(convexAuthToken, iterationId);
   const serializedWidgetRenderObservations =
     await serializeRenderObservationsForBackend(
       widgetRenderObservations,
-      convexClient,
+      uploadTarget,
     );
   const serializedBrowserInteractionSteps =
     await serializeBrowserStepsForBackend(
       browserInteractionSteps,
-      convexClient,
+      uploadTarget,
     );
 
   // Upload the iteration replay video alongside the screenshots, in the same
   // single-pass choke point. Best-effort: a failed upload is logged + dropped
   // (videoBlobId stays undefined → no player) and NEVER fails the iteration.
   let videoBlobId: string | undefined;
-  if (videoBytes && videoBytes.length > 0) {
+  if (videoBytes && videoBytes.length > 0 && uploadTarget) {
     try {
-      videoBlobId = await uploadVideoBlob(convexClient, videoBytes);
+      videoBlobId = await uploadVideoBlob(uploadTarget, videoBytes, {
+        ...(videoMime ? { contentType: videoMime } : {}),
+      });
     } catch (err) {
       logger.warn("[evals] replay video upload failed; finalizing without it", {
         iterationId,
@@ -1055,19 +1263,23 @@ export async function finalizeEvalIteration(
     messages,
     ...(modelId ? { modelId } : {}),
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
     widgetRenderObservations: serializedWidgetRenderObservations,
     browserInteractionSteps: serializedBrowserInteractionSteps,
     ...(videoBlobId ? { videoBlobId } : {}),
+    // Only alongside a blob that actually landed. Metadata describing a video
+    // nothing uploaded would render a duration and an fps under an empty
+    // player — worse than no metadata, because it asserts a recording exists.
+    ...(videoBlobId && videoMeta ? { videoMeta } : {}),
   });
   // Fall back to the W1 single-call path ONLY when the fanout failed
   // before any turn landed. With turns already written, re-sending
   // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
   // orphan turns 1..N. See persist-eval-trace.ts for the contract.
-  const useW1Fallback =
-    fanout.persisted === false && fanout.turnsWritten === 0;
+  const useW1Fallback = fanout.persisted === false && fanout.turnsWritten === 0;
   if (fanout.persisted === false) {
     logger.warn(
       useW1Fallback
@@ -1086,6 +1298,7 @@ export async function finalizeEvalIteration(
   // call on a deleted session, AND so the lock fires even when
   // the iteration update threw a transient error.
   let iterationGoneOrCancelled = false;
+  const usagePayload = buildIterationUsagePayload(usage);
   try {
     await convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId,
@@ -1093,9 +1306,22 @@ export async function finalizeEvalIteration(
       result,
       actualToolCalls: sanitizeForConvexTransport(toolsCalled),
       tokensUsed: usage.totalTokens ?? 0,
+      // The structured token field, beside (not instead of) `tokensUsed` and
+      // the metadata breakdown — old readers keep working unchanged. Without
+      // it `testIteration.usage` stayed undefined on every hosted iteration,
+      // so the run-vs-run diff fell back to trace tokens and could not cost
+      // the run at all. It is also what the backend prices from.
+      ...(usagePayload ? { usage: usagePayload } : {}),
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(messages),
+            ...(requestPayloads?.length
+              ? {
+                  requestPayloadsJson: JSON.stringify(
+                    capRequestPayloadsForPersist(requestPayloads),
+                  ),
+                }
+              : {}),
             // Mirrors `appendEvalTurnTrace.systemPrompt`. Cursor Bugbot
             // follow-up "W1 omits systemPrompt": without this the W1
             // fallback persists a transcript with no resolved system
@@ -1113,8 +1339,7 @@ export async function finalizeEvalIteration(
               : {}),
             ...(widgetSnapshots?.length
               ? {
-                  widgetSnapshots:
-                    sanitizeForConvexTransport(widgetSnapshots),
+                  widgetSnapshots: sanitizeForConvexTransport(widgetSnapshots),
                 }
               : {}),
             // PR 6b: browser artifacts already uploaded + sanitized above;
@@ -1137,7 +1362,14 @@ export async function finalizeEvalIteration(
               : {}),
             // Iteration replay video already uploaded above; carry the storageId
             // onto the W1 fallback so the replay survives the fanout-failed path.
-            ...(videoBlobId ? { videoBlobId } : {}),
+            ...(videoBlobId
+              ? {
+                  videoBlobId,
+                  // ...and what it says about itself, on the same call. On its
+                  // own it would render a duration under an empty player.
+                  ...(videoMeta ? { videoMeta } : {}),
+                }
+              : {}),
           }
         : {}),
       error,

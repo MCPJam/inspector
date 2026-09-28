@@ -1,3 +1,31 @@
+import { modelWorkloadFor } from "../../utils/model-workload.js";
+import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
+import { BrowserSessionService } from "../../services/browserd/session-service.js";
+import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
+import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { isChromiumInstalled } from "../../utils/browser-rendering-setup.js";
+import { resolveLocalBrowserRuntime } from "../../services/browserd/local/local-browser-session.js";
+import { resolveBrowserEngine } from "../../utils/computers/browser-engine.js";
+import {
+  BROWSER_CONSENT_HEADER,
+  verifyLocalBrowserConsent,
+} from "../../utils/computers/browser-consent.js";
+import {
+  withoutLegacyWebmcpVerbs,
+  type BrowserPageToolsSnapshot,
+} from "../../utils/built-in-tools/browser.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import {
   createUIMessageStream,
@@ -16,14 +44,24 @@ import type { RuntimeStandaloneSkill } from "../../services/environments/effecti
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
+import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
-import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
+import { getRequestLogger } from "../../utils/request-logger";
+import {
+  HOSTED_MODE,
+  LOCAL_HARNESS_ENABLED,
+  WEBMCP_INSPECTOR_ENABLED,
+} from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  externalAccountHostModelRefusalReason,
+} from "../../utils/harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -37,6 +75,11 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import {
+  createEmptyTurnWatcher,
+  hasSettledToolCallThisPrompt,
+} from "../../utils/empty-step-failure.js";
+import { emitError } from "../../utils/chat-stream-chunks.js";
 import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
@@ -56,6 +99,8 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   buildWidgetModelContextSystemPrompt,
+  advertisedPageToolsOnly,
+  guardPageToolRefresh,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
@@ -100,6 +145,19 @@ import {
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
 import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
+import {
+  resolveBrowserRollout,
+  guestBrowserProject,
+} from "../../utils/computers/browser-rollout.js";
+import {
+  LOCAL_HARNESS_GRANT_HEADER,
+  parseHarnessExecutionTarget,
+  type RawHarnessTargetInput,
+} from "../../utils/harness/local/request-target.js";
+import {
+  contextCredentialClass,
+  resolveLocalHarnessActor,
+} from "../../utils/harness/local/acting-user.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -125,11 +183,6 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -286,6 +339,12 @@ function buildLocalScopeStepUpResume(input: {
         claimed.toolName
       ];
       if (
+        (claimed.connectionId &&
+          toolConnectionAttribution(
+            originalTool,
+            claimed.input,
+            claimed.toolCallId,
+          )?.connectionId !== claimed.connectionId) ||
         !originalTool ||
         typeof originalTool.execute !== "function" ||
         (typeof originalTool._serverId === "string" &&
@@ -519,7 +578,8 @@ function streamDirectChatWithLiveTrace(options: {
   // chain — cheaper than widening the engine's signature for every headless
   // caller that will never emit a receipt.
   let persistReceipt:
-    { outcome: PersistChatOutcome; turnId: string } | undefined;
+    | { outcome: PersistChatOutcome; turnId: string }
+    | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -590,6 +650,14 @@ function streamDirectChatWithLiveTrace(options: {
         traceEvents: buildDirectChatTraceCallbacks(writer),
       });
 
+      // `streamText` finishes an empty last step as if it were a reply, which
+      // left a blank bubble and no record. Same verdict as the hosted engine.
+      const emptyTurn = createEmptyTurnWatcher({
+        settledToolBeforeStream: hasSettledToolCallThisPrompt(
+          turnOptions.messageHistory,
+          handle.traceTurn.promptMessageStartIndex,
+        ),
+      });
       try {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
@@ -618,6 +686,27 @@ function streamDirectChatWithLiveTrace(options: {
           if (
             isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
           ) {
+            continue;
+          }
+          emptyTurn.observe(chunk);
+          const emptyTurnMessage =
+            chunk.type === "finish" && !handle.isAborted()
+              ? emptyTurn.failureFor(chunk)
+              : undefined;
+          if (emptyTurnMessage) {
+            // The error REPLACES the finish chunk, as on the hosted engine,
+            // and is written before the report so a reporter throw cannot
+            // swallow it.
+            emitError(writer, emptyTurnMessage);
+            reportRouteFailure(
+              "[mcp/chat-v2] direct step returned no content",
+              new Error(emptyTurnMessage),
+              {
+                source: "mcp.chat-v2.direct-empty-step",
+                hop: "user_server_hop",
+                context: { provider, modelId: handle.modelId },
+              },
+            );
             continue;
           }
           writer.write(
@@ -668,6 +757,13 @@ chatV2.post("/", async (c) => {
       // (computer still comes only from the server-resolved runtime config).
       // "local" additionally requires the consent capability header.
       computerEngine?: "local" | "cloud";
+      browserEngine?: "local" | "cloud";
+      // Run a CLAUDE CODE HARNESS turn on this machine rather than in a cloud
+      // computer. Opaque ids only; the consent capability rides the
+      // `x-mcpjam-local-harness-grant` header, never the body, so it cannot
+      // enter a persisted transcript. Local-route only — `/api/web/chat-v2`
+      // parses it too, and refuses it, so the two cannot disagree about shape.
+      harnessTarget?: RawHarnessTargetInput;
     };
     const mcpClientManager = c.mcpClientManager;
     const rawScopeStepUpResume = body.scopeStepUpResume;
@@ -729,7 +825,7 @@ chatV2.post("/", async (c) => {
       ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isScenarioSession ? (bodySurface ?? "preview") : undefined;
+      isScenarioSession ? bodySurface ?? "preview" : undefined;
 
     // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -807,6 +903,9 @@ chatV2.post("/", async (c) => {
           // where the client's `readRouteError` looks. Only the access
           // verdicts carry one; every other status keeps the pre-existing
           // shape.
+          if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
+            return c.json({ error: runtime.error, code: runtime.code }, 401);
+          }
           if (runtime.code === "SCENARIO_ACCESS_STALE") {
             return c.json(
               { error: failClosedMessage, code: "SCENARIO_ACCESS_STALE" },
@@ -867,12 +966,40 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: body.builtInToolIds,
+        builtInToolIds: isScenarioSession ? undefined : body.builtInToolIds,
       },
       // Scenario: published host wins. Host preview: owner's body tweaks win,
       // harness/computer stay host-only (not overridable). See web/chat-v2.ts.
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+    let localBrowserSettingsUnavailable = false;
+    if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
+      let enabled =
+        typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+          ? hostRuntimeConfig.localBrowserEnabled
+          : undefined;
+      if (
+        !hostRuntimeConfig &&
+        typeof body.projectId === "string" &&
+        body.projectId &&
+        c.req.header("authorization") &&
+        !isGuestChatRequest(c.req.header("authorization"))
+      ) {
+        try {
+          enabled = await readLocalBrowserSetting(
+            await getConvexBearerForRequest(c),
+            body.projectId,
+          );
+        } catch {
+          localBrowserSettingsUnavailable = true;
+        }
+      }
+      resolvedExecution.builtInToolIds = resolveLocalBrowserTools(
+        resolvedExecution.builtInToolIds,
+        enabled,
+        true,
+      );
+    }
     // Preserve the per-field warnings the inline code emitted — the
     // resolver returns drift as data so the call site can keep its
     // existing log shape unchanged.
@@ -925,8 +1052,44 @@ chatV2.post("/", async (c) => {
     // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
+    //
+    // Host-wins for a scenario, and ALSO for an EXTERNAL-ACCOUNT harness on any
+    // surface — see the twin gate in `routes/web/chat-v2.ts`. The Cursor
+    // adapter passes no model, so the body's model overrides nothing and only
+    // the host's `cursor/auto` sentinel describes the turn; recording the
+    // browser's leftover pick would attribute the turn to a model that never
+    // ran.
+    //
+    // Unconditional for such a harness, matching the web rail: the refusal
+    // directly above has already established that this host carries the
+    // sentinel, so there is nothing left for a narrowing here to decide.
+    // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
+    // below resolves anything. `resolveHostModelDefinition` asks the org's
+    // model config about an id it cannot possibly list, on a call carrying a
+    // 15 s timeout — and this host is going to be refused by the harness
+    // pre-flight further down regardless. Deciding it here keeps the same
+    // refusal (one shared sentence, one rule) and pays nothing for it.
+    //
+    // The pre-flight's own copy of the rule stays: it is the gate every surface
+    // shares, and this is a shortcut in front of it, not a replacement.
+    if (resolvedExecution.harness) {
+      const hostModelRefusal = externalAccountHostModelRefusalReason({
+        harnessId: resolvedExecution.harness,
+        modelId: resolvedExecution.modelId ?? String(model?.id ?? ""),
+      });
+      if (hostModelRefusal) {
+        return c.json(
+          {
+            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          },
+          503,
+        );
+      }
+    }
     if (
-      isScenarioSession &&
+      (isScenarioSession ||
+        (resolvedExecution.harness &&
+          harnessUsesExternalAccount(resolvedExecution.harness))) &&
       hostRuntimeConfig &&
       model &&
       resolvedExecution.modelId &&
@@ -996,21 +1159,46 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
-    // Provider-aware, matching streamWebChatTurn's dispatch: bare hosted ids
-    // (`gpt-5-nano` + `openai`) only canonicalize to their prefixed MCPJam form
-    // with the provider — a provider-blind check here routes them into
-    // org/BYOK below even after they passed the harness preflight.
+    // Matches streamWebChatTurn's dispatch: the whole definition, so a bare
+    // hosted id (`gpt-5-nano` + `openai`) still canonicalizes to its prefixed
+    // MCPJam form, and the picker's explicit `hosted: false` on a "Your
+    // providers" row with the same bare id still routes to the org's key.
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id &&
-      isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+      modelDefinition.id && isHostedModelDefinition(modelDefinition),
     );
+    // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+    // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
+    // `streamWebChatTurn` makes, for the same reason: without it a Cursor host
+    // on this rail passes the harness preflight above and then falls into the
+    // org-BYOK branch, which asks the org config for a `cursor` provider key
+    // that cannot exist — so the harness never runs and the user sees a
+    // configuration error for a host the product just called ready.
+    //
+    // Kept separate from `isMcpJamProvidedModel` rather than folded into it:
+    // that name means "MCPJam pays for this model", and an external-account
+    // turn is precisely the case where it does not. The two facts differ, so
+    // the values do too — `modelSource` below reads this one.
+    const isExternalAccountHarnessTurn = Boolean(
+      resolvedExecution.harness &&
+        harnessUsesExternalAccount(resolvedExecution.harness),
+    );
+    const usesMcpjamFreePath =
+      isMcpJamProvidedModel || isExternalAccountHarnessTurn;
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
     // allowlist. A guest MCPJam-model request still gets its bearer minted
     // lazily below (resolveMcpJamAuthHeader).
     let mcpJamAuthHeader = requestAuthHeader;
     const resolveMcpJamAuthHeader = async () => {
-      if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
+      // Keyed on the FREE-PATH predicate, not on "MCPJam provides this model".
+      // An external-account harness turn takes the same branch below and needs
+      // the same bearer for everything that branch does with it — persisting
+      // the session, reserving the box, fetching runtime config. Gating the
+      // mint on `isMcpJamProvidedModel` left an anonymous Cursor turn holding
+      // `undefined` and 503-ing on "Unable to authenticate with MCPJam
+      // servers" before the harness ever started, on a host the preflight had
+      // just called ready.
+      if (mcpJamAuthHeader || !usesMcpjamFreePath) return mcpJamAuthHeader;
       try {
         mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
       } catch {
@@ -1023,7 +1211,7 @@ chatV2.post("/", async (c) => {
     // it before tool prep too, otherwise host-enabled built-ins are omitted
     // even though the later MCPJam model path can authenticate the turn.
     if (
-      isMcpJamProvidedModel &&
+      usesMcpjamFreePath &&
       !mcpJamAuthHeader &&
       process.env.CONVEX_HTTP_URL
     ) {
@@ -1088,10 +1276,65 @@ chatV2.post("/", async (c) => {
 
     // Harness preflight: fail closed with a clear message when a host-resolved
     // harness (claude-code | codex) can't run on this server (never silent-
+    // The HARNESS execution target, resolved BEFORE the availability gate,
+    // because it changes what that gate checks: a local turn reserves and wakes
+    // no E2B box, so the computers-data-plane requirement does not apply to it.
+    //
+    // Parsed by the same shared rules `/api/web/chat-v2` uses, so the two
+    // routes cannot disagree about shape. An explicit ask that cannot be
+    // honoured is REFUSED here, before a stream opens, rather than silently
+    // relocated to a cloud box: quietly moving a turn the user deliberately
+    // scoped to their machine is the dishonesty this design removes.
+    //
+    // The acting user is resolved ONLY for an explicit local-native ask, by
+    // the same module and the same rules the consent route binds with, so the
+    // grant is verified against the identity that authenticated rather than
+    // one the body named or one nobody resolved at all. Every unrelated turn
+    // — hosted, BYOK, guest, anonymous desktop — skips this entirely and its
+    // authentication behaviour is exactly what it was.
+    const asksForLocalNative = body.harnessTarget?.kind === "local-native";
+    let localHarnessActingUserId: string | null = null;
+    if (asksForLocalNative) {
+      const actor = await resolveLocalHarnessActor({
+        authorizationHeader: requestAuthHeader,
+        contextCredential: contextCredentialClass(c),
+      });
+      if (!actor.ok) {
+        // The credential's own status, not a blanket 400: an expired session
+        // is a 401 the client re-authenticates from, and a deployment with no
+        // AuthKit at all is a 503 the operator fixes. Collapsing both into
+        // "your target is malformed" is what sends a signed-out user to
+        // re-pick a folder.
+        return c.json(
+          { error: actor.message, reason: actor.reason },
+          actor.status,
+        );
+      }
+      localHarnessActingUserId = actor.actor.userId;
+    }
+    const harnessTargetParse = parseHarnessExecutionTarget({
+      body,
+      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      actingUserId: localHarnessActingUserId,
+      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      actorEligible:
+        !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
+    });
+    if (harnessTargetParse.kind === "refused") {
+      return c.json({ error: harnessTargetParse.reason }, 400);
+    }
+    const harnessExecutionTarget =
+      harnessTargetParse.kind === "local-native"
+        ? harnessTargetParse.target
+        : undefined;
+
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        // A local turn reserves and wakes nothing, so the computers-data-plane
+        // check does not apply to it. Every other rule still does.
+        ...(harnessExecutionTarget ? { localExecution: true } : {}),
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // The RESOLVED definition — eligibility and the canonical id are both
@@ -1100,7 +1343,15 @@ chatV2.post("/", async (c) => {
         model: {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
         },
+        // The HOST's own configured id, kept separate from the resolved model
+        // above. Only the external-account rule reads it, and only that rule
+        // should: it asks whether this HOST carries the runtime's sentinel, a
+        // question a request body must not be able to answer.
+        ...(resolvedExecution.modelId
+          ? { hostModelId: resolvedExecution.modelId }
+          : {}),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
@@ -1109,7 +1360,20 @@ chatV2.post("/", async (c) => {
           readXaaEnterprisePolicy(
             (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
           ).kind !== "off",
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.mcp.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         return c.json(
           {
@@ -1130,7 +1394,9 @@ chatV2.post("/", async (c) => {
     // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
@@ -1169,14 +1435,175 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-          ? { preference: "cloud" as const }
-          : {}),
+        ? { preference: "cloud" as const }
+        : {}),
       localConsentValid,
     });
 
-    // Filled by the resolver when browser tools are advertised; merged into
-    // the engines' single `uiToolApprovals` slot below.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
+    const localBrowserRequested = body.browserEngine === "local";
+    const browserRollout =
+      !localBrowserSettingsUnavailable &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+        ? await resolveBrowserRollout(c, localBrowserRequested)
+        : { enabled: false, actor: null };
+    const localBrowserGuestId =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      browserRollout.actor?.guest
+        ? browserRollout.actor.id
+        : undefined;
+    const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
+    const browserConsentValid =
+      browserRollout.enabled &&
+      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
+      !isScenarioSession &&
+      (await verifyLocalBrowserConsent(browserConsentToken));
+    let browserEngine = resolveBrowserEngine({
+      preference: localBrowserRequested ? "local" : "cloud",
+      localConsentValid: browserConsentValid,
+    });
+    if (!browserRollout.enabled) browserEngine = "unavailable";
+    let browserUnavailableReason = localBrowserSettingsUnavailable
+      ? "browser_runtime_unavailable: Could not load local Browser settings. Retry your request."
+      : !browserRollout.enabled
+      ? "browser_rollout_unavailable: Browser is not available for this location."
+      : localBrowserRequested && browserEngine !== "local"
+      ? browserConsentValid
+        ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
+        : "browser_consent_required: Allow Browser in the Browser panel."
+      : undefined;
+
+    if (
+      browserEngine === "local" &&
+      resolveLocalBrowserRuntime() !== "electron" &&
+      !(await isChromiumInstalled())
+    ) {
+      browserEngine = "unavailable";
+      browserUnavailableReason =
+        "browser_runtime_unavailable: Install Chromium in the Browser panel.";
+    }
+    if (
+      !localBrowserGuestId &&
+      body.browserEngine &&
+      body.chatSessionId &&
+      body.projectId &&
+      builtInAuthHeader &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID) &&
+      !browserUnavailableReason
+    ) {
+      try {
+        const browserSessions = new BrowserSessionService();
+        const location = await browserSessions.conversationLocation({
+          conversationId: body.chatSessionId,
+          projectId: body.projectId,
+          bearer: builtInAuthHeader,
+        });
+        if (
+          location &&
+          location !== (localBrowserRequested ? "local" : "cloud")
+        )
+          throw new Error("browser_location_mismatch");
+      } catch (error) {
+        browserEngine = "unavailable";
+        browserUnavailableReason =
+          error instanceof Error &&
+          error.message.includes("browser_location_mismatch")
+            ? "browser_location_mismatch: Start a new chat to change Browser location."
+            : "browser_runtime_unavailable: Browser session could not be reached. Retry from the Browser panel.";
+      }
+    }
+
+    const emitBrowserReadiness = (writer: {
+      write: (chunk: UIMessageChunk) => void;
+    }) => {
+      if (
+        !body.browserEngine ||
+        !resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+      )
+        return;
+      writer.write({
+        type: "data-browser-readiness",
+        data: { reason: browserUnavailableReason ?? null },
+      });
+    };
+
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
+    // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
+    // skipped entirely for a turn that has no browser capability.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(bodyHostId ? { hostId: bodyHostId } : {}),
+          }
+        : undefined;
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
+      builtInToolIds: browserUnavailableReason
+        ? []
+        : resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: browserEngine === "local" ? "local" : "hosted",
+      projectId:
+        typeof body.projectId === "string"
+          ? localBrowserGuestId
+            ? guestBrowserProject(body.projectId, localBrowserGuestId)
+            : body.projectId
+          : undefined,
+      ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+    /**
+     * Record what this turn advertised from the page.
+     *
+     * Written down rather than re-derived: the live browser describes the page
+     * it is on NOW, so a conversation reopened tomorrow would attribute its
+     * cards to whatever tool happens to carry that name then.
+     */
+    const withPageToolsAtTurn = (
+      trace: PersistedTurnTrace,
+    ): PersistedTurnTrace =>
+      // A turn that started with no snapshot but grew tools mid-turn has a
+      // record worth keeping too — the refresher's, read at persist time.
+      pageToolsSnapshot || pageToolRefresh
+        ? {
+            ...trace,
+            // Filtered by the same collision policy the model's own set was,
+            // so the record cannot name a tool the model never got.
+            pageToolsAtTurn: toMintedPageToolRecords(
+              reservedAgainstPageTools
+                ? advertisedPageToolsOnly(
+                    advertisedPageTools,
+                    reservedAgainstPageTools,
+                  )
+                : advertisedPageTools,
+              advertisedPageToolsBinding ?? pageToolsSnapshot,
+            ),
+          }
+        : trace;
+
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    // The generation those tools belong to; moves with them on each refresh.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1195,7 +1622,7 @@ chatV2.post("/", async (c) => {
             // resolver withholds bash on the personal-project path — matching
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
-            isGuest: !requestAuthHeader,
+            isGuest: requestIsGuest,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -1206,13 +1633,40 @@ chatV2.post("/", async (c) => {
             // requires approval regardless (see bash.ts).
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
+            browserEngine,
+            localBrowserGuestId,
+            browserConsentToken,
+            localBrowserRequested,
+            browserUnavailableReason,
             localComputerRequested: localPrefEligible,
-            // This route THREADS the classification below, so it may advertise
-            // interactive browser tools; surfaces that thread nothing get none
-            // (see built-in-tools/browser.ts).
+            // A person is watching this route, so browser tools may be
+            // advertised and keep a signed-in profile; surfaces that attest
+            // nothing get none (see built-in-tools/browser.ts).
             browserApprovalDelivery: { kind: "attested" },
-            onBrowserApprovals: (approvals) => {
-              browserToolApprovals = approvals;
+            ...(resolvedExecution.browserProfileId
+              ? { browserProfileId: resolvedExecution.browserProfileId }
+              : {}),
+            ...(browserSessionScope ? { browserSessionScope } : {}),
+            ...(pageToolsSnapshot
+              ? { browserPageTools: pageToolsSnapshot }
+              : {}),
+            // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset
+            // as a constructor argument and never re-reads it, so claiming it
+            // here would build a refresher nothing consumes. NOT gated on the
+            // snapshot: the ordinary turn starts on a blank tab or with no
+            // browser at all, and is exactly the one whose set has to grow.
+            browserDynamicPageTools: !resolvedExecution.harness,
+            // KEPT HERE, dropped later. Two of the engines this route can hand
+            // the set to consume `refreshTools` and two (BYOK direct, harness)
+            // do not; retiring the verbs at build time took the page away from
+            // the ones that cannot re-advertise. The two refreshing call sites
+            // below strip them with `withoutLegacyWebmcpVerbs`.
+            browserRetireInvokeVerb: false as const,
+            onBrowserPageTools: ({ minted }) => {
+              advertisedPageTools = minted;
+            },
+            onBrowserToolsRefresh: (refresh) => {
+              pageToolRefresh = refresh;
             },
           }
         : null,
@@ -1225,7 +1679,25 @@ chatV2.post("/", async (c) => {
     // persisted direct-chat/resume configs keep the RAW user prompt; the env
     // block is turn-injected, not user configuration.
     const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
-      systemPrompt,
+      systemPrompt:
+        browserUnavailableReason &&
+        resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+          ? [
+              systemPrompt,
+              "Browser is configured for this conversation but is temporarily unavailable for this turn. " +
+                (browserUnavailableReason.startsWith(
+                  "browser_consent_required:",
+                )
+                  ? "The user must click Allow in the Browser panel, then retry their request."
+                  : browserUnavailableReason.replace(
+                      /^browser_[a-z_]+:\s*/,
+                      "",
+                    )),
+              "If the request needs browsing, explain this setup step briefly. Do not claim that this assistant cannot browse in general. Do not claim navigation succeeded or switch browser locations.",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : systemPrompt,
       // The environment context describes the pinned E2B image — the WRONG
       // machine when this turn's bash runs on the user's own computer.
       hasBashTool:
@@ -1282,11 +1754,17 @@ chatV2.post("/", async (c) => {
     // orchestrator used to pick between.
     //
     // Local files are always in it (this route only runs where there IS a local
-    // filesystem). The project's skills join them when the request is
-    // authenticated and names a project — the same three conditions
-    // `shouldEnableCloudSkillTools` applies on the hosted routes, restated here
-    // because this route derives guest-ness from the absence of an
-    // Authorization header rather than from a guest id.
+    // filesystem). The project's skills join them when the request comes from a
+    // SIGNED-IN caller and names a project — the same membership condition
+    // `shouldEnableCloudSkillTools` applies on the hosted routes.
+    //
+    // `requestIsGuest`, not the presence of an Authorization header: this route
+    // attaches a guest bearer for anonymous callers (`/api/mcp/chat-v2` is in
+    // the client's `HOSTED_AUTH_PATH_PREFIXES`), so a header proves a session
+    // exists, never that it belongs to a member. Reading it as membership sent
+    // one `projectSkills:listSkills` per guest turn into a signed-in-only
+    // query, which refused every one of them (CONVEX-19R). The header term
+    // survives only to narrow `string | undefined` for `authHeader` below.
     //
     // Signed out, or with no project: local-only, which is exactly what this
     // route did before. What is new is that signing IN no longer means choosing.
@@ -1311,7 +1789,12 @@ chatV2.post("/", async (c) => {
       : [];
     let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
     let skillsFetchFailed: SkillsFetchFailure | undefined;
-    if (gathersInMemorySkills && requestAuthHeader && body.projectId) {
+    if (
+      gathersInMemorySkills &&
+      !requestIsGuest &&
+      requestAuthHeader &&
+      body.projectId
+    ) {
       const startedAt = Date.now();
       try {
         cloudRuntimeSkills = await listCloudRuntimeSkills({
@@ -1340,6 +1823,24 @@ chatV2.post("/", async (c) => {
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
+        // Read from the SERVER-resolved host config, never the body, and per
+        // turn rather than per connection: the connection's copy is captured
+        // when it connects, so a toggle saved mid-session would not reach it
+        // until something reconnected.
+        //
+        // Authoritative whenever a host config resolved: a host that cancels
+        // normally must send an EMPTY record, not nothing. `undefined` would
+        // fall through to the connection's connect-time copy — which is the
+        // stale value this exists to override — so switching the toggle back
+        // on would keep suppressing.
+        ...(hostRuntimeConfig
+          ? {
+              toolCallCancellation:
+                toolCallCancellationFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                ) ?? {},
+            }
+          : {}),
         modelDefinition,
         systemPrompt: effectiveSystemPrompt,
         temperature,
@@ -1353,6 +1854,9 @@ chatV2.post("/", async (c) => {
           : {}),
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
+        // The prompt section that explains `webmcp_*` tools has to be there
+        // BEFORE a navigation adds them; the refresher's presence is the fact.
+        pageToolsMayGrow: Boolean(pageToolRefresh),
         // A harness turn takes its skills on-box and must be handed none here —
         // the two delivery channels are deliberately disjoint.
         skillsSource: resolvedExecution.harness
@@ -1403,27 +1907,44 @@ chatV2.post("/", async (c) => {
       scrubMessages,
       progressivePlan,
       discoveryState,
+      reservedAgainstPageTools,
     } = prepared;
-    // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
-    // NAME and never read a tool's own `needsApproval`, so page tools reach them
-    // approval-less unless we hand over their classification here. Page tools
-    // always gate; an empty set (no page tools, incl. every hosted-mode turn
-    // where WEBMCP_INSPECTOR_ENABLED is off) leaves all other tools on the
-    // existing `requireToolApproval` path unchanged. Without this the turn
-    // strands — the client defers the call awaiting an approval pill the server
-    // never sends. `uiTools` are ignored on this route (see above), so the page
-    // classification is the whole of this turn's `uiToolApprovals`.
-    const pageToolApprovals = classifyPageToolApprovals(
-      validatedPageTools.map((entry) => entry.alias),
-    );
-    // Browser tools are name-classified for the same reason page tools are,
-    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
-    // rather than one overwriting the other.
-    const uiToolApprovals = mergeUiToolApprovalClassifications(
-      pageToolApprovals,
-      browserToolApprovals,
-    );
+
+    /**
+     * The mid-turn refresher, under the SAME collision policy `prepareChatV2`
+     * applied to the turn's opening set.
+     *
+     * The refresher reserves only the browser's own verb names; every MCP, app,
+     * UI and skill name beside them is decided here, and a page tool minted
+     * after a navigation has to lose to those exactly as one minted at turn
+     * start does.
+     */
+    const guardedRefreshTools = async (ctx: { signal?: AbortSignal }) => {
+      const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+      // The persisted record is re-read here rather than captured at turn
+      // start, so a reopened conversation shows the set the turn ENDED with —
+      // the one its last steps actually used.
+      advertisedPageTools = advertisedPageToolsOnly(
+        pageToolRefresh!.currentPageTools(),
+        reservedAgainstPageTools,
+      );
+      advertisedPageToolsBinding = pageToolRefresh!.currentPageToolsBinding();
+      return refresh
+        ? (guardPageToolRefresh(refresh, reservedAgainstPageTools) as never)
+        : undefined;
+    };
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
+    if (
+      (body.messages?.length ?? 0) <= 1 &&
+      builtInAuthHeader &&
+      typeof body.projectId === "string"
+    )
+      void refreshConnectionProfiles(
+        mcpClientManager,
+        builtInAuthHeader.replace(/^Bearer\s+/i, ""),
+        body.projectId,
+      );
+
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
       body.projectId ?? "",
@@ -1452,6 +1973,11 @@ chatV2.post("/", async (c) => {
       );
       const event = createLocalScopeStepUpContinuation({
         bindingKey: scopeStepUpBindingKey,
+        connectionId: toolConnectionAttribution(
+          preparedTools[toolName],
+          toolInput,
+          info.toolCallId,
+        )?.connectionId,
         serverId: info.serverId,
         ...(resourceUrl ? { resourceUrl } : {}),
         toolCallId: info.toolCallId,
@@ -1475,6 +2001,22 @@ chatV2.post("/", async (c) => {
           }),
       },
     );
+    /**
+     * The tool set for an engine that CAN grow it mid-turn.
+     *
+     * The two by-name WebMCP verbs were kept at build time
+     * (`browserRetireInvokeVerb: false` above) because which engine runs is
+     * only known here. Two of them — local-org and direct BYOK — never consume
+     * `refreshTools`, so the verbs are their only way to reach a page the model
+     * navigated to after the turn started. Dropped ONLY on the two hosted paths
+     * that pass `refreshTools` below, which is the safe direction: an extra
+     * tool costs a line in the list, a missing one costs the page. Both go
+     * together (see `withoutLegacyWebmcpVerbs`). Mirrors `web-chat-turn.ts`.
+     */
+    const refreshingEngineTools = (): ToolSet =>
+      pageToolRefresh
+        ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+        : (allTools as ToolSet);
     const scopeStepUpEngineResume = scopeStepUpResumeRequest
       ? buildLocalScopeStepUpResume({
           request: scopeStepUpResumeRequest,
@@ -1483,11 +2025,11 @@ chatV2.post("/", async (c) => {
           modelVisibleMcpToolResults,
         })
       : scopeStepUpCancelRequest
-        ? buildLocalScopeStepUpCancellation({
-            request: scopeStepUpCancelRequest,
-            bindingKey: scopeStepUpBindingKey,
-          })
-        : undefined;
+      ? buildLocalScopeStepUpCancellation({
+          request: scopeStepUpCancelRequest,
+          bindingKey: scopeStepUpBindingKey,
+        })
+      : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );
@@ -1522,8 +2064,9 @@ chatV2.post("/", async (c) => {
         })
       : undefined;
 
-    // MCPJam-provided models: delegate to stream handler
-    if (isMcpJamProvidedModel && modelDefinition.id) {
+    // MCPJam-provided models — and external-account harness turns, which carry
+    // a sentinel model id instead of a hosted one — delegate to stream handler
+    if (usesMcpjamFreePath && modelDefinition.id) {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
@@ -1562,16 +2105,18 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader,
-        clientIp: getClientIp(c),
+        clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
         // tool-construction policies have to reach it separately. Inert on the
@@ -1592,6 +2137,7 @@ chatV2.post("/", async (c) => {
         }) => {
           scopeChallengeWriter = writer;
           taskCreatedBridge?.attachStreamWriter(writer);
+          emitBrowserReadiness(writer);
         },
         ...(resolvedExecution.harness
           ? {
@@ -1624,6 +2170,10 @@ chatV2.post("/", async (c) => {
         ...(harnessComputerWorkdir
           ? { computerWorkdir: harnessComputerWorkdir }
           : {}),
+        // Run on the user's own machine. Opaque ids plus the consent
+        // capability, all re-verified by the availability gate before anything
+        // spawns.
+        ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).
@@ -1635,7 +2185,13 @@ chatV2.post("/", async (c) => {
               return await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
-                modelSource: "mcpjam",
+                // `'external-account'` rather than `'mcpjam'` when the runtime
+                // pays on the customer's own vendor account: `'mcpjam'` is what
+                // makes a turn consume the org's MCPJam spend limit, and this
+                // turn spent none of it.
+                modelSource: isExternalAccountHarnessTurn
+                  ? "external-account"
+                  : "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
                 ...(!isScenarioSession && body.rewind
@@ -1661,6 +2217,9 @@ chatV2.post("/", async (c) => {
                   : {
                       directVisibility: body.directVisibility,
                       resumeConfig: {
+                        executionTarget: bodyHostId
+                          ? { kind: "host", hostId: bodyHostId }
+                          : { kind: "adhoc" },
                         systemPrompt,
                         temperature,
                         requireToolApproval,
@@ -1674,7 +2233,12 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace,
+                turnTrace: withPageToolsAtTurn({
+                  ...turnTrace,
+                  ...(prepared.connectionsAtTurn
+                    ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                    : {}),
+                }),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -1715,7 +2279,8 @@ chatV2.post("/", async (c) => {
       // still executes locally against the local MCP connection. Without this,
       // a local-eligible provider would resolve to the "local" runtime and pull
       // the org key onto this machine, which org BYOK must never do.
-      const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
+      const localMcpRuntimeRequired =
+        body.localMcpRuntimeRequired === true || localBrowserRequested;
       const runtime: OrgProviderRuntime =
         !localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
           ? await resolveOrgProviderRuntime(
@@ -1727,6 +2292,13 @@ chatV2.post("/", async (c) => {
                 scenarioId: bodyScenarioId,
                 accessVersion: bodyAccessVersion,
                 serverIds: hostConfigServerIds,
+              },
+              {
+                modelWorkload: modelWorkloadFor({
+                  sourceType: chatSessionSourceType,
+                  tools: allTools,
+                  messages: modelMessages,
+                }),
               },
             )
           : { runtimeLocation: "cloud", providerKey };
@@ -1762,6 +2334,9 @@ chatV2.post("/", async (c) => {
                 : {
                     directVisibility: body.directVisibility,
                     resumeConfig: {
+                      executionTarget: bodyHostId
+                        ? { kind: "host", hostId: bodyHostId }
+                        : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
                       requireToolApproval,
@@ -1775,7 +2350,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -1817,6 +2397,7 @@ chatV2.post("/", async (c) => {
           }) => {
             scopeChallengeWriter = writer;
             taskCreatedBridge?.attachStreamWriter(writer);
+            emitBrowserReadiness(writer);
           },
         });
       }
@@ -1826,20 +2407,25 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        ...(typeof modelDefinition.nativeModelId === "string"
+          ? { nativeModelId: modelDefinition.nativeModelId }
+          : {}),
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,
-        clientIp: getClientIp(c),
+        clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
@@ -1850,6 +2436,7 @@ chatV2.post("/", async (c) => {
         }) => {
           scopeChallengeWriter = writer;
           taskCreatedBridge?.attachStreamWriter(writer);
+          emitBrowserReadiness(writer);
         },
       });
     }
@@ -1900,7 +2487,8 @@ chatV2.post("/", async (c) => {
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
     const inboundAbortSignalDirect = c.req.raw.signal as
-      AbortSignal | undefined;
+      | AbortSignal
+      | undefined;
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
@@ -1932,6 +2520,7 @@ chatV2.post("/", async (c) => {
       }) => {
         scopeChallengeWriter = writer;
         taskCreatedBridge?.attachStreamWriter(writer);
+        emitBrowserReadiness(writer);
       },
       onPersist: chatSessionId
         ? async ({
@@ -1977,6 +2566,9 @@ chatV2.post("/", async (c) => {
                 : {
                     directVisibility: body.directVisibility,
                     resumeConfig: {
+                      executionTarget: bodyHostId
+                        ? { kind: "host", hostId: bodyHostId }
+                        : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
                       requireToolApproval,
@@ -1990,7 +2582,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

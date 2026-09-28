@@ -116,9 +116,12 @@ export function normalizeOAuthConformanceConfig(
     customHeaders: config.customHeaders,
     redirectUrl: config.redirectUrl,
     fetchFn: config.fetchFn ?? fetch,
+    allowPrivateNetwork: config.allowPrivateNetwork ?? false,
     stepTimeout: config.stepTimeout ?? 30_000,
     verification: {
-      listTools: config.verification?.listTools ?? !!config.verification?.callTool,
+      profile: config.verification?.profile,
+      listTools:
+        config.verification?.listTools ?? !!config.verification?.callTool,
       callTool: config.verification?.callTool,
       timeout: config.verification?.timeout ?? 30_000,
     },

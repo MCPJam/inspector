@@ -4,6 +4,7 @@ import { initialAppState } from "@/state/app-types";
 import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
 
 const {
+  oauthMembershipState,
   loadAppStateMock,
   saveAppStateMock,
   useProjectStateMock,
@@ -13,6 +14,7 @@ const {
   projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
+  oauthMembershipState: { allProjects: undefined as { _id: string }[] | undefined },
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
   useProjectStateMock: vi.fn(),
@@ -77,6 +79,11 @@ vi.mock("convex/react", () => ({
   useQuery: () => undefined,
 }));
 
+vi.mock("../useProjects", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../useProjects")>(),
+  useProjectQueries: () => oauthMembershipState,
+}));
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
@@ -133,11 +140,7 @@ function createServer(
 function createLoadedAppState(selectedServerState?: {
   name: string;
   connectionStatus:
-    | "connected"
-    | "connecting"
-    | "oauth-flow"
-    | "disconnected"
-    | "failed";
+    "connected" | "connecting" | "oauth-flow" | "disconnected" | "failed";
 }) {
   const baseProject = {
     ...initialAppState.projects.default,
@@ -170,6 +173,7 @@ describe("useAppState active organization recovery", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    oauthMembershipState.allProjects = undefined;
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
@@ -184,10 +188,67 @@ describe("useAppState active organization recovery", () => {
       useLocalFallback: false,
       remoteProjects: [],
       isLoadingRemoteProjects: false,
+      isLoadingProjects: false,
       effectiveActiveProjectId: "none",
     });
     useProjectStateMock.mockReturnValue(projectStateValue);
     useServerStateMock.mockReturnValue(serverStateValue);
+  });
+
+  it("reports actual WorkOS identity, not guest Convex authentication", () => {
+    const record = vi.fn();
+    window.electronAPI = { diagnostics: { record } } as any;
+    const props = {
+      currentUserId: null as string | null,
+      isWorkOsLoading: true,
+      currentActorKey: "guest",
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+      validOrganizations: [],
+    };
+    const hook = renderHook((p) => useAppState(p), { initialProps: props });
+    try {
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "loading" }),
+      );
+      hook.rerender({ ...props, isWorkOsLoading: false });
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "guest" }),
+      );
+      hook.rerender({
+        ...props,
+        isWorkOsLoading: false,
+        currentUserId: "private-user",
+      });
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "signed_in" }),
+      );
+      expect(JSON.stringify(record.mock.calls)).not.toContain("private-user");
+    } finally {
+      hook.unmount();
+      delete window.electronAPI;
+    }
+  });
+
+  it("keeps OAuth membership IDs stable until the membership query changes", () => {
+    oauthMembershipState.allProjects = [{ _id: "project-1" }];
+    const props = {
+      currentUserId: "user-1", currentActorKey: "user-1",
+      hasOrganizations: false, isLoadingOrganizations: false, validOrganizations: [],
+      isWorkOsLoading: false,
+    };
+    const { rerender } = renderHook((options) => useAppState(options), { initialProps: props });
+    const first = useServerStateMock.mock.lastCall?.[0].oauthProjectIds;
+    expect(first).toEqual(new Set(["project-1"]));
+    rerender({ ...props, isWorkOsLoading: true });
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBe(first);
+    oauthMembershipState.allProjects = [{ _id: "project-2" }];
+    rerender(props);
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toEqual(new Set(["project-2"]));
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).not.toBe(first);
+    oauthMembershipState.allProjects = undefined;
+    rerender(props);
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBeUndefined();
   });
 
   it("recovers a stale stored org to the first owned organization", async () => {
@@ -371,6 +432,119 @@ describe("useAppState active organization recovery", () => {
     expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
   });
 
+  it("does not disconnect runtime servers while the initial guest scope resolves", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    projectStateValue.isLoadingProjects = true;
+
+    const hookProps: {
+      currentUserId: string | null;
+      currentActorKey: string | null;
+      routeOrganizationId: string | undefined;
+      hasOrganizations: boolean;
+      isLoadingOrganizations: boolean;
+      validOrganizations: Array<{ _id: string; myRole?: string }>;
+    } = {
+      currentUserId: null,
+      currentActorKey: null,
+      routeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: true,
+      validOrganizations: [],
+    };
+
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
+    });
+
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "excalidraw",
+        config: { type: "http", url: "https://mcp.excalidraw.com/mcp" },
+      });
+    });
+
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
+      isLoadingProjects: false,
+      useLocalFallback: false,
+    });
+    rerender({
+      ...hookProps,
+      currentActorKey: "guest-1",
+      isLoadingOrganizations: false,
+    });
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ currentActorKey: "guest-1" }),
+      );
+    });
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+    expect(disconnectAllRuntimeServersMock).not.toHaveBeenCalled();
+  });
+
+  it("clears runtime servers when the last project disappears after hydration", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
+      isLoadingProjects: false,
+      useLocalFallback: false,
+    });
+    const hookProps = {
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      routeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizations: [{ _id: "org-1", myRole: "owner" }],
+    };
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
+    });
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "demo-server",
+        config: { type: "http", url: "https://example.com/mcp" },
+      });
+    });
+
+    projectStateValue.effectiveActiveProjectId = "none";
+    rerender(hookProps);
+
+    await waitFor(() => {
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "demo-server",
+      );
+    });
+    expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
+  });
+
   // Removed in Slice 5: the legacy `loadAppState` → `patchStateForPendingOAuth`
   // path is gone (Convex hydrates state, the patch helper is deleted), so
   // tests asserting the runtime-server seed via `loadAppStateMock` no longer
@@ -392,7 +566,10 @@ describe("useAppState active organization recovery", () => {
       servers: {},
     });
     localStorage.setItem("mcp-oauth-pending", "demo-server");
-    localStorage.setItem("mcp-serverUrl-demo-server", "https://example.com/mcp");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp",
+    );
     window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
     const { result } = renderHook(() =>
@@ -469,5 +646,4 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
-
 });

@@ -2,6 +2,7 @@ import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { HostThemeMode } from "@/lib/client-styles";
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -38,13 +39,18 @@ import { SandboxProxyIframeCard } from "./sandbox-config-grid";
 function getClientLogo(
   clientInfoName: string | undefined,
   hostName: string | undefined,
-  themeMode: HostThemeMode
+  themeMode: HostThemeMode,
 ): string | null {
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
     return mcpjamLogo;
   if (haystack.includes("claude-code") || haystack.includes("claude code"))
     return claudeCodeLogo;
+  if (
+    haystack.includes("claude-desktop") ||
+    haystack.includes("claude desktop")
+  )
+    return claudeDesktopLogo;
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("mistral") || haystack.includes("le chat"))
     return mistralLogo;
@@ -153,7 +159,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   const timeoutLeaf = protocolBand.find((l) => l.leafKey === "timeout");
   const clientInfoLeaf = protocolBand.find((l) => l.leafKey === "clientInfo");
   const protocolVersionLeaf = protocolBand.find(
-    (l) => l.leafKey === "protocolVersion"
+    (l) => l.leafKey === "protocolVersion",
   );
 
   return (
@@ -177,7 +183,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             const clientLogo = getClientLogo(
               clientInfoLeaf?.value,
               hostName,
-              themeMode
+              themeMode,
             );
             return (
               <span
@@ -227,7 +233,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                   <span
                     className={cn(
                       "hp-host-sub-stat",
-                      timeoutLeaf.isChanged && "host-matrix-changed"
+                      timeoutLeaf.isChanged && "host-matrix-changed",
                     )}
                   >
                     <span className="hp-host-sub-stat-label">Timeout</span>
@@ -283,7 +289,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 className={cn(
                   "hp-cap",
                   row.isChanged && !row.isNewlyOn && "host-matrix-changed",
-                  row.isNewlyOn && "host-matrix-newly"
+                  row.isNewlyOn && "host-matrix-newly",
                 )}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -330,7 +336,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                       !row.on && "hp-cap--off",
                       isSelected && "hp-cap--selected",
                       row.isChanged && !row.isNewlyOn && "host-matrix-changed",
-                      row.isNewlyOn && "host-matrix-newly"
+                      row.isNewlyOn && "host-matrix-newly",
                     )}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -363,7 +369,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
               const prefix = "sandbox-cfg:";
               if (selectedNodeId && selectedNodeId.startsWith(prefix)) {
                 return selectedNodeId.slice(
-                  prefix.length
+                  prefix.length,
                 ) as SandboxConfigSubKey;
               }
               return null;
@@ -429,8 +435,8 @@ function ViewIframeInjectedGlobals({
   const openaiSubtitle = compatRuntime.hasMethodOverrides
     ? `${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods`
     : compatRuntime.fromOverride
-    ? "overridden"
-    : null;
+      ? "overridden"
+      : null;
   const mcpAppsSubtitle = mcpAppsBridge.hasOverrides
     ? `${mcpAppsBridge.overrideCount} ${
         mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"

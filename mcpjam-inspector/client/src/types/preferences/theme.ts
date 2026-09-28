@@ -13,6 +13,8 @@ export const THEME_MODE_VALUES = THEME_MODE_OPTIONS.map((m) => m.value);
 
 export type ThemeMode = (typeof THEME_MODE_VALUES)[number];
 
+export type ThemePreference = ThemeMode | "system";
+
 // --- generated:themePresets:start ---
 
 export const THEME_PRESET_OPTIONS = [

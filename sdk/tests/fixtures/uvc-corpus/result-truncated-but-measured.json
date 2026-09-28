@@ -1,0 +1,41 @@
+{
+  "id": "result-truncated-but-measured",
+  "title": "A 100 000-character result stored truncated and measured whole",
+  "rationale": "The size basis rule: the 64 000-char text cap sets `truncated` on the stored text and never changes `size.bytes`, so a budget is graded against what the server actually returned.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "dump_logs", "arguments": { "service": "api" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "The API log dump is 100 KB; the first errors appear at 08:12.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "dump_logs",
+        "description": "Return raw logs for a service.",
+        "inputSchema": { "type": "object", "properties": { "service": { "type": "string" } }, "required": ["service"] },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      {
+        "toolCallId": "c1",
+        "toolName": "dump_logs",
+        "text": "08:12 ERROR upstream timeout …",
+        "truncated": true,
+        "isError": false,
+        "size": { "bytes": 100000, "basis": "model_visible_output", "complete": true }
+      }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "dump_logs", "durationMs": 2400, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "toolResultSizeUnder", "maxBytes": 65536 }, "observation": "fail", "relevance": "useful", "note": "graded on the 100 000 bytes the server returned, not the 64 000 we kept" },
+    { "predicate": { "type": "toolResultSizeUnder", "maxBytes": 200000 }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "toolLatencyUnder", "ms": 2000 }, "observation": "fail", "relevance": "useful" },
+    { "predicate": { "type": "toolLatencyUnder", "ms": 5000 }, "observation": "pass", "relevance": "neutral" }
+  ]
+}

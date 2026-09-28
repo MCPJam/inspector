@@ -15,7 +15,13 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  PUBLISH_NATIVE_UNTRUSTED,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const SERVER_NAME_PROPERTY = {
   type: "string",
@@ -61,6 +67,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       // A successful quick-connect auto-redirects to the playground.
       mayNavigate: true,
       execute: async (args) => {
@@ -106,6 +113,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const serverName = asOptionalString(args.serverName);
         if (!serverName) {
@@ -151,6 +159,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const serverName = asOptionalString(args.serverName);
         if (!serverName) {
@@ -203,6 +212,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       execute: async (args) => {
         const query = asOptionalString(args.query);
         const tier = asOptionalString(args.tier);

@@ -168,6 +168,20 @@ test("5 — result: null (or any unrecognized value) fails closed", () => {
   }
 });
 
+test("5, not 1 — a run still HELD for its judge has produced no verdict", () => {
+  // `grading` never reaches a terminal set, so a `--wait` that runs out on it
+  // lands here as "no valid verdict observed". Reporting a judge that has not
+  // answered as a regression (1) is the one thing this contract forbids.
+  assert.equal(
+    evalRunWaitExitCode({
+      launchOutcome: "started",
+      runs: [run({ status: "grading", result: "pending" })],
+      waitErrors: [],
+    }),
+    5
+  );
+});
+
 test("5, not 4 — status: failed is an execution crash, not a setup defect", () => {
   assert.equal(
     evalRunWaitExitCode({

@@ -1,13 +1,26 @@
 /**
- * Does this eval iteration need a disposable box booted for it?
+ * Does this eval iteration need a disposable box booted for it, and WHICH KIND?
  *
  * Its own module, not an inline condition in the runner, because the rule is
  * load-bearing and was previously untestable without driving a whole iteration
  * — which is how the harness half of it went missing.
  */
+import { parseBrowserToolPolicy } from "./browser-tool-policy.js";
+
+const BROWSER_BUILT_IN_TOOL_ID = "browser";
+
+export interface EphemeralEvalSandboxNeed {
+  needed: boolean;
+  /**
+   * WHICH IMAGE. `desktop-browser` boots an X session with Chromium on it and
+   * costs several times a terminal box, so it is only ever chosen for the one
+   * reason that requires it.
+   */
+  runtimeKind: "terminal" | "desktop-browser";
+}
 
 /**
- * TWO reasons an iteration needs a box, not one:
+ * THREE reasons an iteration needs a box, not two:
  *
  *   - the run PINS a computer image — the box IS the reproducible environment
  *     the author asked for, and `bash` is exposed from it;
@@ -18,10 +31,22 @@
  *     conditional on an image: an unpinned harness run simply gets the
  *     deployment-default template. The control plane resolves which image that
  *     is, so the provision call still names no template.
+ *   - the run declares a BROWSER — same reasoning, one layer over: the hosted
+ *     engine has one computer per (project, member), so without a box of its
+ *     own every unattended run in a project would drive the same Chromium, the
+ *     same tab and the same cookie jar, and the ephemeral profile that
+ *     isolation needs would relaunch the daemon a person may be using.
  *
- * A harness run that boots no box does not fail loudly — it silently runs on
- * someone's personal computer. That is why the harness arm is here rather than
- * left to a later "did we get a binding?" check.
+ * A harness or browser run that boots no box does not fail loudly — it
+ * silently runs on someone's personal computer, or is silently advertised
+ * nothing. That is why both arms are here rather than left to a later "did we
+ * get a binding?" check.
+ *
+ * BOTH HALVES ARE REQUIRED for the browser arm. The tool has to be attached
+ * AND a policy declared: nothing in an unattended run can approve a click, so
+ * a policy-less `browser` advertises no tools at all — and provisioning a
+ * desktop box for a run that will use nothing is money for nothing, refused a
+ * moment later by the control plane as `desktop_not_advertised`.
  *
  * `runId` absent is the SINGLE-CASE surface, which never provisions (both
  * provisioning sites require a run). Admission refuses a harness there rather
@@ -30,8 +55,48 @@
 export function needsEphemeralEvalSandbox(args: {
   pinnedEnvironmentId?: string | undefined;
   harness?: string | undefined;
+  /** The iteration's frozen `builtInToolIds`. */
+  builtInToolIds?: readonly string[] | undefined;
+  /** The host config's declared unattended browser policy, unparsed. */
+  browserToolPolicy?: unknown;
+  /**
+   * Can THIS replica advertise a hosted browser at all — the env flag and the
+   * backend's own gate, exactly as `resolveHostTools` reads them?
+   *
+   * Passed in rather than read here so the rule stays pure and testable, and
+   * DEFAULTS TO TRUE so a caller that does not know the answer keeps the old
+   * behaviour. It matters because the two decisions are made in different
+   * places: a desktop box is provisioned before the tool resolver runs, so a
+   * replica with `HOSTED_BROWSER_TOOLS_ENABLED` off would boot and pay for a
+   * desktop and then suppress every tool that box exists for. The backend
+   * refuses its own half of this (`desktop_not_advertised`,
+   * `desktop_unavailable`), but it cannot see an inspector-side env flag.
+   */
+  hostedBrowserAvailable?: boolean;
   runId: unknown;
-}): boolean {
-  if (args.runId === null || args.runId === undefined) return false;
-  return Boolean(args.pinnedEnvironmentId) || Boolean(args.harness);
+}): EphemeralEvalSandboxNeed {
+  if (args.runId === null || args.runId === undefined) {
+    return { needed: false, runtimeKind: "terminal" };
+  }
+  const wantsBrowser =
+    (args.builtInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID) &&
+    parseBrowserToolPolicy(args.browserToolPolicy, {
+      source: "needs-ephemeral-sandbox",
+      // The delivery parse a few lines later in the runner reports a malformed
+      // policy; this one only decides whether to book a box.
+      quiet: true,
+    }) !== undefined &&
+    args.hostedBrowserAvailable !== false;
+  if (wantsBrowser) {
+    // A browser needs the DESKTOP image whatever else is true. A pinned
+    // environment alongside it is refused by the control plane
+    // (`desktop_pin_conflict`) with a sentence the run surfaces — deliberately
+    // there rather than here, so one place decides it and the message that
+    // reaches the user is the same on both surfaces.
+    return { needed: true, runtimeKind: "desktop-browser" };
+  }
+  return {
+    needed: Boolean(args.pinnedEnvironmentId) || Boolean(args.harness),
+    runtimeKind: "terminal",
+  };
 }

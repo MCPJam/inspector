@@ -56,6 +56,21 @@ describe("widget-debug-store — sandbox + lifecycle", () => {
         kind: "widget-content-requested",
       });
     });
+    it("round-trips the view-mount fields the Sandbox Stack origin chip reads", () => {
+      // These three travel from the sandbox proxy through the renderer into
+      // `applied`; the chip is their only consumer, so a drop here is silent.
+      const applied: WidgetSandboxApplied = {
+        permissive: false,
+        hostPolicyApplied: false,
+        viewMode: "url",
+        viewUrl: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+        assignedOrigin: "http://127.0.0.1:6274",
+      };
+      useWidgetDebugStore.getState().setSandboxApplied("tool-view", applied);
+
+      const info = useWidgetDebugStore.getState().widgets.get("tool-view");
+      expect(info!.applied).toEqual(applied);
+    });
   });
 
   describe("appendLifecycle", () => {

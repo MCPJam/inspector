@@ -6,6 +6,9 @@ const { mockUseQuery } = vi.hoisted(() => ({ mockUseQuery: vi.fn() }));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
+  // Per-run metrics and live-run rows; idle unless `perRunMetrics` is on.
+  useQueries: () => ({}),
+  useConvex: () => ({ query: async () => null }),
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,

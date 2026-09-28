@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
   closeTunnelOperation,
@@ -10,6 +11,10 @@ import {
   createTunnelOperation,
   diagnoseServerOperation,
   getScenarioOperation,
+  getStudyOperation,
+  getShareSettingsOperation,
+  listStudiesOperation,
+  setStudyGuestExecutionOperation,
   runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
@@ -26,11 +31,10 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
-  listServerPromptsOperation,
-  listServerResourcesOperation,
   listServerToolsOperation,
   PlatformApiClient,
   PlatformApiError,
@@ -38,7 +42,6 @@ import {
   publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
-  setEvalSuiteEnvironmentsOperation,
   showServersOperation,
 } from "../../src/platform/index.js";
 
@@ -586,9 +589,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
         {
           id: "scenario-1",
           environmentId,
-          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          name: created ? (requestBody.name as string) ?? "Checkout" : "Kept",
           mode: created
-            ? ((requestBody.mode as string) ?? "project_members")
+            ? (requestBody.mode as string) ?? "project_members"
             : "anyone_with_link",
           accessVersion: 1,
           link: "https://app.mcpjam.com/s/checkout?t=abc",
@@ -604,6 +607,61 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/scenarios\/[^/]+$/.test(path)) {
       return Response.json(SCENARIO_DETAIL);
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/study$/.test(path)) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "study-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/studies$/.test(path)) {
+      return Response.json({ items: SCENARIOS });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+\/guest-execution$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      return Response.json({ ok: true });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+$/.test(path)) {
+      // Id-addressed, like the real route. A NAME is not a Convex id, and the
+      // upstream answers a malformed id with a 400, not a 404 — so "Support"
+      // gets the 400 and a well-formed id that matches nothing gets the 404.
+      // Either one sends `get_study` down its name-resolution path.
+      const studyId = decodeURIComponent(path.split("/").pop() ?? "");
+      if (!studyId.startsWith("box-")) {
+        return Response.json(
+          { code: "VALIDATION_ERROR", message: "Invalid scenarioId" },
+          { status: 400 }
+        );
+      }
+      if (!SCENARIOS.some((row) => row.id === studyId)) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "Study not found" },
+          { status: 404 }
+        );
+      }
+      return Response.json({ ...SCENARIO_DETAIL, environmentId: "env-1" });
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
@@ -860,6 +918,98 @@ describe("listEvalSuiteRunsOperation", () => {
   });
 });
 
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  /**
+   * The suite's attachment list is CLIENTS. The wire body still names it
+   * `hosts`, so `clients` folds onto it entry by entry — and both at once is a
+   * refusal, because two replace-all lists describe two different suites.
+   */
+  it("folds `clients` onto the wire's `hosts`", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      {
+        suite: "smoke",
+        clients: [{ client: "Claude" }, { client: "ChatGPT", servers: ["a"] }],
+      },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { hosts: [{ host: "Claude" }, { host: "ChatGPT", servers: ["a"] }] },
+    ]);
+  });
+
+  it("refuses `clients` and `hosts` together", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    const error = await updateEvalSuiteOperation
+      .execute(
+        {
+          suite: "smoke",
+          clients: [{ client: "Claude" }],
+          hosts: [{ host: "ChatGPT" }],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("not both");
+    expect(patchBodies).toEqual([]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
+  });
+});
+
 describe("runEvalSuiteOperation", () => {
   it("omits serverIds so the platform connects the suite's saved selection", async () => {
     const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
@@ -900,9 +1050,14 @@ describe("runEvalSuiteOperation", () => {
     const createCall = fetchMock.mock.calls.find(([target]) =>
       String(target).endsWith("/eval-runs")
     );
+    // `serverNames` rides along PAIRED WITH `serverIds` by index. A launch
+    // that re-authors the suite's saved selection persists these names; when
+    // they were missing the platform stored the raw ids, and every surface
+    // that lists the suite showed an opaque id where the server name belongs.
     expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
       suiteId: "suite-1",
       serverIds: ["server-http", "server-disabled"],
+      serverNames: ["Echo", "Retired"],
     });
   });
 
@@ -1067,6 +1222,24 @@ describe("runEvalCaseOperation", () => {
     });
   });
 
+  it("pairs serverNames with an explicit server override", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", servers: ["echo"] },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((runCall?.[1] as RequestInit).body));
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+  });
+
   it("requires a suite and a case", () => {
     expect(
       runEvalCaseOperation.inputSchema.safeParse({ suite: "Smoke" }).success
@@ -1136,6 +1309,138 @@ describe("createEvalSuiteOperation", () => {
         expect.objectContaining({ kind: "assert" }),
       ],
     });
+  });
+
+  /**
+   * A case's grading rule is a CHECK. This operation called the same field
+   * `predicates` while the API, the UI and `create_eval_case` all called it
+   * `checks` — so an agent authored a suite in one word and then edited one of
+   * its own cases in another.
+   */
+  it("folds a case's `checks` onto the wire's `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = {
+      mode: "replace",
+      list: [{ type: "toolCalledAtLeastOnce", toolName: "echo" }],
+    };
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+            checks: gate,
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.tests[0].predicates).toEqual(gate);
+    expect(body.tests[0]).not.toHaveProperty("checks");
+  });
+
+  it("refuses a case that sets both `checks` and `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = { mode: "replace", list: [] };
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Authored smoke",
+          servers: ["echo"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [
+            {
+              title: "echo works",
+              steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+              checks: gate,
+              predicates: gate,
+            },
+          ],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("echo works");
+    expect(
+      fetchMock.mock.calls.some(
+        ([target, init]) =>
+          String(target).endsWith("/eval-suites") &&
+          (init as RequestInit | undefined)?.method === "POST"
+      )
+    ).toBe(false);
+  });
+
+  it("attaches the named clients so the suite is not authored without one", async () => {
+    // An API-authored suite had no way to name its client: it read back with
+    // an empty Client everywhere it was listed, and `run_eval_suite`'s host
+    // selector — which only runs hosts ATTACHED to the suite — had nothing to
+    // select.
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        hosts: ["Claude", "host-chatgpt"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.hosts).toEqual([{ host: "Claude" }, { host: "host-chatgpt" }]);
+  });
+
+  it("omits hosts entirely when no client is named", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body).not.toHaveProperty("hosts");
   });
 
   it("rejects stdio servers before creating the suite", async () => {
@@ -1253,9 +1558,9 @@ describe("createEvalSuiteOperation", () => {
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) return;
-    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
-      true
-    );
+    expect(
+      parsed.error.issues.some((issue) => /hostz/.test(issue.message))
+    ).toBe(true);
   });
 
   it("requires a name, at least one server, and at least one case", () => {
@@ -1284,6 +1589,43 @@ describe("createEvalSuiteOperation", () => {
 });
 
 describe("eval run polling operations", () => {
+  it("defines the chain vocabulary IN BAND, not by reference", () => {
+    // An MCP client sees the tool description and nothing else. The stage
+    // order, the three-way chain discriminant and the five states used to live
+    // only in the hosted agent's promptNotes, so every other MCP surface — the
+    // public worker included — handed a model ~36 bare enum members with no
+    // definitions and no way to look them up mid-turn.
+    const description = getEvalRunOperation.description;
+
+    // The order is normative: `notReached` is derived from position.
+    expect(description).toContain(
+      "connection → discovery → selection → call → response → userValue"
+    );
+    // The discriminant, and which of the three carries rows.
+    for (const status of ["verified", "unverified", "absent"]) {
+      expect(description).toContain(`\`${status}\``);
+    }
+    // Every state, each said as its own fact.
+    for (const state of DECISION_LABEL_VOCABULARIES.stageStates) {
+      expect(description).toContain(`\`${state}\``);
+    }
+    // THE claim this whole vocabulary exists to protect.
+    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain(
+      "authorizes proposing a change to the server under test"
+    );
+    // The full 29-reason vocabulary does not belong in a tool description; it
+    // belongs where an agent already fetches reference material. Named here so
+    // the pointer cannot be dropped while the skill stays served.
+    expect(description).toContain("user-value-chain-glossary");
+    // And the phrase that would make a client render a spend warning on a
+    // read-only operation (mcp/tests/platformTools.test.ts ties it to
+    // `risk: "spend"`, which a read must never declare).
+    expect(description).not.toContain("COSTS MONEY");
+    expect(getEvalRunOperation.risk).toBeUndefined();
+    expect(getEvalRunOperation.readOnly).toBe(true);
+  });
+
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -1401,7 +1743,154 @@ describe("eval run polling operations", () => {
   });
 });
 
-describe("scenario operations", () => {
+describe("study operations", () => {
+  it("lists the project's studies", async () => {
+    const { client } = makeClient();
+
+    const result = await listStudiesOperation.execute({}, { client });
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.items).toEqual(SCENARIOS);
+  });
+
+  it("reads a study by id in ONE request", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { study: "box-1" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+    // The merged read carries what only the user-testing read used to.
+    expect(result.study.environmentId).toBe("env-1");
+    expect(callsTo(fetchMock, "/studies")).toHaveLength(1);
+  });
+
+  it("falls back to name resolution when the id path 400s on a name", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { study: "Support" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+    // Miss, then list, then the id read: three calls, and the last one is
+    // addressed by the id the list resolved.
+    const paths = callsTo(fetchMock, "/studies").map((url) => url.pathname);
+    expect(paths).toEqual([
+      "/api/v1/projects/project-new/studies/Support",
+      "/api/v1/projects/project-new/studies",
+      "/api/v1/projects/project-new/studies/box-1",
+    ]);
+  });
+
+  it("falls back to name resolution when a well-formed id 404s", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "box-9" }, { client })
+      .catch((caught: unknown) => caught);
+
+    // Reached the name path: the refusal lists candidates, which only the
+    // list read can produce.
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
+  it("names the candidates when neither the id nor the name matches", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "missing" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
+  it("addresses a `study` share by the stored `scenario` path segment", async () => {
+    const { client, fetchMock } = makeClient();
+
+    // The fixture has no share route, so this 404s; the path is the point.
+    await getShareSettingsOperation
+      .execute({ resourceType: "study", resourceId: "box-1" }, { client })
+      .catch(() => undefined);
+
+    // Vocabulary 1 (no header) 404s `/shares/study/...`; `scenario` resolves
+    // under both.
+    expect(callsTo(fetchMock, "/shares/")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/shares/scenario/box-1"
+    );
+  });
+
+  it("accepts the deprecated `scenario` selector", async () => {
+    const { client } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { scenario: "box-1" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+  });
+
+  it("refuses both selector spellings at once", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "box-1", scenario: "box-1" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toBe(
+      "Pass either study or its deprecated scenario alias, not both."
+    );
+  });
+
+  it("refuses a request that names no study", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("study is required");
+  });
+
+  it("drops both selector spellings from the guest-execution body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await setStudyGuestExecutionOperation.execute(
+      {
+        scenario: "box-1",
+        enabled: true,
+        computerEnabled: false,
+        sharedSkillsEnabled: false,
+        dailyCreditCap: 5,
+        dailyComputerStartCap: 0,
+        maxConcurrentComputers: 0,
+      },
+      { client }
+    );
+
+    const call = fetchMock.mock.calls.find(([target]) =>
+      String(target).includes("/guest-execution")
+    );
+    const body = JSON.parse(String((call?.[1] as RequestInit)?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).not.toHaveProperty("scenario");
+    expect(body).not.toHaveProperty("study");
+    expect(body.dailyCreditCap).toBe(5);
+  });
+});
+
+describe("scenario operations (deprecated)", () => {
   it("lists the project's scenarios", async () => {
     const { client } = makeClient();
 
@@ -1700,6 +2189,21 @@ describe("searchSessionsOperation", () => {
     expect(result.nextCursor).toBe("cursor-2");
   });
 
+  it("sends `study` as the stored `scenario`, which every vocabulary accepts", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await searchSessionsOperation.execute(
+      { query: "refund", sourceTypes: ["study", "eval"] },
+      { client }
+    );
+
+    // Vocabulary 1 (no header) refuses `study`; `scenario` is accepted under
+    // both, so the promise that either spelling works holds without a header.
+    expect(
+      callsTo(fetchMock, "/sessions")[0]?.searchParams.get("sourceType")
+    ).toBe("scenario,eval");
+  });
+
   it("defaults to the titles scope and sends no sourceType filter", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -1849,6 +2353,7 @@ describe("operation catalog consistency", () => {
     show_servers: {},
     connect_project_server: { url: "https://example.com/mcp" },
     get_project_server_connection_status: { connectionRequestId: "scr_abc" },
+    cancel_project_server_connection: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1874,6 +2379,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {
@@ -1906,7 +2412,20 @@ describe("operation catalog consistency", () => {
     update_eval_case: { suite: "s", case: "c", title: "renamed" },
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
+    import_eval_cases: { suite: "s", content: "# Case" },
     get_eval_run: { project: "p", runId: "r" },
+    get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_gate: { project: "p", runId: "r" },
+    get_eval_run_route_facts: { project: "p", runId: "r" },
+    get_eval_run_server_facts: { project: "p", runId: "r" },
+    propose_eval_description_rewrite: {
+      project: "p",
+      runId: "r",
+      toolName: "t",
+    },
+    start_eval_description_experiment: { project: "p", experiment: "e" },
+    get_eval_description_experiment: { project: "p", experiment: "e" },
+    list_eval_suite_stage_analytics: { project: "p", suite: "s" },
     // baseRunId is deliberately absent from the minimal input: omitting it is
     // the common path (compare against the nearest completed predecessor).
     compare_eval_run: { project: "p", runId: "r" },
@@ -1921,46 +2440,99 @@ describe("operation catalog consistency", () => {
     },
     get_eval_gate_waiver: { project: "p", runId: "r" },
     revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
+    backtest_eval_run_judge: { project: "p", runId: "r", rubric: null },
+    backtest_eval_run: {
+      project: "p",
+      runId: "r",
+      draft: { assertions: { mode: "replace", list: [] } },
+    },
     request_eval_run_judge: { project: "p", runId: "r" },
-    list_eval_check_repos: {},
-    connect_eval_check_repo: {
+    list_eval_github_repos: {},
+    connect_eval_github_repo: {
       suite: "s",
       repo: "acme/widgets",
       // No default: the policy decides what other people's pull requests
       // report during an outage, so every caller states it.
       outagePolicy: "fail_open",
     },
+    // The pre-rename spellings of the two above. Still advertised, so an agent
+    // already calling one keeps its tool; same inputs, same implementation.
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
+      outagePolicy: "fail_open",
+    },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
-    list_scenarios: {},
-    get_scenario: { scenario: "c" },
+    list_studies: {},
+    get_study: { study: "c" },
     list_chat_sessions: {},
-    list_journeys: {},
-    list_journey_runs: { journey: "j" },
-    get_journey_run: { run: "r" },
-    list_journey_run_sessions: { run: "r" },
-    launch_journey_run: { journey: "j" },
-    cancel_journey_run: { run: "r" },
-    publish_scenario: { environment: "e" },
-    unpublish_scenario: { environment: "e" },
+    list_goals: {},
+    list_goal_runs: { goalId: "j" },
+    get_goal_run: { run: "r" },
+    list_goal_run_sessions: { run: "r" },
+    launch_goal_run: { goalId: "j" },
+    cancel_goal_run: { run: "r" },
+    publish_study: { environment: "e" },
+    unpublish_study: { environment: "e" },
     get_capabilities: {},
     list_personas: {},
     get_persona: { persona: "pe" },
     create_persona: { name: "Ada", role: "buyer" },
     update_persona: { persona: "pe", name: "Ada" },
     delete_persona: { persona: "pe" },
+    list_secrets: {},
+    get_secret: { secret: "sec" },
+    // `delivery` is REQUIRED with no default, which is the point: a caller who
+    // has not said whether the value ends up inside the sandbox has not made
+    // the decision this operation exists to make.
+    create_secret: {
+      name: "STRIPE_API_KEY",
+      value: "sk_live_example_value",
+      delivery: "materialized",
+    },
+    update_secret: { secret: "sec", value: "sk_live_rotated_value" },
+    delete_secret: { secret: "sec" },
+    list_trace_destinations: { organization: "org" },
+    get_trace_destination: { organization: "org", destination: "td" },
+    create_trace_destination: {
+      organization: "org",
+      name: "Coralogix",
+      endpointUrl: "https://ingress.eu2.coralogix.com:443",
+    },
+    update_trace_destination: {
+      organization: "org",
+      destination: "td",
+      name: "Coralogix (production)",
+    },
+    delete_trace_destination: { organization: "org", destination: "td" },
+    test_trace_destination: { organization: "org", destination: "td" },
+    pause_trace_destination: { organization: "org", destination: "td" },
+    resume_trace_destination: { organization: "org", destination: "td" },
+    backfill_trace_destination: {
+      organization: "org",
+      destination: "td",
+      days: 7,
+    },
+    list_trace_destination_backfills: {
+      organization: "org",
+      destination: "td",
+    },
     generate_personas: { environmentId: "e" },
-    get_journey: { journey: "j" },
-    create_journey: {
+    // The deprecated spelling, kept here so the alias fold stays exercised
+    // by the ratchet that parses every minimal input.
+    get_goal: { journey: "j" },
+    create_goal: {
       goal: "buy a thing",
       persona: "pe",
-      sessionsPerTarget: 1,
+      iterations: 1,
       maxTurns: 8,
     },
-    update_journey: { journey: "j", goal: "buy two things" },
-    archive_journey: { journey: "j" },
-    generate_journeys: {
+    update_goal: { goalId: "j", goal: "buy two things" },
+    archive_goal: { goalId: "j" },
+    generate_goals: {
       environmentId: "e",
       persona: { name: "Ada", role: "buyer" },
     },
@@ -1970,28 +2542,27 @@ describe("operation catalog consistency", () => {
     update_swarm: { swarm: "sw", name: "checkout v2" },
     archive_swarm: { swarm: "sw" },
     get_swarms_overview: {},
-    get_journey_run_scorecard: { run: "r" },
+    get_goal_run_scorecard: { run: "r" },
     list_swarm_findings: {},
     dismiss_swarm_finding: { finding: "f" },
     undismiss_swarm_finding: { finding: "f" },
-    get_wave_insights: { wave: "w" },
-    request_wave_insights: { wave: "w" },
-    cancel_wave_insights: { wave: "w" },
-    get_user_testing_scenario: { scenario: "cb" },
-    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
-    list_user_testing_sessions: { scenario: "cb" },
-    get_user_testing_session: { scenario: "cb", session: "s" },
-    get_user_testing_metrics: { scenario: "cb" },
-    get_user_testing_usage: { scenario: "cb" },
-    list_user_testing_findings: { scenario: "cb" },
-    get_user_testing_signals: { scenario: "cb" },
-    get_user_testing_insights: { scenario: "cb", window: "w" },
-    request_user_testing_insights: { scenario: "cb" },
-    cancel_user_testing_insights: { scenario: "cb", window: "w" },
-    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
-    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
-    set_user_testing_guest_execution: {
-      scenario: "cb",
+    get_swarm_run_insights: { swarmRun: "w" },
+    request_swarm_run_insights: { swarmRun: "w" },
+    cancel_swarm_run_insights: { swarmRun: "w" },
+    update_study: { study: "cb", name: "Checkout" },
+    list_study_sessions: { study: "cb" },
+    get_study_session: { study: "cb", session: "s" },
+    get_study_metrics: { study: "cb" },
+    get_study_usage: { study: "cb" },
+    list_study_findings: { study: "cb" },
+    get_study_signals: { study: "cb" },
+    get_study_insights: { study: "cb", window: "w" },
+    request_study_insights: { study: "cb" },
+    cancel_study_insights: { study: "cb", window: "w" },
+    dismiss_study_finding: { study: "cb", finding: "f" },
+    undismiss_study_finding: { study: "cb", finding: "f" },
+    set_study_guest_execution: {
+      study: "cb",
       enabled: true,
       computerEnabled: false,
       sharedSkillsEnabled: false,
@@ -1999,7 +2570,7 @@ describe("operation catalog consistency", () => {
       dailyComputerStartCap: 0,
       maxConcurrentComputers: 0,
     },
-    rotate_user_testing_link: { scenario: "cb" },
+    rotate_study_link: { study: "cb" },
     get_share_settings: { resourceType: "scenario", resourceId: "cb" },
     set_share_mode: {
       resourceType: "scenario",
@@ -2007,9 +2578,9 @@ describe("operation catalog consistency", () => {
       mode: "project_members",
     },
     rotate_share_link: { resourceType: "scenario", resourceId: "cb" },
-    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
-    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
-    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
+    upsert_study_member: { study: "cb", email: "a@example.com" },
+    remove_study_member: { study: "cb", member: "a@example.com" },
+    rebind_study: { study: "cb", environmentId: "env_1" },
     get_share_settings: { resourceType: "scenario", resourceId: "s1" },
     set_share_mode: {
       resourceType: "scenario",
@@ -2064,6 +2635,8 @@ describe("operation catalog consistency", () => {
       modelId: "anthropic/claude-sonnet-5",
       serverIds: ["srv"],
     },
+    drive_chat_session_browser: { op: "close", sessionId: "cs_1" },
+    observe_chat_session_browser: { op: "trace", sessionId: "cs_1" },
     get_chat_session: { sessionId: "cs_1" },
     get_chat_session_trace: { sessionId: "cs_1" },
     render_server_widget: { server: "srv", toolName: "show_map" },
@@ -2092,7 +2665,13 @@ describe("operation catalog consistency", () => {
         `missing fixture for ${operation.name}`
       ).toBeDefined();
       expect(operation.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
-      expect(operation.inputSchema.safeParse(minimalInput).success).toBe(true);
+      const parsed = operation.inputSchema.safeParse(minimalInput);
+      // The failure message names the operation: with 200-odd fixtures, a bare
+      // `expected false to be true` costs a bisect to find which one moved.
+      expect(
+        parsed.success,
+        `${operation.name}: ${JSON.stringify((parsed as { error?: { issues?: unknown } }).error?.issues)}`
+      ).toBe(true);
     }
     expect(
       showServersOperation.inputSchema.safeParse({ project: "" }).success
@@ -2143,7 +2722,18 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Stops a pending connection, releasing the slot it holds.
+      "cancel_project_server_connection",
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
+      // Description-rewrite experiment. Propose spends a small model budget
+      // to draft the rewrite; start launches two replay arms and spends
+      // eval-iteration credits. `get_eval_description_experiment` stays a
+      // read — it only polls the receipt.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",
@@ -2167,6 +2757,7 @@ describe("operation catalog consistency", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
+      "import_eval_cases",
       "create_client",
       "update_client",
       "delete_client",
@@ -2177,13 +2768,13 @@ describe("operation catalog consistency", () => {
       "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.
-      "launch_journey_run",
+      "launch_goal_run",
       // Cancelling settles a run's attempts — a state change, not a read.
-      "cancel_journey_run",
+      "cancel_goal_run",
       // Scenarios: publishing exposes an environment to people outside the
       // project, unpublishing tears that down. Both are writes.
-      "publish_scenario",
-      "unpublish_scenario",
+      "publish_study",
+      "unpublish_study",
       "update_project_environment",
       "restore_project_environment",
       "create_sandbox_image",
@@ -2194,14 +2785,32 @@ describe("operation catalog consistency", () => {
       "reset_computer",
       "delete_sandbox_image",
       // Swarms authoring. Creating a persona or a journey persists but starts
-      // nothing and spends nothing — `launch_journey_run` above is the call
+      // nothing and spends nothing — `launch_goal_run` above is the call
       // that costs.
       "create_persona",
       "update_persona",
       "delete_persona",
-      "create_journey",
-      "update_journey",
-      "archive_journey",
+      // Secret writes. `create_secret` and `update_secret` carry a credential
+      // in their INPUT (risk: exposure); `delete_secret` revokes one.
+      "create_secret",
+      "update_secret",
+      "delete_secret",
+      // Trace-destination writes. `create` and `update` carry vendor
+      // credentials in their INPUT and decide whether customer content leaves
+      // the platform (risk: exposure); `resume` is exposure too, because it
+      // restarts an export someone stopped. `test` and `pause` persist but
+      // expose nothing, and `backfill` is `spend` — it can queue a month of an
+      // organization's history at a vendor that bills on ingest.
+      "create_trace_destination",
+      "update_trace_destination",
+      "delete_trace_destination",
+      "test_trace_destination",
+      "pause_trace_destination",
+      "resume_trace_destination",
+      "backfill_trace_destination",
+      "create_goal",
+      "update_goal",
+      "archive_goal",
       "create_swarm",
       "update_swarm",
       "archive_swarm",
@@ -2209,29 +2818,29 @@ describe("operation catalog consistency", () => {
       // on the organization's account, and a read that spends is a lie about
       // what calling it costs.
       "generate_personas",
-      "generate_journeys",
+      "generate_goals",
       // Insights: dismissal is a judgement someone recorded, and requesting a
       // pass spends against the org's shared daily budget.
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
-      "request_wave_insights",
-      "cancel_wave_insights",
+      "request_swarm_run_insights",
+      "cancel_swarm_run_insights",
       // User testing writes. The exposure controls are the reason `risk`
       // exists as a separate axis from `readOnly`: rotating a link and
       // dismissing a finding are both writes, and only one of them can lock
       // people out of a live scenario.
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "rotate_user_testing_link",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "rotate_study_link",
       "set_share_mode",
       "rotate_share_link",
-      "upsert_user_testing_member",
-      "remove_user_testing_member",
-      "rebind_user_testing_scenario",
+      "upsert_study_member",
+      "remove_study_member",
+      "rebind_study",
       "set_share_mode",
       "rotate_share_link",
       "install_registry_directory_server",
@@ -2244,6 +2853,8 @@ describe("operation catalog consistency", () => {
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
       "send_chat_message",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
       // Gate waivers. Both are writes because both persist an audited record
       // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
       // deliberately NOT here — reading whether a gate is waived is available
@@ -2274,6 +2885,7 @@ describe("operation catalog consistency", () => {
       // arguments. Softening the destructive default would claim a safety the
       // host cannot verify, since `readOnlyHint` is server-asserted.
       "send_chat_message",
+      "drive_chat_session_browser",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(
@@ -2469,14 +3081,18 @@ describe("registry operations", () => {
       if (path === "/api/v1/projects") {
         return Response.json({ items: PROJECTS });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)
+      ) {
         return Response.json({
           serverId: "server-installed",
           serverName: "Installed",
           outcome: options?.outcome ?? "created",
         });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)
+      ) {
         return Response.json({
           id: "server-installed",
           projectId: "project-new",

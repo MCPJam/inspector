@@ -41,6 +41,9 @@ export type {
   HostConfigInputV2,
   CanonicalHostConfigV2,
   CanonicalHostConfigSkillSelection,
+  CanonicalHostConfigBrowserToolPolicy,
+  HostConfigBrowserToolPolicy,
+  HostConfigBrowserToolPolicyMode,
   HostConfigSkillSelection,
   HostConfigComputer,
   HostConfigMcpProfileV1,
@@ -75,6 +78,7 @@ export { isAppOnlyTool } from "./app-only-tool.js";
 export {
   filterAppOnlyTools,
   applyVisibilityPolicyAndCountSignals,
+  applyToolDescriptionOverrides,
 } from "./tool-visibility.js";
 export type { ToolMetadataSource } from "./tool-visibility.js";
 export {
@@ -92,8 +96,10 @@ export { hostConnectionProfile } from "./host-connection.js";
 export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,
+  readOpenAiAppsOverrides,
   compatPresetForHostStyle,
   resolveOpenAiCompatForHostConfig,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
 } from "./compat-runtime.js";
 
 // Stage 5 (Step 1): SDK→backend eval ingestion wire normalizer. Strips
@@ -102,3 +108,37 @@ export {
 // backend ingestion handler (Step 2) hash byte-identical wire shapes. Helper
 // only — no reporter changes ship with Step 1.
 export { normalizeSdkEvalHostConfigForWire } from "./sdk-evals-normalizer.js";
+
+// Saved model selection: model + credential source + connection reference +
+// settings + fallback, beside the bare `modelId`. Pure and browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./model-selection.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./model-selection.js";

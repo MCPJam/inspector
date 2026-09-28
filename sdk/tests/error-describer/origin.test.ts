@@ -45,6 +45,7 @@ describe("origin — the decisions that carry consequences", () => {
   const CASES: Array<[string, ErrorOrigin]> = [
     // Explicit server-side failure.
     ["jsonrpc/internal_error", "user_server"],
+    ["jsonrpc/invalid_response_format", "user_server"],
     // Direction-dependent protocol and transport signals.
     ["jsonrpc/parse_error", "ambiguous"],
     ["jsonrpc/method_not_found", "ambiguous"],
@@ -160,6 +161,24 @@ describe("origin — credential ownership override", () => {
         })
       )
     ).toBe("mcpjam");
+  });
+
+  it("owns a provider the hosted gateway has not allowlisted, with no API-key remedy", () => {
+    // MCPJam's gateway settings refused the provider; nothing the user holds
+    // can change that, so the entry is ours and never sends them to a key.
+    const normalized = describeAsSlug("provider/not_allowlisted");
+
+    expect(originOf(normalized)).toBe("mcpjam");
+    expect(normalized.severity).toBe("warning");
+    expect(normalized.oneLine).toMatch(
+      /Retrying or changing your API key won't help/
+    );
+    const remedies = normalized.nextSteps.join(" ");
+    expect(remedies).toMatch(/different provider/);
+    expect(remedies).toMatch(/BYOK/);
+    expect(remedies).not.toMatch(
+      /(check|update|verify) (your|the) (api )?key/i
+    );
   });
 });
 

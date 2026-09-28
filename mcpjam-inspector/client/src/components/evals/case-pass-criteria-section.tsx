@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * Pass criteria for the case-edit surface — a gear popover (same affordance
  * as suite settings) containing validators + checks overrides.
@@ -36,6 +37,7 @@ export interface CasePassCriteriaPopoverProps {
   predicates: CasePredicates | undefined;
   onPredicatesChange: (next: CasePredicates | undefined) => void;
   suiteDefaultPredicates: Predicate[];
+  suppressedSuiteStandardCheckIds?: string[];
   availableTools?: string[];
   onAppendScenarioToSteps?: (scenarioAsserts: Predicate[]) => void;
 }
@@ -68,6 +70,7 @@ export function CasePassCriteriaPopover({
   predicates,
   onPredicatesChange,
   suiteDefaultPredicates,
+  suppressedSuiteStandardCheckIds,
   availableTools,
   onAppendScenarioToSteps,
 }: CasePassCriteriaPopoverProps) {
@@ -112,8 +115,8 @@ export function CasePassCriteriaPopover({
           className="px-2 py-1 text-[11px]"
         >
           {isOverridden
-            ? "Pass criteria — overrides active"
-            : "Pass criteria — validators and checks"}
+            ? "Edit pass criteria (overridden for this case)"
+            : "Edit pass criteria"}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -124,8 +127,8 @@ export function CasePassCriteriaPopover({
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">Pass criteria</p>
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Override validators and checks for this case. Inherited values come
-            from the suite defaults.
+            Override validators and assertions for this case. Inherited values
+            come from the suite defaults.
           </p>
           {isOverridden ? (
             <p
@@ -148,7 +151,10 @@ export function CasePassCriteriaPopover({
         <CaseChecksSection
           value={predicates}
           onChange={onPredicatesChange}
-          suiteDefaults={suiteDefaultPredicates}
+          suiteDefaults={filterSuppressedSuiteAssertions(
+            suiteDefaultPredicates,
+            suppressedSuiteStandardCheckIds,
+          )}
           availableTools={availableTools}
           embedded
           onAppendScenarioToSteps={onAppendScenarioToSteps}

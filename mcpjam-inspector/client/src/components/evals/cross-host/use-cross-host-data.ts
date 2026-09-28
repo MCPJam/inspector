@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { compactModelIdTail } from "@/lib/environment-label";
-import { formatRunId, runEnvironmentRef } from "../helpers";
+import { formatRunId, runEnvironmentRef, runClientIdentity } from "../helpers";
 import { computeIterationResult } from "../pass-criteria";
 import type {
   EvalCase,
@@ -30,6 +30,9 @@ export type CrossHostEnvironment = {
 };
 
 export type HostColumn = {
+  /** Only real named clients can open host configuration. */
+  namedHostId?: string;
+  hostStyle?: string;
   hostId: string;
   /** `(hostId, modelKey)` or per-env when a shared-slot collision splits. */
   columnKey?: string;
@@ -412,12 +415,14 @@ export function modelKeyForRun(
   // Persisted attribution is the run's frozen column. A later edit to the
   // named environment must not move historical runs into a new model cell
   // (or recast an inherit run as an override).
-  if (run.modelSource === "override" && run.effectiveModelId) {
+  if (
+    (run.modelSource === "override" || run.modelSource === "case") && run.effectiveModelId) {
     return run.effectiveModelId;
   }
   if (run.modelSource === "client_default") {
     return CLIENT_DEFAULT_MODEL_KEY;
   }
+  if (run.client?.modelId) return run.client.modelId;
   // Pre-attribution rows: join the live environment if present.
   const ref = runEnvironmentRef(run);
   const env = ref ? envById.get(ref.environmentId) : undefined;
@@ -454,15 +459,29 @@ export function useCrossHostData(
       modelKey: string;
       envIds: string[];
       isHistorical: boolean;
+      /** The column id is a real `hosts` row, not a synthetic style/sdk key. */
+      addressable: boolean;
     };
     const pending = new Map<string, PendingColumn>();
+    // Keep the existing named-host column ids; synthetic identities cannot
+    // be passed to host queries or configuration actions.
+    const clientColumnId = (run: EvalSuiteRun) => {
+      const identity = runClientIdentity(run);
+      return identity.namedHostId ?? identity.key;
+    };
+    const identities = new Map(
+      runs.map((run) => [
+        clientColumnId(run),
+        runClientIdentity(run, hostNamesById),
+      ]),
+    );
     const groupKey = (hostId: string, modelKey: string) =>
       `${hostId}::${modelKey}`;
 
     const touch = (
       hostId: string,
       modelKey: string,
-      opts: { envId?: string; historical: boolean },
+      opts: { envId?: string; historical: boolean; addressable: boolean },
     ) => {
       const key = groupKey(hostId, modelKey);
       const existing = pending.get(key);
@@ -472,6 +491,7 @@ export function useCrossHostData(
           modelKey,
           envIds: opts.envId ? [opts.envId] : [],
           isHistorical: opts.historical,
+          addressable: opts.addressable,
         });
         return;
       }
@@ -479,20 +499,29 @@ export function useCrossHostData(
         existing.envIds.push(opts.envId);
       }
       existing.isHistorical = existing.isHistorical && opts.historical;
+      existing.addressable = existing.addressable || opts.addressable;
     };
 
     for (const a of attachments) {
-      touch(a.namedHostId, CLIENT_DEFAULT_MODEL_KEY, { historical: false });
+      touch(a.namedHostId, CLIENT_DEFAULT_MODEL_KEY, {
+        historical: false,
+        addressable: true,
+      });
     }
 
     for (const run of runs) {
-      if (!run.namedHostId) continue;
+      const identity = runClientIdentity(run);
+      const hostId = identity.namedHostId ?? identity.key;
       const modelKey = modelKeyForRun(run, envById);
       const ref = runEnvironmentRef(run);
-      const historical = !attachedHostIds.has(run.namedHostId) && ref === null;
-      touch(run.namedHostId, modelKey, {
+      const historical = !attachedHostIds.has(hostId) && ref === null;
+      touch(hostId, modelKey, {
         envId: ref?.environmentId,
         historical,
+        // Only a run that resolved to a real host contributes an addressable
+        // id. A pre-descriptor run can still carry an environmentRef, so
+        // "this group has env ids" does NOT make its id a host id.
+        addressable: Boolean(identity.namedHostId),
       });
     }
 
@@ -513,12 +542,14 @@ export function useCrossHostData(
       touch(env.hostId, modelKey, {
         envId: env.environmentId,
         historical: false,
+        addressable: true,
       });
     }
 
     const resolveHostName = (hostId: string): string | null =>
       attachments.find((a) => a.namedHostId === hostId)?.hostName ??
       hostNamesById?.get(hostId) ??
+      identities.get(hostId)?.name ??
       null;
 
     // Runs with no environmentRef cannot land in a split column. If a
@@ -526,15 +557,16 @@ export function useCrossHostData(
     // group key alive so those iterations stay visible.
     const groupsNeedingResidual = new Set<string>();
     for (const run of runs) {
-      if (!run.namedHostId) continue;
       if (runEnvironmentRef(run)) continue;
       groupsNeedingResidual.add(
-        groupKey(run.namedHostId, modelKeyForRun(run, envById)),
+        groupKey(clientColumnId(run), modelKeyForRun(run, envById)),
       );
     }
 
     const hostColumns: HostColumn[] = [];
     for (const group of pending.values()) {
+      const identity = identities.get(group.hostId);
+      const namedHostId = group.addressable ? group.hostId : undefined;
       const groupEnvs = group.envIds
         .map((id) => envById.get(id))
         .filter((e): e is CrossHostEnvironment => Boolean(e));
@@ -545,6 +577,8 @@ export function useCrossHostData(
         for (const env of groupEnvs) {
           hostColumns.push({
             hostId: group.hostId,
+            namedHostId,
+            hostStyle: identity?.hostStyle,
             columnKey: `${group.hostId}::${group.modelKey}::${env.environmentId}`,
             modelKey: group.modelKey,
             modelLabel: modelLabelForKey(group.modelKey),
@@ -561,6 +595,8 @@ export function useCrossHostData(
       }
       hostColumns.push({
         hostId: group.hostId,
+        namedHostId,
+        hostStyle: identity?.hostStyle,
         columnKey: groupKey(group.hostId, group.modelKey),
         modelKey: group.modelKey,
         modelLabel: modelLabelForKey(group.modelKey),
@@ -572,12 +608,13 @@ export function useCrossHostData(
     // Build run → columnKey index (only active runs)
     const runHostMap = new Map<string, string>();
     for (const run of runs) {
-      if (!run.namedHostId || !activeRunIds.has(run._id)) continue;
+      if (!activeRunIds.has(run._id)) continue;
+      const hostId = clientColumnId(run);
       const modelKey = modelKeyForRun(run, envById);
       const ref = runEnvironmentRef(run);
       const splitCol = hostColumns.find(
         (col) =>
-          col.hostId === run.namedHostId &&
+          col.hostId === hostId &&
           col.modelKey === modelKey &&
           col.splitLabel &&
           ref &&
@@ -585,7 +622,7 @@ export function useCrossHostData(
       );
       runHostMap.set(
         run._id,
-        splitCol?.columnKey ?? groupKey(run.namedHostId, modelKey),
+        splitCol?.columnKey ?? groupKey(hostId, modelKey),
       );
     }
 

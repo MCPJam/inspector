@@ -57,6 +57,7 @@ export function PersonaPickerPopover({
   triggerClassName,
   triggerTestId,
   listTestId,
+  showTriggerIcon = true,
 }: {
   personas: readonly PersonaPickerOption[];
   open: boolean;
@@ -69,6 +70,8 @@ export function PersonaPickerPopover({
   triggerClassName?: string;
   triggerTestId?: string;
   listTestId?: string;
+  /** Mockup omits the plus on Confirm's "Add existing persona". */
+  showTriggerIcon?: boolean;
 }) {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -80,7 +83,7 @@ export function PersonaPickerPopover({
           className={triggerClassName}
           data-testid={triggerTestId}
         >
-          <Plus className="mr-1.5 size-4" />
+          {showTriggerIcon ? <Plus className="mr-1.5 size-4" /> : null}
           {triggerLabel}
         </Button>
       </PopoverTrigger>

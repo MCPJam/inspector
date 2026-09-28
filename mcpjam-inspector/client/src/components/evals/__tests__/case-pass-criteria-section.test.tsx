@@ -9,9 +9,9 @@ import {
 describe("isCasePassCriteriaOverridden", () => {
   it("returns false when match options and predicates inherit", () => {
     expect(isCasePassCriteriaOverridden(undefined, undefined)).toBe(false);
-    expect(isCasePassCriteriaOverridden(undefined, { mode: "inherit" })).toBe(
-      false,
-    );
+    expect(
+      isCasePassCriteriaOverridden(undefined, { mode: "inherit", list: [] }),
+    ).toBe(false);
   });
 
   it("returns true when validators diverge from suite defaults", () => {

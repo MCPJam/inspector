@@ -5,8 +5,9 @@ import { PartSwitch } from "../thread/part-switch";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockDetectUIType, mockWidgetReplay } = vi.hoisted(() => ({
+const { mockDetectUIType, mockToolPart, mockWidgetReplay } = vi.hoisted(() => ({
   mockDetectUIType: vi.fn(),
+  mockToolPart: vi.fn(),
   mockWidgetReplay: vi.fn(),
 }));
 
@@ -20,23 +21,18 @@ vi.mock("../thread/parts/text-part", () => ({
 }));
 
 vi.mock("../thread/parts/tool-part", () => ({
-  ToolPart: ({
-    part,
-    serverId,
-    rawOutput,
-  }: {
-    part: any;
-    serverId?: string;
-    rawOutput?: unknown;
-  }) => (
-    <div
-      data-testid="tool-part"
-      data-server-id={serverId ?? ""}
-      data-raw-output={JSON.stringify(rawOutput ?? null)}
-    >
-      {part.toolName || "tool"}
-    </div>
-  ),
+  ToolPart: (props: { part: any; serverId?: string; rawOutput?: unknown }) => {
+    mockToolPart(props);
+    return (
+      <div
+        data-testid="tool-part"
+        data-server-id={props.serverId ?? ""}
+        data-raw-output={JSON.stringify(props.rawOutput ?? null)}
+      >
+        {props.part.toolName || "tool"}
+      </div>
+    );
+  },
 }));
 
 vi.mock("../thread/parts/reasoning-part", () => ({
@@ -124,7 +120,8 @@ vi.mock("@/state/app-state-context", () => ({
 vi.mock("../thread/thread-helpers", () => ({
   isToolPart: (part: any) => part.type === "tool-invocation",
   isDynamicTool: (part: any) => part.type === "dynamic-tool",
-  isDataPart: (part: any) => part.type?.endsWith("-data"),
+  isDataPart: (part: any) =>
+    part.type?.startsWith("data-") || part.type?.endsWith("-data"),
   getToolInfo: (part: any) => ({
     toolName: part.toolName || "test-tool",
     toolCallId: part.toolCallId || "call-123",
@@ -150,7 +147,8 @@ vi.mock("@/lib/toast", () => ({
 // Mock mcp-apps-utils
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   detectUIType: mockDetectUIType,
-  getUIResourceUri: () => null,
+  getUIResourceUri: (_uiType: unknown, metadata: any) =>
+    metadata?.ui?.resourceUri ?? null,
   UIType: {
     OPENAI_SDK: "openai-apps",
     MCP_APPS: "mcp-apps",
@@ -160,6 +158,20 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 }));
 
 describe("PartSwitch", () => {
+  it("keeps browser readiness in the panel instead of rendering internal JSON", () => {
+    const { container } = render(
+      <PartSwitch
+        {...defaultProps}
+        part={
+          {
+            type: "data-browser-readiness",
+            data: { reason: "browser_consent_required: Allow Browser" },
+          } as any
+        }
+      />,
+    );
+    expect(container.textContent).toBe("");
+  });
   const defaultProps = {
     role: "user" as UIMessage["role"],
     onSendFollowUp: vi.fn(),
@@ -178,6 +190,39 @@ describe("PartSwitch", () => {
     mockDetectUIType.mockReturnValue(null);
   });
 
+  it.each(["openai-apps", "mcp-apps", "both", null])(
+    "keeps recorded widgets static under placeholder policy (%s)",
+    (uiType) => {
+      mockDetectUIType.mockReturnValue(uiType);
+      const { container } = render(<PartSwitch {...defaultProps}
+        role="assistant" interactive={false} widgetPolicy="placeholder"
+        part={{ type: "dynamic-tool", toolName: "search", toolCallId: "call-123",
+          state: "output-available", input: {}, output: { answer: 42 } } as any}
+        toolRenderOverrides={{ "call-123": {
+          resourceUri: "ui://search", cachedWidgetHtmlUrl: "https://example.com/widget",
+          frozenScreenshotUrl: "https://example.com/screenshot",
+        } } as any}
+      />);
+      expect(container.querySelector('[data-widget-placeholder="true"]')).not.toBeNull();
+      expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      expect(mockWidgetReplay).not.toHaveBeenCalled();
+      expect(container.querySelector("iframe, img")).toBeNull();
+    },
+  );
+
+  it.each([null, "browser_consent_required"])(
+    "hides internal browser readiness (%s)",
+    (reason) => {
+      const { container } = render(
+        <PartSwitch
+          {...defaultProps}
+          part={{ type: "data-browser-readiness", data: { reason } } as any}
+        />,
+      );
+      expect(container.textContent).toBe("");
+    },
+  );
+
   describe("text parts", () => {
     it("renders TextPart for text type", () => {
       const part = { type: "text", text: "Hello world" };
@@ -192,12 +237,12 @@ describe("PartSwitch", () => {
       const part = { type: "text", text: "Hello" };
 
       render(
-        <PartSwitch {...defaultProps} part={part as any} role="assistant" />
+        <PartSwitch {...defaultProps} part={part as any} role="assistant" />,
       );
 
       expect(screen.getByTestId("text-part")).toHaveAttribute(
         "data-role",
-        "assistant"
+        "assistant",
       );
     });
   });
@@ -214,7 +259,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("reasoning-part")).toBeInTheDocument();
       expect(screen.getByTestId("reasoning-part")).toHaveTextContent(
-        "Thinking..."
+        "Thinking...",
       );
     });
 
@@ -225,7 +270,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-state",
-        "done"
+        "done",
       );
     });
 
@@ -241,12 +286,12 @@ describe("PartSwitch", () => {
           {...defaultProps}
           part={part as any}
           reasoningDisplayMode="collapsed"
-        />
+        />,
       );
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-display-mode",
-        "collapsed"
+        "collapsed",
       );
     });
 
@@ -262,12 +307,12 @@ describe("PartSwitch", () => {
           {...defaultProps}
           part={part as any}
           reasoningDisplayMode="collapsible"
-        />
+        />,
       );
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-display-mode",
-        "collapsible"
+        "collapsible",
       );
     });
   });
@@ -290,7 +335,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("source-url-part")).toBeInTheDocument();
       expect(screen.getByTestId("source-url-part")).toHaveTextContent(
-        "https://example.com"
+        "https://example.com",
       );
     });
 
@@ -301,7 +346,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("source-document-part")).toBeInTheDocument();
       expect(screen.getByTestId("source-document-part")).toHaveTextContent(
-        "Doc Title"
+        "Doc Title",
       );
     });
   });
@@ -311,7 +356,7 @@ describe("PartSwitch", () => {
       const part = { type: "step-start" };
 
       const { container } = render(
-        <PartSwitch {...defaultProps} part={part as any} />
+        <PartSwitch {...defaultProps} part={part as any} />,
       );
 
       expect(container.firstChild).toBeNull();
@@ -327,7 +372,7 @@ describe("PartSwitch", () => {
       expect(screen.getByTestId("json-part")).toBeInTheDocument();
       expect(screen.getByTestId("json-part")).toHaveAttribute(
         "data-label",
-        "Unknown part"
+        "Unknown part",
       );
     });
   });
@@ -359,7 +404,7 @@ describe("PartSwitch", () => {
           part={part as any}
           toolsMetadata={{}}
           toolServerMap={{}}
-        />
+        />,
       );
 
       expect(screen.getByTestId("tool-part")).toBeInTheDocument();
@@ -392,12 +437,12 @@ describe("PartSwitch", () => {
           part={part as any}
           toolsMetadata={{}}
           toolServerMap={{}}
-        />
+        />,
       );
 
       expect(screen.getByTestId("tool-part")).toHaveAttribute(
         "data-server-id",
-        "qa-server"
+        "qa-server",
       );
     });
 
@@ -434,12 +479,12 @@ describe("PartSwitch", () => {
           part={part as any}
           toolsMetadata={{}}
           toolServerMap={{}}
-        />
+        />,
       );
 
       expect(screen.getByTestId("tool-part")).toHaveAttribute(
         "data-raw-output",
-        JSON.stringify(rawResult)
+        JSON.stringify(rawResult),
       );
     });
 
@@ -472,7 +517,7 @@ describe("PartSwitch", () => {
                 },
               }}
             />
-          </ActiveHostCapsResolverProvider>
+          </ActiveHostCapsResolverProvider>,
         );
         expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       });
@@ -501,7 +546,7 @@ describe("PartSwitch", () => {
                 },
               }}
             />
-          </ActiveHostCapsResolverProvider>
+          </ActiveHostCapsResolverProvider>,
         );
         expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
@@ -528,7 +573,7 @@ describe("PartSwitch", () => {
                 ui: { resourceUri: "ui://widget/create-view.html" },
               },
             }}
-          />
+          />,
         );
         expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       });
@@ -565,13 +610,13 @@ describe("PartSwitch", () => {
               },
             },
           }}
-        />
+        />,
       );
 
       expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       expect(screen.getByTestId("widget-replay")).toHaveAttribute(
         "data-cached-url",
-        "https://storage.example.com/widget.html"
+        "https://storage.example.com/widget.html",
       );
       expect(mockWidgetReplay).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -579,7 +624,106 @@ describe("PartSwitch", () => {
           renderOverride: expect.objectContaining({
             cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
           }),
-        })
+        }),
+      );
+    });
+
+    it("uses recorded diagnostics and hides live controls for frozen widgets", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const part = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-frozen",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          interactive
+          showInlineEdit
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          toolsMetadata={{
+            create_view: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+          }}
+          toolRenderOverrides={{
+            "call-frozen": {
+              frozenScreenshotUrl: "https://storage.example.com/widget.png",
+              widgetCsp: { connectDomains: ["https://api.example.com"] },
+              widgetPermissions: { clipboardWrite: {} },
+              widgetPermissive: false,
+              prefersBorder: true,
+              recordedWidgetErrors: {
+                consoleErrors: ["TypeError: broken"],
+                blockedRequests: ["https://blocked.example.com"],
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("frozen-widget-replay")).toBeInTheDocument();
+      expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          displayMode: undefined,
+          onDisplayModeChange: undefined,
+          allowInlineEdit: false,
+          recordedWidgetDiagnostics: {
+            resourceUri: "ui://widget/create-view.html",
+            csp: { connectDomains: ["https://api.example.com"] },
+            permissions: { clipboardWrite: {} },
+            permissive: false,
+            prefersBorder: true,
+            consoleErrors: ["TypeError: broken"],
+            blockedRequests: ["https://blocked.example.com"],
+          },
+        }),
+      );
+    });
+
+    it("keeps display modes, diagnostics, and edit enabled for live widgets", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const onDisplayModeChange = vi.fn();
+      const part = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-live",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          interactive
+          showInlineEdit
+          displayMode="inline"
+          onDisplayModeChange={onDisplayModeChange}
+          toolsMetadata={{
+            create_view: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          displayMode: "inline",
+          onDisplayModeChange,
+          allowInlineEdit: true,
+          recordedWidgetDiagnostics: undefined,
+        }),
       );
     });
 
@@ -612,7 +756,7 @@ describe("PartSwitch", () => {
             part={dismissedPart as any}
             toolsMetadata={widgetMetadata}
             tornDownWidgetIds={new Set(["call-1"])}
-          />
+          />,
         );
         expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
@@ -626,7 +770,7 @@ describe("PartSwitch", () => {
             part={dismissedPart as any}
             toolsMetadata={widgetMetadata}
             tornDownWidgetIds={new Set(["other-call"])}
-          />
+          />,
         );
         expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       });
@@ -640,10 +784,10 @@ describe("PartSwitch", () => {
             part={dismissedPart as any}
             toolsMetadata={widgetMetadata}
             onRequestTeardown={handleTeardown}
-          />
+          />,
         );
         expect(mockWidgetReplay).toHaveBeenCalledWith(
-          expect.objectContaining({ onRequestTeardown: handleTeardown })
+          expect.objectContaining({ onRequestTeardown: handleTeardown }),
         );
       });
     });

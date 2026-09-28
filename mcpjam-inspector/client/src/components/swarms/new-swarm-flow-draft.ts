@@ -34,7 +34,11 @@ import type {
   ProposedPersona,
 } from "@/components/swarms/new-swarm-confirm-step";
 import type { SwarmLaunchedRun } from "@/components/swarms/new-swarm-running-step";
-import type { SwarmPushIntensity } from "@/components/swarms/swarm-intensity";
+import {
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
+  type SwarmPushIntensity,
+} from "@/components/swarms/swarm-intensity";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
 const STORAGE_KEY = "mcp-new-swarm-flow-draft";
@@ -121,6 +125,8 @@ export type NewSwarmFlowDraft = {
   resolvedEnvironments: ProjectEnvironmentView[] | null;
   createdEnvOverlay: ProjectEnvironmentView[];
   pushIntensity: SwarmPushIntensity;
+  /** Iterations per goal, keyed by proposed persona key. */
+  iterationsByPersona: Record<string, number>;
   reusedIds: string[];
   proposed: ProposedPersona[];
   launchedRuns: SwarmLaunchedRun[];
@@ -145,6 +151,26 @@ type StoredDraft = {
 
 const FLOW_STEPS: NewSwarmFlowStep[] = ["describe", "confirm", "running"];
 const INTENSITIES: SwarmPushIntensity[] = ["quick", "standard", "launch"];
+
+/**
+ * Per-persona iterations, dropping anything the counter could not produce.
+ *
+ * Clamped rather than rejected: a stored number outside the backend's range
+ * would fail the launch, and throwing the whole draft away over it would
+ * lose a slate the user paid a model call for.
+ */
+function parseIterations(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+  const parsed: Record<string, number> = {};
+  for (const [key, count] of Object.entries(value)) {
+    if (typeof count !== "number" || !Number.isFinite(count)) continue;
+    parsed[key] = Math.min(
+      MAX_SWARM_ITERATIONS,
+      Math.max(MIN_SWARM_ITERATIONS, Math.round(count)),
+    );
+  }
+  return parsed;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -303,6 +329,9 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
   // Tolerated like `name`: a draft written before this field existed is still
   // resumable, and its other fields are what made it resumable anyway.
   const nameEdited = value.nameEdited === true;
+  // Tolerated like `name`: a draft written before the iterations control
+  // existed still resumes, with every persona at the default count.
+  const iterationsByPersona = parseIterations(value.iterationsByPersona);
   if (!isComposerState(value.targetState)) return null;
   if (
     value.resolvedEnvironmentIds !== null &&
@@ -339,6 +368,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     resolvedEnvironments: value.resolvedEnvironments,
     createdEnvOverlay: value.createdEnvOverlay,
     pushIntensity: intensity as SwarmPushIntensity,
+    iterationsByPersona,
     reusedIds: value.reusedIds,
     proposed: value.proposed,
     launchedRuns: value.launchedRuns,

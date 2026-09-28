@@ -25,6 +25,8 @@
  */
 
 export const ANALYTICS_EVENTS = {
+  // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
+  platform_launch_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
@@ -122,6 +124,20 @@ export const ANALYTICS_EVENTS = {
 
   // --- Billing / revenue funnel (migrated) ---
   billing_upsell_gate_viewed: { source: "client" },
+  // Organization billing funnel. Properties are deliberately categorical:
+  // flow/source/plan/interval/outcome/failure_kind only. Never attach prices,
+  // Stripe ids, organization ids, invoice ids, or raw error strings as event
+  // properties. Organization attribution belongs only in PostHog's native
+  // `organization` group.
+  billing_plans_viewed: { source: "client" },
+  billing_flow_started: { source: "client" },
+  // A handoff means Checkout or the Stripe portal opened; it does not mean
+  // Stripe collected payment. Trusted payment outcomes come from the backend.
+  billing_handoff_succeeded: { source: "client" },
+  // An action means the app received a terminal result itself (for example a
+  // paid seat, scheduled plan change, or confirmed cancellation).
+  billing_action_succeeded: { source: "client" },
+  billing_flow_failed: { source: "client" },
   credit_topup_checkout_started: { source: "client" },
   credit_topup_checkout_failed: { source: "client" },
   credit_topup_return_cancelled: { source: "client" },
@@ -147,6 +163,7 @@ export const ANALYTICS_EVENTS = {
   // text), location: chat_tab | playground_single | playground_compare.
   chat_starter_prompt_clicked: { source: "client" },
   chat_tab_viewed: { source: "client" },
+  platform_paid_fallback_notice: { source: "client" },
   chat_voice_input_recording_canceled: { source: "client" },
   chat_voice_input_recording_started: { source: "client" },
   chat_voice_input_recording_stopped: { source: "client" },
@@ -155,6 +172,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },
@@ -178,11 +196,40 @@ export const ANALYTICS_EVENTS = {
   // local_terminal_unavailable: the local terminal could not be offered
   //   {reason} — an enum, never a node-pty error string.
   computer_engine_selected: { source: "client" },
+  local_browser_consent_denied: { source: "client" },
+  local_browser_consent_gate_shown: { source: "client" },
+  local_browser_consent_granted: { source: "client" },
   local_computer_consent_denied: { source: "client" },
   local_computer_consent_gate_shown: { source: "client" },
   local_computer_consent_granted: { source: "client" },
   local_computer_consent_reauthorized: { source: "client" },
   local_terminal_unavailable: { source: "client" },
+  // --- Local harness target ("Native on this machine") ---
+  // The Claude Code agent running as a supervised process on the user's own
+  // machine rather than in a cloud computer. Content-free by the same rule as
+  // the local computer above, and then some: NEVER a workspace path (not even
+  // tilde-shortened), a machine id, a runtime digest, a lease, or a key.
+  // Enums, booleans and counts only.
+  // local_harness_target_selected: the user moved the Hosted⇄Native selector
+  //   {target}.
+  // local_harness_consent_gate_shown: the consent sheet rendered.
+  // local_harness_consent_granted / _denied: Allow / "Run hosted instead" —
+  //   the two affordances on the sheet.
+  // local_harness_consent_reauthorized: "Forget & re-authorize".
+  // local_harness_runtime_install_started / _completed / _failed: the explicit
+  //   runtime-pack install step {outcome} — an enum, never an installer
+  //   message, which can carry a path.
+  // local_harness_unavailable: the native target could not be offered
+  //   {reason} — the availability gate's own status enum.
+  local_harness_target_selected: { source: "client" },
+  local_harness_consent_denied: { source: "client" },
+  local_harness_consent_gate_shown: { source: "client" },
+  local_harness_consent_granted: { source: "client" },
+  local_harness_consent_reauthorized: { source: "client" },
+  local_harness_runtime_install_started: { source: "client" },
+  local_harness_runtime_install_completed: { source: "client" },
+  local_harness_runtime_install_failed: { source: "client" },
+  local_harness_unavailable: { source: "client" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
@@ -216,6 +263,10 @@ export const ANALYTICS_EVENTS = {
   eval_suite_duplicated: { source: "client" },
   eval_suite_run_start_requests_completed: { source: "client" },
   eval_suite_server_changed: { source: "client" },
+  eval_case_run_test: { source: "client" },
+  eval_suggestion_accepted: { source: "client" },
+  eval_suggestion_dismissed: { source: "client" },
+  eval_suggestion_shown: { source: "client" },
   eval_test_case_created: { source: "client" },
   eval_test_case_deleted: { source: "client" },
   eval_test_case_duplicated: { source: "client" },
@@ -227,6 +278,24 @@ export const ANALYTICS_EVENTS = {
   evaluate_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
+  // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
+  // counts arrivals by a SIGNED-OUT visitor only, and `location` separates
+  // Swarms from User Testing rather than one audience from another.
+  //
+  // It used to fire for plan-locked members too, back when both shared one
+  // component, which quietly inflated the sign-up funnel with billing
+  // impressions. They are separate components now and a plan-locked arrival
+  // is counted by `billing_upsell_gate_viewed`, which the upsell itself
+  // fires. Do not re-point this event at the shared shell without splitting
+  // the audiences again.
+  //
+  // The nudge pair measures the dialog the guest CTA opens; the
+  // sign-up/sign-in clicks inside it reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with the same location, exactly as the invite
+  // nudge below does.
+  guest_feature_preview_shown: { source: "client" },
+  guest_feature_nudge_shown: { source: "client" },
+  guest_feature_nudge_dismissed: { source: "client" },
   guest_refresh_failure: { source: "client" },
   guest_refresh_success: { source: "client" },
   host_capabilities_dialog_opened: { source: "client" },
@@ -244,6 +313,12 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
+  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
+  // on hosted): shown/dismissed measure the gate's conversion funnel; the
+  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with location "invite_signup_nudge".
+  invite_signup_nudge_shown: { source: "client" },
+  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
@@ -309,6 +384,9 @@ export const ANALYTICS_EVENTS = {
   plan_limit_sign_in_clicked: { source: "client" },
   plan_limit_buy_credits_clicked: { source: "client" },
   plan_limit_byok_clicked: { source: "client" },
+  // The swarm variant's tertiary link. `surface` on the impression says which
+  // variant was on screen, so it needs no wall_kind of its own.
+  plan_limit_explore_plans_clicked: { source: "client" },
   plan_limit_interval_selected: { source: "client" },
   plan_limit_upgrade_clicked: { source: "client" },
   plan_limit_upgrade_failed: { source: "client" },
@@ -317,6 +395,20 @@ export const ANALYTICS_EVENTS = {
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
+  // Guest credit-wall A/B (BB-133): the treatment modal replaces the single
+  // "Sign in" CTA with a benefit-led create-account primary and a see-plans
+  // secondary. `variant` on the impression/click events lets PostHog compare
+  // sign-in vs create-account conversion across control and treatment.
+  plan_limit_create_account_clicked: { source: "client" },
+  plan_limit_see_plans_clicked: { source: "client" },
+  // --- Plan confirmation step on the organization plans page ---
+  // The modal that stands between an Upgrade/Change plan card and Stripe.
+  // `shown` vs `submitted` measures how many confirmations are abandoned, and
+  // `interval_selected` says how often the cycle is changed at the last step.
+  plans_upgrade_confirm_shown: { source: "client" },
+  plans_upgrade_confirm_interval_selected: { source: "client" },
+  plans_upgrade_confirm_submitted: { source: "client" },
+  plans_upgrade_confirm_dismissed: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },
@@ -403,6 +495,25 @@ export const ANALYTICS_EVENTS = {
   ui_tool_call_completed: { source: "client" },
   ui_tool_call_started: { source: "client" },
 
+  // --- The same `ui_*` tools, published to browser-native WebMCP agents ---
+  // Diagnostics for `native-tool-publisher.ts`. Same hard rule as the events
+  // above and then some: a native call is made by software MCPJam does not
+  // control, so its ARGUMENTS AND RESULTS NEVER RIDE AN EVENT — only tool
+  // names (first-party, curated), statuses, counts and durations.
+  // ui_tool_native_published: one page's publication landed. Props: api_home
+  //   (document | navigator), tool_count. The adoption signal — how many
+  //   sessions actually have a browser with the WebMCP API.
+  // ui_tool_native_registration_failed: one tool the browser refused. Props:
+  //   tool_name, error_code (the DOMException NAME only, e.g.
+  //   InvalidStateError — never its message).
+  // ui_tool_native_call_completed: one native invocation settled. Props:
+  //   tool_name, status (the shared execution status: ok | error |
+  //   unavailable | invalid_input | cancelled | threw), duration_ms, and the
+  //   structured error_code when there is one.
+  ui_tool_native_published: { source: "client" },
+  ui_tool_native_registration_failed: { source: "client" },
+  ui_tool_native_call_completed: { source: "client" },
+
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
   // state (none | provisioning | invite_sent | pending_admin_approval |
@@ -426,6 +537,10 @@ export const ANALYTICS_EVENTS = {
   //   active project.
   // `project_route_inaccessible`       props: reason (malformed | not-a-member
   //   | timed-out). Never says whether the project exists.
+  // `project_route_recovered`          props: cause (late-ready). A route that
+  //   had already looked inaccessible later resolved without navigation.
+  // `project_route_stale_return_recovered` props: outcome (switched |
+  //   no-fallback). A post-sign-in scoped path named a lost membership.
   // `project_route_scope_mismatch`     props: guard (redirect-loop |
   //   repeated-switch). Redirect-loop protection tripped.
   // `app_signin_return_restored`       props: outcome (restored | absent |
@@ -433,8 +548,19 @@ export const ANALYTICS_EVENTS = {
   project_route_legacy_normalized: { source: "client" },
   project_route_resolved: { source: "client" },
   project_route_inaccessible: { source: "client" },
+  project_route_recovered: { source: "client" },
+  project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // A signed-in tab's WorkOS session was rejected on refresh (usually the
+  // max session length running out); the user is sent back to sign in.
+  workos_session_expired: { source: "client" },
+  // `browser_pane_session_summary`   props: engine, transport, tier, fps,
+  //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
+  //   on unmount — a per-frame event would be tens of thousands of captures an
+  //   hour, and the question ("did the viewport work move the numbers?") is
+  //   answered by the session, not the frame.
+  browser_pane_session_summary: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

@@ -1,8 +1,8 @@
+import type { ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import type { ScenarioListItem } from "@/hooks/useScenarios";
 import {
   getScenarioHostLabel,
@@ -85,7 +85,7 @@ function OverviewBody({
   // auth to query with. Treating that as "still loading" would spin forever.
   if (!scenarios || scenarios.length === 0) {
     return (
-      <EmptyState
+      <UserTestingEmptyState
         onCreateScenario={onCreateScenario}
         createLabel={createLabel}
       />
@@ -101,7 +101,7 @@ function OverviewBody({
           "border-b border-border/40 pb-2 text-xs font-medium text-muted-foreground",
         )}
       >
-        <span>Scenario</span>
+        <span>Study</span>
         <span>Client</span>
         <span>Server</span>
         <span className="text-right">Testers</span>
@@ -199,11 +199,11 @@ function LoadFailureState({
     >
       <AlertTriangle className="size-8 text-amber-500" />
       <h2 className="mt-4 text-base font-semibold">
-        Couldn&apos;t show your scenarios
+        Couldn&apos;t show your studies
       </h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        The list failed to render. Reload the page — this doesn&apos;t mean
-        anything happened to your scenarios.
+        The list failed to render. Reload the page. A render failure isn&apos;t
+        a sign that your studies changed.
       </p>
       <Button variant="outline" className="mt-5" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />
@@ -216,55 +216,73 @@ function LoadFailureState({
 /**
  * The redesigned User Testing empty state (BB-125).
  *
- * The graphic is one of the project's pixel characters rather than the frame's
- * bitmap: the asset lives in the design file, and reaching for a stock icon
- * instead would put a third visual language on a page that already sits beside
- * the Swarm empty state. Scaled up because at its native 44px it reads as a
- * list bullet, not an illustration.
+ * The graphic is the frame's own bitmap, served from `public/`. It replaces a
+ * scaled-up `PersonaPixelAvatar`, which stood in while the asset did not exist
+ * yet: a persona avatar says "a user", but this page is about a study — the
+ * desk, the brief and the observed subject are the thing being described.
  *
- * The scale goes on a WRAPPER so it stays independent of the avatar, which
- * animates its own `transform` for the idle float every PersonaPixelAvatar
- * carries. Tailwind emits the standalone `scale` property, so the two do
- * compose today — the wrapper is what keeps that true if the utility ever
- * compiles to `transform` instead, where the animation would win.
+ * Sized against the Swarm empty state, but by MASS rather than by height.
+ * That page puts four `PersonaPixelAvatar size="lg"` characters in a row —
+ * 56px tall but roughly 180px wide — so a single 44x56 bitmap matched the
+ * height and still read as a quarter of the picture. At 2x that height
+ * (112px, `h-28`) the two illustrations occupy about the same area.
+ *
+ * 112px is also well down from the native 250px, which towered over the
+ * heading beneath it.
+ *
+ * `w-auto` rather than a matching width: 196×250 has no clean integer
+ * downscale (their GCD is 2), so pinning both dimensions would round the
+ * ratio. The intrinsic size stays on the attributes to reserve the box
+ * before the file loads.
+ *
+ * No `image-rendering: pixelated` either. That keeps edges hard when pixel
+ * art is scaled UP; scaling 4.5× DOWN it would drop rows unevenly and
+ * alias. The browser's own filtering is the better of the two here.
  */
-function EmptyState({
+export function UserTestingEmptyState({
   onCreateScenario,
   createLabel,
+  action,
 }: {
-  onCreateScenario: () => void;
-  createLabel: string;
+  onCreateScenario?: () => void;
+  createLabel?: string;
+  /**
+   * Replaces the create button, and nothing else (REEV-6). The signed-out
+   * preview renders this same component so the illustration, the heading and
+   * the sentence under it are identical to what a member sees on an empty
+   * tab. See the matching slot on `SwarmsEmptyHero` for why this is a slot
+   * and not a second copy of the strings.
+   */
+  action?: ReactNode;
 }) {
   return (
     <div
       className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-empty"
     >
-      <div
-        className="flex h-[120px] w-[88px] items-end justify-center"
+      <img
+        src="/user-testing-empty.png"
+        alt=""
+        width={196}
+        height={250}
+        aria-hidden
         data-testid="user-testing-empty-illustration"
-      >
-        {/* origin-bottom so the scale grows upward from the character's feet
-            and the row keeps its baseline. */}
-        <span className="origin-bottom scale-[2]">
-          <PersonaPixelAvatar
-            seed="user-testing-empty-state"
-            shapeIndex={1}
-            paletteIndex={5}
-            size="lg"
-          />
-        </span>
-      </div>
+        className="h-28 w-auto max-w-full object-contain"
+      />
       <h2 className="mt-4 text-lg font-semibold">Create your first study</h2>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-foreground">
         A study starts with a link you send. Users open it, use your server
         inside the client they&rsquo;re used to seeing, and their sessions are
         recorded here.
       </p>
-      <Button size="sm" className="mt-4" onClick={onCreateScenario}>
-        <Plus className="mr-1.5 size-4" />
-        {createLabel}
-      </Button>
+      <div className="mt-4">
+        {action ?? (
+          <Button size="sm" onClick={onCreateScenario}>
+            <Plus className="mr-1.5 size-4" />
+            {createLabel}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

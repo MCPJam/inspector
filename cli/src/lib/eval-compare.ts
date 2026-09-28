@@ -29,6 +29,8 @@ export type EvalCompareOptions = {
   minEffectSizePercent?: string;
   gateDeterministicRegressions?: boolean;
   maxP95LatencyIncreaseMs?: string;
+  /** PERCENT increase over the baseline's cost (0–…), not a fraction. */
+  maxCostIncreasePercent?: string;
 };
 
 function parseNonNegativeInteger(raw: string, flag: string): number {
@@ -36,9 +38,22 @@ function parseNonNegativeInteger(raw: string, flag: string): number {
   // disable the minimum-sample floor entirely.
   const value = raw.trim() === "" ? NaN : Number(raw);
   if (!Number.isInteger(value) || value < 0) {
-    throw usageError(
-      `${flag} must be a non-negative integer, got "${raw}".`
-    );
+    throw usageError(`${flag} must be a non-negative integer, got "${raw}".`);
+  }
+  return value;
+}
+
+/**
+ * A non-negative decimal percentage, left AS a percentage.
+ *
+ * Distinct from `parsePercentAsFraction` above, which divides by 100 for the
+ * engine's fraction-valued fields, and from it also in having no upper bound:
+ * a run costing three times its baseline is a 200% increase.
+ */
+function parseNonNegativeDecimal(raw: string, flag: string): number {
+  const value = raw.trim() === "" ? NaN : Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw usageError(`${flag} must be a non-negative number, got "${raw}".`);
   }
   return value;
 }
@@ -96,6 +111,18 @@ export function comparePolicyFromOptions(
     policy.maximumP95LatencyIncreaseMs = parseNonNegativeInteger(
       options.maxP95LatencyIncreaseMs,
       "--max-p95-latency-increase-ms"
+    );
+  }
+  if (options.maxCostIncreasePercent !== undefined) {
+    // NOT `parsePercentAsFraction`: this threshold is compared against a
+    // percentage the gate computes (`(compare - base) / base * 100`), so
+    // converting it to a fraction here would make `--max-cost-increase-percent
+    // 10` mean 0.1% — a hundredfold-stricter gate than the author wrote.
+    // Also not capped at 100: a run that costs three times the baseline is a
+    // 200% increase, and a ceiling above 100 is a legitimate thing to allow.
+    policy.maximumCostIncreasePercent = parseNonNegativeDecimal(
+      options.maxCostIncreasePercent,
+      "--max-cost-increase-percent"
     );
   }
   return policy;
@@ -158,15 +185,26 @@ export function iterationWeightingEqualFrom(
 function sideFromRun(
   summary: PlatformRunCompare["baseRun"]["summary"],
   integrity: "valid" | "invalid" | null,
-  e2eP95Ms: number | undefined
+  e2eP95Ms: number | undefined,
+  cost: {
+    costUsd?: number;
+    costCoverage?: { costed: number; total: number };
+  } = {}
 ): GateInput {
+  const totals = {
+    ...(e2eP95Ms !== undefined ? { e2eP95Ms } : {}),
+    ...(cost.costUsd !== undefined ? { costUsd: cost.costUsd } : {}),
+    ...(cost.costCoverage !== undefined
+      ? { costCoverage: cost.costCoverage }
+      : {}),
+  };
   return {
     iterations: {
       total: summary?.total ?? 0,
       passed: summary?.passed ?? 0,
     },
     ...(integrity ? { scoreIntegrity: integrity } : {}),
-    ...(e2eP95Ms !== undefined ? { totals: { e2eP95Ms } } : {}),
+    ...(Object.keys(totals).length > 0 ? { totals } : {}),
   };
 }
 
@@ -184,15 +222,36 @@ export function compareGateInputFrom(
 ): CompareGateInput {
   const cases = compare.cases;
   return {
+    // Cost comes STRAIGHT OFF the wire, unlike p95: the compare DTO already
+    // carries whole-run cost with its coverage, so no iteration fetch is
+    // needed to decide a cost-increase gate. Coverage travels with it because
+    // the gate refuses on a partial sum — a run we priced less of would
+    // otherwise read as the cheaper run.
     base: sideFromRun(
       compare.baseRun.summary,
       compare.scoreContract.base.scoreIntegrity,
-      latency.baseP95Ms
+      latency.baseP95Ms,
+      {
+        ...(typeof compare.metrics.estimatedCostUsd.base === "number"
+          ? { costUsd: compare.metrics.estimatedCostUsd.base }
+          : {}),
+        ...(compare.metrics.costCoverage
+          ? { costCoverage: compare.metrics.costCoverage.base }
+          : {}),
+      }
     ),
     compare: sideFromRun(
       compare.compareRun.summary,
       compare.scoreContract.compare.scoreIntegrity,
-      latency.compareP95Ms
+      latency.compareP95Ms,
+      {
+        ...(typeof compare.metrics.estimatedCostUsd.compare === "number"
+          ? { costUsd: compare.metrics.estimatedCostUsd.compare }
+          : {}),
+        ...(compare.metrics.costCoverage
+          ? { costCoverage: compare.metrics.costCoverage.compare }
+          : {}),
+      }
     ),
     deterministicScoreRegressions: deterministicRegressionsFrom(cases),
     scoreDeltasAvailable: cases.some((row) => row.scoreDeltas.length > 0),
@@ -214,20 +273,22 @@ export function compareGateInputFrom(
 export function flakyInputFrom(
   iterations: PlatformEvalIteration[]
 ): Array<{ caseKey: string; passed: boolean }> {
-  return iterations
-    // A pending iteration has `result: null`. Mapping that to `passed: false`
-    // would make a half-finished case look like it both passed and failed —
-    // a fabricated flake.
-    .filter(
-      (iteration) =>
-        iteration.result === "passed" || iteration.result === "failed"
-    )
-    .map((iteration) => ({
-      // Falls back to the iteration's own id, never a shared literal: a
-      // single "unknown" bucket would pool unrelated iterations, and one pass
-      // plus one fail from two DIFFERENT cases would be reported as a flake
-      // that never existed.
-      caseKey: iteration.testCaseId ?? iteration.title ?? iteration.id,
-      passed: iteration.result === "passed",
-    }));
+  return (
+    iterations
+      // A pending iteration has `result: null`. Mapping that to `passed: false`
+      // would make a half-finished case look like it both passed and failed —
+      // a fabricated flake.
+      .filter(
+        (iteration) =>
+          iteration.result === "passed" || iteration.result === "failed"
+      )
+      .map((iteration) => ({
+        // Falls back to the iteration's own id, never a shared literal: a
+        // single "unknown" bucket would pool unrelated iterations, and one pass
+        // plus one fail from two DIFFERENT cases would be reported as a flake
+        // that never existed.
+        caseKey: iteration.testCaseId ?? iteration.title ?? iteration.id,
+        passed: iteration.result === "passed",
+      }))
+  );
 }

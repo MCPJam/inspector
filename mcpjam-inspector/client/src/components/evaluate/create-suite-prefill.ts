@@ -1,16 +1,46 @@
 /**
- * Seeded into the name field when there is no empty-hero / URL / agent
- * prefill, so Continue is enabled on first paint. Also used as the
- * empty-after-clear placeholder.
+ * Exact "Suite 1", "Suite 2", … names. Anything else (including
+ * "Suite 1 extra" or a server-card prefill) is ignored when incrementing.
  */
-export const DEFAULT_CREATE_SUITE_NAME = "Customer support workflows";
+const NUMBERED_SUITE_NAME = /^Suite (\d+)$/;
+
+/**
+ * Fallback when no numbered suites exist yet. Also the empty-after-clear
+ * placeholder when the caller does not pass existing names.
+ */
+export const DEFAULT_CREATE_SUITE_NAME = "Suite 1";
+
+/**
+ * Next unused "Suite N" from existing names. Takes one past the highest
+ * exact match; names that do not match `/^Suite (\d+)$/` are ignored.
+ */
+export function nextUnusedSuiteName(
+  existingNames: ReadonlyArray<string> = [],
+): string {
+  let highest = 0;
+  for (const name of existingNames) {
+    const match = NUMBERED_SUITE_NAME.exec(name);
+    if (!match) continue;
+    const n = Number(match[1]);
+    if (Number.isFinite(n) && n > highest) {
+      highest = n;
+    }
+  }
+  return `Suite ${highest + 1}`;
+}
 
 /**
  * Empty-hero server cards and URL/agent prefills win; otherwise the
- * page starts with a real default so the user can Continue immediately.
+ * page starts with the next unused "Suite N" so Continue is enabled
+ * on first paint.
  */
-export function seedCreateSuiteName(initialName?: string | null): string {
-  return initialName?.trim() ? initialName : DEFAULT_CREATE_SUITE_NAME;
+export function seedCreateSuiteName(
+  initialName?: string | null,
+  existingNames: ReadonlyArray<string> = [],
+): string {
+  return initialName?.trim()
+    ? initialName
+    : nextUnusedSuiteName(existingNames);
 }
 
 /**

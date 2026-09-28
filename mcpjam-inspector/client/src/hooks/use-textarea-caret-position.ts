@@ -60,13 +60,16 @@ export function useTextareaCaretPosition(
     const before = value.slice(0, safeIndex);
     const after = value.slice(safeIndex);
 
-    mirror.innerHTML =
-      before.replace(/\n/g, "<br/>") +
-      `<span id="caret-marker">|</span>` +
-      after.replace(/\n/g, "<br/>");
-
-    const marker = mirror.querySelector<HTMLSpanElement>("#caret-marker");
-    if (!marker) return;
+    // Text nodes, never innerHTML: `value` is arbitrary text, and the composer
+    // is seeded programmatically from imported eval suites as well as typing.
+    // `white-space: pre-wrap` above already renders "\n" as a line break.
+    const marker = document.createElement("span");
+    marker.textContent = "|";
+    mirror.replaceChildren(
+      document.createTextNode(before),
+      marker,
+      document.createTextNode(after),
+    );
 
     const mirrorRect = mirror.getBoundingClientRect();
     const markerRect = marker.getBoundingClientRect();

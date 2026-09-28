@@ -38,6 +38,7 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import { withHostedMcpAnswerBodies } from "../../utils/hosted-mcp-base-fetch.js";
 import {
   runDirectoryReadiness,
   type DirectoryReadinessResult,
@@ -87,7 +88,7 @@ const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * A no-op outside hosted mode, where reaching localhost is the point.
  */
 export function createConformanceFetch(targetLabel: string): typeof fetch {
-  return createStreamingPinnedFetch({
+  const fetchFn = createStreamingPinnedFetch({
     targetLabel,
     // DNS + connect + headers, summed across the redirect chain. Deliberately
     // NOT a bound on an established body: an SSE stream is long-lived by
@@ -98,6 +99,12 @@ export function createConformanceFetch(targetLabel: string): typeof fetch {
     bodyIdleTimeoutMs: CONFORMANCE_BODY_IDLE_TIMEOUT_MS,
     maxResponseBytes: CONFORMANCE_MAX_RESPONSE_BYTES,
   });
+  // An MCP server's answers are read as MCP (hosted: see
+  // `withHostedMcpAnswerBodies`). An OAuth endpoint's are not — its error
+  // bodies are what the OAuth suite grades.
+  return targetLabel === "MCP server"
+    ? withHostedMcpAnswerBodies(fetchFn)
+    : fetchFn;
 }
 
 // ── Result shapes shared with clients ───────────────────────────────────
@@ -162,13 +169,13 @@ export async function runProtocolConformance(
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
     // mode, where reaching localhost is the point.
     //
-    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use. The
-    // one real MCP connection this suite opens goes through MCPClientManager's
-    // own transport fetch, which this does not reach — so a redirect returned by
-    // the MCP endpoint itself is still followed unchecked. Closing that means
-    // threading a base fetch through the client manager, which is a shared
-    // connection path for every protocol version and every surface, and does not
-    // belong in this change.
+    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use, and
+    // `mcp-conformance/runner.ts` also threads it into the client manager as
+    // `baseFetch` — so the one real MCP connection a run opens is under the
+    // same guard as the probes beside it. The deferral this comment used to
+    // record ("threading a base fetch through the client manager … does not
+    // belong in this change") was taken up by the runner, and then by every
+    // hosted connection factory when the gap it left became MJ-001.
     fetchFn: createConformanceFetch("MCP server"),
   };
   const test = new MCPConformanceTest(config);

@@ -2,11 +2,12 @@
 
 import { resolve, dirname } from "path";
 import { spawn } from "child_process";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { createServer, createConnection } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import open from "open";
+import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -427,7 +428,115 @@ async function setupOllamaInSingleTerminal(model) {
   }
 }
 
+/**
+ * `mcpjam-inspector harness install` — download and verify the local-harness
+ * runtime pack, then exit.
+ *
+ * A subcommand rather than a flag on the server, and handled before the server
+ * spawn, because installing a 515 MB agent runtime is a thing somebody asks
+ * for and watches finish. Nothing about starting the Inspector installs it.
+ */
+async function runHarnessSubcommand(args) {
+  const action = args[1];
+  if (action !== "install" && action !== "status") {
+    logError("usage: mcpjam-inspector harness <install|status>");
+    return 2;
+  }
+
+  // A dedicated bundle: importing the server entry would start a server.
+  const cliEntry = resolve(__dirname, "../dist/server/harness-install-cli.js");
+  if (!existsSync(cliEntry)) {
+    logError(
+      "the Inspector server build is missing; run `npm run build` first",
+    );
+    return 1;
+  }
+  // `pathToFileURL`, not a hand-built `file://` — a Windows path is
+  // `C:\\…`, and `file://C:/…` parses `C` as the URL's HOST.
+  let mod;
+  try {
+    mod = await import(pathToFileURL(cliEntry).href);
+  } catch (error) {
+    // The import FAILED; that is a different thing from a build that loaded
+    // and lacks the export, and reporting it as the latter sends the reader
+    // looking for the wrong problem.
+    logError(
+      `could not load the local harness runtime installer: ${
+        error?.message ?? error
+      }`,
+    );
+    return 1;
+  }
+  const install = mod?.harnessInstall;
+  const status = mod?.harnessStatus;
+  if (typeof install !== "function" || typeof status !== "function") {
+    logError(
+      "this Inspector build does not expose the local harness runtime " +
+        "installer",
+    );
+    return 1;
+  }
+
+  if (action === "status") {
+    const current = await status();
+    log(JSON.stringify(current, null, 2));
+    return current.state === "ready" ? 0 : 1;
+  }
+
+  logStep("1", "Installing the local Claude Code runtime pack");
+  let lastPercent = -1;
+  const result = await install((progress) => {
+    if (progress.state === "downloading" && progress.percent !== lastPercent) {
+      lastPercent = progress.percent;
+      process.stdout.write(`\r  downloading ${progress.percent}%   `);
+    } else if (progress.state === "verifying") {
+      process.stdout.write("\r  verifying…            ");
+    }
+  });
+  process.stdout.write("\r");
+  if (result.state === "ready") {
+    logSuccess(`Runtime pack ${result.packVersion} installed and verified`);
+    return 0;
+  }
+  // The reason, where the installer could establish one. Each of these sends a
+  // reader somewhere different — retry the network, free some disk, report a
+  // bad artifact — so collapsing them into "it failed" is what makes an
+  // installer message useless.
+  const REASONS = {
+    network: "the runtime could not be downloaded",
+    verification:
+      "the downloaded runtime did not match what this Inspector expected, " +
+      "so it was not installed",
+    disk: "the runtime could not be written to its install location",
+    unknown: "the install did not complete",
+  };
+  if (result.state === "failed") {
+    logError(
+      `${REASONS[result.reason] ?? REASONS.unknown}` +
+        (result.message ? `: ${result.message}` : ""),
+    );
+    logInfo("Run `mcpjam-inspector harness install` again to retry.");
+    return 1;
+  }
+  if (result.state === "interrupted") {
+    logError("Setup was interrupted before it finished.");
+    logInfo("Run `mcpjam-inspector harness install` again to continue.");
+    return 1;
+  }
+  logError(
+    `Runtime pack not installed (${result.state})` +
+      (result.message ? `: ${result.message}` : ""),
+  );
+  return 1;
+}
+
 async function main() {
+  // Subcommands run before the banner and before anything spawns a server.
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs[0] === "harness") {
+    return runHarnessSubcommand(rawArgs);
+  }
+
   // Show MCP banner at startup
   console.clear();
   printBanner();
@@ -890,12 +999,17 @@ async function main() {
     }
 
     // Spawn the server process but don't wait for it to exit
+    // The invocation folder travels EXPLICITLY, because `cwd` below is about
+    // to become the installed package's root and the server would otherwise
+    // have no way back to where the user actually was.
+    const launchWorkspace = launchWorkspaceCandidate({ projectRoot });
     const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
         MCPJAM_INSPECTOR_PARENT_PID: process.pid.toString(),
         NODE_ENV: "production",
         PORT: PORT,
+        ...(launchWorkspace ? { MCPJAM_LAUNCH_WORKSPACE: launchWorkspace } : {}),
         ...(verboseLogs && { VERBOSE_LOGS: "true" }),
       },
       cwd: projectRoot,
@@ -1026,7 +1140,18 @@ async function main() {
 }
 
 main()
-  .then((_) => process.exit(0))
+  .then((code) => {
+    // A subcommand's exit code is its ANSWER: `harness status` returns 1 when
+    // no pack is installed, and a script that branches on it was reading 0.
+    // Set rather than exited on, so the JSON it just printed finishes draining
+    // — `process.exit` truncates a pending write to a pipe. Nothing is left
+    // holding the loop open on that path, so the process still ends here.
+    if (typeof code === "number") {
+      process.exitCode = code;
+      return;
+    }
+    process.exit(0);
+  })
   .catch((e) => {
     logError("Fatal error occurred");
     logError(e.stack || e.message);

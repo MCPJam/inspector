@@ -92,7 +92,11 @@ function wire(
       passed: ZERO,
       failed: ZERO,
     },
-    metrics: { wallDurationMs: ZERO, totalTokens: ZERO, estimatedCostUsd: ZERO },
+    metrics: {
+      wallDurationMs: ZERO,
+      totalTokens: ZERO,
+      estimatedCostUsd: ZERO,
+    },
     scoreContract: {
       base: {
         evaluationConfigHash: "cfg",
@@ -149,7 +153,8 @@ test("tuning without the gate is a usage error, not a silent no-op", () => {
 test("a blank flag value is rejected rather than read as zero", () => {
   // `Number("")` is 0, and a silent 0 here removes the sample floor entirely.
   assert.throws(
-    () => comparePolicyFromOptions({ gateRegressions: true, minSampleSize: "" }),
+    () =>
+      comparePolicyFromOptions({ gateRegressions: true, minSampleSize: "" }),
     /non-negative integer/
   );
   assert.throws(
@@ -188,6 +193,37 @@ test("out-of-range and non-integer values are usage errors", () => {
   );
 });
 
+test("comparePolicyFromOptions: --max-cost-increase-percent stays a percentage", () => {
+  // NOT divided by 100 like `--min-effect-size-percent`: the gate compares it
+  // against a percentage it computes, so a fraction here would make `10` mean
+  // a hundredfold-stricter 0.1%.
+  assert.equal(
+    comparePolicyFromOptions({ maxCostIncreasePercent: "10" })
+      .maximumCostIncreasePercent,
+    10
+  );
+});
+
+test("comparePolicyFromOptions: --max-cost-increase-percent allows over 100", () => {
+  // A run costing three times its baseline is a 200% increase; capping the
+  // flag at 100 would make that threshold unexpressible.
+  assert.equal(
+    comparePolicyFromOptions({ maxCostIncreasePercent: "200" })
+      .maximumCostIncreasePercent,
+    200
+  );
+});
+
+test("comparePolicyFromOptions: --max-cost-increase-percent rejects blank and negative", () => {
+  for (const raw of ["", "-1", "abc"]) {
+    assert.throws(
+      () => comparePolicyFromOptions({ maxCostIncreasePercent: raw }),
+      /--max-cost-increase-percent must be a non-negative number/,
+      raw
+    );
+  }
+});
+
 test("the boolean gates map straight through", () => {
   const policy = comparePolicyFromOptions({
     gateDeterministicRegressions: true,
@@ -203,7 +239,10 @@ test("counts only gating, deterministic, unchanged-definition true->false flips"
   const cases = [
     caseRow({ caseKey: "ck_real", scoreDeltas: [delta()] }),
     // Advisory: information, not a gate.
-    caseRow({ caseKey: "ck_advisory", scoreDeltas: [delta({ gating: false })] }),
+    caseRow({
+      caseKey: "ck_advisory",
+      scoreDeltas: [delta({ gating: false })],
+    }),
     // A judge disagreeing between runs is the judge being a judge.
     caseRow({
       caseKey: "ck_judge",

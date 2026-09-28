@@ -16,6 +16,10 @@ import type { ModelDefinition } from "@/shared/types";
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
 
+const { runHarnessTurnMock } = vi.hoisted(() => ({
+  runHarnessTurnMock: vi.fn(),
+}));
+
 const buildSsePayload = (events: any[]) =>
   `${events
     .map((event) => `data: ${JSON.stringify(event)}\n\n`)
@@ -93,12 +97,35 @@ vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
 }));
 
+// The harness arm, stubbed so this suite can see WHICH engine the dispatch
+// chose. Without it a sentinel turn would try to reserve a real computer, and
+// the only assertion available would be about the emulated engine's fetch —
+// which cannot tell "ran the harness" from "refused".
+vi.mock("../harness/run-harness-turn.js", () => ({
+  runHarnessTurn: runHarnessTurnMock,
+}));
+
 vi.mock("../logger", () => ({
   logger: {
     error: vi.fn(),
     warn: vi.fn(),
     info: vi.fn(),
+    // Stubbed so the emulated-engine path is fully drivable from this suite:
+    // without it, a turn that reaches the engine dies on a missing mock method,
+    // and a test asserting "no engine ran" would pass for the wrong reason.
+    event: vi.fn(),
+    systemEvent: vi.fn(),
   },
+  // Same trap `engine-error-phase.test.ts` documents, reached from a different
+  // direction. Every stub stream in this suite is a lone `finish` chunk — the
+  // empty-response shape — so each turn now runs the engine's empty-step
+  // failure branch, which reports through `stream-failure-reporter` →
+  // `error-origin-capture` → this export. A mock missing it throws a vitest
+  // module error INSIDE the branch; the throw escapes to the agentic loop's
+  // catch, `runSucceeded` never flips, and persistence silently never runs —
+  // which is what these persist-plumbing assertions would have blamed on the
+  // product.
+  captureOriginErrorToSentry: vi.fn(),
 }));
 
 const baseModelDefinition: ModelDefinition = {
@@ -336,5 +363,208 @@ describe("runAssistantTurn", () => {
     await lastExecution;
 
     expect(onConversationComplete).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE DISPATCH GATE, and the one place where "model ineligible" must not mean
+   * "run the emulated engine instead".
+   *
+   * A fallback would produce a swarm or eval turn that completes, reports
+   * success, and is recorded under `executionEngineLabel` = `harness:<id>`
+   * having never run that harness. So an ineligible model THROWS, on both the
+   * external-account and the brokered arm.
+   *
+   * This is the path with no pre-flight: the interactive rails fail closed at
+   * `checkHarnessRuntimeAvailable`, but `sessionSimulation/runner.ts` drives
+   * turns straight through here.
+   */
+  describe("external-account harness dispatch", () => {
+    const turn = (modelDefinition: ModelDefinition, harness: string) =>
+      runAssistantTurn({
+        messages: [{ role: "user", content: "Hi." }] as any,
+        modelDefinition,
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        authContext: { kind: "user_bearer", token: "Bearer test-token" },
+        sourceType: "swarm",
+        origin: "scenario",
+        approvalMode: "auto-deny",
+        streamSink: "none",
+        persistMode: "caller",
+        harness: harness as any,
+      });
+
+    it("REFUSES an ordinary model rather than falling back to the emulated engine", async () => {
+      global.fetch = vi.fn();
+
+      await expect(
+        turn(
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            provider: "anthropic",
+            name: "Sonnet",
+          } as ModelDefinition,
+          "cursor"
+        )
+      ).rejects.toThrow(/chooses its own model on your own account/);
+
+      // The load-bearing half: NEITHER engine ran. A resolved turn here is a
+      // completed run that never touched Cursor — the emulated engine's only
+      // outbound sign is the `/stream` POST, and the harness arm is stubbed.
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+
+    it("sends the SENTINEL to the harness — the rule refuses configurations, not Cursor", async () => {
+      // The control that makes the refusal above meaningful. A rule that
+      // refused every Cursor turn would also satisfy "no silent emulation", so
+      // the dispatch has to be observed CHOOSING the harness for a correctly
+      // configured host — not merely observed not throwing.
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+
+      await turn(
+        {
+          id: "cursor/auto",
+          provider: "cursor",
+          name: "Cursor Auto",
+        } as ModelDefinition,
+        "cursor"
+      );
+
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      // …and the emulated engine, whose only outbound sign is the `/stream`
+      // POST, was never reached.
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("REFUSES a BROKERED harness's BYOK model too — no emulated fallback", async () => {
+      // The warn-and-emulate path this used to take is gone: a completed eval
+      // turn recorded under `harness:claude-code` that ran the emulated engine
+      // on the org's key is the same mis-attribution, from the other arm.
+      global.fetch = vi.fn();
+
+      await expect(
+        turn(
+          {
+            id: "llama3",
+            provider: "ollama",
+            name: "Llama 3",
+          } as ModelDefinition,
+          "claude-code"
+        )
+      ).rejects.toThrow(
+        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("brokered harness dispatch reads the evidence table", () => {
+    const turn = (
+      modelDefinition: ModelDefinition,
+      harness: string,
+      sourceType: "direct" | "eval" | "swarm" = "eval"
+    ) =>
+      runAssistantTurn({
+        messages: [{ role: "user", content: "Hi." }] as any,
+        modelDefinition,
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        authContext: { kind: "user_bearer", token: "Bearer test-token" },
+        sourceType,
+        origin: "scenario",
+        approvalMode: "auto-deny",
+        streamSink: "none",
+        persistMode: "caller",
+        harness: harness as any,
+      });
+
+    it("throws the pre-flight's reason for a model the runtime can't run", async () => {
+      global.fetch = vi.fn();
+      await expect(
+        turn(
+          {
+            id: "openai/gpt-5.6-luna",
+            provider: "openai",
+            name: "GPT-5.6 Luna",
+          } as ModelDefinition,
+          "codex"
+        )
+      ).rejects.toThrow(
+        "This host runs the codex harness, which isn't available: the Codex " +
+          "harness can't run this host's model — pick a Codex-compatible " +
+          "model to run the real runtime."
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["eval", "swarm"] as const)(
+      "refuses an unverified pair for %s",
+      async (sourceType) => {
+        global.fetch = vi.fn();
+        await expect(
+          turn(
+            {
+              id: "anthropic/claude-fable-5",
+              provider: "anthropic",
+              name: "Fable 5",
+            } as ModelDefinition,
+            "claude-code",
+            sourceType
+          )
+        ).rejects.toThrow(/not verified for claude-code \d+\.\d+\.\d+/);
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it("runs an unverified pair in Playground chat, on the harness", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      await turn(
+        {
+          id: "anthropic/claude-fable-5",
+          provider: "anthropic",
+          name: "Fable 5",
+        } as ModelDefinition,
+        "claude-code",
+        "direct"
+      );
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("runs a supported pair on the harness", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      await turn(
+        {
+          id: "openai/gpt-5.5",
+          provider: "openai",
+          name: "GPT-5.5",
+        } as ModelDefinition,
+        "codex"
+      );
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
   });
 });

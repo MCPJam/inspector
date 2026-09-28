@@ -15,6 +15,25 @@ export interface PtyBaseOpts {
   rows: number;
   timeoutMs: number;
   onData: (data: Uint8Array) => void;
+  /**
+   * Extra environment for the shell — how a MATERIALIZED project secret reaches
+   * a HUMAN typing `stripe customers list` into the terminal, not just an agent
+   * calling a tool.
+   *
+   * Carried through the retry-without-cwd fallback below, which is the whole
+   * reason it lives on the BASE opts rather than being passed alongside them: a
+   * stale workdir must cost the terminal its directory, never its environment.
+   *
+   * NOT WIRED YET, and the reason is a real constraint rather than an omission.
+   * The only PTY routes today are the persistent-computer terminals, and a
+   * persistent computer has no stable binding to any one Project Environment —
+   * it outlives runs, is reused across them, and can be attached to several — so
+   * there is no honest answer to "which secrets does this box hold". The backend
+   * grant resolver refuses to invent one (`projectSecretsEgress.ts`), and this
+   * side must not invent one either. When a session-sandbox terminal exists, its
+   * box DOES have an environment, and wiring it is one field at that call site.
+   */
+  envs?: Record<string, string>;
 }
 
 /** Minimal shape of the E2B sandbox we depend on (keeps this unit-testable). */
@@ -41,7 +60,9 @@ export async function createPtyWithCwd<Handle>(
 }
 
 /** Accept only an absolute, length-bounded path as a cwd; reject anything else. */
-export function sanitizeTerminalCwd(raw: string | undefined): string | undefined {
+export function sanitizeTerminalCwd(
+  raw: string | undefined,
+): string | undefined {
   if (!raw || !raw.startsWith("/") || raw.length > 1024) return undefined;
   return raw;
 }

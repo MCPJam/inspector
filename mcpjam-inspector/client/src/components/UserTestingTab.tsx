@@ -27,6 +27,7 @@ import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
 import {
   buildUserTestingScenarioPath,
+  defaultUserTestingDetailTab,
   parseUserTestingDetailTab,
   routePaths,
   useAppNavigate,
@@ -145,15 +146,16 @@ export function UserTestingTab({
   // scenario the list chooses not to advertise must still open.
   const allRows = scenarios ?? [];
   const scenarioRow = scenarioId
-    ? allRows.find((c) => c.scenarioId === scenarioId) ?? null
+    ? (allRows.find((c) => c.scenarioId === scenarioId) ?? null)
     : null;
   // `!environmentId` mirrors the backend's `getHostPublishScenario`: an
   // environment-backed row displays a host it does not belong to, and must
   // never absorb that host's legacy links.
   const legacyHostRow =
     scenarioId && !scenarioRow
-      ? allRows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
-        null
+      ? (allRows.find(
+          (c) => c.namedHostId === scenarioId && !c.environmentId,
+        ) ?? null)
       : null;
   // A Journeys-owned host is standalone — it has no scenario at all, so an old
   // link to one lands here with nothing to resolve. Worth naming precisely
@@ -303,7 +305,7 @@ export function UserTestingTab({
         if (!environmentsEnabled) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "Publishing a scenario needs Environments, which isn't enabled for this project. Create the scenario from the New scenario screen instead.",
+            "Publishing a study needs Environments, which isn't enabled for this project. Create the study from the New study screen instead.",
           );
         }
         const target = resolveAgentTarget(payload?.environment, {
@@ -335,13 +337,13 @@ export function UserTestingTab({
             // lie the model then repeats to the user.
             created: result.created,
             note: result.created
-              ? "The scenario is published and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists."
-              : "That environment was already published; its existing scenario is open, with the name and access it already had.",
+              ? "The study is published and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists."
+              : "That environment was already published; its existing study is open, with the name and access it already had.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            e instanceof Error ? e.message : "Failed to publish the scenario.",
+            e instanceof Error ? e.message : "Failed to publish the study.",
           );
         }
       },
@@ -369,7 +371,7 @@ export function UserTestingTab({
           // the agent it removed something it did not.
           if (result?.deleted === false) {
             throw new Error(
-              "The scenario was not deleted — it may already be gone.",
+              "The study was not deleted — it may already be gone.",
             );
           }
           return {
@@ -383,12 +385,15 @@ export function UserTestingTab({
             // published from a saved environment still leaves that
             // environment alone. Asserting either outcome unconditionally
             // would have the model report the wrong amount of damage.
-            note: describeScenarioDeletion(target.environmentId, result?.retirement),
+            note: describeScenarioDeletion(
+              target.environmentId,
+              result?.retirement,
+            ),
           };
         } catch (e) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            e instanceof Error ? e.message : "Failed to delete the scenario.",
+            e instanceof Error ? e.message : "Failed to delete the study.",
           );
         }
       },
@@ -453,8 +458,13 @@ export function UserTestingTab({
         detailTab:
           activeView === "edit"
             ? "edit"
-            : parseUserTestingDetailTab(
+            : // Same landing-tab rule the detail view reads, from the same
+              // counter: the snapshot has to name the tab the human is
+              // actually looking at, and on an empty study a bare URL is
+              // Insights, not Findings.
+              parseUserTestingDetailTab(
                 typeof window === "undefined" ? "" : window.location.search,
+                defaultUserTestingDetailTab(scenarioRow?.sessionCount),
               ),
         selectedScenarioId: scenarioId ?? null,
         selectedHostId: scenario?.namedHostId ?? null,
@@ -486,7 +496,7 @@ export function UserTestingTab({
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
           title="Select a project first"
-          body="Scenarios belong to a project — pick one, then create a scenario in it."
+          body="Studies belong to a project. Pick one, then create a study in it."
           onBack={goOverview}
         />
       );
@@ -513,19 +523,32 @@ export function UserTestingTab({
             name,
             mode,
           });
-          navigate(buildUserTestingScenarioPath(result.scenarioId), {
-            replace: true,
-          });
+          // ONLY when this call created it. An idempotent hit means the
+          // creator asked for a new study and got none; walking them into the
+          // one that already exists answers a question they did not ask, and
+          // loses the draft they were holding. The create screen reports it
+          // and keeps them there.
+          if (result.created) {
+            navigate(buildUserTestingScenarioPath(result.scenarioId), {
+              replace: true,
+            });
+          }
           return { scenarioId: result.scenarioId, created: result.created };
         }}
-        onSetPerTurnFeedback={async (scenarioId, settings) => {
-          // A second write, because `publishEnvironmentScenario` takes no
-          // `chatUi`. Both fields go together: this is the study's first and
-          // only statement about its rating widget, so there is no stored
-          // value for a partial patch to preserve.
+        onApplyStudySurfaces={async (scenarioId, surfaces) => {
+          // ONE second write, because `publishEnvironmentScenario` takes no
+          // `chatUi`. Ratings and tasks travel together: this is the study's
+          // first and only statement about either, so there is no stored value
+          // for a partial patch to preserve — and one mutation means one
+          // failure mode instead of a study whose two halves failed apart.
           await updateScenario({
             scenarioId,
-            chatUi: { surfaces: { perTurnFeedback: settings } },
+            chatUi: {
+              surfaces: {
+                perTurnFeedback: surfaces.perTurnFeedback,
+                tasks: surfaces.tasks,
+              },
+            },
           } as any);
         }}
       />
@@ -540,8 +563,8 @@ export function UserTestingTab({
       return (
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
-          title="Sign in to open this scenario"
-          body="Scenarios live in a project. Sign in and select the project this link belongs to."
+          title="Sign in to open this study"
+          body="Studies live in a project. Sign in and select the project this link belongs to."
           onBack={goOverview}
         />
       );
@@ -550,12 +573,12 @@ export function UserTestingTab({
     // The list is what validates the param, so nothing can be decided until
     // it lands. The host list only gates the Swarms dead-end below.
     if (listLoading || (!scenarioRow && !legacyHostRow && hostsLoading)) {
-      return <ScenarioSpinner label="Loading scenario…" />;
+      return <ScenarioSpinner label="Loading study…" />;
     }
 
     // The redirect effect is already in flight; rendering "not found" for a
     // frame would flash a lie at someone following a working old link.
-    if (legacyHostRow) return <ScenarioSpinner label="Loading scenario…" />;
+    if (legacyHostRow) return <ScenarioSpinner label="Loading study…" />;
 
     if (!scenarioRow) {
       if (isJourneysHost) {
@@ -563,7 +586,7 @@ export function UserTestingTab({
           <ScenarioNotice
             icon={<Boxes className="size-8 text-muted-foreground/70" />}
             title="Managed by Swarms"
-            body="This client belongs to the Swarms surface and has no share surface. Manage its journeys and runs there."
+            body="This client belongs to the Swarms surface and has no share surface. Manage its goals and runs there."
             onBack={goOverview}
             extraAction={
               <Button
@@ -580,14 +603,14 @@ export function UserTestingTab({
       return (
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
-          title="Scenario not found"
-          body="This scenario no longer exists, was never published, or isn't visible to you."
+          title="Study not found"
+          body="This study no longer exists, was never published, or isn't visible to you."
           onBack={goOverview}
         />
       );
     }
 
-    if (scenarioLoading) return <ScenarioSpinner label="Loading scenario…" />;
+    if (scenarioLoading) return <ScenarioSpinner label="Loading study…" />;
 
     if (!scenario) {
       // The row is in the list but the detail query returns nothing — the
@@ -596,7 +619,7 @@ export function UserTestingTab({
       // degraded read failed.
       return (
         <ScenarioLoadFailure
-          title="Couldn't load this scenario"
+          title="Couldn't load this study"
           body="It may have just been deleted. Go back to User Testing to see the current list."
         />
       );
@@ -605,7 +628,10 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         scenario={scenario}
-        isAuthenticated={effectiveAuth}
+        // From the LIST row: the detail query carries no activity counters,
+        // and this only gates an edit — a stale-by-one count cannot lose data
+        // in either direction.
+        sessionCount={scenarioRow?.sessionCount}
         editMode={editOpen}
         onBack={goOverview}
         onDeleted={goOverview}
@@ -624,10 +650,18 @@ export function UserTestingTab({
           <h1 className="text-xl font-bold tracking-tight text-foreground">
             User Testing
           </h1>
-          <Button size="sm" onClick={goCreate}>
-            <Plus className="mr-1.5 size-4" />
-            Create new study
-          </Button>
+          {/* Hidden while the list is empty (REEV-6, Vig in review): the
+              empty state below has its own centred button, and two create
+              buttons on one screen is the duplication he flagged. It returns
+              as soon as there is a study to sit beside, because by then the
+              empty state's button is gone. Also hidden while loading, so it
+              does not appear and then vanish for an empty project. */}
+          {scenarios !== undefined && rows.length > 0 ? (
+            <Button size="sm" onClick={goCreate}>
+              <Plus className="mr-1.5 size-4" />
+              Create new study
+            </Button>
+          ) : null}
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Create a study with real users or internal testers, then read what

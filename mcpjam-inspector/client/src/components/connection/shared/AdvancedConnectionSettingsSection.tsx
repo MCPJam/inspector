@@ -24,7 +24,7 @@ import type { McpProtocolVersion } from "@/lib/client-config-v2";
  *   - "november" → `"2025-11-25"`, explicit stateful pin.
  *   - "latest"   → `"2026-07-28"`, the newest stateless preview client.
  */
-type DropdownValue = "inherit" | "november" | "latest";
+type DropdownValue = "inherit" | "november" | "latest" | McpProtocolVersion;
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -53,7 +53,7 @@ interface AdvancedConnectionSettingsSectionProps {
   onUpdateHeader?: (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => void;
   hasStoredHeaders?: boolean;
   isRevealingHeaders?: boolean;
@@ -94,7 +94,7 @@ interface AdvancedConnectionSettingsSectionProps {
    */
   mcpProtocolVersionOverride?: McpProtocolVersion;
   onMcpProtocolVersionOverrideChange?: (
-    version: McpProtocolVersion | undefined
+    version: McpProtocolVersion | undefined,
   ) => void;
   /**
    * Transport kind of this server. MCPJam's current stateless preview
@@ -167,7 +167,7 @@ export function AdvancedConnectionSettingsSection({
   useEffect(() => {
     if (!pendingRevealKey) return;
     const index = (customHeaders ?? []).findIndex(
-      (header) => header.key === pendingRevealKey
+      (header) => header.key === pendingRevealKey,
     );
     if (index === -1) return;
     maskedHeaders.show(index);
@@ -205,7 +205,16 @@ export function AdvancedConnectionSettingsSection({
       ? "latest"
       : mcpProtocolVersionOverride === "2025-11-25"
       ? "november"
-      : "inherit";
+      : mcpProtocolVersionOverride ?? "inherit";
+
+  if (
+    !visibleOptions.some((option) => option.value === selectedDropdownValue)
+  ) {
+    visibleOptions.push({
+      value: selectedDropdownValue,
+      label: `Pinned (${selectedDropdownValue})`,
+    });
+  }
 
   return (
     <div className="space-y-2">
@@ -335,7 +344,9 @@ export function AdvancedConnectionSettingsSection({
                               onUpdateHeader(index, "value", value)
                             }
                             visible={maskedHeaders.isVisible(index)}
-                            onToggleVisibility={() => maskedHeaders.toggle(index)}
+                            onToggleVisibility={() =>
+                              maskedHeaders.toggle(index)
+                            }
                             inputLabel={`Header ${index + 1} value`}
                             subject={label}
                             className="flex-[1.4]"
@@ -427,7 +438,9 @@ export function AdvancedConnectionSettingsSection({
                         ? "2026-07-28"
                         : next === "november"
                         ? "2025-11-25"
-                        : undefined
+                        : next === "inherit"
+                        ? undefined
+                        : (next as McpProtocolVersion),
                     );
                   }}
                 >

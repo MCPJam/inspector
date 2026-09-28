@@ -34,8 +34,9 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
-import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -149,7 +150,7 @@ export function SaveAsTestCaseAction({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview],
   );
 
@@ -268,9 +269,9 @@ export function SaveAsTestCaseAction({
           <DialogHeader>
             <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription>
-              Captures this prompt and the assistant's tool calls. Turns
-              with no observed tool calls can't be saved here — create a
-              negative test from the Evals suite instead.
+              Captures this prompt and the assistant's tool calls. Turns with no
+              observed tool calls can't be saved here — create a negative test
+              from the Evals suite instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -357,11 +358,15 @@ export function SaveAsTestCaseAction({
                         </p>
                       </div>
                       <div className="shrink-0">
-                        <ServerAttachmentPicker
+                        <ServerPicker
                           projectId={projectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
+                          // Required here, so no X; the callback still goes
+                          // down so a delete in the picker reaches this form.
                           onClearSelection={() => setServerAttachmentId(null)}
+                          offerClear={false}
+                          inModal
                           disabled={submitting}
                         />
                       </div>

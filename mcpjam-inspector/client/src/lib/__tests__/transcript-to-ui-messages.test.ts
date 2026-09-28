@@ -1,5 +1,6 @@
 import { convertToModelMessages } from "ai";
 import { describe, expect, it } from "vitest";
+import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
 import {
   mergeTranscriptToolResults,
   preserveHydratedMessageIds,
@@ -72,7 +73,7 @@ describe("transcriptToUIMessages", () => {
     expect((merged[1] as { role?: string }).role).toBe("assistant");
     const assistantContent = (merged[1] as { content: unknown[] }).content;
     const toolCallPart = assistantContent.find(
-      (p) => (p as { type?: string }).type === "tool-call"
+      (p) => (p as { type?: string }).type === "tool-call",
     ) as { result?: unknown };
     expect(toolCallPart.result).toEqual({ results: [] });
 
@@ -85,7 +86,7 @@ describe("transcriptToUIMessages", () => {
     ]);
 
     const toolPart = messages[1].parts.find(
-      (p) => p.type === "dynamic-tool"
+      (p) => p.type === "dynamic-tool",
     ) as
       | { type: "dynamic-tool"; toolCallId: string; output: unknown }
       | undefined;
@@ -125,7 +126,7 @@ describe("transcriptToUIMessages", () => {
 
     const messages = transcriptToUIMessages(transcript);
     const invocations = messages[1].parts.filter(
-      (p) => p.type === "dynamic-tool"
+      (p) => p.type === "dynamic-tool",
     ) as Array<{
       toolCallId: string;
       output: unknown;
@@ -359,8 +360,8 @@ describe("transcriptToUIMessages", () => {
       (message) =>
         message.role === "tool" &&
         (message.content as any[]).some(
-          (part) => part?.toolCallId === "call-suspended-1"
-        )
+          (part) => part?.toolCallId === "call-suspended-1",
+        ),
     );
     expect(hasToolResult).toBe(false);
     const assistantToolCall = modelMessages
@@ -445,11 +446,81 @@ describe("transcriptToUIMessages", () => {
     });
 
     const toolMessage = modelMessages.find(
-      (message) => message.role === "tool"
+      (message) => message.role === "tool",
     ) as any;
     expect(toolMessage.content[0].providerOptions).toEqual({
       mcpjam: { serverId: "srv-1" },
     });
+  });
+
+  it("keeps the provenance the server stored with a reply and a tool result (MJ-009)", async () => {
+    const toolResult = {
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "list_issues",
+      output: {
+        type: "content",
+        value: [{ type: "media", data: "AAAA", mediaType: "image/png" }],
+      },
+      result: { content: [{ type: "image", data: "AAAA" }] },
+      providerOptions: {
+        mcpjam: { serverId: "linear", resultSig: "mjpv1.result" },
+      },
+    };
+    const transcript = [
+      { role: "user", content: "What's open?" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Checking.",
+            providerOptions: { mcpjam: { textSig: "mjpv1.text" } },
+          },
+          {
+            type: "reasoning",
+            text: "Look it up.",
+            providerOptions: { mcpjam: { textSig: "mjpv1.reasoning" } },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "list_issues",
+            input: { state: "open" },
+          },
+        ],
+      },
+      { role: "tool", content: [toolResult] },
+    ];
+
+    const [, assistant] = transcriptToUIMessages(transcript);
+    const [text, reasoning, tool] = assistant.parts as any[];
+    expect(text).toEqual({
+      type: "text",
+      text: "Checking.",
+      providerMetadata: { mcpjam: { textSig: "mjpv1.text" } },
+    });
+    // Stored reasoning comes back as text, with its signature.
+    expect(reasoning).toEqual({
+      type: "text",
+      text: "Look it up.",
+      providerMetadata: { mcpjam: { textSig: "mjpv1.reasoning" } },
+    });
+    expect(tool.callProviderMetadata.mcpjam).toMatchObject({
+      serverId: "linear",
+      resultSig: "mjpv1.result",
+    });
+    // The server signs exactly the output the browser rebuilds.
+    expect(tool.output).toEqual(hydratedToolResultOutput(toolResult));
+
+    // And the signature reaches the model message the server receives.
+    const model = await convertToModelMessages(
+      transcriptToUIMessages(transcript),
+    );
+    const modelText = (model[1] as any).content.find(
+      (part: any) => part.type === "text",
+    );
+    expect(modelText.providerOptions.mcpjam.textSig).toBe("mjpv1.text");
   });
 
   it("generates IDs when not present", () => {
@@ -478,7 +549,7 @@ describe("transcriptToUIMessages", () => {
     const second = transcriptToUIMessages(transcript);
 
     expect(first.map((message) => message.id)).toEqual(
-      second.map((message) => message.id)
+      second.map((message) => message.id),
     );
     expect(first[1].parts[0]).toMatchObject(second[1].parts[0]);
   });
@@ -495,10 +566,12 @@ describe("transcriptToUIMessages", () => {
         id: "live-user-start-game",
         role: "user",
         parts: [{ type: "text", text: "Execute `start_game`" }],
+        metadata: { timestampMs: 100 },
       },
       {
         id: "live-assistant-start-game",
         role: "assistant",
+        metadata: { timestampMs: 200 },
         parts: [
           { type: "text", text: "Invoked `start_game`" },
           {
@@ -534,11 +607,13 @@ describe("transcriptToUIMessages", () => {
 
     const stabilized = preserveHydratedMessageIds(
       currentMessages,
-      hydratedMessages
+      hydratedMessages,
     );
 
     expect(stabilized[0].id).toBe("live-user-start-game");
     expect(stabilized[1].id).toBe("live-assistant-start-game");
+    expect(stabilized[0].metadata).toMatchObject({ timestampMs: 100 });
+    expect(stabilized[1].metadata).toMatchObject({ timestampMs: 200 });
     expect((stabilized[1].parts[1] as any).output).toEqual({
       board: ["_", "X", "_", "_", "_", "_", "_", "_", "_"],
     });

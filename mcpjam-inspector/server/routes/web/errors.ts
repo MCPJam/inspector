@@ -13,7 +13,9 @@ import {
   maybeCaptureOriginError,
   type OriginCaptureBoundary,
 } from "../../utils/error-origin-capture.js";
+import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
+import { internalErrorResponseView } from "./hosted-internal-error.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -98,11 +100,18 @@ export const ErrorCode = {
   // re-authenticating with MCPJam will not change the outcome — the user has
   // to reconnect the upstream server.
   UPSTREAM_AUTH_FAILED: "UPSTREAM_AUTH_FAILED",
+  // The caller's AuthKit session has been revoked (signed out, or ended by the
+  // identity provider) — 401, and signing in again is the only remedy (MJ-011).
+  // Publicly it collapses onto UNAUTHORIZED with `details.reason:
+  // "SESSION_REVOKED"`, the v1 convention for a specific 401; the mapping sits
+  // in `routes/v1/envelope.ts` beside UPSTREAM_AUTH_FAILED's.
+  SESSION_REVOKED: "SESSION_REVOKED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 export class WebRouteError extends Error {
+  setupFailureSource?: "oauth_refresh" | "xaa_mint" | "authorization_required";
   status: number;
   code: ErrorCode;
   details?: Record<string, unknown>;
@@ -159,6 +168,14 @@ export class WebRouteError extends Error {
     this.normalized = normalized;
   }
 
+  /** Setup provenance only; never changes error ownership or response fields. */
+  withSetupFailureSource(
+    source: NonNullable<WebRouteError["setupFailureSource"]>,
+  ): this {
+    this.setupFailureSource = source;
+    return this;
+  }
+
   /**
    * Attach wire headers, chainable so a throw site stays one expression:
    * `throw new WebRouteError(429, …).withHeaders({ "Retry-After": "30" })`.
@@ -185,10 +202,14 @@ export function webError(
   // `extras` is permissive (rpc-log collectors, etc.). If it carries a
   // `normalized` key, hoist it to the top-level response body — clients
   // pluck the rich block off the JSON envelope without re-classifying.
-  const { normalized, effectiveOrigin, responseHeaders, ...restExtras } =
+  const { normalized, effectiveOrigin, hop, responseHeaders, ...restExtras } =
     (extras ?? {}) as Record<string, unknown> & {
       normalized?: NormalizedError;
       effectiveOrigin?: ErrorOrigin;
+      // Destructured OUT for the same reason as `responseHeaders`: this is
+      // telemetry, not part of the client contract. It rides on
+      // `webErrorMeta` only.
+      hop?: RouteFailureHop;
       // Destructured OUT of the body spread on purpose: everything left in
       // `restExtras` is spread into the JSON, so a header bag left in there
       // would ship as a response FIELD instead of as headers.
@@ -218,15 +239,29 @@ export function webError(
       message,
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
       ...(normalized ? { slug: normalized.slug } : {}),
+      // Recorded independently of `origin`, never folded into it. A hop says
+      // WHICH BOUNDARY broke; `origin` says WHOSE PROBLEM it is. Collapsing
+      // the two would let a `user_server_hop` declaration quietly lower a
+      // positively-MCPJam verdict, which is the one direction of this change
+      // that must stay impossible.
+      ...(hop ? { hop } : {}),
     });
   }
+  // A hosted 500 INTERNAL_ERROR answers with a generic sentence and the
+  // request id (MJ-020, MJ-021). The message stashed above is what the request
+  // log keeps.
+  const view = internalErrorResponseView(c, status, code, {
+    message,
+    details,
+    normalized,
+  });
   return c.json(
     {
       ...restExtras,
       code,
-      message,
-      ...(details ? { details } : {}),
-      ...(normalized ? { normalized } : {}),
+      message: view.message,
+      ...(view.details ? { details: view.details } : {}),
+      ...(view.normalized ? { normalized: view.normalized } : {}),
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
     },
     status,

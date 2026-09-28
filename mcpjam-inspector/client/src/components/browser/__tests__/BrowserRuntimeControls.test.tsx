@@ -1,0 +1,113 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+const state = vi.hoisted(() => ({
+  sessionId: "chat-1" as string | null,
+  setEngine: vi.fn(),
+  newChat: vi.fn(async () => true),
+  revoke: vi.fn(),
+  grant: vi.fn(async () => true),
+  toggleVisible: true,
+}));
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    selectedEngine: "local",
+    toggleVisible: state.toggleVisible,
+    resolved: true,
+    localAvailable: true,
+    cloudAvailable: state.toggleVisible,
+    consent: { granted: true, revoke: state.revoke, grant: state.grant },
+    setEngine: state.setEngine,
+  }),
+}));
+vi.mock("@/components/playground/playground-chat-history-bridge", () => ({
+  usePlaygroundChatHistoryBridge: () => ({
+    onNewChat: state.newChat,
+    isStreaming: false,
+  }),
+}));
+vi.mock("@/stores/active-chat-session-store", () => ({
+  useActiveChatSessionStore: (select: (s: unknown) => unknown) =>
+    select({ sessionId: state.sessionId }),
+}));
+vi.mock("@/stores/browser-readiness-store", () => ({
+  useBrowserReadinessStore: (select: (s: unknown) => unknown) =>
+    select({ reasons: {} }),
+}));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
+import { BrowserRuntimeControls } from "../BrowserRuntimeControls";
+beforeEach(() => {
+  vi.clearAllMocks();
+  state.sessionId = "chat-1";
+  state.toggleVisible = true;
+  state.newChat.mockResolvedValue(true);
+});
+it("changes a bound location only after a new chat succeeds", async () => {
+  render(<BrowserRuntimeControls projectId="p" />);
+  fireEvent.change(screen.getByLabelText("Browser location"), {
+    target: { value: "cloud" },
+  });
+  expect(state.setEngine).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("Start new chat"));
+  await waitFor(() => expect(state.setEngine).toHaveBeenCalledWith("cloud"));
+});
+it("preserves location when new-chat confirmation is cancelled", async () => {
+  state.newChat.mockResolvedValue(false);
+  render(<BrowserRuntimeControls projectId="p" />);
+  fireEvent.change(screen.getByLabelText("Browser location"), {
+    target: { value: "cloud" },
+  });
+  fireEvent.click(screen.getByText("Start new chat"));
+  await waitFor(() => expect(state.newChat).toHaveBeenCalled());
+  expect(state.setEngine).not.toHaveBeenCalled();
+});
+it("revokes only through the Browser permission controller", () => {
+  render(<BrowserRuntimeControls projectId="p" />);
+  fireEvent.click(screen.getByText("Revoke Browser"));
+  expect(state.revoke).toHaveBeenCalledOnce();
+});
+
+it("offers existing grants explicit shared setup without applying it on mount", async () => {
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  expect(state.grant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Enable for all clients" }));
+  expect(state.grant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+  await waitFor(() => expect(state.grant).toHaveBeenCalledOnce());
+});
+
+it("keeps runtime controls in the compact options menu", async () => {
+  render(<BrowserRuntimeControls projectId="p" compact />);
+  expect(screen.queryByLabelText("Browser location")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Browser options" }));
+  expect(await screen.findByLabelText("Browser location")).toBeVisible();
+  fireEvent.click(screen.getByText("Revoke Browser"));
+  expect(state.revoke).toHaveBeenCalledOnce();
+});
+
+it("links to client Browser settings inside the compact options menu", async () => {
+  render(<BrowserRuntimeControls projectId="p" compact hostId="host-1" />);
+  fireEvent.click(screen.getByRole("button", { name: "Browser options" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Browser settings" }));
+  expect(navigate).toHaveBeenCalledWith("/hosts/host-1?hostTab=browser");
+});
+
+it("changes the personal preference without resetting or starting a chat", () => {
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  fireEvent.change(screen.getByLabelText("Browser location"), { target: { value: "cloud" } });
+  expect(state.setEngine).toHaveBeenCalledWith("cloud");
+  expect(state.newChat).not.toHaveBeenCalled();
+});
+
+it("hides Cloud location chrome when only This machine is offered", () => {
+  state.toggleVisible = false;
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  expect(screen.queryByLabelText("Browser location")).toBeNull();
+  expect(screen.queryByText(/environments use Cloud/)).toBeNull();
+  expect(screen.queryByText("Cloud")).toBeNull();
+  expect(screen.getByText("Browser authorized")).toBeInTheDocument();
+});

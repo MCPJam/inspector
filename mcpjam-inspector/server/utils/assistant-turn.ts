@@ -26,8 +26,6 @@ import type {
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { getCanonicalModelId } from "@/shared/types";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -40,6 +38,10 @@ import {
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { getHarnessAdapter } from "./harness/registry.js";
+import {
+  harnessModelPurposeForSourceType,
+  harnessModelRefusal,
+} from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
 
@@ -108,6 +110,8 @@ export interface RunAssistantTurnOptions {
 
   /** See `PrepareChatV2Options.approvalMode`. Default `"prompt"`. */
   approvalMode?: "prompt" | "auto-deny";
+  /** See `MCPJamHandlerOptions.clientSuppliedHistory`. Default false. */
+  clientSuppliedHistory?: boolean;
   /**
    * Required-tool-approval policy on the underlying engine. Forwarded
    * verbatim to `handleMCPJamFreeChatModel` so the dispatch-time
@@ -186,6 +190,8 @@ export interface RunAssistantTurnOptions {
   onToolCall?: MCPJamHandlerOptions["onToolCall"];
   onToolResult?: MCPJamHandlerOptions["onToolResult"];
   onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
+  yieldAfterStep?: boolean;
   /**
    * PR 5b-followup-2: structured-error pass-through. Eval's backend
    * stream runner uses this to surface guardrail detail (429
@@ -227,6 +233,14 @@ export interface RunAssistantTurnOptions {
    * unpoliced path.
    */
   harnessToolPolicy?: MCPJamHandlerOptions["harnessToolPolicy"];
+  /**
+   * The eval iteration this turn executes, when there is one. Threaded through
+   * to the harness turn, where it becomes the authorized claim on the proxy
+   * tokens that lets firsthand tool-call evidence be recorded.
+   */
+  evalIterationId?: MCPJamHandlerOptions["evalIterationId"];
+  /** Reports back what the run FROZE about evidence, as the mint saw it. */
+  onHarnessEvidenceDecision?: MCPJamHandlerOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
 
   /**
@@ -272,6 +286,25 @@ export interface RunAssistantTurnOptions {
    * `pinnedHarnessSkills` — see `harness/skill-delivery.ts`.
    */
   runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+
+  /**
+   * The Project Environment this turn resolved — the GRANT BOUNDARY for project
+   * secrets. Pass-through to `runHarnessTurn`, which needs it to answer whether
+   * a BROKERED credential is actually granted to this run's box: the backend
+   * composes a box's egress transform from the environment's `secretSelection`,
+   * so a project-wide answer would report a secret the box never receives.
+   *
+   * An id, never a resolved spec carrying values — see the option's docblock on
+   * `MCPJamHandlerOptions`. Absent ⇒ no grant, which is a normal state and not
+   * a failure.
+   */
+  environmentId?: MCPJamHandlerOptions["environmentId"];
+
+  /**
+   * Why `environmentId` is absent on a run that HAS one (eval replay). Copy
+   * only — see the option's docblock on `MCPJamHandlerOptions`.
+   */
+  environmentUnresolvedReason?: MCPJamHandlerOptions["environmentUnresolvedReason"];
 
   /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
@@ -327,7 +360,7 @@ export interface RunAssistantTurnResult {
 }
 
 function extractAssistantMessages(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): AssistantModelMessage[] {
   const out: AssistantModelMessage[] = [];
   for (const msg of messages) {
@@ -339,7 +372,7 @@ function extractAssistantMessages(
 }
 
 function extractToolCalls(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): RunAssistantTurnResult["toolCalls"] {
   const out: RunAssistantTurnResult["toolCalls"] = [];
   for (const msg of messages) {
@@ -360,7 +393,7 @@ function extractToolCalls(
 }
 
 function extractToolResults(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): RunAssistantTurnResult["toolResults"] {
   const out: RunAssistantTurnResult["toolResults"] = [];
   for (const msg of messages) {
@@ -384,7 +417,7 @@ function extractToolResults(
  * with the scenario synthetic surface.)
  */
 function buildExtraBodyFields(
-  opts: RunAssistantTurnOptions
+  opts: RunAssistantTurnOptions,
 ): Record<string, unknown> | undefined {
   const base = { ...(opts.extraBodyFields ?? {}) };
   return Object.keys(base).length > 0 ? base : undefined;
@@ -402,8 +435,8 @@ function buildHandlerOptions(
   captureTranscript: (
     messages: ModelMessage[],
     turnTrace: PersistedTurnTrace,
-    harnessSessionCommit?: HarnessSessionCommitPayload
-  ) => void
+    harnessSessionCommit?: HarnessSessionCommitPayload,
+  ) => void,
 ): MCPJamHandlerOptions {
   const wrappedOnConversationComplete: MCPJamHandlerOptions["onConversationComplete"] =
     async (fullHistory, turnTrace, harnessSessionCommit) => {
@@ -425,7 +458,7 @@ function buildHandlerOptions(
         return await opts.onConversationComplete(
           fullHistory,
           turnTrace,
-          harnessSessionCommit
+          harnessSessionCommit,
         );
       }
       return undefined;
@@ -462,6 +495,10 @@ function buildHandlerOptions(
     // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and
     // (b) claim the correct owner lane (`swarm-chat` for swarm).
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
+    ...(opts.evalIterationId ? { evalIterationId: opts.evalIterationId } : {}),
+    ...(opts.onHarnessEvidenceDecision
+      ? { onHarnessEvidenceDecision: opts.onHarnessEvidenceDecision }
+      : {}),
     ...(opts.harnessToolPolicy
       ? { harnessToolPolicy: opts.harnessToolPolicy }
       : {}),
@@ -489,6 +526,14 @@ function buildHandlerOptions(
     ...(opts.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
       : {}),
+    // The turn's grant boundary for project secrets. Harness-relevant: the
+    // external-account credential check asks whether a BROKERED secret is
+    // selected into THIS environment, and an absent id means "no grant" rather
+    // than "ask the project".
+    ...(opts.environmentId ? { environmentId: opts.environmentId } : {}),
+    ...(opts.environmentUnresolvedReason
+      ? { environmentUnresolvedReason: opts.environmentUnresolvedReason }
+      : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),
@@ -505,6 +550,7 @@ function buildHandlerOptions(
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }
       : {}),
+    ...(opts.clientSuppliedHistory ? { clientSuppliedHistory: true } : {}),
     onConversationComplete: wrappedOnConversationComplete,
     ...(opts.onStreamComplete
       ? { onStreamComplete: opts.onStreamComplete }
@@ -517,6 +563,12 @@ function buildHandlerOptions(
     ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
     ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
     ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
+    ...(opts.durableCheckpoint
+      ? {
+          durableCheckpoint: opts.durableCheckpoint,
+          yieldAfterStep: opts.yieldAfterStep,
+        }
+      : {}),
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
@@ -570,7 +622,7 @@ function buildHandlerOptions(
  *   `messageHistory` from the engine (NOT a fallback to the input).
  */
 export async function runAssistantTurn(
-  opts: RunAssistantTurnOptions
+  opts: RunAssistantTurnOptions,
 ): Promise<RunAssistantTurnResult> {
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
@@ -582,62 +634,65 @@ export async function runAssistantTurn(
       capturedMessages = fullHistory;
       capturedTrace = turnTrace;
       capturedHarnessCommit = harnessSessionCommit;
-    }
+    },
   );
 
-  // A host with a `harness` selected (claude-code | codex) runs the real runtime
-  // inside its computer; otherwise the emulated engine. Both satisfy the same
-  // ChatEngineLoopResult contract, so everything downstream is identical.
+  // A host with a `harness` selected (claude-code | codex | cursor) runs the
+  // real runtime inside its computer; otherwise the emulated engine. Both
+  // satisfy the same ChatEngineLoopResult contract, so everything downstream is
+  // identical.
   //
-  // Harness is MCPJam-model-only: runHarnessTurn authenticates the model via the
-  // deploy/Convex MCPJam credential path, NOT the caller's org-BYOK provider key
-  // (it ignores endpointPath / extraBodyFields). Running a BYOK turn through it
-  // would use the wrong credentials and mis-account spend, so for BYOK models we
-  // fall back to the emulated engine (which honors the org-BYOK path).
+  // THERE IS NO FALLBACK BETWEEN THEM. A harness turn whose model the harness
+  // cannot run — not MCPJam-provided (a BYOK model: the harness authenticates
+  // with MCPJam's gateway credential, never the org's key), unsupported by the
+  // runtime at its pinned version, not verified there (evals and swarms), or
+  // not the external-account runtime's sentinel — THROWS with the pre-flight's
+  // own reason. It used to warn and run the emulated engine instead, which
+  // produced a completed turn, recorded under the harness's name, that the
+  // harness never touched: a wrong answer attributed to the wrong runtime,
+  // strictly worse than a failure. Every caller here already treats a thrown
+  // turn as a failed turn.
   //
-  // The interactive web path fails closed at the chat-v2 preflight when a harness
-  // host's model is ineligible. This gate is the authoritative one for
-  // eval/synthetic (which forward `harness` unconditionally and shouldn't hard-
-  // fail a batch): when a harness was requested but the model isn't eligible, we
-  // SURFACE the fallback (not a silent emulated swap) so it's visible in logs/
-  // traces rather than misread as "observed the real harness".
+  // The interactive rails refuse earlier, at `checkHarnessRuntimeAvailable`;
+  // this is the same decision (`harnessModelRefusal` is what that pre-flight
+  // calls) for the paths that never run one — eval/synthetic forward `harness`
+  // unconditionally, and `sessionSimulation/runner.ts` drives turns without a
+  // pre-flight.
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
-  // Eligibility is BOTH "MCPJam-provided" AND "the runtime can actually run this
-  // model". The interactive routes check supportsModel in their preflight, but
-  // eval/synthetic don't — without this a codex turn on an MCPJam-provided but
-  // non-Codex model (e.g. anthropic/claude-haiku-4.5) would reach createCodex()
-  // with no native model and silently use Codex's default. Mirror the preflight.
-  const harnessAdapter = harnessRequested
-    ? getHarnessAdapter(opts.harness as string)
-    : undefined;
-  // supportsModel needs the CANONICAL id (bare hosted ids like `gpt-5-nano` →
-  // `openai/gpt-5-nano`); isHostedCatalogModel canonicalizes internally, so a
-  // bare id would otherwise pass eligibility but fail supportsModel and wrongly
-  // fall back to emulated.
-  const canonicalHarnessModelId = getCanonicalModelId(
-    harnessModelId,
-    opts.modelDefinition.provider
-  );
-  const modelEligible =
-    isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
-    (harnessAdapter
-      ? harnessAdapter.supportsModel(canonicalHarnessModelId)
-      : true);
-  const useHarness = harnessRequested && modelEligible;
-  if (harnessRequested && !modelEligible) {
-    logger.warn(
-      "[assistant-turn] harness requested but model ineligible (not MCPJam-" +
-        "provided, or unsupported by the runtime) — falling back to the emulated " +
-        "engine (surfaced, not silent)",
-      {
+  if (harnessRequested) {
+    const harnessAdapter = getHarnessAdapter(opts.harness as string);
+    // Playground chat (`direct`) may run an unverified harness × model pair
+    // with a warning; evals, scenarios and swarms may not.
+    const purpose = harnessModelPurposeForSourceType(opts.sourceType);
+    const { refusal, warning } = harnessModelRefusal({
+      adapter: harnessAdapter,
+      model: {
+        id: harnessModelId,
+        provider: opts.modelDefinition.provider,
+        hosted: opts.modelDefinition.hosted,
+      },
+      purpose,
+    });
+    if (refusal) {
+      // Wrapped in the SAME sentence the chat routes build around a pre-flight
+      // refusal, so a reader who meets this in a run log and one who meets it in
+      // a 503 are reading the same thing.
+      throw new Error(
+        `This host runs the ${opts.harness} harness, which isn't available: ` +
+          `${refusal.reason}.`,
+      );
+    }
+    if (warning) {
+      logger.warn("[assistant-turn] running an unverified harness model", {
         harness: opts.harness,
         modelId: harnessModelId,
-        provider: opts.modelDefinition.provider,
+        reason: warning,
         sourceType: opts.sourceType,
-      }
-    );
+      });
+    }
   }
+  const useHarness = harnessRequested;
   const engineResult = useHarness
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);

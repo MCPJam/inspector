@@ -1,4 +1,10 @@
-import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 interface SparklineGeometry {
@@ -12,13 +18,17 @@ function buildSparklineGeometry(
   w: number,
   h: number,
   pad: number,
+  bars = false,
 ): SparklineGeometry[] {
   const max = Math.max(...points);
-  const min = Math.min(...points);
+  const min = bars ? 0 : Math.min(...points);
   const span = max - min || 1;
   return points.map((value, index) => ({
     value,
-    x: pad + (index / (points.length - 1)) * (w - pad * 2),
+    x:
+      pad +
+      (bars ? (index + 0.5) / points.length : index / (points.length - 1)) *
+        (w - pad * 2),
     y: pad + (1 - (value - min) / span) * (h - pad * 2),
   }));
 }
@@ -27,10 +37,13 @@ function resolveHoverIndex(
   clientX: number,
   rect: DOMRect,
   pointCount: number,
+  bars = false,
 ): number {
   if (pointCount < 2) return 0;
   const ratio = (clientX - rect.left) / rect.width;
-  const index = Math.round(ratio * (pointCount - 1));
+  const index = bars
+    ? Math.floor(ratio * pointCount)
+    : Math.round(ratio * (pointCount - 1));
   return Math.max(0, Math.min(pointCount - 1, index));
 }
 
@@ -78,14 +91,14 @@ function SparklineTooltip({
   );
 }
 
-function useSparklineHover(pointCount: number) {
+function useSparklineHover(pointCount: number, bars = false) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const updateHover = (clientX: number) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect || pointCount < 2) return;
-    setHoverIndex(resolveHoverIndex(clientX, rect, pointCount));
+    setHoverIndex(resolveHoverIndex(clientX, rect, pointCount, bars));
   };
 
   return {
@@ -118,8 +131,9 @@ export function EvalSparkline({
   tooltipValues,
   testId,
   height = 24,
-  strokeClassName = "text-muted-foreground/60",
+  strokeClassName = "text-primary",
   tooltipPlacement = "below",
+  bars = false,
 }: {
   points: number[];
   pointLabels: string[];
@@ -130,31 +144,33 @@ export function EvalSparkline({
   height?: number;
   strokeClassName?: string;
   tooltipPlacement?: "above" | "below";
+  bars?: boolean;
 }) {
   const w = 120;
   const h = height;
   const pad = 3;
   const geometry = useMemo(() => {
     if (points.length < 2) return [];
-    return buildSparklineGeometry(points, w, h, pad);
-  }, [points, w, h, pad]);
+    return buildSparklineGeometry(points, w, h, pad, bars);
+  }, [points, w, h, pad, bars]);
   const { containerRef, hoverIndex, onMouseMove, onMouseLeave } =
-    useSparklineHover(points.length);
+    useSparklineHover(points.length, bars);
 
   if (points.length < 2) return null;
 
   const active = hoverIndex != null ? geometry[hoverIndex] : geometry.at(-1);
   const activeLabel =
     hoverIndex != null ? pointLabels[hoverIndex] : pointLabels.at(-1);
-  const activeValue =
-    hoverIndex != null ? points[hoverIndex] : points.at(-1);
+  const activeValue = hoverIndex != null ? points[hoverIndex] : points.at(-1);
   const activeTooltip =
     hoverIndex != null && tooltipValues
       ? tooltipValues[hoverIndex]
       : tooltipValues?.at(-1);
   const tooltipLeft =
     hoverIndex != null && points.length > 1
-      ? (hoverIndex / (points.length - 1)) * 100
+      ? (bars
+          ? (hoverIndex + 0.5) / points.length
+          : hoverIndex / (points.length - 1)) * 100
       : 100;
 
   return (
@@ -171,9 +187,7 @@ export function EvalSparkline({
           leftPercent={tooltipLeft}
           placement={tooltipPlacement}
           value={
-            activeTooltip != null
-              ? activeTooltip
-              : formatValue(activeValue)
+            activeTooltip != null ? activeTooltip : formatValue(activeValue)
           }
         />
       ) : null}
@@ -183,17 +197,48 @@ export function EvalSparkline({
         viewBox={`0 0 ${w} ${h}`}
         preserveAspectRatio="none"
         aria-hidden
-        className={strokeClassName}
+        className={bars ? "text-primary" : strokeClassName}
       >
         <Baseline w={w} h={h} pad={pad} />
-        <polyline
-          points={geometry.map((point) => `${point.x},${point.y}`).join(" ")}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        {bars &&
+          geometry.map((point, index) => {
+            const width = ((w - pad * 2) / points.length) * 0.7;
+            return (
+              <rect
+                key={index}
+                data-chart-bar="value"
+                x={point.x - width / 2}
+                y={point.y}
+                width={width}
+                height={h - pad - point.y}
+                rx={0.6}
+                fill="currentColor"
+                // The hovered bar is the PROMINENT one. Resting below full
+                // opacity is what leaves room for hover to read as emphasis.
+                opacity={hoverIndex === index ? 1 : 0.6}
+              />
+            );
+          })}
+        {!bars && (
+          <>
+            <polygon
+              points={[
+                `${geometry[0].x},${h - pad}`,
+                ...geometry.map((point) => `${point.x},${point.y}`),
+                `${geometry[geometry.length - 1].x},${h - pad}`,
+              ].join(" ")}
+              className="fill-current opacity-15"
+            />
+            <polyline
+              points={geometry.map((point) => `${point.x},${point.y}`).join(" ")}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
+        )}
         {hoverIndex != null && active ? (
           <>
             <line
@@ -213,7 +258,7 @@ export function EvalSparkline({
               strokeWidth={1.5}
             />
           </>
-        ) : active ? (
+        ) : active && !bars ? (
           <circle cx={active.x} cy={active.y} r={2} fill="currentColor" />
         ) : null}
       </svg>
@@ -230,6 +275,7 @@ export function EvalDualSparkline({
   testId,
   height = 28,
   tooltipPlacement = "below",
+  bars = false,
 }: {
   primary: number[];
   secondary: number[];
@@ -239,6 +285,7 @@ export function EvalDualSparkline({
   testId?: string;
   height?: number;
   tooltipPlacement?: "above" | "below";
+  bars?: boolean;
 }) {
   const w = 120;
   const h = height;
@@ -249,21 +296,24 @@ export function EvalDualSparkline({
     }
     const all = [...primary, ...secondary];
     const max = Math.max(...all);
-    const min = Math.min(...all);
+    const min = bars ? 0 : Math.min(...all);
     const span = max - min || 1;
     const toGeometry = (points: number[]) =>
       points.map((value, index) => ({
         value,
-        x: pad + (index / (points.length - 1)) * (w - pad * 2),
+        x:
+          pad +
+          (bars ? (index + 0.5) / points.length : index / (points.length - 1)) *
+            (w - pad * 2),
         y: pad + (1 - (value - min) / span) * (h - pad * 2),
       }));
     return {
       primaryGeometry: toGeometry(primary),
       secondaryGeometry: toGeometry(secondary),
     };
-  }, [primary, secondary, w, h, pad]);
+  }, [primary, secondary, w, h, pad, bars]);
   const { containerRef, hoverIndex, onMouseMove, onMouseLeave } =
-    useSparklineHover(primary.length);
+    useSparklineHover(primary.length, bars);
 
   if (primary.length < 2 || secondary.length < 2) return null;
 
@@ -277,7 +327,9 @@ export function EvalDualSparkline({
     hoverIndex != null ? pointLabels[hoverIndex] : pointLabels.at(-1);
   const tooltipLeft =
     hoverIndex != null && primary.length > 1
-      ? (hoverIndex / (primary.length - 1)) * 100
+      ? (bars
+          ? (hoverIndex + 0.5) / primary.length
+          : hoverIndex / (primary.length - 1)) * 100
       : 100;
 
   return (
@@ -312,26 +364,61 @@ export function EvalDualSparkline({
         aria-hidden
       >
         <Baseline w={w} h={h} pad={pad} />
-        <polyline
-          points={primaryGeometry
-            .map((point) => `${point.x},${point.y}`)
-            .join(" ")}
-          fill="none"
-          className="stroke-muted-foreground/45"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <polyline
-          points={secondaryGeometry
-            .map((point) => `${point.x},${point.y}`)
-            .join(" ")}
-          fill="none"
-          className="stroke-foreground/60"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        {bars &&
+          primaryGeometry.map((point, index) => {
+            const secondaryPoint = secondaryGeometry[index];
+            const slotWidth = (w - pad * 2) / primary.length;
+            const width = slotWidth * 0.24;
+            const pairGap = slotWidth * 0.06;
+            return (
+              <g key={index}>
+                <rect
+                  data-chart-bar="p50"
+                  x={point.x - pairGap / 2 - width}
+                  y={point.y}
+                  width={width}
+                  height={h - pad - point.y}
+                  rx={0.6}
+                  className="fill-primary/40"
+                />
+                {secondaryPoint && (
+                  <rect
+                    data-chart-bar="p95"
+                    x={point.x + pairGap / 2}
+                    y={secondaryPoint.y}
+                    width={width}
+                    height={h - pad - secondaryPoint.y}
+                    rx={0.6}
+                    className="fill-primary"
+                  />
+                )}
+              </g>
+            );
+          })}
+        {!bars && (
+          <polyline
+            points={primaryGeometry
+              .map((point) => `${point.x},${point.y}`)
+              .join(" ")}
+            fill="none"
+            className="stroke-primary/45"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+        {!bars && (
+          <polyline
+            points={secondaryGeometry
+              .map((point) => `${point.x},${point.y}`)
+              .join(" ")}
+            fill="none"
+            className="stroke-primary"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
         {hoverIndex != null && activePrimary ? (
           <>
             <line
@@ -347,7 +434,7 @@ export function EvalDualSparkline({
               cx={activePrimary.x}
               cy={activePrimary.y}
               r={3}
-              className="fill-background stroke-muted-foreground/60"
+              className="fill-background stroke-primary/60"
               strokeWidth={1.5}
             />
             {activeSecondary ? (
@@ -355,19 +442,19 @@ export function EvalDualSparkline({
                 cx={activeSecondary.x}
                 cy={activeSecondary.y}
                 r={3}
-                className="fill-background stroke-foreground/70"
+                className="fill-background stroke-primary"
                 strokeWidth={1.5}
               />
             ) : null}
           </>
-        ) : (
+        ) : !bars ? (
           <>
             {activePrimary ? (
               <circle
                 cx={activePrimary.x}
                 cy={activePrimary.y}
                 r={2}
-                className="fill-muted-foreground/60"
+                className="fill-primary/60"
               />
             ) : null}
             {activeSecondary ? (
@@ -375,11 +462,11 @@ export function EvalDualSparkline({
                 cx={activeSecondary.x}
                 cy={activeSecondary.y}
                 r={2}
-                className="fill-foreground/70"
+                className="fill-primary"
               />
             ) : null}
           </>
-        )}
+        ) : null}
       </svg>
     </div>
   );

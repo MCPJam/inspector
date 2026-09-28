@@ -10,10 +10,15 @@ import {
 import { cn } from "@/lib/utils";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import {
+  environmentLabel,
+  environmentLabelsById,
+  isNamedEnvironment,
+} from "@/lib/environment-label";
 
-/** Backend cap on `suite.environmentIds` (and the journey fan-out list). */
-export const MAX_SUITE_ENVIRONMENTS = 10;
+/** Suite matrices retain every target; execution budgets are checked at launch. */
+export const MAX_SUITE_ENVIRONMENTS = Number.POSITIVE_INFINITY;
 
 /**
  * Controlled project-environment selector, shared by every surface that picks
@@ -57,6 +62,8 @@ export function EnvironmentPicker({
   disabled = false,
   busy = false,
   emptyLabel = "No environments · pick some",
+  headingLabel,
+  emptyProjectLabel = "No environments in this project yet.",
   className,
   triggerTestId,
   triggerAriaLabel,
@@ -75,6 +82,9 @@ export function EnvironmentPicker({
   /** Shows the spinner while the caller persists. */
   busy?: boolean;
   emptyLabel?: string;
+  /** Popover heading. Defaults to Environments / Environments · run order. */
+  headingLabel?: string;
+  emptyProjectLabel?: string;
   className?: string;
   /** Test hook + a11y label for the trigger, for callers that key on them. */
   triggerTestId?: string;
@@ -83,7 +93,7 @@ export function EnvironmentPicker({
    * Render the popover INLINE rather than in a portal, for callers that live
    * inside a Radix Dialog. A portalled popover lands outside the dialog, where
    * the modal overlay's `pointer-events: none` on the body swallows every
-   * click. Same escape hatch, same name, as `ServerGroupPicker`.
+   * click. Same escape hatch, same name, as `ServerPicker`.
    */
   inModal?: boolean;
   /**
@@ -100,34 +110,44 @@ export function EnvironmentPicker({
     includeArchived: true,
     includeAdhoc: true,
   });
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
 
   const [open, setOpen] = useState(false);
 
   const selected = useMemo(
     () =>
       multi ? (value as string[] | null) ?? [] : value ? [value as string] : [],
-    [multi, value]
+    [multi, value],
   );
 
   const environmentsById = useMemo(
     () => new Map((environments ?? []).map((e) => [e.environmentId, e])),
-    [environments]
+    [environments],
+  );
+  // ONE numbering for the whole project, keyed by id. Two live rows can carry
+  // the same name, and without this both render identically — picking between
+  // them is a coin flip. Built from the full fetched list rather than the
+  // offerable slice so the `#n` here matches the one every other surface
+  // derives for the same project; see `environmentLabelsById`.
+  const labelsById = useMemo(
+    () => environmentLabelsById(environments ?? []),
+    [environments],
   );
   const liveEnvironments = useMemo(
     () =>
       (environments ?? []).filter(
-        (e) => !e.archivedAt && isNamedEnvironment(e)
+        (e) => !e.archivedAt && isNamedEnvironment(e),
       ),
-    [environments]
+    [environments],
   );
   const archivedSelected = useMemo(
     () =>
       selected
         .map((id) => environmentsById.get(id))
         .filter(
-          (e): e is NonNullable<typeof e> => !!e && e.archivedAt !== undefined
+          (e): e is NonNullable<typeof e> => !!e && e.archivedAt !== undefined,
         ),
-    [selected, environmentsById]
+    [selected, environmentsById],
   );
   // Gated on the query having settled so a loading list doesn't flash every
   // selected id as an orphan.
@@ -136,7 +156,7 @@ export function EnvironmentPicker({
       environments === undefined
         ? []
         : selected.filter((id) => !environmentsById.has(id)),
-    [environments, selected, environmentsById]
+    [environments, selected, environmentsById],
   );
 
   const emit = (next: string[]) => {
@@ -171,7 +191,7 @@ export function EnvironmentPicker({
             // "…" is for an id no row resolves at all (the orphan case). A row
             // that merely has no name — an ad-hoc one a journey points at —
             // labels by its client instead.
-            return env ? environmentLabel(env) : "…";
+            return env ? labelsById.get(id) ?? environmentLabel(env) : "…";
           })
           .join(", ");
 
@@ -190,7 +210,7 @@ export function EnvironmentPicker({
               ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-60",
-            className
+            className,
           )}
         >
           <Layers className="size-3.5 shrink-0 text-muted-foreground" />
@@ -216,7 +236,8 @@ export function EnvironmentPicker({
         portalled={!inModal}
       >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {multi ? "Environments · run order" : "Environments"}
+          {headingLabel ??
+            (multi ? "Environments · run order" : "Environments")}
         </div>
         {environments === undefined ? (
           <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
@@ -226,7 +247,7 @@ export function EnvironmentPicker({
           archivedSelected.length === 0 &&
           orphanSelectedIds.length === 0 ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            No environments in this project yet.
+            {emptyProjectLabel}
           </p>
         ) : (
           <div className="max-h-64 space-y-0.5 overflow-y-auto">
@@ -240,7 +261,7 @@ export function EnvironmentPicker({
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     (capBlocked || inert) &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                 >
                   <Checkbox
@@ -249,13 +270,16 @@ export function EnvironmentPicker({
                       toggle(env.environmentId, next === true)
                     }
                     disabled={capBlocked || inert}
-                    aria-label={environmentLabel(env)}
+                    aria-label={
+                      labelsById.get(env.environmentId) ?? environmentLabel(env)
+                    }
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
                     {/* Offerable rows are named-only, so this IS the name —
-                        routed through the helper so the type stays honest and
-                        the vocabulary stays in one place. */}
-                    {environmentLabel(env)}
+                        routed through the helper so the type stays honest, the
+                        vocabulary stays in one place, and two rows sharing a
+                        name are told apart by a `#n`. */}
+                    {labelsById.get(env.environmentId) ?? environmentLabel(env)}
                   </span>
                   {multi && checked ? (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
@@ -273,7 +297,7 @@ export function EnvironmentPicker({
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     inert &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                 >
                   {/* Archived: uncheck to detach only — never re-attachable. */}
@@ -281,10 +305,12 @@ export function EnvironmentPicker({
                     checked
                     onCheckedChange={() => toggle(env.environmentId, false)}
                     disabled={inert}
-                    aria-label={`${environmentLabel(env)} (archived)`}
+                    aria-label={`${
+                      labelsById.get(env.environmentId) ?? environmentLabel(env)
+                    } (archived)`}
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {environmentLabel(env)}
+                    {labelsById.get(env.environmentId) ?? environmentLabel(env)}
                     <span className="ml-1 text-[10px] text-muted-foreground">
                       (archived)
                     </span>
@@ -305,7 +331,7 @@ export function EnvironmentPicker({
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     inert &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                 >
                   {/* Unresolvable: uncheck to detach only. There is no name to
@@ -337,28 +363,33 @@ export function EnvironmentPicker({
             Cap reached — at most {max} environments.
           </p>
         ) : null}
-        <div className="mt-0.5 border-t pt-0.5">
-          {footerSlot ? (
-            // Close on the bubbled CLICK only. A keydown handler here would fire
-            // before the browser dispatches a button's synthetic click for Enter
-            // and Space, unmounting the footer action before it ever ran; the
-            // click covers pointer and keyboard activation alike.
-            <div className="contents" onClick={() => setOpen(false)}>
-              {footerSlot}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              navigateApp(routePaths.environments);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          >
-            <ExternalLink className="size-3.5 shrink-0" />
-            Manage environments →
-          </button>
-        </div>
+        {footerSlot || environmentsEnabled ? (
+          <div className="mt-0.5 border-t pt-0.5">
+            {footerSlot ? (
+              // Close on the bubbled CLICK only. A keydown handler here would fire
+              // before the browser dispatches a button's synthetic click for Enter
+              // and Space, unmounting the footer action before it ever ran; the
+              // click covers pointer and keyboard activation alike.
+              <div className="contents" onClick={() => setOpen(false)}>
+                {footerSlot}
+              </div>
+            ) : null}
+            {/* With the flag off, /environments redirects to /servers. */}
+            {environmentsEnabled ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  navigateApp(routePaths.environments);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              >
+                <ExternalLink className="size-3.5 shrink-0" />
+                Manage environments →
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

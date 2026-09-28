@@ -4,6 +4,7 @@ import {
   CreditCard,
   FolderKanban,
   Inbox,
+  Wallet,
 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -42,6 +43,9 @@ function getNotificationIcon(type: NotificationType) {
   if (type.startsWith("scheduled_eval")) {
     return <ActivitySquare className="h-4 w-4" />;
   }
+  if (type === "organization_spend_threshold") {
+    return <Wallet className="h-4 w-4" />;
+  }
   return <Building2 className="h-4 w-4" />;
 }
 
@@ -68,6 +72,11 @@ function getNotificationMessage(notification: Notification): string {
       return `Scheduled run failed for suite "${entityName}"`;
     case "scheduled_eval_paused":
       return `Schedule paused for suite "${entityName}" after repeated failures`;
+    // No actor: nobody performed this, the organization's own spend crossed a
+    // line it set. The threshold itself is on the budget page rather than in
+    // this line, which has one sentence to spend.
+    case "organization_spend_threshold":
+      return `"${entityName}" is approaching or has reached its spend budget`;
     default:
       return "You have a new notification";
   }

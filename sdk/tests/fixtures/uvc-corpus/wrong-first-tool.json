@@ -1,0 +1,41 @@
+{
+  "id": "wrong-first-tool",
+  "title": "The write before the lookup",
+  "rationale": "`toolCalledBefore` is deterministic validation of an authored route: every `add_comment` must be preceded by a `get_issue`. Here it is not.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "add_comment", "arguments": { "issueId": "ISS-1", "body": "bumping" } },
+      { "toolCallId": "c2", "toolName": "get_issue", "arguments": { "issueId": "ISS-1" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "Commented on ISS-1.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "get_issue",
+        "description": "Fetch one issue by id.",
+        "inputSchema": { "type": "object", "properties": { "issueId": { "type": "string" } }, "required": ["issueId"] },
+        "annotations": { "readOnlyHint": true }
+      },
+      {
+        "name": "add_comment",
+        "description": "Append a comment to an issue.",
+        "inputSchema": { "type": "object", "properties": { "issueId": { "type": "string" }, "body": { "type": "string" } }, "required": ["issueId", "body"] },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "add_comment", "text": "{\"ok\":true}", "isError": false, "size": { "bytes": 11, "basis": "model_visible_output", "complete": true } },
+      { "toolCallId": "c2", "toolName": "get_issue", "text": "{\"id\":\"ISS-1\"}", "isError": false, "size": { "bytes": 14, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "add_comment", "durationMs": 120, "provenance": "span" },
+      { "toolCallId": "c2", "toolName": "get_issue", "durationMs": 90, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "toolCalledBefore", "toolName": "get_issue", "beforeToolName": "add_comment" }, "observation": "fail", "relevance": "useful" },
+    { "predicate": { "type": "toolCallCountUnder", "count": 5 }, "observation": "pass", "relevance": "neutral", "note": "a total-call ceiling cannot see a wrong order — this is why total calls is not \"hops before the right tool\"" }
+  ]
+}

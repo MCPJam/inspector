@@ -1,3 +1,5 @@
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
 import {
@@ -50,6 +52,7 @@ type StepSpanMeta = {
 export type AiSdkEvalTraceContext = {
   runStartedAt: number;
   recordedSpans: EvalTraceSpan[];
+  recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
   openSteps: Map<
     number,
     {
@@ -180,6 +183,7 @@ export function createAiSdkEvalTraceContext(
   return {
     runStartedAt,
     recordedSpans: [],
+    recordedRequestPayloads: [],
     openSteps: new Map(),
     openTools: new Map(),
     lastPrepareStepNumber: -1,
@@ -824,6 +828,15 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolCallId,
             toolName: name,
             serverId: raw._serverId,
+            ...(toolConnectionAttribution(raw, input, toolCallId)
+              ? {
+                  connectionId: toolConnectionAttribution(
+                    raw,
+                    input,
+                    toolCallId,
+                  )!.connectionId,
+                }
+              : {}),
             status: success ? "ok" : "error",
             ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
@@ -842,6 +855,15 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
               toolCallId,
               toolName: name,
               serverId: raw._serverId,
+              ...(toolConnectionAttribution(raw, input, toolCallId)
+                ? {
+                    connectionId: toolConnectionAttribution(
+                      raw,
+                      input,
+                      toolCallId,
+                    )!.connectionId,
+                  }
+                : {}),
               status: "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(

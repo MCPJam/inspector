@@ -1,7 +1,5 @@
-import { percentile } from "./helpers";
-import {
-  computeIterationResult,
-} from "./pass-criteria";
+import { iterationCosts, percentile, sumIterationCost } from "./helpers";
+import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration } from "./types";
 
 export type RunCaseIterationOutcome = "pass" | "fail" | "pending" | "cancelled";
@@ -20,6 +18,28 @@ export type RunCaseGroup = {
   total: number;
   p50Ms: number | null;
   p95Ms: number | null;
+  /**
+   * MCPJam-billed cost across this case's PRICED iterations, with the count
+   * that produced it.
+   *
+   * `costedIterations` is not decoration: a p95 over two of ten trials is a
+   * different claim from a p95 over all ten, and the two render identically
+   * without it. `null` means nothing in the group was priced — never that the
+   * case was free.
+   */
+  totalCostUsd: number | null;
+  p50CostUsd: number | null;
+  p95CostUsd: number | null;
+  costedIterations: number;
+  /**
+   * True when any figure in `totalCostUsd` came from a customer's own runner.
+   *
+   * Travels with the total for the same reason `costedIterations` does: the
+   * number is real either way, but "MCPJam measured this" and "your runner
+   * told us this" are different claims, and a reader cannot tell them apart
+   * from the amount alone.
+   */
+  hasRunnerReportedCost: boolean;
   iterationResults: RunCaseIterationOutcome[];
 };
 
@@ -74,6 +94,13 @@ export function groupRunIterationsByTestCase(
         total: 0,
         p50Ms: null,
         p95Ms: null,
+        // Seeded null/0; the real values are computed once the group's
+        // iterations are all in, in the map pass below.
+        totalCostUsd: null,
+        p50CostUsd: null,
+        p95CostUsd: null,
+        costedIterations: 0,
+        hasRunnerReportedCost: false,
         iterationResults: [],
       });
     }
@@ -96,10 +123,21 @@ export function groupRunIterationsByTestCase(
     const durations = group.iterations
       .map(iterationDurationMs)
       .filter((value): value is number => value !== null);
+    // Cost percentiles come from the PRICED iterations only, and the coverage
+    // that produced them travels alongside: a p95 over two of ten trials is a
+    // different claim from a p95 over all ten, and without the count the two
+    // render identically.
+    const costs = iterationCosts(group.iterations);
+    const costTotals = sumIterationCost(group.iterations);
     return {
       ...group,
       p50Ms: percentile(durations, 0.5),
       p95Ms: percentile(durations, 0.95),
+      totalCostUsd: costTotals.totalUsd,
+      p50CostUsd: percentile(costs, 0.5),
+      p95CostUsd: percentile(costs, 0.95),
+      costedIterations: costTotals.costedIterations,
+      hasRunnerReportedCost: costTotals.hasRunnerReported,
     };
   });
 

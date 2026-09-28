@@ -1,7 +1,9 @@
 /**
  * Monitoring gating: the Monitoring rail item in the results split is visible
- * only when the synthetic-monitors flag is on AND the suite has monitoring
- * signal (a schedule or a widget probe case).
+ * only when the suite has monitoring signal AND the flag owning that signal is
+ * on. The rail's two halves answer to DIFFERENT flags — a schedule to
+ * `scheduled-evals-enabled`, a widget probe case to `synthetic-monitors` — so
+ * the mock is key-aware and each half is pinned against the other's flag too.
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -9,9 +11,16 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalCase, EvalSuite } from "../types";
 
-const flagState = { enabled: false };
+const flagState = vi.hoisted(() => ({
+  syntheticMonitors: false,
+  scheduledEvals: false,
+}));
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => flagState.enabled,
+  useFeatureFlagEnabled: (key: string) => {
+    if (key === "synthetic-monitors") return flagState.syntheticMonitors;
+    if (key === "scheduled-evals-enabled") return flagState.scheduledEvals;
+    return false;
+  },
   usePostHog: () => ({ capture: vi.fn() }),
 }));
 
@@ -89,52 +98,60 @@ function renderDashboard(suite: EvalSuite, cases: EvalCase[]) {
   );
 }
 
-describe("SuiteDashboard monitoring gating", () => {
-  beforeEach(() => {
-    flagState.enabled = false;
+const scheduledSuite = () =>
+  makeSuite({
+    schedule: { intervalMinutes: 15, enabled: true, state: "active" },
   });
 
-  it("hides the Monitoring item when the flag is off, even with signal", () => {
-    renderDashboard(
-      makeSuite({
-        schedule: { intervalMinutes: 15, enabled: true, state: "active" },
-      }),
-      [makeProbeCase()],
-    );
+describe("SuiteDashboard monitoring gating", () => {
+  beforeEach(() => {
+    flagState.syntheticMonitors = false;
+    flagState.scheduledEvals = false;
+  });
+
+  it("hides the Monitoring item when both flags are off, even with signal", () => {
+    renderDashboard(scheduledSuite(), [makeProbeCase()]);
     expect(screen.queryByText("Monitoring")).toBeNull();
   });
 
-  it("hides the Monitoring item when the flag is on but there's no signal", () => {
-    flagState.enabled = true;
+  it("hides the Monitoring item when the flags are on but there's no signal", () => {
+    flagState.syntheticMonitors = true;
+    flagState.scheduledEvals = true;
     renderDashboard(makeSuite(), []);
     expect(screen.queryByText("Monitoring")).toBeNull();
   });
 
-  it("shows the Monitoring item for a scheduled suite when the flag is on", () => {
-    flagState.enabled = true;
-    renderDashboard(
-      makeSuite({
-        schedule: { intervalMinutes: 15, enabled: true, state: "active" },
-      }),
-      [],
-    );
+  it("shows the Monitoring item for a scheduled suite under the schedule flag", () => {
+    flagState.scheduledEvals = true;
+    renderDashboard(scheduledSuite(), []);
     expect(screen.getByText("Monitoring")).toBeTruthy();
   });
 
+  // The half the split exists for: a schedule is NOT synthetic-monitors' to
+  // reveal any more, so Schedule stays dark on a deployment that has the
+  // scorer kinds turned on.
+  it("hides a scheduled suite's Monitoring item when only synthetic-monitors is on", () => {
+    flagState.syntheticMonitors = true;
+    renderDashboard(scheduledSuite(), []);
+    expect(screen.queryByText("Monitoring")).toBeNull();
+  });
+
   it("shows the Monitoring item for a widget probe case (no schedule)", () => {
-    flagState.enabled = true;
+    flagState.syntheticMonitors = true;
     renderDashboard(makeSuite(), [makeProbeCase()]);
     expect(screen.getByText("Monitoring")).toBeTruthy();
   });
 
+  // And the mirror image: the schedule flag does not smuggle in the probe half.
+  it("hides a probe case's Monitoring item when only the schedule flag is on", () => {
+    flagState.scheduledEvals = true;
+    renderDashboard(makeSuite(), [makeProbeCase()]);
+    expect(screen.queryByText("Monitoring")).toBeNull();
+  });
+
   it("opens the monitoring pane when the rail item is clicked", () => {
-    flagState.enabled = true;
-    renderDashboard(
-      makeSuite({
-        schedule: { intervalMinutes: 15, enabled: true, state: "active" },
-      }),
-      [],
-    );
+    flagState.scheduledEvals = true;
+    renderDashboard(scheduledSuite(), []);
     fireEvent.click(screen.getByText("Monitoring"));
     expect(screen.getByTestId("monitoring-tab")).toBeTruthy();
   });

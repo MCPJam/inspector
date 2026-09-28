@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareProjectDialog } from "../ShareProjectDialog";
@@ -56,10 +62,9 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 }));
 
 vi.mock("@/lib/billing-gates", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/lib/billing-gates")>(
-      "@/lib/billing-gates",
-    );
+  const actual = await vi.importActual<typeof import("@/lib/billing-gates")>(
+    "@/lib/billing-gates",
+  );
 
   return {
     ...actual,
@@ -75,8 +80,7 @@ vi.mock("@/hooks/useProjects", async () => {
 
   return {
     ...actual,
-    useProjectMembers: (...args: unknown[]) =>
-      mockUseProjectMembers(...args),
+    useProjectMembers: (...args: unknown[]) => mockUseProjectMembers(...args),
     useProjectMutations: () => ({
       createProject: mockCreateProject,
       inviteProjectMember: mockInviteProjectMember,
@@ -170,6 +174,24 @@ function renderDialog(
 }
 
 describe("ShareProjectDialog", () => {
+  it("renders a searchable member page without a dialog in embedded mode", () => {
+    renderDialog({ embedded: true });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Members & Sharing" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search members" }), {
+      target: { value: "nobody-matches" },
+    });
+    expect(screen.getByText("No active members found.")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "Filter members by role" }),
+    );
+    fireEvent.click(screen.getByRole("option", { name: "editor" }));
+    expect(
+      screen.getByRole("combobox", { name: "Filter members by role" }),
+    ).toHaveTextContent("editor");
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";
@@ -705,9 +727,7 @@ describe("ShareProjectDialog", () => {
       />,
     );
 
-    expect(
-      screen.queryByTestId("member-limit-upsell"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("member-limit-upsell")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled();
   });
 
@@ -754,9 +774,19 @@ describe("ShareProjectDialog", () => {
     const editorButtons = screen.getAllByRole("button", { name: /Editor/ });
     await user.click(editorButtons[editorButtons.length - 1]);
 
-    // Click "Remove from project" in the dropdown
-    const removeItem = await screen.findByText("Remove from project");
+    // Click "Remove from project" in the dropdown, then confirm.
+    const removeItem = await screen.findByRole("menuitem", {
+      name: "Remove from project",
+    });
     await user.click(removeItem);
+    expect(mockRemoveProjectMember).not.toHaveBeenCalled();
+    const confirmDialog = await screen.findByRole("alertdialog");
+    expect(confirmDialog).toHaveTextContent("member@example.com");
+    await user.click(
+      within(confirmDialog).getByRole("button", {
+        name: "Remove from project",
+      }),
+    );
 
     await waitFor(() => {
       expect(mockRemoveProjectMember).toHaveBeenCalledWith({

@@ -447,6 +447,111 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
+  it("creates in the organization the caller names, not the active one", async () => {
+    // The create dialog lets the user pick where the project lands, so the
+    // target is no longer always whichever organization is active.
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Existing project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-active",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-active",
+    });
+
+    await act(async () => {
+      await result.current.handleCreateProject("Project Two", false, {
+        organizationId: "org-other",
+      });
+    });
+
+    expect(createProjectMock).toHaveBeenCalledWith({
+      organizationId: "org-other",
+      name: "Project Two",
+      clientConfig: undefined,
+      servers: {},
+    });
+  });
+
+  it("falls back to the active organization when the caller names none", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Existing project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-active",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-active",
+    });
+
+    await act(async () => {
+      await result.current.handleCreateProject("Project Two", false, {});
+    });
+
+    expect(createProjectMock).toHaveBeenCalledWith({
+      organizationId: "org-active",
+      name: "Project Two",
+      clientConfig: undefined,
+      servers: {},
+    });
+  });
+
+  it("selects a local project in the same call that creates it", async () => {
+    // App relies on this being atomic for the local/guest path: no URL can
+    // name a local id, and switching afterwards through `handleSwitchProject`
+    // does not work — it validates against the project map captured in the
+    // render it was created in, which cannot contain a project dispatched a
+    // moment ago, and answers "Project not found".
+    const appState = createAppState({});
+    const { result, dispatch } = renderUseProjectState({
+      appState,
+      isAuthenticated: false,
+      hasSignedInUser: false,
+      hasOrganizations: false,
+    });
+
+    let createdId = "";
+    await act(async () => {
+      createdId = await result.current.handleCreateProject("Scratch", true);
+    });
+
+    expect(createdId).toBeTruthy();
+    expect(createProjectMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CREATE_PROJECT",
+        project: expect.objectContaining({ id: createdId, name: "Scratch" }),
+      }),
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SWITCH_PROJECT",
+      projectId: createdId,
+    });
+  });
+
   it("does not ensure a default project until organization selection resolves", async () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];

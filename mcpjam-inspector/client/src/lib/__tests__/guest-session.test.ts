@@ -135,6 +135,70 @@ describe("guest-session module", () => {
       expect(session).toBeNull();
     });
 
+    it("stops minting after a 429 refusal until retry-after elapses, and exposes the refusal", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          get: (name: string) => (name === "retry-after" ? "600" : null),
+        },
+      } as unknown as Response);
+
+      expect(guestSession.getGuestSessionRefusal()).toBeNull();
+      const first = await guestSession.getOrCreateGuestSession();
+      expect(first).toBeNull();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      const refusal = guestSession.getGuestSessionRefusal();
+      expect(refusal).not.toBeNull();
+      expect(refusal!.until).toBeGreaterThan(Date.now() + 500_000);
+
+      // Deterministic for the window: no second request.
+      const second = await guestSession.getOrCreateGuestSession();
+      expect(second).toBeNull();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the refusal and notifies subscribers when retry-after elapses", async () => {
+      vi.useFakeTimers();
+      try {
+        const listener = vi.fn();
+        guestSession.subscribeGuestSessionChanges(listener);
+        vi.mocked(global.fetch).mockResolvedValue({
+          ok: false,
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: {
+            get: (name: string) => (name === "retry-after" ? "5" : null),
+          },
+        } as unknown as Response);
+        await guestSession.getOrCreateGuestSession();
+        expect(guestSession.getGuestSessionRefusal()).not.toBeNull();
+        const callsAfterRefusal = listener.mock.calls.length;
+
+        vi.advanceTimersByTime(5_000);
+
+        expect(guestSession.getGuestSessionRefusal()).toBeNull();
+        expect(listener.mock.calls.length).toBeGreaterThan(callsAfterRefusal);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("notifies subscribers when a refusal is recorded", async () => {
+      const listener = vi.fn();
+      guestSession.subscribeGuestSessionChanges(listener);
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: { get: () => null },
+      } as unknown as Response);
+      await guestSession.getOrCreateGuestSession();
+      expect(listener).toHaveBeenCalled();
+    });
+
     it("returns null on network error", async () => {
       vi.mocked(global.fetch).mockRejectedValue(new Error("network"));
       const session = await guestSession.getOrCreateGuestSession();
@@ -170,6 +234,165 @@ describe("guest-session module", () => {
       expect(a).toEqual(b);
       expect(b).toEqual(c);
       expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // The auth retry ladder uses these so it can report WHY a mint failed. The
+  // swallowing wrappers above must keep returning null for everyone else.
+  describe("throwing variants", () => {
+    const unavailable = {
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+    } as Response;
+
+    it("rejects with the real cause and status on a non-ok response", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(unavailable);
+
+      const error = await guestSession
+        .getOrCreateGuestSessionOrThrow()
+        .catch((e: unknown) => e);
+      expect((error as Error).message).toBe(
+        "guest-session request failed: 503 Service Unavailable",
+      );
+      expect((error as { status?: number }).status).toBe(503);
+    });
+
+    it("rejects without a status on a network error", async () => {
+      vi.mocked(global.fetch).mockRejectedValue(new Error("offline"));
+
+      const error = await guestSession
+        .getOrCreateGuestSessionOrThrow()
+        .catch((e: unknown) => e);
+      expect((error as Error).message).toBe("offline");
+      expect((error as { status?: number }).status).toBeUndefined();
+    });
+
+    it("resolves null on a 429 refusal instead of throwing", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          get: (name: string) => (name === "retry-after" ? "600" : null),
+        },
+      } as unknown as Response);
+
+      await expect(
+        guestSession.getOrCreateGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      expect(guestSession.getGuestSessionRefusal()).not.toBeNull();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("force refresh rejects while its wrapper returns null", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(unavailable);
+
+      const error = await guestSession
+        .forceRefreshGuestSessionOrThrow()
+        .catch((e: unknown) => e);
+      expect((error as { status?: number }).status).toBe(503);
+      await expect(guestSession.forceRefreshGuestSession()).resolves.toBeNull();
+    });
+
+    it("shares one failing request between a swallowing and a throwing caller", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(unavailable);
+
+      const [swallowed, thrown] = await Promise.all([
+        guestSession.getOrCreateGuestSession(),
+        guestSession.getOrCreateGuestSessionOrThrow().catch((e: unknown) => e),
+      ]);
+      expect(swallowed).toBeNull();
+      expect((thrown as { status?: number }).status).toBe(503);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    // On a self-hosted install the 503 is made by the local server, and its
+    // body is the only place the reason for the failed relay shows up.
+    describe("upstream failure details", () => {
+      function unavailableWith(json: () => Promise<unknown>): Response {
+        return { ...unavailable, json } as unknown as Response;
+      }
+
+      async function mintError() {
+        return (await guestSession
+          .getOrCreateGuestSessionOrThrow()
+          .catch((e: unknown) => e)) as Error & {
+          status?: number;
+          upstreamFailure?: unknown;
+        };
+      }
+
+      it("names the reason in the message and keeps the details", async () => {
+        vi.mocked(global.fetch).mockResolvedValue(
+          unavailableWith(async () => ({
+            code: "INTERNAL_ERROR",
+            details: { reason: "timeout" },
+          })),
+        );
+
+        const error = await mintError();
+        expect(error.message).toBe(
+          "guest-session request failed: 503 Service Unavailable (timeout)",
+        );
+        expect(error.status).toBe(503);
+        expect(error.upstreamFailure).toEqual({ reason: "timeout" });
+      });
+
+      it("adds the network code or upstream status to the reason", async () => {
+        vi.mocked(global.fetch).mockResolvedValueOnce(
+          unavailableWith(async () => ({
+            details: { reason: "network", networkCode: "ENOTFOUND" },
+          })),
+        );
+        expect((await mintError()).message).toBe(
+          "guest-session request failed: 503 Service Unavailable (network ENOTFOUND)",
+        );
+
+        vi.mocked(global.fetch).mockResolvedValueOnce(
+          unavailableWith(async () => ({
+            details: { reason: "upstream_status", upstreamStatus: 522 },
+          })),
+        );
+        expect((await mintError()).message).toBe(
+          "guest-session request failed: 503 Service Unavailable (upstream_status 522)",
+        );
+      });
+
+      it("keeps the plain message when the body has no usable details", async () => {
+        const bodies: Array<() => Promise<unknown>> = [
+          async () => ({ details: { reason: "made_up" } }),
+          async () => ({ code: "INTERNAL_ERROR" }),
+          () => Promise.reject(new SyntaxError("Unexpected token <")),
+        ];
+        for (const json of bodies) {
+          vi.mocked(global.fetch).mockResolvedValueOnce(unavailableWith(json));
+          const error = await mintError();
+          expect(error.message).toBe(
+            "guest-session request failed: 503 Service Unavailable",
+          );
+          expect(error.upstreamFailure).toBeUndefined();
+        }
+      });
+
+      it("does not wait on a body that never arrives", async () => {
+        vi.useFakeTimers();
+        try {
+          vi.mocked(global.fetch).mockResolvedValue(
+            unavailableWith(() => new Promise(() => {})),
+          );
+
+          const pending = mintError();
+          await vi.advanceTimersByTimeAsync(1000);
+          const error = await pending;
+          expect(error.message).toBe(
+            "guest-session request failed: 503 Service Unavailable",
+          );
+          expect(error.upstreamFailure).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
     });
   });
 

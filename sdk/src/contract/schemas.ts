@@ -39,7 +39,12 @@ export const scoreStatusSchema = z.enum([
   "not_applicable",
 ]);
 
-export const scorerRoleSchema = z.enum(["gating", "advisory"]);
+/**
+ * `"required"` is canonical, `"gating"` its legacy spelling of the same value.
+ * Widened for READING: a stored contract is historical evidence and is never
+ * rewritten, so both must parse forever.
+ */
+export const scorerRoleSchema = z.enum(["gating", "advisory", "required"]);
 
 export const scorerErrorPolicySchema = z.enum(["fail", "ignore"]);
 

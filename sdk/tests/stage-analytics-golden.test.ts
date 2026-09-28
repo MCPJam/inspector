@@ -195,7 +195,9 @@ describe("golden fixture", () => {
   });
 
   test("matches the committed fixture byte for byte", () => {
-    const serialized = `${JSON.stringify(actual, null, 2)}\n`;
+    // Keep the v11 golden bytes. All measured facts must remain identical at v12.
+    expect(actual.stageAnalyzerVersion).toBe(12);
+    const serialized = `${JSON.stringify({ ...actual, stageAnalyzerVersion: 11 }, null, 2)}\n`;
     if (process.env.UPDATE_STAGE_ANALYTICS_GOLDEN === "1") {
       writeFileSync(GOLDEN_PATH, serialized);
     }

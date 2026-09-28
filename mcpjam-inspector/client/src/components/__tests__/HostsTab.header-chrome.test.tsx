@@ -16,6 +16,12 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
   useAppNavigate: () => vi.fn(),
 }));
 
+vi.mock("@/components/hosts/redesigned/HostCanvasSelector", () => ({
+  HostCanvasSelector: ({ showAddClient }: { showAddClient?: boolean }) => (
+    <div data-testid="client-selector" data-show-add={String(showAddClient)} />
+  ),
+}));
+
 vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: vi.fn(() => [null as string | null, vi.fn()]),
 }));
@@ -35,6 +41,8 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 vi.mock("@/hooks/useProjects", () => ({
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE: "Only project admins can create clients.",
+  useCanManageProjectClients: () => ({ canManage: true, isLoading: false }),
   useProjectServers: vi.fn(() => ({
     servers: [],
     serversRecord: {},
@@ -107,6 +115,10 @@ describe("HostsTab", () => {
       />,
     );
 
+    expect(screen.getByTestId("client-selector")).toHaveAttribute(
+      "data-show-add",
+      "false",
+    );
     const chrome = screen.getByTestId("hosts-tab-header-chrome");
     expect(chrome).toHaveClass(
       "relative",

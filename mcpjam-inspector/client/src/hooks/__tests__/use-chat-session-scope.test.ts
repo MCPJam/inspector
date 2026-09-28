@@ -142,6 +142,17 @@ describe("scope step-up resume auto-send fence", () => {
     ).toBe(true);
   });
 
+  it("automatically continues after a stale page-tool result, but not while its replacement awaits approval", () => {
+    const completed = completedToolMessage("page_deadbeef");
+    completed.parts[0].output = { isError: true, content: [{ type: "text", text: "Tools refreshed automatically; issue a new call." }] };
+    expect(shouldAutoSendCompletedClientToolCalls({ messages: [completed] })).toBe(true);
+    const pending = completedToolMessage("page_cafebabe");
+    pending.parts[0].state = "approval-requested";
+    pending.parts[0].approval = { id: "fresh-approval" };
+    delete pending.parts[0].output;
+    expect(shouldAutoSendCompletedClientToolCalls({ messages: [pending] })).toBe(false);
+  });
+
   it("suppresses even browser-tool auto-send while a one-shot resume is active", () => {
     expect(
       shouldAutoSendCompletedClientToolCalls(

@@ -92,6 +92,8 @@ export type {
   WidgetSandboxApplied,
   WidgetLifecycleEvent,
   WidgetMount,
+  CspMountId,
+  CspApplicationIntent,
   CspViolation,
   UiLogEvent,
   // chrome injection

@@ -32,6 +32,22 @@ export interface InspectorApiClientOptions {
 type InspectorRequestInit = Omit<RequestInit, "body"> & {
   body?: unknown;
   timeoutMs?: number;
+  /**
+   * Return this non-2xx body instead of throwing, when the caller can read it.
+   *
+   * Some endpoints answer a STRUCTURED OUTCOME with a 4xx or 5xx — the browser
+   * door replies 403 for a refused command and 502 for one whose result is
+   * unknown, and those bodies carry the very distinction a caller has to act
+   * on. Throwing them away as generic transport failures loses it: `refused`
+   * (nothing ran, retry is safe) and `unknown` (it may have run, do NOT retry)
+   * become the same thrown error, and a script retries a command that already
+   * happened.
+   *
+   * The predicate keeps that knowledge with the caller who has it. Anything it
+   * does not claim still throws, so a consent failure or a usage error stays
+   * loud instead of arriving as a quiet object.
+   */
+  treatAsSuccess?: (status: number, payload: unknown) => boolean;
 };
 
 export interface EnsureInspectorOptions extends InspectorApiClientOptions {
@@ -691,7 +707,7 @@ export class InspectorApiClient {
     }
 
     const payload = await readResponsePayload(response);
-    if (!response.ok) {
+    if (!response.ok && !init.treatAsSuccess?.(response.status, payload)) {
       throw operationalError(
         getErrorMessage(payload) ??
           `Inspector request ${path} failed with ${response.status}.`,

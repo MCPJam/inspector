@@ -14,6 +14,10 @@ import {
   isRetryableTransientError,
   retryWithPolicy,
 } from "./retry.js";
+import {
+  isSensitiveHeaderName,
+  redactSensitiveTraceValue,
+} from "./oauth/state-machines/trace-redaction.js";
 import type { OAuthProtocolVersion } from "./oauth/state-machines/types.js";
 
 export interface ProbeMcpServerConfig {
@@ -27,6 +31,13 @@ export interface ProbeMcpServerConfig {
   clientName?: string;
   clientVersion?: string;
   retryPolicy?: RetryPolicy;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local) for
+   * the metadata pointers this probe follows. The LOCAL inspector and CLI set
+   * it; hosted callers leave it unset. Link-local and cloud-metadata
+   * destinations stay refused either way.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 export interface ProbeHttpAttempt {
@@ -129,13 +140,21 @@ function lowerCaseHeaders(
   );
 }
 
-function removeAuthorizationHeader(
+/**
+ * Drop every credential-shaped header, not just `Authorization`.
+ *
+ * Discovery dials hosts the *target* names in its own `WWW-Authenticate`
+ * challenge, so the user never chose them. Filtering a single header name left
+ * `X-Api-Key` and friends — anything the user stored against the server — going
+ * to a host of the target's choosing. Metadata endpoints are unauthenticated by
+ * definition, so over-stripping here costs nothing and under-stripping egresses
+ * a credential.
+ */
+function removeCredentialHeaders(
   headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).filter(
-      ([key]) => key.toLowerCase() !== "authorization"
-    )
+    Object.entries(headers).filter(([key]) => !isSensitiveHeaderName(key))
   );
 }
 
@@ -243,7 +262,8 @@ function buildAuthServerMetadataUrls(
  */
 function assertMetadataDestinationAllowed(
   candidate: string,
-  serverUrl: string
+  serverUrl: string,
+  allowPrivateNetwork = false
 ): void {
   try {
     const target = new URL(candidate);
@@ -267,6 +287,7 @@ function assertMetadataDestinationAllowed(
 
   assertOutboundOAuthUrlAllowed(candidate, {
     allowLoopback: isLoopbackOAuthUrl(serverUrl),
+    allowPrivateNetwork,
   });
 }
 
@@ -385,6 +406,40 @@ function isRetryableProbeStatus(status: number): boolean {
   );
 }
 
+/**
+ * Replace credential values on a recorded attempt with their redacted display
+ * form.
+ *
+ * `attempt.request.headers` is the same object `performRequest` hands to
+ * `fetch`, and it ships to the caller inside `transport.attempts`. Redacting it
+ * before the dial would break the request, so this runs once the dial is done.
+ * The attempt record exists to show the *shape* of the request; the secret
+ * value carries no diagnostic weight, and echoing it puts a live token into a
+ * JSON body that reaches browser memory, HAR exports and support bundles.
+ */
+const redactedAttempts = new WeakSet<ProbeHttpAttempt>();
+
+function redactAttemptCredentials(attempt: ProbeHttpAttempt): void {
+  // Runs twice on a dialled attempt — once in `performRequest`, once in the
+  // sweep at the end of `probeMcpServer` — so it has to be idempotent. The
+  // bookkeeping is out of band because the alternative, recognising an
+  // already-redacted value by its text, is decided by the header value: a
+  // stored credential containing "[redacted]" would read as already safe and
+  // ship verbatim.
+  if (redactedAttempts.has(attempt)) {
+    return;
+  }
+  redactedAttempts.add(attempt);
+
+  attempt.request.headers = Object.fromEntries(
+    Object.entries(attempt.request.headers).map(([key, value]) =>
+      isSensitiveHeaderName(key)
+        ? [key, redactSensitiveTraceValue(value)]
+        : [key, value]
+    )
+  );
+}
+
 async function performRequest(
   fetchFn: typeof fetch,
   attempt: ProbeHttpAttempt,
@@ -444,6 +499,7 @@ async function performRequest(
     throw requestError;
   } finally {
     cleanup();
+    redactAttemptCredentials(attempt);
   }
 }
 
@@ -552,7 +608,7 @@ async function discoverOAuthDetails(
   wwwAuthenticateHeader: string | undefined
 ): Promise<ProbeOAuthDetails> {
   const protocolVersion = normalizeProtocolVersion(config.protocolVersion);
-  const metadataHeaders = removeAuthorizationHeader(
+  const metadataHeaders = removeCredentialHeaders(
     normalizeHeaders(config.headers)
   );
   // Read the pointer off the Bearer challenge rather than the raw header. A
@@ -582,7 +638,8 @@ async function discoverOAuthDetails(
     if (resourceMetadataUrlFromHeader) {
       assertMetadataDestinationAllowed(
         resourceMetadataUrlFromHeader,
-        config.url
+        config.url,
+        config.allowPrivateNetwork
       );
     }
     attempts.push(resourceMetadataAttempt);
@@ -616,7 +673,12 @@ async function discoverOAuthDetails(
         config.fetchFn ?? fetch,
         attempt,
         config.timeoutMs,
-        (landingUrl) => assertMetadataDestinationAllowed(landingUrl, config.url)
+        (landingUrl) =>
+          assertMetadataDestinationAllowed(
+            landingUrl,
+            config.url,
+            config.allowPrivateNetwork
+          )
       );
 
       return new Response(
@@ -652,7 +714,11 @@ async function discoverOAuthDetails(
       // loopback server discovering its own metadata. This also keeps a
       // malformed entry from aborting discovery inside `new URL()` below.
       if (advertisedAuthServer) {
-        assertMetadataDestinationAllowed(advertisedAuthServer, config.url);
+        assertMetadataDestinationAllowed(
+          advertisedAuthServer,
+          config.url,
+          config.allowPrivateNetwork
+        );
       }
       authMetadataUrls = buildAuthServerMetadataUrls(
         protocolVersion,
@@ -680,7 +746,11 @@ async function discoverOAuthDetails(
           authAttempt,
           config.timeoutMs,
           (landingUrl) =>
-            assertMetadataDestinationAllowed(landingUrl, config.url)
+            assertMetadataDestinationAllowed(
+              landingUrl,
+              config.url,
+              config.allowPrivateNetwork
+            )
         );
 
         if (
@@ -978,5 +1048,8 @@ export async function probeMcpServer(
     operation: () => probeMcpServerOnce(config, attempts),
     shouldRetryResult: (result) => result.retryable,
   });
+  // An attempt refused before the dial never reaches `performRequest`'s
+  // `finally`, so it would still be carrying live headers here.
+  attempts.forEach(redactAttemptCredentials);
   return outcome.result;
 }

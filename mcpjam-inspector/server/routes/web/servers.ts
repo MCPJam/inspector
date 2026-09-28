@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
-import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   mapRuntimeError,
   webErrorFromRoute,
@@ -27,8 +27,13 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
-  createGuardedFetch,
 } from "../../utils/hosted-egress-guard.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import {
+  projectHostedValidateInitInfo,
+  redactHostedDoctorTransportDetail,
+} from "../../utils/hosted-doctor-redaction.js";
+import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
@@ -36,13 +41,21 @@ import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
 
+// Hosted, a failure is reported like every other MCP route's (MJ-001; see
+// `withEphemeralConnection`), and a successful connect's log envelope reports
+// received frames by their envelope as well.
 servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
     projectServerSchema,
     (manager, body) => validateServerCore(c, manager, body),
-    { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
-  )
+    {
+      timeoutMs: WEB_CONNECT_TIMEOUT_MS,
+      ...(HOSTED_MODE
+        ? { redactSuccessLogs: projectHostedConnectFailureLogs }
+        : {}),
+    },
+  ),
 );
 
 /**
@@ -59,6 +72,13 @@ export async function validateServerCore(
   manager: any,
   body: { projectId: string; serverId: string }
 ) {
+  // The doctor's target check, so a stored URL the hosted inspector will not
+  // dial is answered as the caller's to fix (400) rather than as a failed
+  // connection. A no-op outside hosted mode.
+  const configuredUrl = manager.getServerConfig?.(body.serverId)?.url;
+  if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
+    await assertHostedServerTarget(String(configuredUrl));
+  }
   await manager.getToolsForAiSdk([body.serverId]);
   const snapshot = await exportSingleServerForInspection(
     manager,
@@ -76,8 +96,15 @@ export async function validateServerCore(
     });
   });
   // Same success envelope as the local /api/mcp/connect path so the inspector
-  // client's `storeInitInfo` takes one code path on both surfaces.
-  return buildConnectSuccessEnvelope(manager, body.serverId);
+  // client's `storeInitInfo` takes one code path on both surfaces. Hosted, its
+  // initialization info is projected (MJ-001).
+  const envelope = buildConnectSuccessEnvelope(manager, body.serverId);
+  return HOSTED_MODE
+    ? {
+        ...envelope,
+        initInfo: projectHostedValidateInitInfo(envelope.initInfo),
+      }
+    : envelope;
 }
 
 async function persistHostedConnectInspection(
@@ -156,7 +183,11 @@ servers.post("/doctor", async (c) => {
 
   try {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
-    rpcCollector = createHostedRpcLogCollector(rawBody);
+    // A hosted doctor response carries only its projected envelope (MJ-001),
+    // so the connection's JSON-RPC frames are not collected for it.
+    rpcCollector = HOSTED_MODE
+      ? undefined
+      : createHostedRpcLogCollector(rawBody);
     const timeoutMs = WEB_CONNECT_TIMEOUT_MS;
     const result = await runHostedDoctor(
       c,
@@ -179,11 +210,11 @@ servers.post("/doctor", async (c) => {
 export default servers;
 
 /**
- * Refuse a doctor target the hosted inspector must not dial, mapping the two
- * guard outcomes the way the conformance routes do: a blocked address is the
- * caller's problem (400), a resolver failure is ours (503).
+ * Refuse a doctor or validate target the hosted inspector must not dial,
+ * mapping the two guard outcomes the way the conformance routes do: a blocked
+ * address is the caller's problem (400), a resolver failure is ours (503).
  */
-async function assertHostedDoctorTarget(url: string): Promise<void> {
+async function assertHostedServerTarget(url: string): Promise<void> {
   try {
     await assertAllowedHostedTargetUrl(url, "Server URL");
   } catch (error) {
@@ -224,16 +255,25 @@ export async function runHostedDoctor(
     body.clientCapabilities
   );
 
-  // The guarded `fetchFn` below covers the probe's own requests and nothing
-  // else: `runServerDoctor` records a failed probe and connects anyway, over an
-  // MCP transport that takes no fetch. So a target the guard would refuse still
-  // gets dialed by the connection step. Judge the target once, here, before
-  // either step runs — the same check the conformance routes make, and a no-op
-  // outside hosted mode.
-  await assertHostedDoctorTarget(config.url);
+  // Judge the target once, before either leg runs — the same check the
+  // conformance routes make, and a no-op outside hosted mode. This is the
+  // caller-facing refusal: a stored URL that is already a private address gets
+  // a 400 naming the host they typed, rather than a transport error.
+  await assertHostedServerTarget(config.url);
 
-  return runServerDoctor({
-    config,
+  // THE DOCTOR'S TWO LEGS, ON ONE TRANSPORT.
+  //
+  // `runServerDoctor` probes over `fetchFn`, records a failed probe, and
+  // connects anyway — and its connection goes through `withEphemeralClient`,
+  // which threads the config's own `baseFetch` into the MCP transport. Both
+  // legs dial the pinned transport: resolve once, classify, pin the address
+  // into the socket, and re-run all of it on every redirect hop. One transport
+  // rather than two so the probe and the connection cannot disagree about what
+  // is dialable.
+  const doctorFetch = hostedMcpBaseFetch();
+
+  const result = await runServerDoctor({
+    config: { ...config, baseFetch: doctorFetch },
     target: {
       kind: "http",
       scope: "hosted",
@@ -250,6 +290,8 @@ export async function runHostedDoctor(
     // catch a hostname that answers with a private address, and only per-hop
     // checking can catch a redirect. Both live here. Outside hosted mode this
     // is the identity function, so localhost and LAN probing is unaffected.
-    fetchFn: createGuardedFetch(),
+    fetchFn: doctorFetch,
   });
+
+  return redactHostedDoctorTransportDetail(result);
 }

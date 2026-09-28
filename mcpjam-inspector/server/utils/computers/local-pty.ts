@@ -18,6 +18,9 @@
  * is unavailable (hosted, kill switch off, no bash), because a terminal on a
  * machine that may not execute bash would be a second, ungated execution path.
  */
+import { chmodSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { logger } from "../logger.js";
 import { isLocalComputerEngineAvailable } from "./local-machine.js";
 
@@ -58,8 +61,46 @@ let loadPromise: Promise<LocalPtyModuleLoad> | null = null;
  * native addon will not appear mid-process, and retrying per connection would
  * pay the resolution cost on every socket).
  */
+/**
+ * npm's published node-pty prebuilds have shipped `spawn-helper` without its
+ * execute bit (npm preserves the mode packed into the tarball). On macOS
+ * node-pty exec's that helper for every PTY, so the module LOADS fine — the
+ * availability probe passes — and every spawn then dies with the bare
+ * `posix_spawnp failed.`. The repair is a one-bit chmod on a file inside our
+ * own node_modules, so do it once at load rather than leaving every affected
+ * install to diagnose it. Best-effort: any failure here falls through to the
+ * spawn error, which the WS handler surfaces to the terminal pane.
+ */
+function repairSpawnHelperMode(): void {
+  if (process.platform !== "darwin") return;
+  try {
+    const require = createRequire(import.meta.url);
+    const root = path.dirname(require.resolve("node-pty/package.json"));
+    for (const helper of [
+      path.join(root, "prebuilds", `darwin-${process.arch}`, "spawn-helper"),
+      path.join(root, "build", "Release", "spawn-helper"),
+    ]) {
+      try {
+        const mode = statSync(helper).mode;
+        if ((mode & 0o111) === 0) {
+          chmodSync(helper, mode | 0o111);
+          logger.info("[local-pty] restored execute bit on spawn-helper", {
+            helper,
+          });
+        }
+      } catch {
+        // Candidate absent (other build layout) or chmod refused — the spawn
+        // error stays the source of truth.
+      }
+    }
+  } catch {
+    // node-pty itself not resolvable — the import below reports that.
+  }
+}
+
 export function loadLocalPtyModule(): Promise<LocalPtyModuleLoad> {
   if (!loadPromise) {
+    repairSpawnHelperMode();
     // `as string` widens the specifier for TYPE resolution only — node-pty is
     // optional, so `tsc` must not fail when it isn't installed (and must not
     // fight the package's own types when it is). The cast is erased before

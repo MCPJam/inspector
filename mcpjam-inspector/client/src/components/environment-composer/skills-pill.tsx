@@ -31,7 +31,7 @@ export function SkillsPill({
    * Render the popover INLINE rather than portalled, for callers inside a Radix
    * Dialog — a portalled popover lands outside the dialog, where the modal
    * overlay swallows every click. Same escape hatch, same name, as
-   * `EnvironmentPicker` and `ServerGroupPicker`.
+   * `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
 }) {
@@ -80,7 +80,7 @@ export function SkillsPill({
         portalled={!inModal}
       >
         <div className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Skills · shared pins
+          Skills · library pins
         </div>
         <ProjectEnvironmentSkillsPicker
           projectId={projectId}

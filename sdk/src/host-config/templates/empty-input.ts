@@ -17,6 +17,7 @@
 import { DEFAULT_TEMPERATURE_V2 } from "../defaults.js";
 import { getDefaultClientCapabilities } from "../../mcp-client-manager/capabilities.js";
 import type {
+  Harness,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "../types.js";
@@ -52,16 +53,22 @@ export type SeededHostConfigInput = {
   // stays free of cross-imports, like `harness` below. Absent ⇒ legacy
   // all-visible; `{ mode: "explicit", skillIds: [] }` = explicitly no skills.
   skillSelection?:
-    | { mode: "all-visible" }
-    | { mode: "explicit"; skillIds: string[] };
+    { mode: "all-visible" } | { mode: "explicit"; skillIds: string[] };
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: { kind: "personal"; workdir?: string };
-  // Real agent harness for this host. `"claude-code"` / `"codex"` run a real CLI
-  // runtime (requires an attached computer); absent ⇒ MCPJam's emulated engine.
-  // Kept as a local literal (mirrors the `Harness` union / HARNESS_IDS in
-  // ../types.ts) so this module stays free of cross-imports.
-  harness?: "claude-code" | "codex";
+  // Optional saved browser profile selected for hosted browser sessions.
+  browserProfileId?: string;
+  // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"`
+  // run a real CLI runtime (requires an attached computer); absent ⇒ MCPJam's
+  // emulated engine.
+  //
+  // The canonical union, not a copy. This was a local literal justified as
+  // keeping the module cross-import-free, which it never was — `../types.js`
+  // is a sibling in this same package and already supplies two type imports
+  // above. What the literal did buy was a third place to forget: a harness in
+  // `HARNESS_IDS` but missing here is one a seeded template cannot express.
+  harness?: Harness;
   connectionDefaults: {
     headers: Record<string, string>;
     requestTimeout: number;
@@ -155,6 +162,7 @@ export function emptyHostConfigInputV2(
             : {}),
         }
       : undefined,
+    browserProfileId: partial.browserProfileId,
     // String literal — near-pass-through like progressiveToolDiscovery.
     harness: partial.harness,
     connectionDefaults: {

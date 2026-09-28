@@ -99,6 +99,122 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     });
   });
 
+  it("keeps an export-policy refusal as a policy, not a reconnect", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "export_denied",
+              exportDenied: true,
+              policy: "credentialExportPolicy",
+              message: "Export policy is deny.",
+            }),
+            { status: 403, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    const error = await forceRefreshHostedOAuthAccessToken(
+      "bearer-token",
+      "project-1",
+      "server-1",
+      { serverName: "Asana" }
+    ).catch((caught) => caught);
+
+    expect(error).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: {
+        exportDenied: true,
+        policy: "credentialExportPolicy",
+        serverId: "server-1",
+        serverName: "Asana",
+      },
+    });
+    expect(error.details.oauthRequired).toBeUndefined();
+  });
+
+  it("forwards the server's refusal on refresh_token_invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "refresh_token_invalid",
+              message: "Hosted OAuth refresh token is invalid. Please reconnect.",
+              declined: {
+                error: "invalid_request",
+                description: "Unsupported grant_type",
+              },
+            }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    await expect(
+      forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+        { serverName: "Asana" }
+      )
+    ).rejects.toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      details: {
+        refreshTokenInvalid: true,
+        declined: {
+          error: "invalid_request",
+          description: "Unsupported grant_type",
+        },
+      },
+    });
+  });
+
+  it("forwards the transport detail when nothing answered", async () => {
+    const transport = {
+      kind: "unreachable",
+      phase: "token",
+      host: "as.example.com",
+      elapsedMs: 12,
+      cause: "ECONNREFUSED",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "authorization_server_unreachable",
+              message: "Could not reach the authorization server.",
+              detail: null,
+              transport,
+            }),
+            { status: 503, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    await expect(
+      forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+        { serverName: "Descope" }
+      )
+    ).rejects.toMatchObject({
+      status: 503,
+      details: { failure: null, transport },
+    });
+  });
+
   it("forwards the recorded failure on authorization_server_unreachable", async () => {
     vi.stubGlobal(
       "fetch",
@@ -304,6 +420,39 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
     ).resolves.toEqual({ accessToken: "fresh-token" });
   });
 
+  it("tags actual refresh-service failures without changing their status or retry count", async () => {
+    const { classifySetupAttribution } = await import(
+      "../../services/evals/run-setup-signals.js"
+    );
+    for (const mode of ["authorization_server", "network"] as const) {
+      const fetch = vi.fn(async () => {
+        if (mode === "network") throw new Error("refresh service unavailable");
+        return new Response(
+          JSON.stringify({
+            code: "authorization_server_unreachable",
+            message: "Authorization server did not answer.",
+          }),
+          { status: 503 },
+        );
+      });
+      vi.stubGlobal("fetch", fetch);
+      const handler = buildHostedOAuthUnauthorizedHandler({
+        bearerToken: "token",
+        projectId: "project-1",
+        serverId: "server-1",
+        serverName: "Linear",
+      });
+      const error = await handler({
+        serverId: "server-1",
+        error: new Error("HTTP 401"),
+      }).catch((error) => error);
+      expect(error.setupFailureSource).toBe("oauth_refresh");
+      expect(error.status).toBe(mode === "network" ? 502 : 503);
+      expect(classifySetupAttribution(error)).toBe("ours");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("propagates refresh_token_invalid as a WebRouteError", async () => {
     vi.stubGlobal(
       "fetch",
@@ -333,6 +482,7 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
         error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
       })
     ).rejects.toMatchObject({
+      setupFailureSource: "oauth_refresh",
       status: 401,
       code: "UNAUTHORIZED",
       details: {
@@ -946,6 +1096,28 @@ describe("private authorization server fallback", () => {
     ).catch((e) => e);
 
     expect(error.status).toBe(502);
+  });
+
+  it("tags local authorization-server failures after the fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => privateAuthServer409({ refresh: REFRESH_MATERIAL })),
+    );
+    localRefreshMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token",
+      projectId: "project-1",
+      serverId: "server-1",
+      serverName: "Local",
+      allowPrivateAuthorizationServerFallback: true,
+    });
+    await expect(
+      handler({ serverId: "server-1", error: new Error("HTTP 401") }),
+    ).rejects.toMatchObject({
+      status: 502,
+      setupFailureSource: "oauth_refresh",
+      details: { authorizationServerUnreachable: true },
+    });
   });
 
   it("only the local call site opts into the fallback", async () => {

@@ -3,10 +3,15 @@ import { CheckCircle2 } from "lucide-react";
 import type { Diagnosis } from "./types";
 import { summarize } from "./classify";
 import { BlockedRequestCard } from "./BlockedRequestCard";
+import { OriginCard } from "./OriginCard";
 
 interface FindingsTabProps {
   diagnoses: Diagnosis[];
   onViewPolicyDiff: (host: string) => void;
+  /** `_meta.ui.domain`, when the server declared one. */
+  declaredDomain?: string | null;
+  /** The origin MCPJam actually serves the view from. */
+  assignedOrigin?: string;
 }
 
 interface MeterPart {
@@ -15,18 +20,36 @@ interface MeterPart {
   cls: string;
 }
 
-export function FindingsTab({ diagnoses, onViewPolicyDiff }: FindingsTabProps) {
+export function FindingsTab({
+  diagnoses,
+  onViewPolicyDiff,
+  declaredDomain,
+  assignedOrigin,
+}: FindingsTabProps) {
   const summary = useMemo(() => summarize(diagnoses), [diagnoses]);
+
+  // Rendered above the empty-state early return: a widget can declare a
+  // domain that does not match and still trip no CSP violation at all, which
+  // is exactly the case a developer needs told.
+  const originCard = (
+    <OriginCard
+      declaredDomain={declaredDomain}
+      assignedOrigin={assignedOrigin}
+    />
+  );
 
   if (diagnoses.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
-        <CheckCircle2 className="size-8 text-emerald-500/70" />
-        <div className="text-sm font-medium">No CSP violations recorded.</div>
-        <div className="text-[11.5px] text-muted-foreground max-w-md">
-          The widget loaded without tripping any{" "}
-          <span className="font-mono">securitypolicyviolation</span> events.
-          Check Policy Diff to inspect the declared / effective allowlists.
+      <div className="space-y-3">
+        {originCard}
+        <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
+          <CheckCircle2 className="size-8 text-emerald-500/70" />
+          <div className="text-sm font-medium">No CSP violations recorded.</div>
+          <div className="text-[11.5px] text-muted-foreground max-w-md">
+            The widget loaded without tripping any{" "}
+            <span className="font-mono">securitypolicyviolation</span> events.
+            Check Policy Diff to inspect the requested / Effective policies.
+          </div>
         </div>
       </div>
     );
@@ -49,6 +72,11 @@ export function FindingsTab({ diagnoses, onViewPolicyDiff }: FindingsTabProps) {
       label: "mismatch",
       cls: "text-sky-600 dark:text-sky-400",
     },
+    {
+      count: summary.policyUnavailable,
+      label: "unavailable",
+      cls: "text-muted-foreground",
+    },
   ].filter((p) => p.count > 0);
 
   const fixesPart =
@@ -57,7 +85,9 @@ export function FindingsTab({ diagnoses, onViewPolicyDiff }: FindingsTabProps) {
       : null;
   const declPart =
     summary.declarations > 0
-      ? `${summary.declarations} ${summary.declarations === 1 ? "declaration" : "declarations"}`
+      ? `${summary.declarations} ${
+          summary.declarations === 1 ? "declaration" : "declarations"
+        }`
       : null;
 
   return (

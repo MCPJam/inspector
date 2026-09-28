@@ -369,7 +369,7 @@ executeTool(
   serverId: string,
   toolName: string,
   args: Record<string, unknown>
-): Promise<unknown>
+): Promise<CallToolResult | Record<string, unknown>>
 ```
 
 #### Parameters
@@ -382,16 +382,28 @@ executeTool(
 
 #### Returns
 
-`Promise<unknown>` - The tool's return value (type depends on the tool).
+`Promise<CallToolResult | Record<string, unknown>>` — Resolves to a `CallToolResult` for standard tool calls, or a task envelope (`Record<string, unknown>`) when the server returns a task instead of an inline result.
 
-#### Example
+Because the return type is a union, TypeScript will not let you read `.content` directly. Use `assertCallToolResult` (throws on a task envelope) or `isCallToolResult` (type-guard) to narrow the value first:
 
 ```typescript
-const result = await manager.executeTool("myServer", "add", {
-  a: 5,
-  b: 3,
-});
-console.log(result); // 8
+import { MCPClientManager, assertCallToolResult, isCallToolResult } from "@mcpjam/sdk";
+
+// assertCallToolResult — throws if the result is a task envelope
+const result = assertCallToolResult(
+  await manager.executeTool("myServer", "get-sum", { a: 2, b: 3 }),
+);
+const [block] = result.content;
+if (block.type !== "text") throw new Error("Expected a text block");
+console.log(block.text); // "The sum of 2 and 3 is 5."
+
+// isCallToolResult — type-guard for conditional handling
+const raw = await manager.executeTool("myServer", "add", { a: 5, b: 3 });
+if (isCallToolResult(raw)) {
+  console.log(raw.content);
+} else {
+  // task envelope — handle async task flow
+}
 ```
 
 #### Throws
@@ -597,7 +609,7 @@ const agent = new HostRunner({
 });
 
 const result = await agent.run("Add 2 and 3");
-console.log(result.getText());
+console.log(result.text);
 ```
 
 <Note>
@@ -700,7 +712,7 @@ async function main() {
     });
 
     const result = await agent.run("Add 2 and 3");
-    console.log(result.getText());
+    console.log(result.text);
   } finally {
     await manager.disconnectServer("math");
     await manager.disconnectServer("asana");

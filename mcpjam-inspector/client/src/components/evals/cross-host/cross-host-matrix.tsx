@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import { HostChip } from "@/components/hosts/host-chip";
+import { findHostStyle } from "@/lib/client-styles";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "../use-persisted-state";
 import {
@@ -108,7 +110,7 @@ export type HostVerdictMap = Map<string, HostVerdict>;
 
 const HOST_VERDICT_TONE: Record<HostVerdict["verdict"], string> = {
   strong: "text-success",
-  mixed: "text-amber-600 dark:text-amber-400",
+  mixed: "text-warning",
   weak: "text-destructive",
   incomplete: "text-muted-foreground",
 };
@@ -131,7 +133,8 @@ function HostColumnHeader({
     >
       <HostChip
         name={displayName}
-        hostId={col.hostId}
+        hostId={col.namedHostId}
+        logoSrc={col.hostStyle && findHostStyle(col.hostStyle) ? getScenarioHostLogo(col.hostStyle) : undefined}
         layout="stack"
         size="sm"
       />
@@ -306,14 +309,14 @@ export function CrossHostMatrix({
                 data-divergence={rowTone ?? undefined}
                 className={cn(
                   "group",
-                  rowTone === "diverge" && "bg-amber-500/[0.05]",
+                  rowTone === "diverge" && "bg-warning/[0.05]",
                 )}
               >
                 <td
                   className={cn(
                     "z-10 w-[300px] max-w-[300px] align-top px-4 py-2.5",
                     stickyCaseColumnClass,
-                    rowTone === "diverge" && "border-l-2 border-l-amber-500",
+                    rowTone === "diverge" && "border-l-2 border-l-warning",
                     rowTone === "allfail" &&
                       "border-l-2 border-l-destructive",
                     onTestCaseClick && "cursor-pointer hover:bg-muted/40",

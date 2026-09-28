@@ -147,6 +147,129 @@ describe("describeHostedOAuthFailure structured backend shapes", () => {
       "Hosted OAuth refresh token is invalid. Please reconnect.",
     ]);
   });
+
+  const declinedError = (declined: unknown) =>
+    Object.assign(
+      new Error("Hosted OAuth refresh token is invalid. Please reconnect."),
+      {
+        code: "UNAUTHORIZED",
+        details: {
+          oauthRequired: true,
+          refreshTokenInvalid: true,
+          serverId: "srv_1",
+          serverName: "Linear",
+          declined,
+        },
+      }
+    );
+
+  it("quotes the server's own reply when it refused the refresh", () => {
+    // CONVEX-1NT: a server that does not accept refresh_token grants at all.
+    const copy = describeHostedOAuthFailure(
+      declinedError({
+        error: "invalid_request",
+        description: "Unsupported grant_type",
+      }),
+      "Linear"
+    );
+
+    expect(copy).toEqual({
+      kind: "declined",
+      title: "Token refresh rejected",
+      detail: [
+        'The server refused grant_type=refresh_token with invalid_request: "Unsupported grant_type"',
+      ],
+      action: "reconnect",
+    });
+  });
+
+  it("drops the quote when the server sent no description", () => {
+    const copy = describeHostedOAuthFailure(
+      declinedError({ error: "invalid_grant", description: "" }),
+      "Linear"
+    );
+
+    expect(copy?.detail).toEqual([
+      "The server refused grant_type=refresh_token with invalid_grant",
+    ]);
+  });
+
+  it("falls back to the generic message when no reply is sent", () => {
+    const copy = describeHostedOAuthFailure(declinedError(null), "Linear");
+
+    expect(copy?.title).toBe("Refresh token declined for Linear");
+    expect(copy?.detail).toEqual([
+      "Hosted OAuth refresh token is invalid. Please reconnect.",
+    ]);
+  });
+
+  const unreachableError = (details: Record<string, unknown>) =>
+    Object.assign(new Error("Could not reach the authorization server."), {
+      code: "authorization_server_unreachable",
+      details: { authorizationServerUnreachable: true, ...details },
+    });
+
+  it("names the refresh request when the token endpoint answered badly", () => {
+    const copy = describeHostedOAuthFailure(
+      unreachableError({
+        failure: {
+          url: "https://as.example.com/token",
+          status: 502,
+          body: "Bad gateway",
+          phase: "token",
+        },
+      }),
+      "Linear"
+    );
+
+    expect(copy).toEqual({
+      kind: "unreachable",
+      title: "Token refresh failed",
+      detail: [
+        'The server answered grant_type=refresh_token with HTTP 502: "Bad gateway"',
+      ],
+      action: "retry",
+    });
+  });
+
+  it("keeps the host copy when metadata discovery failed instead", () => {
+    const copy = describeHostedOAuthFailure(
+      unreachableError({
+        failure: {
+          url: "https://as.example.com/.well-known/oauth-authorization-server",
+          status: 530,
+          body: "",
+          phase: "metadata",
+        },
+      }),
+      "Linear"
+    );
+
+    expect(copy?.title).toBe("Could not reach as.example.com");
+  });
+
+  it.each([
+    [{ phase: "token", kind: "timeout" }, "timed out"],
+    [{ phase: "token", kind: "unreachable", cause: "ECONNREFUSED" }, "ECONNREFUSED"],
+    [{ phase: "token", kind: "unreachable", cause: "unknown" }, "no response"],
+  ])(
+    "names the refresh request when nothing answered: %o",
+    (transport, reason) => {
+      const copy = describeHostedOAuthFailure(
+        unreachableError({ failure: null, transport }),
+        "Linear"
+      );
+
+      expect(copy).toEqual({
+        kind: "unreachable",
+        title: "Token refresh failed",
+        detail: [
+          `The server didn't answer grant_type=refresh_token (${reason}).`,
+        ],
+        action: "retry",
+      });
+    }
+  );
 });
 
 describe("describeHostedOAuthFailure invalid_client messages", () => {

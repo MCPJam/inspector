@@ -63,16 +63,16 @@ describe("serverDraftToFormData", () => {
     // Same message the user would see, and it tells the model what to fix.
     expect(
       serverDraftToFormData({ name: "x", url: "not-a-url" }),
-    ).toMatchObject({ ok: false, error: expect.stringContaining("Invalid URL") });
+    ).toMatchObject({ ok: false, error: expect.stringContaining("Enter a complete server URL") });
     expect(
       serverDraftToFormData({ name: "x", transport: "stdio", command: "" }),
     ).toEqual({
       ok: false,
-      error: "Command is required for STDIO connections",
+      error: "Enter the command that starts your STDIO server.",
     });
     expect(serverDraftToFormData({ name: "x" })).toMatchObject({
       ok: false,
-      error: expect.stringContaining("URL is required"),
+      error: expect.stringContaining("Enter your server’s URL"),
     });
   });
 
@@ -157,7 +157,7 @@ describe("serverDraftToFormData in hosted mode", () => {
       );
       expect(
         hostedAdapter({ name: "x", url: "http://insecure.com/mcp" }),
-      ).toEqual({ ok: false, error: "Hosted mode requires HTTPS server URLs" });
+      ).toEqual({ ok: false, error: "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app." });
     } finally {
       vi.doUnmock("@/lib/config");
       vi.resetModules();

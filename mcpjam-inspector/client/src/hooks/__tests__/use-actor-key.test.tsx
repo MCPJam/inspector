@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useActorKey } from "../use-actor-key";
 
 const mockState = vi.hoisted(() => ({
@@ -58,6 +58,64 @@ describe("useActorKey", () => {
     });
     await waitFor(() => {
       expect(result.current).toBe("guest_new");
+    });
+  });
+});
+
+describe("useActorKey on a vanity landing", () => {
+  const originalLocation = window.location;
+
+  function setHostname(hostname: string) {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, hostname },
+    });
+  }
+
+  beforeEach(() => {
+    mockState.auth = { user: null, isLoading: false };
+    mockState.getCachedGuestSession.mockReset();
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getOrCreateGuestSession.mockReset();
+    mockState.getOrCreateGuestSession.mockResolvedValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+    mockState.subscribeGuestSessionChanges.mockReset();
+    mockState.subscribeGuestSessionChanges.mockReturnValue(() => {});
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  });
+
+  // This hook is the SECOND guest-creation path; skipping it in
+  // unified-convex-auth alone would still spend from the per-IP budget.
+  it("returns null without minting a guest on caniuse.dev", async () => {
+    setHostname("caniuse.dev");
+
+    const { result } = renderHook(() => useActorKey());
+
+    await waitFor(() => {
+      expect(result.current).toBeNull();
+    });
+    expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
+  });
+
+  it("still mints a guest on score.mcpjam.com", async () => {
+    setHostname("score.mcpjam.com");
+
+    const { result } = renderHook(() => useActorKey());
+
+    await waitFor(() => {
+      expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(result.current).toBe("guest_1");
     });
   });
 });

@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,6 +14,7 @@ import {
   type WidgetRenderClient,
   type WidgetRenderResponse,
 } from "../src/lib/widget-render.js";
+import { runCli } from "./support/task-cli-harness.js";
 import { CliError } from "../src/lib/output.js";
 
 /* ------------------------------------------------------------------ *
@@ -166,13 +165,6 @@ test("buildWidgetRenderOutput surfaces the install hint and no screenshot", () =
  * Subprocess integration — drives the real CLI against a mock Inspector.
  * ------------------------------------------------------------------ */
 
-const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
-  ? process.cwd()
-  : path.join(process.cwd(), "cli");
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
-
 // Bytes that begin with the PNG signature so the round-trip can assert both the
 // exact payload and that a PNG landed on disk. Not a fully-valid image, which is
 // unnecessary for the write path.
@@ -181,55 +173,6 @@ const SCREENSHOT_BYTES = Buffer.concat([
   Buffer.from("fake-png-body"),
 ]);
 const SCREENSHOT_B64 = SCREENSHOT_BYTES.toString("base64");
-
-async function runCli(
-  args: string[],
-  options: { env?: NodeJS.ProcessEnv } = {},
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return await new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args],
-      {
-        cwd: CLI_DIR,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
-          MCPJAM_TELEMETRY_DISABLED: "1",
-          // Keep the tsx runner's Node deprecation warnings (e.g. [DEP0205])
-          // out of stdout/stderr so the CLI's JSON is the only content there.
-          NODE_NO_WARNINGS: "1",
-          ...options.env,
-        },
-      },
-      (error, stdout, stderr) => {
-        if (
-          error &&
-          (error as NodeJS.ErrnoException).code !== undefined &&
-          typeof (error as NodeJS.ErrnoException).code !== "number"
-        ) {
-          reject(
-            new Error(
-              `Failed to execute CLI: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            ),
-          );
-          return;
-        }
-        resolve({
-          exitCode:
-            typeof (error as NodeJS.ErrnoException | null)?.code === "number"
-              ? Number((error as NodeJS.ErrnoException).code)
-              : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
-  });
-}
 
 function lastJsonLine(stdout: string): string {
   const lines = stdout.trim().split(/\r?\n/);

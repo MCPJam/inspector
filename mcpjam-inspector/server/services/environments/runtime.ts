@@ -51,9 +51,42 @@ export interface ResolvedEnvironmentSkill {
   extraFrontmatter?: unknown;
   /** Optional for deploy skew — an older backend may omit channel provenance. */
   channels?: RuntimeSkillChannel[];
+  /**
+   * The backend's ready-made provenance row for this entry — the shape of
+   * `pinnedSkillMetaValidator` (mcpjam-backend
+   * convex/lib/projectEnvironmentValidators.ts), built there by the one shared
+   * writer.
+   *
+   * OPAQUE on purpose. Re-declaring its fields here would make this the FOURTH
+   * hand mirror of a shape whose three existing mirrors all drifted — and the
+   * only thing this side does with it is echo it back onto the turn trace.
+   * Typing it as a record is what keeps that honest: nothing here can read a
+   * field, so nothing here can start depending on one.
+   *
+   * Optional for deploy skew: an older backend omits it, and a turn then
+   * records no provenance rather than a partial one.
+   */
+  provenance?: Record<string, unknown>;
   /** Optional for deploy skew; absent is read as "no supporting files". */
   files?: Array<{ path: string; size: number; url: string | null }>;
 }
+
+/**
+ * Per-turn configuration provenance, in the shape the chat-ingestion turn
+ * trace carries it (`turnTrace.skillsAtTurn` / `.environmentAtTurn`).
+ *
+ * `skillsAtTurn` being an EMPTY array is meaningful — "this turn ran with no
+ * skills" — and is a different fact from the whole object being undefined,
+ * which means there was no environment to record.
+ */
+export type TurnSkillProvenance = {
+  environmentAtTurn: {
+    environmentId: string;
+    name: string;
+    revision: number;
+  };
+  skillsAtTurn: Array<Record<string, unknown>>;
+};
 
 /**
  * The inspector-side mirror of the backend's `ResolvedEnvironmentRuntimeSpec`.
@@ -107,6 +140,8 @@ export interface ResolvedEnvironmentRuntime {
     versionHash: string;
     versionNumber: number;
     capturedAt: number;
+    /** Same opaque provenance row as {@link ResolvedEnvironmentSkill}. */
+    provenance?: Record<string, unknown>;
     files: Array<{ path: string; size: number; url: string | null }>;
   }>;
   pluginVersions?: Array<{
@@ -388,6 +423,97 @@ export function runtimeSkills(
       ? { extraFrontmatter: skill.extraFrontmatter as never }
       : {}),
   }));
+}
+
+/**
+ * What this turn should RECORD about the configuration it ran with.
+ *
+ * Deliberately NOT part of `runtimeSkills` and not in the effective-capability
+ * set: skill DELIVERY stays byte-identical, and provenance is a separate
+ * outbound field on the turn trace. A recording change that also changed what
+ * reaches the model would be impossible to review.
+ *
+ * Call this AFTER any narrowing (plugin overrides filter `spec.skills`), so the
+ * record reflects what actually ran rather than what the environment would
+ * resolve on its own.
+ *
+ * DELIVERY DECIDES WHAT IS RECORDED. `skillsAtTurn` asserts "this turn ran with
+ * exactly these", so it must describe what the model RECEIVED, not what the
+ * environment resolved — the two differ per channel, and recording the resolved
+ * set would make the trace claim a skill the model never saw:
+ *
+ *   - `emulated` — every channel is delivered. `getEffectiveSkillToolsAndPrompt`
+ *     mints a tool per entry of `allEffectiveSkills`, captures included and
+ *     addressed by their namespaced `ref`. Record everything.
+ *   - `harness` — only `runtimeSkills(spec)` reaches the adapter, and that is
+ *     `spec.skills` alone. Captured MCP-server skills are NOT delivered: their
+ *     runtime address is `<serverSlug>/<name>`, and `isValidSkillName` rejects
+ *     a name containing `/`, so an adapter would skip every one as
+ *     `invalid-skill-name`. Record authored + plugin only.
+ *   - `unsupported` — the resolved harness has no skill channel at all (Codex
+ *     today). Nothing is delivered, so record an empty list.
+ *
+ * Wiring captures into the harness channel is a DELIVERY change blocked on that
+ * addressing question — see the P2 skill-delivery work. Until it lands, the
+ * honest record is the narrower one.
+ *
+ * `undefined` when there is no environment — a plain Playground chat has
+ * nothing to record. An empty `skillsAtTurn` when nothing was delivered,
+ * because "ran with none" is a real answer and a different one from "unknown".
+ * Entries whose `provenance` the backend did not supply are skipped: on an
+ * older deployment that yields an empty array, which is honest about what this
+ * side can prove.
+ */
+export function turnSkillProvenance(
+  spec:
+    | Pick<
+        ResolvedEnvironmentRuntime,
+        "environmentRef" | "skills" | "serverSkills"
+      >
+    | null
+    | undefined,
+  options: { delivery: EnvironmentSkillDelivery }
+): TurnSkillProvenance | undefined {
+  const ref = spec?.environmentRef;
+  if (
+    !ref ||
+    typeof ref.environmentId !== "string" ||
+    typeof ref.name !== "string" ||
+    // An EMPTY name is rejected, not tolerated. `readScenarioEnvironment`
+    // normalizes a missing `environmentRef.name` to `""`, and recording that
+    // would put a blank `mcpjam.environment.name` into an exported trace —
+    // which reads as a real environment called nothing, rather than as absent
+    // provenance. Costs nothing in practice: a payload old enough to omit the
+    // name is old enough that its skills carry no `provenance` rows either, so
+    // `skillsAtTurn` would have been empty anyway.
+    ref.name.length === 0 ||
+    typeof ref.revision !== "number"
+  ) {
+    return undefined;
+  }
+  const isProvenanceRow = (
+    provenance: unknown
+  ): provenance is Record<string, unknown> =>
+    !!provenance && typeof provenance === "object" && !Array.isArray(provenance);
+  return {
+    environmentAtTurn: {
+      environmentId: ref.environmentId,
+      name: ref.name,
+      revision: ref.revision,
+    },
+    // Exactly the channels this delivery mode hands to the model — see the
+    // header. Captures are appended after authored entries, the order the
+    // backend's own run snapshots pin them in.
+    skillsAtTurn:
+      options.delivery === "unsupported"
+        ? []
+        : [
+            ...(spec?.skills ?? []).map((skill) => skill.provenance),
+            ...(options.delivery === "emulated"
+              ? (spec?.serverSkills ?? []).map((skill) => skill.provenance)
+              : []),
+          ].filter(isProvenanceRow),
+  };
 }
 
 // ── Browser preview projection ──────────────────────────────────────────────

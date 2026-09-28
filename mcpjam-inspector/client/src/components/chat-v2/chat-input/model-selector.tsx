@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
 import { ArrowUpRight, Check, X } from "lucide-react";
@@ -33,10 +34,22 @@ import {
   isMCPJamProvidedModelMenuItem,
   pickOwnProviderModel,
 } from "@/components/chat-v2/shared/model-helpers";
+import {
+  applyWorkloadCapabilityLocks,
+  catalogFreshnessLabel,
+  NOT_VERIFIED_TAG,
+  retiringTag,
+  sortModelsNewestFirst,
+  type ModelWorkload,
+} from "@/components/chat-v2/shared/available-models";
+import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
+  /** Alternate trigger for embedded surfaces such as eval tables. */
+  trigger?: ReactNode;
+  inModal?: boolean;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   /** `userInitiated` marks a pick made from this menu, as opposed to the
@@ -44,7 +57,7 @@ interface ModelSelectorProps {
    * the remembered own-provider model. */
   onModelChange: (
     model: ModelDefinition,
-    options?: { userInitiated?: boolean }
+    options?: { userInitiated?: boolean },
   ) => void;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
@@ -83,6 +96,50 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
+  platformPaidFallback?: boolean;
+  /**
+   * What this surface runs the model for. Rows whose catalog observed a
+   * capability the workload needs as unsupported are disabled, and ones
+   * observed as unknown are tagged "Not verified" (disabled for eval and
+   * persona runs, warned elsewhere). Omitted, rows render exactly as passed.
+   * See `MODEL_WORKLOAD_POLICIES`.
+   */
+  workload?: ModelWorkload;
+  /**
+   * Multi-select only: the selection may be emptied. Without it the last
+   * selected row cannot be removed (chat always runs at least one model).
+   * Surfaces with another way to run (an environment's "Client defaults")
+   * pass it, and then an empty `selectedModels` means nothing is selected.
+   */
+  allowEmptySelection?: boolean;
+  /**
+   * Non-model choices listed above the models (an environment's "Client
+   * defaults"). In multi-select mode they toggle like rows and keep the menu
+   * open; in single mode a pick closes it.
+   */
+  extraOptions?: ModelSelectorExtraOption[];
+  /**
+   * A surface's own reason a row cannot be added right now (for example a
+   * run budget), shown like a lock. Selected rows stay removable.
+   */
+  rowDisabledReason?: (
+    model: ModelDefinition,
+    state: { selected: boolean },
+  ) => string | undefined;
+  /** A surface's own tag for a row ("Not eligible", "Not in catalog"). */
+  rowTag?: (model: ModelDefinition) => string | undefined;
+}
+
+export interface ModelSelectorExtraOption {
+  id: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  /** Shown under the option while it is disabled. */
+  disabledReason?: string;
+  onSelect: () => void;
+  testId?: string;
 }
 
 type GroupKey = string;
@@ -99,7 +156,7 @@ type PendingSelectionChange =
     };
 
 const groupModelsByProvider = (
-  models: ModelDefinition[]
+  models: ModelDefinition[],
 ): Map<GroupKey, ModelDefinition[]> => {
   const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
@@ -154,7 +211,7 @@ const MIN_MODEL_SEARCH_SCORE = 0.3;
 export const modelFilter = (
   value: string,
   search: string,
-  keywords?: string[]
+  keywords?: string[],
 ): number => {
   const score = defaultFilter(value, search, keywords);
   if (score <= 0) {
@@ -163,7 +220,7 @@ export const modelFilter = (
 
   const words = search.split(/\s+/).filter((word) => word.length > 1);
   const everyWordMatches = words.every(
-    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE
+    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE,
   );
 
   return everyWordMatches ? score : 0;
@@ -178,23 +235,60 @@ export const modelFilter = (
  */
 const groupHasMatch = (group: ModelGroup, search: string): boolean =>
   group.models.some(
-    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0
+    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
   );
+
+function SelectionCheck({ checked }: { checked: boolean }) {
+  return (
+    <div
+      className={cn(
+        "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+        checked
+          ? "border-primary bg-primary shadow-sm"
+          : "border-border/60 bg-transparent hover:border-border",
+      )}
+      aria-hidden
+    >
+      {checked ? (
+        <Check
+          strokeWidth={3}
+          className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// The credential source is part of a selection: equal IDs can belong to
+// different providers, and an omitted routing flag has legacy server semantics.
+function sameModelSelection(
+  left: ModelDefinition,
+  right: ModelDefinition,
+): boolean {
+  return (
+    String(left.id) === String(right.id) &&
+    left.provider === right.provider &&
+    left.customProviderName === right.customProviderName &&
+    left.hosted === right.hosted
+  );
+}
 
 function sameModelOrder(
   left: ModelDefinition[],
-  right: ModelDefinition[]
+  right: ModelDefinition[],
 ): boolean {
   if (left.length !== right.length) {
     return false;
   }
 
   return left.every(
-    (model, index) => String(model.id) === String(right[index]?.id)
+    (model, index) => sameModelSelection(model, right[index]!),
   );
 }
 
 export function ModelSelector({
+  trigger,
+  inModal = false,
   currentModel,
   availableModels,
   onModelChange,
@@ -213,10 +307,16 @@ export function ModelSelector({
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
   onManageOrgProviders,
+  platformPaidFallback = false,
+  workload,
+  allowEmptySelection = false,
+  extraOptions,
+  rowDisabledReason,
+  rowTag,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
-    "provided"
+    "provided",
   );
   const [search, setSearch] = useState("");
   const keepPopoverOpenRef = useRef(false);
@@ -229,7 +329,7 @@ export function ModelSelector({
   const handledProvidersTabNonceRef = useRef(0);
   const selectedProvidersTabNonceRef = useRef(0);
   const providersTabNonce = useModelPickerIntentStore((state) =>
-    respondToProviderTabIntent ? state.openProvidersTabNonce : 0
+    respondToProviderTabIntent ? state.openProvidersTabNonce : 0,
   );
 
   useEffect(() => {
@@ -251,7 +351,7 @@ export function ModelSelector({
         return;
       }
       setProviderTab(
-        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured"
+        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured",
       );
     } else {
       forceConfiguredTabRef.current = false;
@@ -321,24 +421,44 @@ export function ModelSelector({
     onManageOrgProviders?.();
   };
 
-  const selectedModelsData =
-    selectedModels && selectedModels.length > 0
+  const selectedModelsData = allowEmptySelection
+    ? (selectedModels ?? [])
+    : selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
 
+  // Rows are identified by `modelRowKey`, not the raw id: one id can be
+  // listed by the hosted catalog and again under an org connection.
   const lockedRowHighlightId =
     hoveredLockedModelId ??
     (!multiModelEnabled && currentModel.disabled
-      ? String(currentModel.id)
+      ? modelRowKey(currentModel)
       : null);
 
+  // Rows as displayed: the surface's capability needs applied, newest first
+  // within each provider (grouping keeps this order).
+  const displayModels = useMemo(
+    () =>
+      sortModelsNewestFirst(
+        applyWorkloadCapabilityLocks(availableModels, workload),
+      ),
+    [availableModels, workload],
+  );
+  // Freshness of the hosted catalog, from the rows MCPJam provides.
+  const catalogFreshness = useMemo(
+    () =>
+      catalogFreshnessLabel(
+        displayModels.filter((model) => isMCPJamProvidedModelMenuItem(model)),
+      ),
+    [displayModels],
+  );
   const groupedModels = useMemo(
-    () => groupModelsByProvider(availableModels),
-    [availableModels]
+    () => groupModelsByProvider(displayModels),
+    [displayModels],
   );
   const sortedProviders = useMemo(
     () => Array.from(groupedModels.keys()).sort(),
-    [groupedModels]
+    [groupedModels],
   );
 
   const modelGroups = useMemo(() => {
@@ -355,10 +475,10 @@ export function ModelSelector({
       }
 
       const provided = filtered.filter((model) =>
-        isMCPJamProvidedModelMenuItem(model)
+        isMCPJamProvidedModelMenuItem(model),
       );
       const configured = filtered.filter(
-        (model) => !isMCPJamProvidedModelMenuItem(model)
+        (model) => !isMCPJamProvidedModelMenuItem(model),
       );
       const title = getProviderDisplayName(provider);
 
@@ -383,9 +503,9 @@ export function ModelSelector({
     return groups;
   }, [groupedModels, hideProvidedModels, sortedProviders]);
 
-  const selectedIds = useMemo(
-    () => new Set(selectedModelsData.map((model) => String(model.id))),
-    [selectedModelsData]
+  const selectedKeys = useMemo(
+    () => new Set(selectedModelsData.map((model) => modelRowKey(model))),
+    [selectedModelsData],
   );
   const canUseMultiModel =
     enableMultiModel &&
@@ -394,20 +514,19 @@ export function ModelSelector({
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
   const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
-  const triggerLabel =
-    isComparingModels
-      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
-      : compactModelLabel(leadModel.name);
+  const triggerLabel = isComparingModels
+    ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+    : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
-      (g) => g.providerType === "configured"
+      (g) => g.providerType === "configured",
     );
     return { provided, configured };
   }, [modelGroups]);
   const configuredModels = useMemo(
     () => modelSections.configured.flatMap((group) => group.models),
-    [modelSections]
+    [modelSections],
   );
   // Headings for providers whose rows all get filtered out are dropped here;
   // `search` (not its trimmed form) gates this so the set of headings tracks
@@ -418,15 +537,25 @@ export function ModelSelector({
     }
     return {
       provided: modelSections.provided.filter((group) =>
-        groupHasMatch(group, search)
+        groupHasMatch(group, search),
       ),
       configured: modelSections.configured.filter((group) =>
-        groupHasMatch(group, search)
+        groupHasMatch(group, search),
       ),
     };
   }, [modelSections, search]);
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
+
+  // Counterpart of the nonce subscription below: tell the store a picker is
+  // on screen that will actually honour the intent. The out-of-credits
+  // dialog reads that count to decide between opening this picker in place
+  // and navigating to the org's AI providers page. Read off `getState()` so
+  // registering adds no subscription and no re-render.
+  useEffect(() => {
+    if (!respondToProviderTabIntent) return;
+    return useModelPickerIntentStore.getState().registerProvidersTabResponder();
+  }, [respondToProviderTabIntent]);
 
   // React to the global "open Your providers tab" intent (out-of-credits
   // BYOK). Only the opted-in instance subscribes to a live nonce; others read
@@ -457,7 +586,7 @@ export function ModelSelector({
 
     const nextModel = pickOwnProviderModel(
       configuredModels,
-      loadLastOwnProviderModelId()
+      loadLastOwnProviderModelId(),
     );
     // No own-provider models resolved yet (keys still loading). Leave the
     // nonce unconsumed so this settles once the list arrives.
@@ -480,7 +609,7 @@ export function ModelSelector({
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     const isSingleNoOp =
       nextChange.type === "single" &&
-      String(nextChange.nextModel.id) === String(currentModel.id);
+      sameModelSelection(nextChange.nextModel, currentModel);
     const isMultiNoOp =
       nextChange.type === "multi" &&
       nextChange.enabled === multiModelEnabled &&
@@ -530,14 +659,15 @@ export function ModelSelector({
   const handleMultiModelSelect = (model: ModelDefinition) => {
     requestPopoverStayOpen();
 
-    const isSelected = selectedIds.has(String(model.id));
+    const key = modelRowKey(model);
+    const isSelected = selectedKeys.has(key);
     const nextSelectedModels = isSelected
       ? selectedModelsData.filter(
-          (selectedModel) => String(selectedModel.id) !== String(model.id)
+          (selectedModel) => modelRowKey(selectedModel) !== key,
         )
       : [...selectedModelsData, model];
 
-    if (nextSelectedModels.length === 0) {
+    if (nextSelectedModels.length === 0 && !allowEmptySelection) {
       return;
     }
 
@@ -549,7 +679,8 @@ export function ModelSelector({
   };
 
   const handlePromoteLeadModel = (model: ModelDefinition) => {
-    if (!multiModelEnabled || String(model.id) === String(leadModel.id)) {
+    const key = modelRowKey(model);
+    if (!multiModelEnabled || key === modelRowKey(leadModel)) {
       return;
     }
 
@@ -558,7 +689,7 @@ export function ModelSelector({
     const nextSelectedModels = [
       model,
       ...selectedModelsData.filter(
-        (selectedModel) => String(selectedModel.id) !== String(model.id)
+        (selectedModel) => modelRowKey(selectedModel) !== key,
       ),
     ];
 
@@ -569,26 +700,48 @@ export function ModelSelector({
     });
   };
 
+  const handleExtraOption = (option: ModelSelectorExtraOption) => {
+    if (option.disabled) return;
+    if (multiModelEnabled) {
+      requestPopoverStayOpen();
+      option.onSelect();
+      return;
+    }
+    option.onSelect();
+    setIsOpen(false);
+  };
+
   const renderGroupModelItems = (group: ModelGroup) =>
     group.models.map((model) => {
-      const isDisabled =
-        !!model.disabled ||
-        (multiModelEnabled &&
-          !selectedIds.has(String(model.id)) &&
-          selectedLimitReached);
-      const disabledReason =
-        model.disabledReason ??
-        (!selectedIds.has(String(model.id)) && selectedLimitReached
+      const rowKey = modelRowKey(model);
+      const isSelected = selectedKeys.has(rowKey);
+      const limitReason =
+        multiModelEnabled && !isSelected && selectedLimitReached
           ? `You can compare up to ${maxSelectedModels} models at once`
-          : undefined);
+          : undefined;
+      const surfaceReason = rowDisabledReason?.(model, {
+        selected: isSelected,
+      });
+      // A selected row stays removable in multi-select even when it is
+      // locked now: locks only block adding it.
+      const isDisabled =
+        (!!model.disabled || !!limitReason || !!surfaceReason) &&
+        !(multiModelEnabled && isSelected);
+      const disabledReason =
+        model.disabledReason ?? surfaceReason ?? limitReason;
       const isLockedRowHighlight =
-        lockedRowHighlightId === String(model.id) && !!disabledReason;
-      const isSelected = selectedIds.has(String(model.id));
+        lockedRowHighlightId === rowKey && !!disabledReason;
+      const rowTags = [
+        rowTag?.(model),
+        model.unverifiedCapabilities?.length ? NOT_VERIFIED_TAG : undefined,
+        retiringTag(model),
+      ].filter((tag): tag is string => !!tag);
 
       const row = (
         <CommandItem
-          key={String(model.id)}
+          key={rowKey}
           value={modelSearchValue(model, group.title)}
+          aria-checked={multiModelEnabled ? isSelected : undefined}
           onSelect={() => {
             if (multiModelEnabled) {
               handleMultiModelSelect(model);
@@ -603,7 +756,7 @@ export function ModelSelector({
           className={cn(
             "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
             lockedRowHighlightId &&
-              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit"
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
           )}
         >
           <ProviderLogo
@@ -614,44 +767,50 @@ export function ModelSelector({
           <span className="min-w-0 flex-1 truncate text-sm">
             {compactModelLabel(model.name)}
           </span>
-          {multiModelEnabled ? (
-            <div
+          {rowTags.map((tag) => (
+            <span
+              key={tag}
+              data-testid="model-row-tag"
               className={cn(
-                "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                isSelected
-                  ? "border-primary bg-primary shadow-sm"
-                  : "border-border/60 bg-transparent hover:border-border"
+                "shrink-0 rounded border px-1 text-[9px] leading-4",
+                tag === NOT_VERIFIED_TAG
+                  ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
+                  : "border-border/60 text-muted-foreground",
               )}
-              aria-hidden
             >
-              {isSelected ? (
-                <Check
-                  strokeWidth={3}
-                  className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                />
-              ) : null}
-            </div>
-          ) : String(model.id) === String(currentModel.id) ? (
+              {tag}
+            </span>
+          ))}
+          {multiModelEnabled ? (
+            <SelectionCheck checked={isSelected} />
+          ) : sameModelSelection(model, currentModel) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
           ) : null}
         </CommandItem>
       );
 
       return disabledReason ? (
-        <Tooltip key={String(model.id)}>
+        <Tooltip key={rowKey}>
           <TooltipTrigger asChild>
             <div
               className={cn(
                 "rounded-sm transition-colors",
-                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60"
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
               )}
-              onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
+              onMouseEnter={() => setHoveredLockedModelId(rowKey)}
               onMouseLeave={() => setHoveredLockedModelId(null)}
             >
               {row}
             </div>
           </TooltipTrigger>
           <TooltipContent side="right">{disabledReason}</TooltipContent>
+        </Tooltip>
+      ) : model.warningReason ? (
+        <Tooltip key={rowKey}>
+          <TooltipTrigger asChild>
+            <div className="rounded-sm">{row}</div>
+          </TooltipTrigger>
+          <TooltipContent side="right">{model.warningReason}</TooltipContent>
         </Tooltip>
       ) : (
         row
@@ -664,60 +823,62 @@ export function ModelSelector({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={disabled || isLoading}
-                className={cn(
-                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels
-                    ? "max-w-[280px] gap-1"
-                    : "max-w-[180px] gap-1",
-                )}
-                data-testid="model-selector-trigger"
-              >
-                {isComparingModels ? (
-                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
-                    {selectedModelsData.map((model, index) => (
-                      <span
-                        key={String(model.id)}
-                        className={cn(
-                          "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
-                          index === 0
-                            ? "border-primary/25 text-foreground"
-                            : "border-border/50 text-muted-foreground",
-                        )}
-                      >
-                        <ProviderLogo
-                          provider={model.provider}
-                          customProviderName={model.customProviderName}
-                          className="size-3 shrink-0"
-                        />
-                        <span className="truncate">
-                          {compactModelLabel(model.name)}
+              {trigger ?? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled || isLoading}
+                  className={cn(
+                    "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                    isComparingModels
+                      ? "max-w-[280px] gap-1"
+                      : "max-w-[180px] gap-1",
+                  )}
+                  data-testid="model-selector-trigger"
+                >
+                  {isComparingModels ? (
+                    <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                      {selectedModelsData.map((model, index) => (
+                        <span
+                          key={modelRowKey(model)}
+                          className={cn(
+                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                            index === 0
+                              ? "border-primary/25 text-foreground"
+                              : "border-border/50 text-muted-foreground",
+                          )}
+                        >
+                          <ProviderLogo
+                            provider={model.provider}
+                            customProviderName={model.customProviderName}
+                            className="size-3 shrink-0"
+                          />
+                          <span className="truncate">
+                            {compactModelLabel(model.name)}
+                          </span>
                         </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={leadModel.provider}
+                        customProviderName={leadModel.customProviderName}
+                      />
+                      <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                        {triggerLabel}
                       </span>
-                    ))}
-                  </span>
-                ) : (
-                  <>
+                    </>
+                  )}
+                  {isComparingModels ? (
                     <ProviderLogo
                       provider={leadModel.provider}
                       customProviderName={leadModel.customProviderName}
+                      className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
                     />
-                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      {triggerLabel}
-                    </span>
-                  </>
-                )}
-                {isComparingModels ? (
-                  <ProviderLogo
-                    provider={leadModel.provider}
-                    customProviderName={leadModel.customProviderName}
-                    className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
-                  />
-                ) : null}
-              </Button>
+                  ) : null}
+                </Button>
+              )}
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
@@ -728,6 +889,7 @@ export function ModelSelector({
         </Tooltip>
 
         <PopoverContent
+          portalled={!inModal}
           align={align}
           className="w-[280px] p-0"
           sideOffset={8}
@@ -763,13 +925,13 @@ export function ModelSelector({
                       const isLead = index === 0;
                       return (
                         <button
-                          key={String(model.id)}
+                          key={modelRowKey(model)}
                           type="button"
                           className={cn(
                             "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                             isLead
                               ? "border-primary/25 bg-primary/5 text-foreground"
-                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
                           )}
                           onClick={() => handlePromoteLeadModel(model)}
                         >
@@ -843,17 +1005,22 @@ export function ModelSelector({
                             "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                             providerTab === tab
                               ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
                           )}
                         >
                           {tab === "provided"
-                            ? "Free models"
+                            ? (platformPaidFallback ? "MCPJam models" : "Free models")
                             : "Your providers"}
                         </button>
                       ))}
                     </div>
                   ) : null}
 
+                  {platformPaidFallback && providerTab === "provided" && (
+                    <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                      Shared free allowance is unavailable. These models use your purchased credits.
+                    </p>
+                  )}
                   <CommandList className="max-h-[min(320px,45vh)]">
                     {/* cmdk renders Empty whenever no rows are mounted, which
                         the empty providers tab below would otherwise inherit —
@@ -868,9 +1035,49 @@ export function ModelSelector({
                       </p>
                     ) : null}
 
+                    {extraOptions && extraOptions.length > 0 ? (
+                      <CommandGroup>
+                        {extraOptions.map((option) => (
+                          <div key={option.id}>
+                            <CommandItem
+                              value={option.label}
+                              onSelect={() => handleExtraOption(option)}
+                              disabled={option.disabled}
+                              aria-checked={
+                                multiModelEnabled ? option.checked : undefined
+                              }
+                              data-testid={option.testId}
+                              className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm">
+                                  {option.label}
+                                </span>
+                                {option.description ? (
+                                  <span className="block truncate text-[10px] text-muted-foreground">
+                                    {option.description}
+                                  </span>
+                                ) : null}
+                              </span>
+                              {multiModelEnabled ? (
+                                <SelectionCheck checked={option.checked} />
+                              ) : option.checked ? (
+                                <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
+                              ) : null}
+                            </CommandItem>
+                            {option.disabled && option.disabledReason ? (
+                              <p className="px-2 pb-1 text-[10px] text-muted-foreground">
+                                {option.disabledReason}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </CommandGroup>
+                    ) : null}
+
                     {showProvided ? (
                       <CommandGroup
-                        heading={isSearching ? "Free models" : undefined}
+                        heading={isSearching ? (platformPaidFallback ? "MCPJam models" : "Free models") : undefined}
                       >
                         {visibleSections.provided.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
@@ -902,6 +1109,15 @@ export function ModelSelector({
                       </CommandGroup>
                     ) : null}
                   </CommandList>
+
+                  {showProvided && catalogFreshness ? (
+                    <p
+                      className="border-t px-3 py-1.5 text-[10px] text-muted-foreground"
+                      data-testid="model-selector-catalog-freshness"
+                    >
+                      {catalogFreshness}
+                    </p>
+                  ) : null}
 
                   {/* Only under the user's own providers — while searching the
                       rows are a transient mix of both sections. */}

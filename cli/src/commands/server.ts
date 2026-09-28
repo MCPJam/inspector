@@ -139,6 +139,9 @@ export function registerServerCommands(program: Command): void {
         result = await probeMcpServer({
           url: probeUrl,
           protocolVersion,
+          // Local tool, local servers: probing http://127.0.0.1:3000/mcp is
+          // the ordinary case, not the exception.
+          allowPrivateNetwork: true,
           headers: parseHeadersOption(options.header),
           accessToken,
           clientCapabilities:

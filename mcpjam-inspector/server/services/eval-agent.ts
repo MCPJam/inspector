@@ -1,4 +1,8 @@
 import {
+  readOnlyGenerationSnapshot,
+  filterReadOnlyGeneratedCases,
+} from "./eval-generation-coverage";
+import {
   deriveExpectedToolCalls,
   deriveQuery,
   normalizePromptTurns,
@@ -7,6 +11,7 @@ import {
 } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+import { upstreamRefusalFromResponse } from "./upstream-refusal.js";
 
 /**
  * Inspector-side adapter for backend eval test-case generation.
@@ -50,9 +55,13 @@ export interface CaseMixInput {
  * `/eval-generation/generate` body. Absent → today's default generation.
  */
 export interface GenerationOptions {
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
   caseMix?: CaseMixInput;
   /** Condition cases on a generated persona slate for realistic phrasing. */
   varyUserStyles?: boolean;
+  /** User-authored direction for a follow-up generation pass. */
+  refinement?: string;
 }
 
 export interface GeneratedTestCase {
@@ -145,7 +154,7 @@ function adaptWave0Case(tc: BackendWave0TestCase): GeneratedTestCase {
   if (steps.length === 0) {
     throw new Error(
       `Generated case ${JSON.stringify(tc.title)} declares shapeVersion ` +
-        `"wave0" but has no usable steps.`
+        `"wave0" but has no usable steps.`,
     );
   }
   return {
@@ -203,8 +212,12 @@ export async function generateTestCases(
   convexAuthToken: string,
   serverAttachment?: ServerAttachmentInput,
   projectId?: string,
-  generationOptions?: GenerationOptions
+  generationOptions?: GenerationOptions,
 ): Promise<GeneratedTestCase[]> {
+  const snapshot =
+    generationOptions?.toolCoverage === "read-only"
+      ? readOnlyGenerationSnapshot(toolSnapshot)
+      : toolSnapshot;
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
     headers: {
@@ -213,19 +226,34 @@ export async function generateTestCases(
     },
     body: JSON.stringify({
       mode: "normal",
-      toolSnapshot,
+      ...(generationOptions?.testSet
+        ? { testSet: generationOptions.testSet }
+        : {}),
+      ...(generationOptions?.toolCoverage
+        ? { toolCoverage: generationOptions.toolCoverage }
+        : {}),
+      toolSnapshot: snapshot,
       ...(projectId ? { projectId } : {}),
       ...(serverAttachment ? { serverAttachment } : {}),
       ...(generationOptions?.caseMix
         ? { caseMix: generationOptions.caseMix }
         : {}),
       ...(generationOptions?.varyUserStyles ? { varyUserStyles: true } : {}),
+      ...(generationOptions?.refinement
+        ? { refinement: generationOptions.refinement }
+        : {}),
     }),
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to generate test cases: ${errorText}`);
+    // The backend's refusals (its daily platform budget, the caller's own
+    // allowance, a model their plan excludes) keep their status, their `code`
+    // and their `Retry-After` all the way to the caller. Flattening them into
+    // a message here is what turned every one of them into a 500.
+    throw await upstreamRefusalFromResponse(
+      response,
+      "Failed to generate test cases",
+    );
   }
 
   const data = (await response.json()) as {
@@ -238,9 +266,12 @@ export async function generateTestCases(
     throw new Error(
       `Invalid response from backend eval generation: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 
-  return data.tests.map(adaptCase);
+  const tests = data.tests.map(adaptCase);
+  return generationOptions?.toolCoverage === "read-only"
+    ? filterReadOnlyGeneratedCases(tests, snapshot)
+    : tests;
 }

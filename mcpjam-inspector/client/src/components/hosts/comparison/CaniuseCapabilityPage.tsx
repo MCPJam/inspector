@@ -15,6 +15,7 @@ import {
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityBySlug,
   getCaniuseSupportLabel,
+  caniuseFieldHasPresetData,
   getCaniuseSupportLevel,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
@@ -29,7 +30,7 @@ interface CaniuseCapabilityPageProps {
 export function CaniuseCapabilityPage({
   capabilitySlug,
 }: CaniuseCapabilityPageProps) {
-  const capability = getCaniuseCapabilityBySlug(capabilitySlug);
+  const resolvedCapability = getCaniuseCapabilityBySlug(capabilitySlug);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
   const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
@@ -46,6 +47,19 @@ export function CaniuseCapabilityPage({
   const hosts = useMemo(
     () => sortCaniusePresetHosts(presets.hosts),
     [presets.hosts]
+  );
+  // A capability nobody has measured has no page: every column would read
+  // "Not yet tested", which is a question rather than an answer, and a
+  // permalink to it would outlive the reason it was empty. Treated as an
+  // unknown slug so the not-found branch below handles it — the page appears
+  // by itself once the first host value lands.
+  const capability = useMemo(
+    () =>
+      resolvedCapability &&
+      caniuseFieldHasPresetData(resolvedCapability.field, presets.subjects)
+        ? resolvedCapability
+        : null,
+    [resolvedCapability, presets.subjects]
   );
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). This is the `host-compare` surface

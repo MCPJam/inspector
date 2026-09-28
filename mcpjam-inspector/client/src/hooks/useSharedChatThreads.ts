@@ -1,4 +1,6 @@
 import { useQuery } from "convex/react";
+import { useArtifactQuery } from "@/lib/artifact-urls";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
@@ -9,12 +11,14 @@ import type { ChatSessionStageDerivation } from "@/components/shared/user-value-
 // runtime cycle. One declaration of the backend contract, not two.
 import type { SessionCriteria } from "@/lib/swarm-api";
 import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 
 export type SharedChatSourceType = "scenario" | "swarm";
 
 export interface SharedChatThread {
   _id: string;
-  sourceType: SharedChatSourceType;
+  sourceType: SharedChatSourceType | "direct" | "eval";
+  projectId?: string;
   surface?: "preview" | "share_link";
   shareId?: string;
   scenarioId?: string;
@@ -28,6 +32,8 @@ export interface SharedChatThread {
   startedAt: number;
   lastActivityAt: number;
   messagesBlobUrl?: string;
+  /** Frozen model/server/tool context, loaded only for trace viewers. */
+  recordedContext?: Record<string, unknown>;
   /**
    * Flat projections of the session's per-turn ratings, carrying the
    * WORST-TURN policy: `feedbackRating` is the minimum rating across the
@@ -103,6 +109,22 @@ export interface SharedChatThread {
   sentimentClusterLabel?: string;
   /** Multi-label trajectory tags, derived from the transcript (no model call). */
   behaviorTags?: string[];
+  /**
+   * Where this session's insight analysis stands, from `getSession` only.
+   * `owed`: nothing has run yet, the automatic pass is still coming.
+   * `provisional`: analyzed before the outcome could be asserted; the outcome
+   * follows once the session has been quiet for 30 minutes. Both are what
+   * Analyze now changes. Absent from older backends.
+   */
+  analysisPhase?:
+    | "owed"
+    | "analyzing"
+    | "deferred"
+    | "provisional"
+    | "final"
+    | "failed"
+    | "guest"
+    | "none";
   /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
   pathKey?: string;
   /**
@@ -170,6 +192,40 @@ export interface SharedChatThread {
     error?: string;
   };
   /**
+   * How the swarm run that produced this session ENDED, from the backend's
+   * `journeyRunAttempts` row (detail query only — `getSession`).
+   *
+   * Only a 'succeeded' attempt may be promoted to a test case, and the
+   * transcript persists whatever the outcome, so this is the ONLY thing that
+   * distinguishes a session the promote gate will accept from one it always
+   * refuses. Read `undefined` (older backend) and `null` (non-swarm source, or
+   * a swarm row no attempt claimed) as "cannot vouch for this" rather than as
+   * permission — the backend refuses either way, this field only decides
+   * whether the UI offers the action.
+   */
+  runAttemptStatus?:
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "rate_limited"
+    | null;
+  /**
+   * WHY that attempt ended where it did, from the same row (detail query
+   * only). A session refused before it said anything has no transcript to
+   * explain itself, so this is the only record of the refusal. `undefined` on
+   * a backend that predates the field; `null` when none was recorded.
+   */
+  runAttemptErrorCode?: string | null;
+  runAttemptErrorMessage?: string | null;
+  /**
+   * Swarm list rows only: the session's attempt ended without recording a
+   * single message, so it never ran (`swarmSessionNeverRan`). Resolved from the
+   * row's verdict when the list is built; absent everywhere else, where
+   * `runAttemptStatus` answers the same question.
+   */
+  neverRan?: boolean;
+  /**
    * The session's derived user-value chain (`chatSessions.stageDerivation`).
    *
    * Absent on every session written before D8 and on any the analyzer has not
@@ -187,7 +243,8 @@ export interface SharedChatThread {
  * hostConfigs table, so even after the host has rotated forward the
  * row this points at is still readable.
  */
-export interface SessionHistoricalHostConfig {
+export interface SessionHistoricalHostConfig
+  extends Omit<HostSnapshot, "hostStyle"> {
   hostConfigId: string;
   hostStyle: string;
   modelId: string;
@@ -208,7 +265,7 @@ export function useSessionHistoricalHostConfig({
 }) {
   const config = useQuery(
     "chatSessions:getSessionHistoricalHostConfig" as any,
-    sessionId ? ({ sessionId } as any) : "skip"
+    sessionId ? ({ sessionId } as any) : "skip",
   ) as SessionHistoricalHostConfig | null | undefined;
 
   return { config };
@@ -246,11 +303,23 @@ export function useSharedChatThreadList({
   return { threads };
 }
 
-export function useSharedChatThread({ threadId }: { threadId: string | null }) {
-  const thread = useQuery(
-    "chatSessions:getSession" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
-  ) as SharedChatThread | null | undefined;
+export function useSharedChatThread({
+  threadId,
+  includeRecordedContext = false,
+}: {
+  threadId: string | null;
+  includeRecordedContext?: boolean;
+}) {
+  // Carries the transcript's short-lived artifact link.
+  const thread = useArtifactQuery<SharedChatThread | null>(
+    "chatSessions:getSession",
+    threadId
+      ? {
+          sessionId: threadId,
+          ...(includeRecordedContext ? { includeRecordedContext: true } : {}),
+        }
+      : "skip",
+  );
 
   return { thread };
 }
@@ -260,10 +329,10 @@ export function useSharedChatWidgetSnapshots({
 }: {
   threadId: string | null;
 }) {
-  const snapshots = useQuery(
-    "chatSessions:getWidgetSnapshots" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
-  ) as SharedChatWidgetSnapshot[] | undefined;
+  const snapshots = useArtifactQuery<SharedChatWidgetSnapshot[]>(
+    "chatSessions:getWidgetSnapshots",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { snapshots };
 }
@@ -281,7 +350,10 @@ export interface SharedChatTurnTrace {
   };
   spanCount: number;
   modelId?: string;
+  requestPayloadsBlobUrl?: string | null;
   spansBlobUrl?: string | null;
+  /** The `webmcp_*` page tools this turn advertised; see `ChatHistoryTurnTrace`. */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 export function useSharedChatTurnTraces({
@@ -289,10 +361,10 @@ export function useSharedChatTurnTraces({
 }: {
   threadId: string | null;
 }) {
-  const traces = useQuery(
-    "chatSessions:getSessionTurnTraces" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
-  ) as SharedChatTurnTrace[] | undefined;
+  const traces = useArtifactQuery<SharedChatTurnTrace[]>(
+    "chatSessions:getSessionTurnTraces",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { traces };
 }
@@ -324,7 +396,7 @@ export function useSharedChatTurnScores({
 }) {
   const scores = useQuery(
     "sessionScores:listBySession" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SharedChatTurnScore[] | undefined;
 
   return { scores };
@@ -352,10 +424,10 @@ export function useSessionBrowserArtifacts({
 }: {
   threadId: string | null;
 }) {
-  const artifacts = useQuery(
-    "chatSessions:getBrowserArtifacts" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
-  ) as SessionBrowserArtifacts | undefined;
+  const artifacts = useArtifactQuery<SessionBrowserArtifacts>(
+    "chatSessions:getBrowserArtifacts",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { artifacts };
 }

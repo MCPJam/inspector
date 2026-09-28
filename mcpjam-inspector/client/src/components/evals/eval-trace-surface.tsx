@@ -199,30 +199,29 @@ export function EvalTraceSurface({
       : fallbackActualToolCalls;
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col rounded-xl border border-border/50 bg-background">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
-        <TraceViewer
-          trace={activeTrace}
-          model={traceModel}
-          isLoading={isLoading}
-          toolsMetadata={toolsMetadata}
-          toolServerMap={toolServerMap}
-          connectedServerIds={connectedServerIds}
-          traceStartedAtMs={iteration.startedAt ?? iteration.createdAt}
-          traceEndedAtMs={iteration.updatedAt}
-          estimatedDurationMs={estimatedDurationMs}
-          expectedToolCalls={expectedToolCalls}
-          actualToolCalls={actualToolCalls}
-          steps={steps}
-          stepStatusById={stepStatusById}
-          syncedStepId={syncedStepId}
-          onSyncStep={onSyncStep}
-          forcedViewMode={mode}
-          hideToolbar
-          fillContent
-          onRevealNavigateToChat={onNavigateToChat}
-        />
-      </div>
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/50 bg-background">
+      <TraceViewer
+        trace={activeTrace}
+        model={traceModel}
+        isLoading={isLoading}
+        toolsMetadata={toolsMetadata}
+        toolServerMap={toolServerMap}
+        connectedServerIds={connectedServerIds}
+        traceStartedAtMs={iteration.startedAt ?? iteration.createdAt}
+        traceEndedAtMs={iteration.updatedAt}
+        estimatedDurationMs={estimatedDurationMs}
+        expectedToolCalls={expectedToolCalls}
+        actualToolCalls={actualToolCalls}
+        steps={steps}
+        stepStatusById={stepStatusById}
+        syncedStepId={syncedStepId}
+        onSyncStep={onSyncStep}
+        forcedViewMode={mode}
+        hideToolbar
+        fillContent
+        frame="none"
+        onRevealNavigateToChat={onNavigateToChat}
+      />
     </div>
   );
 }

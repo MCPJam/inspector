@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import {
+  executeToolCallsFromMessages,
+  hasUnresolvedToolCalls,
+} from "@/shared/http-tool-calls";
+import { SCOPE_STEP_UP_SUSPEND_CODE } from "@/shared/scope-step-up";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
 import type { MrtrEngineResume } from "../mrtr-hosted-chat.js";
 
@@ -253,5 +257,271 @@ describe("mcpjam-stream-handler — hosted MRTR (§12.5)", () => {
     const history = onConversationComplete.mock.calls[0][0] as any[];
     // No tool-result was fabricated for the indeterminate side-effecting op.
     expect(history.some((m) => m?.role === "tool")).toBe(false);
+  });
+});
+
+describe("mcpjam-stream-handler — a sibling suspends while a step drains before an approval pause", () => {
+  // One step, three calls: one that needs approval, one that does not and
+  // completes, and one that does not and SUSPENDS (MRTR or scope step-up).
+  // The step pauses for the approval, so it first drains the two
+  // approval-free calls. The REAL executor is used on purpose: what matters is
+  // what it does on a suspend — splice the completed sibling's result into the
+  // history, then rethrow.
+  const originalFetch = global.fetch;
+  let suspendCode = "MRTR_SUSPENDED";
+  const suspendSignal = () =>
+    Object.assign(new Error("operation suspended"), { code: suspendCode });
+  const threeCallStep = [
+    {
+      type: "tool-input-available",
+      toolCallId: "gated-1",
+      toolName: "delete_thing",
+      input: { id: 7 },
+    },
+    {
+      type: "tool-input-available",
+      toolCallId: "free-1",
+      toolName: "list_things",
+      input: {},
+    },
+    {
+      type: "tool-input-available",
+      toolCallId: "ask-1",
+      toolName: "ask_user",
+      input: {},
+    },
+    { type: "finish", finishReason: "tool-calls" },
+  ];
+  const buildTools = () => {
+    const gated = vi.fn(async () => ({
+      content: [{ type: "text", text: "deleted" }],
+    }));
+    const free = vi.fn(async () => ({
+      content: [{ type: "text", text: "listed" }],
+    }));
+    const ask = vi.fn(async () => {
+      throw suspendSignal();
+    });
+    return {
+      spies: { gated, free, ask },
+      tools: {
+        delete_thing: { _serverId: "srv", needsApproval: true, execute: gated },
+        list_things: { _serverId: "srv", execute: free },
+        ask_user: { _serverId: "srv", execute: ask },
+      } as any,
+    };
+  };
+  const outputsFor = (toolCallId: string) =>
+    writtenChunks.filter(
+      (chunk) =>
+        chunk?.type === "tool-output-available" &&
+        chunk.toolCallId === toolCallId,
+    );
+
+  beforeEach(async () => {
+    writtenChunks = [];
+    lastExecution = null;
+    suspendCode = "MRTR_SUSPENDED";
+    vi.clearAllMocks();
+    const actual = await vi.importActual<
+      typeof import("@/shared/http-tool-calls")
+    >("@/shared/http-tool-calls");
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      actual.executeToolCallsFromMessages,
+    );
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      actual.hasUnresolvedToolCalls,
+    );
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it.each([
+    ["an MRTR", "MRTR_SUSPENDED"],
+    ["a scope step-up", SCOPE_STEP_UP_SUSPEND_CODE],
+  ])(
+    "emits the completed sibling's result when %s suspend interrupts the drain, persists it, and still pauses for the approval",
+    async (_label, code) => {
+      suspendCode = code;
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(createSseResponse(threeCallStep));
+      const { spies, tools } = buildTools();
+      const onConversationComplete = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "clean up" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "sys",
+        tools,
+        mcpClientManager: managerStub(),
+        clientSuppliedHistory: true,
+        onConversationComplete,
+      } as any);
+      await lastExecution;
+
+      expect(spies.free).toHaveBeenCalledTimes(1);
+      expect(spies.ask).toHaveBeenCalledTimes(1);
+      expect(spies.gated).not.toHaveBeenCalled();
+      // The client is told the completed sibling's result, exactly once.
+      expect(outputsFor("free-1")).toHaveLength(1);
+      // The suspended call has no result, and the gated call waits for its pill.
+      expect(outputsFor("ask-1")).toHaveLength(0);
+      expect(
+        writtenChunks.some(
+          (chunk) =>
+            chunk?.type === "tool-approval-request" &&
+            chunk.toolCallId === "gated-1",
+        ),
+      ).toBe(true);
+      expect(writtenChunks.some((chunk) => chunk?.type === "error")).toBe(
+        false,
+      );
+      const history = onConversationComplete.mock.calls[0]?.[0] as any[];
+      const resultIds = history
+        .filter((message) => message?.role === "tool")
+        .flatMap((message) => message.content)
+        .filter((part: any) => part.type === "tool-result")
+        .map((part: any) => part.toolCallId);
+      expect(resultIds).toEqual(["free-1"]);
+    },
+  );
+
+  it("does not leave the turn stuck: the MRTR resume and then the approval resume complete it without re-running or disowning the sibling", async () => {
+    // Request 1: the pause above, to learn the approval id the server minted.
+    global.fetch = vi.fn().mockResolvedValue(createSseResponse(threeCallStep));
+    const first = buildTools();
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "clean up" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "sys",
+      tools: first.tools,
+      mcpClientManager: managerStub(),
+      clientSuppliedHistory: true,
+    } as any);
+    await lastExecution;
+    const approvalId = writtenChunks.find(
+      (chunk) => chunk?.type === "tool-approval-request",
+    )?.approvalId;
+    expect(approvalId).toBeTruthy();
+    const freeOutput = outputsFor("free-1")[0]?.output;
+    expect(freeOutput).toBeDefined();
+
+    // What the browser now holds: the three calls, the pill, and the
+    // completed sibling's result.
+    const assistant = {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "gated-1",
+          toolName: "delete_thing",
+          input: { id: 7 },
+        },
+        { type: "tool-approval-request", approvalId, toolCallId: "gated-1" },
+        {
+          type: "tool-call",
+          toolCallId: "free-1",
+          toolName: "list_things",
+          input: {},
+        },
+        {
+          type: "tool-call",
+          toolCallId: "ask-1",
+          toolName: "ask_user",
+          input: {},
+        },
+      ],
+    };
+    const freeResult = {
+      type: "tool-result",
+      toolCallId: "free-1",
+      toolName: "list_things",
+      output: { type: "json", value: freeOutput },
+    };
+    const askResult = {
+      type: "tool-result",
+      toolCallId: "ask-1",
+      toolName: "ask_user",
+      output: { type: "json", value: { answer: "yes" } },
+    };
+
+    // Request 2: the user answers the MRTR prompt first. The resume resolves
+    // the suspended call; the turn stays paused ONLY because the approval is
+    // still open — the drained sibling is neither re-run nor answered.
+    writtenChunks = [];
+    lastExecution = null;
+    global.fetch = vi.fn().mockResolvedValue(createSseResponse(textStep));
+    const second = buildTools();
+    const resolve = vi.fn(async () => ({
+      kind: "complete" as const,
+      toolResultMessage: { role: "tool", content: [askResult] } as any,
+    }));
+    await handleMCPJamFreeChatModel({
+      messages: [
+        { role: "user", content: "clean up" },
+        assistant,
+        { role: "tool", content: [freeResult] },
+      ] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "sys",
+      tools: second.tools,
+      mcpClientManager: managerStub(),
+      clientSuppliedHistory: true,
+      mrtrResume: { toolCallId: "ask-1", resolve } as MrtrEngineResume,
+    } as any);
+    await lastExecution;
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(second.spies.free).not.toHaveBeenCalled();
+    expect(outputsFor("free-1")).toHaveLength(0);
+    expect(outputsFor("ask-1")).toHaveLength(1);
+
+    // Request 3: the user approves. The approved call runs, nothing is
+    // answered "not run", and the model finishes the turn.
+    writtenChunks = [];
+    lastExecution = null;
+    global.fetch = vi.fn().mockResolvedValue(createSseResponse(textStep));
+    const third = buildTools();
+    const onConversationComplete = vi.fn();
+    await handleMCPJamFreeChatModel({
+      messages: [
+        { role: "user", content: "clean up" },
+        assistant,
+        {
+          role: "tool",
+          content: [
+            freeResult,
+            askResult,
+            { type: "tool-approval-response", approvalId, approved: true },
+          ],
+        },
+      ] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "sys",
+      tools: third.tools,
+      mcpClientManager: managerStub(),
+      clientSuppliedHistory: true,
+      onConversationComplete,
+    } as any);
+    await lastExecution;
+    expect(third.spies.gated).toHaveBeenCalledTimes(1);
+    expect(third.spies.free).not.toHaveBeenCalled();
+    expect(third.spies.ask).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalled();
+    expect(JSON.stringify(writtenChunks)).not.toContain("Not run");
+    const finalHistory = onConversationComplete.mock.calls[0]?.[0] as any[];
+    expect(
+      finalHistory
+        .filter((message) => message?.role === "assistant")
+        .flatMap((message: any) =>
+          Array.isArray(message.content) ? message.content : [],
+        )
+        .some(
+          (part: any) =>
+            part?.type === "text" && String(part.text).includes("all done"),
+        ),
+    ).toBe(true);
   });
 });

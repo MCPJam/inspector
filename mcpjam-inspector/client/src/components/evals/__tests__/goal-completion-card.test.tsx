@@ -3,6 +3,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GoalCompletionCard } from "../goal-completion-card";
 import type { EvalIteration, EvalSuiteRun } from "../types";
+import type { ModelDefinition } from "@/shared/types";
+
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
@@ -173,7 +180,9 @@ describe("GoalCompletionCard", () => {
       screen.getByText("Two cases diverged from the tool-call verdict."),
     ).toBeInTheDocument();
     // Only the two disagreements are listed.
-    expect(screen.getByText(/Disagrees with pass\/fail · 2/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Disagrees with pass\/fail · 2/),
+    ).toBeInTheDocument();
     expect(screen.getByText("Weather lookup")).toBeInTheDocument();
     expect(screen.getByText("Cart action")).toBeInTheDocument();
     expect(screen.getByText("30%")).toBeInTheDocument();
@@ -185,7 +194,9 @@ describe("GoalCompletionCard", () => {
     ).toBeInTheDocument();
     // The AGREEING case is NOT dumped into the rail (it's inline on the table).
     expect(screen.queryByText("Browse catalog")).not.toBeInTheDocument();
-    expect(screen.queryByText("Listed catalog as expected.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Listed catalog as expected."),
+    ).not.toBeInTheDocument();
     // Advisory framing + re-run.
     expect(
       screen.getByText(/Advisory only — never changes/i),
@@ -218,16 +229,18 @@ describe("GoalCompletionCard", () => {
         onRun={vi.fn()}
       />,
     );
-    expect(screen.getByText(/agree with the deterministic pass\/fail/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Disagrees with pass\/fail/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/agree with the deterministic pass\/fail/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Disagrees with pass\/fail/),
+    ).not.toBeInTheDocument();
   });
 
   it("disables running while a grade is pending", () => {
     render(<GoalCompletionCard {...baseProps} pending onRun={vi.fn()} />);
     expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
-    expect(
-      screen.getByText(/Grading final answers/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Grading recorded traces/i)).toBeInTheDocument();
   });
 
   it("disables running once a request is in flight (no duplicate judge calls)", () => {
@@ -263,9 +276,7 @@ describe("GoalCompletionCard", () => {
         onRun={vi.fn()}
       />,
     );
-    expect(
-      screen.getByText(/Grading final answers/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Grading recorded traces/i)).toBeInTheDocument();
     expect(screen.getByText("Requesting…")).toBeInTheDocument();
     // Stale score / reason from the previous run must not be displayed.
     expect(screen.queryByText("80%")).not.toBeInTheDocument();
@@ -285,7 +296,10 @@ describe("GoalCompletionCard", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
-    expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, true);
+    expect(onRun).toHaveBeenCalledWith(
+      { runOverride: undefined, scope: "failed" },
+      true,
+    );
   });
 
   it("shows run controls by default when the snapshot has no explicit enable", () => {
@@ -302,9 +316,7 @@ describe("GoalCompletionCard", () => {
         onRun={vi.fn()}
       />,
     );
-    expect(
-      screen.getByRole("button", { name: /Run judge/i }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeEnabled();
     expect(
       screen.queryByText(/Disabled in suite settings/i),
     ).not.toBeInTheDocument();
@@ -324,9 +336,7 @@ describe("GoalCompletionCard", () => {
     expect(
       screen.queryByRole("button", { name: /Run judge/i }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/Disabled in suite settings/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Disabled in suite settings/i)).toBeInTheDocument();
   });
 
   it("re-enables run controls when the current suite is enabled, even if the snapshot disabled it", () => {
@@ -348,9 +358,7 @@ describe("GoalCompletionCard", () => {
         currentSuiteJudgeConfig={{ goalCompletion: { enabled: true } }}
       />,
     );
-    expect(
-      screen.getByRole("button", { name: /Run judge/i }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeEnabled();
     expect(
       screen.queryByText(/Disabled in suite settings/i),
     ).not.toBeInTheDocument();
@@ -380,9 +388,7 @@ describe("GoalCompletionCard", () => {
         onRun={vi.fn()}
       />,
     );
-    expect(
-      screen.getByText(/This run used an override/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/This run used an override/i)).toBeInTheDocument();
     // Suite default + run override are shown side-by-side so the user
     // sees why this run's scores aren't suite-contract calibrated.
     expect(screen.getByText(/Suite default:/)).toBeInTheDocument();
@@ -392,5 +398,79 @@ describe("GoalCompletionCard", () => {
     expect(
       screen.getByText(/openai\/gpt-5\.4-mini @ 0\.85/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
+  const hosted: ModelDefinition = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    hosted: true,
+  };
+  const ineligibleHosted: ModelDefinition = {
+    id: "openai/gpt-5-mini",
+    name: "GPT-5 Mini",
+    provider: "openai",
+    hosted: true,
+    catalogObservedAt: 1_790_000_000_000,
+    judgeEligible: false,
+  };
+  const bareByok: ModelDefinition = {
+    id: "gpt-4o",
+    name: "GPT-4o (own key)",
+    provider: "openai",
+    hosted: false,
+  };
+
+  it("runs with an override for the picked judge-eligible hosted model", async () => {
+    const onRun = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        availableModels={[hosted, ineligibleHosted, bareByok]}
+        onRun={onRun}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    expect(screen.queryByText("GPT-5 Mini")).not.toBeInTheDocument();
+    expect(screen.queryByText("GPT-4o (own key)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
+    expect(
+      screen.getByRole("button", { name: "Judge model" }),
+    ).toHaveTextContent("Claude Haiku 4.5");
+    await user.click(screen.getByRole("button", { name: /Run judge/i }));
+    expect(onRun).toHaveBeenCalledWith(
+      { runOverride: { judgeModel: "anthropic/claude-haiku-4.5" } },
+      false,
+    );
+  });
+
+  it("shows a saved ineligible judge as the current value, disabled", async () => {
+    const user = userEvent.setup();
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+              },
+            },
+          },
+        })}
+        availableModels={[hosted, ineligibleHosted]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    const current = screen.getByRole("option", { name: /GPT-5 Mini/ });
+    expect(current).toHaveAttribute("aria-disabled", "true");
+    expect(current).toHaveTextContent("Not eligible");
   });
 });

@@ -19,15 +19,37 @@
  *     Telling an outsider "you are not an admin here" confirms the resource
  *     exists. Only a message that names the admin requirement — which the caller
  *     can only reach if they are already a member — earns a 403.
- *   - **`kind: 'forbidden'` is a TIER denial and answers 403.** A different
- *     shape from the `FORBIDDEN` code above, raised only once membership has
- *     already resolved, so hiding it behind a 404 would tell a legitimate
- *     member their own resource does not exist. Still subject to
- *     `adminFailureIsForbidden` for the resources that deliberately hide their
- *     gate.
+ *   - **`kind: 'forbidden'` is an authorization refusal and answers 403.** A
+ *     different shape from the `FORBIDDEN` code above: the backend raises it
+ *     for eval tier denials, and through `opaqueRefusal` at the chokepoints
+ *     that already answer "missing" and "not yours" identically (a server
+ *     create, a chat session lookup). Stating it is the backend's decision.
+ *     Still subject to `adminFailureIsForbidden` for the resources that
+ *     deliberately hide their gate.
+ *   - **The role helpers are NOT that shape.** `requireProjectRole` and
+ *     `requireWorkspaceRole` throw a plain `Error`, which a production
+ *     deployment masks to `Server Error` with no data, exactly like the plain
+ *     "not found" throws beside them. Nothing here can tell that apart from a
+ *     crash, so it reaches the terminal 500 below. A route addressing one
+ *     resource it can look up resolves that with
+ *     `translateAddressedConvexWriteError`: a failed write to something the
+ *     caller cannot see answers the same 404 a read of it would.
  *   - **Infrastructure failures are 5xx.** A timeout or a reset socket is not
  *     the caller's bad input; those defer to `mapRuntimeError` so a transient
  *     outage is not reported as a validation error.
+ *   - **A structured code with no branch of its own still answers 400**, with
+ *     the backend's own message and its code in `details`. A `ConvexError`
+ *     carrying `{ code, message }` is a refusal somebody wrote down; the coded
+ *     branches above give the ones we know a better status, and this keeps the
+ *     rest actionable instead of collapsing them into the 500 below. It sits
+ *     BEHIND every coded branch and AHEAD of the prose sniffing, because those
+ *     patterns read `error.message` — Convex's framing wrapped around the JSON
+ *     of the payload, the backend's own sentence included — so a refusal whose
+ *     copy says "not found" would otherwise be answered as one. It is logged,
+ *     to Axiom only, so a code that deserves its own branch is still
+ *     discoverable once it stops reaching the 500. See
+ *     `translateStructuredConvexRefusal` at the foot of this file for the v1
+ *     error BOUNDARY's use of the same rule.
  *   - **An unrecognized failure is a 500, and it is logged.** Everything above
  *     is a recognized outcome; what falls past all of it is a write path we do
  *     not understand, which is ours. It used to answer 400 with Convex's prose
@@ -64,6 +86,14 @@ type ConvexErrorData = {
  * running in the other direction. An unlisted code falls through to the
  * translator's terminal 500, which is logged, which is how we would find out.
  */
+/**
+ * The backend's refusal code for a write to a CI-owned suite. Spelled here
+ * rather than imported: this repo does not depend on the backend's source, and
+ * a hand-mirrored constant with the reason written down beats a string literal
+ * buried in a conditional.
+ */
+const CI_OWNED_SUITE_READ_ONLY_CODE = "CI_OWNED_SUITE_READ_ONLY";
+
 const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_unscoped_suite",
   "gate_waiver_reason_empty",
@@ -72,10 +102,30 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_expiry_too_far",
 ]);
 
+/**
+ * The structured payload a `ConvexError` carried, THROUGH any wrapper.
+ *
+ * `CaseBatchPartialFailureError` (and anything else that adds context by
+ * rethrowing) copies the message but not the `data` — `super(cause.message)`
+ * loses the payload — so a coded refusal reaching this file inside a wrapper
+ * matched no branch below and fell all the way to the terminal 500. That is
+ * exactly backwards: a wrapper exists to ADD what landed, not to erase why it
+ * did not. So the `cause` chain is walked, nearest first.
+ *
+ * Bounded, and by depth rather than by a seen-set: a self-referential `cause`
+ * is a bug worth surviving, and three links is already more nesting than any
+ * path here has.
+ */
 function convexErrorData(error: unknown): ConvexErrorData | null {
-  const data = (error as { data?: unknown } | null)?.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  return data as ConvexErrorData;
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const data = (current as { data?: unknown }).data;
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      return data as ConvexErrorData;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 /** Strip Convex's own framing so it cannot reach a public response body. */
@@ -254,6 +304,18 @@ export function translateImportIneligibleError(
   return translateConvexWriteError(error, { resource: "Eval run" });
 }
 
+/**
+ * The 500s the terminal branch of `translateConvexWriteError` produced, and
+ * only those.
+ *
+ * A timeout or a dead socket can also come back as a 5xx (through
+ * `mapRuntimeError`), and a route may throw its own `WebRouteError(500)`; none
+ * of those is "the backend refused and said nothing", so none of them may be
+ * re-read as a refusal. Membership in this set is the one marker that cannot
+ * be produced any other way.
+ */
+const UNRECOGNIZED_WRITE_FAILURES = new WeakSet<WebRouteError>();
+
 export function translateConvexWriteError(
   error: unknown,
   options: TranslateConvexWriteErrorOptions
@@ -271,8 +333,11 @@ export function translateConvexWriteError(
 
   const data = convexErrorData(error);
   const code = typeof data?.code === "string" ? data.code : undefined;
+  // A blank message is no copy: every branch then uses its own fallback.
   const structuredMessage =
-    typeof data?.message === "string" ? data.message : undefined;
+    typeof data?.message === "string" && data.message.trim()
+      ? data.message
+      : undefined;
   const kind = typeof data?.kind === "string" ? data.kind : undefined;
 
   // ── The eval tier denial (mcpjam-backend lib/evalPermissions.ts) ─────────
@@ -289,17 +354,19 @@ export function translateConvexWriteError(
   // caller as a generic internal error.
   //
   // 403 rather than the neutral 404 the generic `FORBIDDEN` branch gives, and
-  // the backend is explicit about why: this denial is only reachable by a
-  // caller who ALREADY resolved membership, so it reveals nothing they could
-  // not see, while "not found" would send a legitimate member hunting for a
-  // run sitting in front of them. The denials that DO mean "you cannot see
-  // this scope at all" never arrive here — the backend collapses those into
-  // its own not-found strings before they leave the mutation.
+  // the backend is explicit about why: "not found" would send a legitimate
+  // member hunting for a run sitting in front of them. The same shape comes
+  // from the backend's `opaqueRefusal`, raised only where "missing" and "not
+  // yours" already leave by the same door, and that answers 403 too (MJ-020,
+  // MJ-021) — the backend chose to state those refusals as refusals, and it
+  // owns that decision. The project and workspace role helpers do not raise
+  // it: they throw a plain `Error`, masked in production, which lands on the
+  // terminal 500 (see `translateAddressedConvexWriteError`).
   //
   // No `/admin/i` message test, unlike the generic `FORBIDDEN` branch. That
   // test exists there because the `FORBIDDEN` code also covers membership
-  // denials, which must hide; this `kind` is only raised after membership
-  // resolved, so there is nothing left to hide.
+  // denials the backend wants hidden; this `kind` is the one it raises when it
+  // does not.
   //
   // `adminFailureIsForbidden` is still honored. A route that deliberately
   // HIDES its permission gate (sandbox images, whose gate also guards shared
@@ -309,6 +376,9 @@ export function translateConvexWriteError(
   // Placed before the coded branches for the same reason `FEATURE_UNAVAILABLE`
   // is: it is a recognized refusal that must keep its own status and its own
   // message, and anything downstream would take one or both away.
+  if (code === "account_suspended") {
+    return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage ?? "Account suspended. Contact support.", { code });
+  }
   if (kind === "forbidden") {
     return adminFailureIsForbidden
       ? new WebRouteError(
@@ -336,6 +406,38 @@ export function translateConvexWriteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       structuredMessage ?? fallbackMessage
+    );
+  }
+
+  // ── The CI-owned suite lock (mcpjam-backend lib/evalPermissions.ts) ──────
+  //
+  // A suite whose configuration lives in a repository — a committed suite file,
+  // or SDK ingest — refuses configuration writes from the app and from this
+  // API. 409 rather than 403, because this is NOT a permission problem: the
+  // caller's role is fine and no amount of privilege changes the answer. What
+  // changes it is editing the source of truth, or taking a copy. A 403 would
+  // send someone to ask their admin for access they already have.
+  //
+  // The backend's `message` names both remedies and is forwarded verbatim; the
+  // hint below is added for the API caller specifically, who has a third
+  // option the app's user does not — send `declaredSuiteId` and write AS the
+  // file.
+  //
+  // Handled explicitly rather than left to fall through, for the same reason
+  // the two branches around it are: an unrecognized code reaches the prose
+  // sniffing below, which reads `error.message` — the JSON of a ConvexError's
+  // data — and either loses the message on a 500 or matches a pattern by
+  // accident and answers with the wrong status.
+  if (code === CI_OWNED_SUITE_READ_ONLY_CODE) {
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      structuredMessage ??
+        "This suite is managed by CI and cannot be edited here.",
+      {
+        reason: CI_OWNED_SUITE_READ_ONLY_CODE,
+        hint: "Edit the suite file in your repository (and send its suite id as declaredSuiteId), or duplicate the suite to get an editable copy.",
+      }
     );
   }
 
@@ -396,6 +498,27 @@ export function translateConvexWriteError(
       ErrorCode.FORBIDDEN,
       structuredMessage ??
         "This feature is not available for your organization."
+    );
+  }
+
+  // An anonymous guest tried to author something that needs an account
+  // (mcpjam-backend lib/sandboxesGate.ts, REEV-6).
+  //
+  // Here for the same reason as `FEATURE_UNAVAILABLE` directly above — the
+  // generic FORBIDDEN branch would collapse this to a 404 and tell the caller
+  // their own project does not exist — but mapped to **401, not 403**. The
+  // distinction is the whole point of the backend emitting a separate code:
+  // 403 says "you may not do this", which for a guest is wrong and unhelpful,
+  // while 401 says "authenticate", which is exactly the remedy and is what a
+  // client library will already be wired to act on.
+  //
+  // Message forwarded verbatim: it names the surface ("Sign in to use
+  // Swarms"), and rewriting it here would put that copy in two places.
+  if (code === "SIGN_IN_REQUIRED") {
+    return new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      structuredMessage ?? "Sign in to use this feature."
     );
   }
 
@@ -538,6 +661,86 @@ export function translateConvexWriteError(
     return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
 
+  // ── A structured code with no branch of its own. ─────────────────────────
+  //
+  // The backend raised `ConvexError({ code, message })` DELIBERATELY: it chose
+  // a machine code and wrote a sentence for the caller. Every branch above
+  // claims a code it knows; what reaches here is a refusal shipped by the
+  // backend that nobody has taught this table about yet — and until this
+  // branch existed, that meant the terminal 500 below, which drops the message
+  // on purpose and pages the on-call. Production hit exactly that with
+  // `ENV_MATERIALIZED_SECRETS_UNSUPPORTED` (mcpjam-backend
+  // `convex/journeyRuns.ts`): a launch refusal naming the remedy, delivered to
+  // the customer as `INTERNAL_ERROR: Server Error` and discoverable only by
+  // tailing `convex logs --prod`.
+  //
+  // 400, because the caller has something to change: a refusal that carries
+  // customer-facing prose is by construction about the request, and a code
+  // that deserves a different status (a 409 conflict, a 429 cap) earns an
+  // explicit branch above — that is what the branches are for. The generic
+  // answer only has to be honest and actionable, not perfectly specific.
+  //
+  // BOTH fields are required, and both must be non-blank once trimmed. `code`
+  // is what marks the throw as deliberate; `message` is the only prose allowed
+  // out, because a ConvexError's `error.message` is the JSON of its data
+  // wrapped in Convex's own framing — request ids, function names,
+  // argument-validator output with the arguments in it. Nothing here reads
+  // `error.message`, so an unstructured throw cannot reach a caller through
+  // this branch: it falls to the 500 below, exactly as before. A blank
+  // `message` would answer 400 with an empty sentence and swallow the log
+  // that says nobody understood the failure, so it is not eligible either —
+  // the same gate `translateStructuredConvexRefusal` applies at the boundary,
+  // which is what keeps the two entry points from disagreeing about the same
+  // payload.
+  //
+  // ── ORDERING: ahead of the prose fallbacks, behind every coded branch. ───
+  //
+  // Behind the coded branches because those are canonical: a billing cap is a
+  // 429 and a precondition failure is a 409, and a generic 400 in front of
+  // them would flatten both.
+  //
+  // AHEAD of the prose fallbacks because those sniff `error.message`, which
+  // for a `ConvexError` is Convex's framing wrapped around the JSON of its
+  // data — the backend's own `message` INCLUDED. So a deliberate refusal that
+  // happens to say "not found", "already exists" or "timed out" in its
+  // customer copy matched a prose pattern on the strength of its own prose,
+  // and answered 404/409/503 with the route's generic noun, dropping both the
+  // message and `details.code`. The same hazard is why `FEATURE_UNAVAILABLE`,
+  // the gate-waiver codes and `IMPORT_INELIGIBLE` are all handled above the
+  // prose block rather than left to fall into it; this is that rule applied
+  // to the codes we have not enumerated yet, which is exactly the population
+  // that cannot get an explicit branch in advance.
+  //
+  // Nothing that reached the prose block WITHOUT `{ code, message }` moves:
+  // an uncoded ConvexError, a string-data refusal, a dead socket and a
+  // validator rejection all still fall through to the same branches in the
+  // same order.
+  if (code?.trim() && structuredMessage?.trim()) {
+    // The unclassified refusal stays VISIBLE. The terminal 500 below used to
+    // be where a never-before-seen code showed up, and its log is how we
+    // would learn a code deserves a branch of its own; answering 400 takes it
+    // out of the 5xx monitors, so the discovery signal has to be replaced
+    // rather than dropped. `logger.warn` is Axiom-only — it deliberately does
+    // NOT capture to Sentry — so this is a queryable record, not a page, which
+    // is the right weight for a refusal that IS being answered correctly.
+    logger.warn(`[v1.convexWrite] unclassified ${resource} structured refusal`, {
+      resource,
+      code: code.trim(),
+      detail: redactForLog(error),
+    });
+    // `code` travels in `details` rather than as the public error code: the v1
+    // union is CLOSED (see `contract.ts`), so a backend code that is not in
+    // `INTERNAL_TO_V1_CODE` has no public member to become. `details.code` is
+    // the same channel `translateResolveError` (environments.ts) and the
+    // registry install family already publish theirs on.
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      structuredMessage.trim(),
+      { code: code.trim() },
+    );
+  }
+
   // ── Mixed-version fallbacks: a deployment that still throws prose. ────────
   const raw = error instanceof Error ? error.message : String(error);
   if (/already exists|name conflict|duplicate/i.test(raw)) {
@@ -627,5 +830,113 @@ export function translateConvexWriteError(
     resource,
     detail: redactForLog(error),
   });
-  return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, fallbackMessage);
+  const unrecognized = new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    fallbackMessage
+  );
+  UNRECOGNIZED_WRITE_FAILURES.add(unrecognized);
+  return unrecognized;
+}
+
+/**
+ * `translateConvexWriteError` for a write addressed at ONE resource the
+ * caller could also read — `PATCH`/`DELETE` on `/servers/:serverId`.
+ *
+ * A production deployment masks a plain backend throw to `Server Error`, and
+ * the backend's "not found" and role-check refusals on these paths are plain
+ * throws. So an update or delete of a resource in a project the caller does
+ * not belong to, and one of an id that does not exist, both arrive here with
+ * nothing to classify and fall to the terminal 500.
+ *
+ * Only on that branch, `isVisible` is asked whether the caller can see the
+ * resource at all, using the same read a `GET` of it answers from:
+ *
+ *   - not visible → the same 404 the `GET` gives. One answer for "missing"
+ *     and "not yours", so it confirms nothing the read does not;
+ *   - visible → the 500 stands. The caller can see the thing and the write
+ *     still failed, so the failure is ours, and it stays in the 5xx range the
+ *     monitors watch;
+ *   - the lookup itself fails → the 500 stands, rather than guessing.
+ *
+ * Every classified outcome — a coded refusal, `kind: 'forbidden'`, a timeout
+ * — is returned exactly as `translateConvexWriteError` gave it, without the
+ * extra read.
+ */
+export async function translateAddressedConvexWriteError(
+  error: unknown,
+  options: TranslateConvexWriteErrorOptions,
+  isVisible: () => Promise<boolean>
+): Promise<WebRouteError> {
+  const translated = translateConvexWriteError(error, options);
+  if (!UNRECOGNIZED_WRITE_FAILURES.has(translated)) return translated;
+  let visible: boolean;
+  try {
+    visible = await isVisible();
+  } catch {
+    return translated;
+  }
+  if (visible) return translated;
+  return new WebRouteError(
+    404,
+    ErrorCode.NOT_FOUND,
+    options.notFoundMessage ?? `${options.resource} not found`
+  );
+}
+
+/**
+ * A DELIBERATELY structured Convex refusal, translated — or `undefined` for
+ * anything else. The v1 ERROR BOUNDARY's view of the table above.
+ *
+ * Twenty-odd write routes call `translateConvexWriteError` themselves. The
+ * ones that do not — the eval-run launch is the one that cost an hour of
+ * production debugging — let a `ConvexError` escape to `v1OnError`, where the
+ * runtime classifier has nothing to key on and answers
+ * `500 INTERNAL_ERROR: Server Error`. The backend had already done the work:
+ * a machine code, and a sentence naming the remedy. Only the last hop threw it
+ * away.
+ *
+ * The gate is `{ code, message }` both being non-empty strings, and that is
+ * the whole safety argument:
+ *
+ *   - a `ConvexError` is not an accident — the backend imported a class and
+ *     handed it an object;
+ *   - a `code` on it is a machine contract someone wrote down;
+ *   - a `message` on it is prose written FOR the caller (Convex's production
+ *     redaction preserves `ConvexError` data and nothing else, which is why
+ *     the backend puts customer copy there).
+ *
+ * The one other shape admitted is `kind: 'forbidden'`, the backend's
+ * authorization refusal, which carries no `code`: it is just as deliberate, and
+ * its only copy is the optional `message` the backend chose to send.
+ *
+ * Anything without both — a `TypeError`, a dead socket, a Convex validator
+ * rejection, a plain `throw new Error(...)` whose text may name our internals
+ * — returns `undefined` here and keeps its opaque 500. This function never
+ * reads `error.message`.
+ *
+ * Copy is deliberately GENERIC: at the boundary there is no route to say which
+ * noun was addressed, so a 404 reads "Not found" rather than borrowing a wrong
+ * one. A route that wants better copy calls the translator directly and gets
+ * its own `resource`.
+ */
+export function translateStructuredConvexRefusal(
+  error: unknown,
+): WebRouteError | undefined {
+  // A route that already decided owns the answer; the boundary maps it as-is.
+  if (error instanceof WebRouteError) return undefined;
+  const data = convexErrorData(error);
+  const code = typeof data?.code === "string" ? data.code.trim() : "";
+  const message = typeof data?.message === "string" ? data.message.trim() : "";
+  // `kind: 'forbidden'` is the backend's authorization refusal, and it carries
+  // no `code` — without this it would reach the caller as a 500 from every
+  // route that does not translate its own writes (MJ-020, MJ-021).
+  const forbidden = data?.kind === "forbidden";
+  if (!forbidden && (!code || !message)) return undefined;
+  return translateConvexWriteError(error, {
+    resource: "Resource",
+    fallbackMessage: "The platform refused this request.",
+    notFoundMessage: "Not found",
+    conflictMessage: "This resource changed since you loaded it.",
+  });
 }

@@ -1,3 +1,4 @@
+import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 
@@ -75,6 +76,19 @@ export interface RequestLogContext extends CommonLogContext {
   requestId: string;
   route: string;
   method: string;
+  /**
+   * The caller's `user-agent`, sanitized and capped.
+   *
+   * A LOG FIELD, never an identity. It is caller-supplied text: this server
+   * already removed UA-derived attribution once because a client can write
+   * whatever it likes there, and re-introducing it here is only safe while
+   * nothing branches on it.
+   *
+   * Omitted rather than defaulted when the header is absent — a row with no
+   * user-agent is a caller that sent none, which is not the same claim as
+   * "unknown client" and should not be counted as one.
+   */
+  userAgent?: string;
 }
 
 export interface SystemLogContext extends CommonLogContext {
@@ -178,6 +192,24 @@ export type RequestEventMap = {
     origin?: ErrorOrigin;
     /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
     slug?: string;
+    /**
+     * Which hop failed, as declared at the catch site — orthogonal to
+     * `origin`, which says who must act.
+     *
+     * `origin` alone cannot carry this. `ambiguous` is the catalog refusing to
+     * guess from the wire shape, and it is the right refusal: the same
+     * `transport/fetch_failed` is produced by a user's dead server and by
+     * MCPJam's own OAuth-metadata proxy. Only the catch site knows which
+     * boundary it wrapped, and until now it told nobody but Sentry —
+     * `route-error-report.ts` maps `user_server_hop` to `undefined`, so the
+     * one declaration that means "not ours" was recorded nowhere.
+     *
+     * ABSENT MEANS UNKNOWN, NEVER "the user's". A monitor that treats a
+     * missing `hop` as an exclusion re-creates the blindness this field
+     * exists to remove; consumers must test `origin == "mcpjam"` first and
+     * only then let a hop exclude a row.
+     */
+    hop?: RouteFailureHop;
   };
   "http.stream.opened": { statusCode: number };
   /**
@@ -237,6 +269,49 @@ export type RequestEventMap = {
     tunnelKind: "shared" | "server";
     rpcMethod?: string;
     path: string;
+  };
+  /**
+   * An environment's MATERIALIZED secrets were resolved for a turn that has no
+   * project-provisioned sandbox to receive them, so they were not delivered.
+   *
+   * Deliberate — a materialized value only ever lands in a box the project
+   * provisioned — but silent until this event: the operational question is "is
+   * anyone selecting materialized secrets on a path that cannot use them?", and
+   * it needs an answer that is queryable rather than grep-able.
+   *
+   * COUNT ONLY, never a name and never a value. This row is one scrubber miss
+   * away from being the leak the feature exists to prevent, and the count is
+   * the whole of what the question needs.
+   */
+  "chat.secrets.undelivered": {
+    secretCount: number;
+    isScenarioSession: boolean;
+  };
+  /**
+   * Built-in tool ids a chat request asked for that the turn did not get
+   * (MJ-008): unknown ids, ids outside the host or project configuration, and
+   * workspace operations the caller's project role does not allow.
+   *
+   * `toolIds` holds catalog names only. An unknown id is free text from the
+   * request body, so it is counted in `unknownCount` and never echoed.
+   */
+  "chat.builtin_tools.withheld": {
+    toolIds: string[];
+    unknownCount: number;
+    reasons: string[];
+    targetKind: "adhoc" | "host" | "environment" | "scenario";
+  };
+  /**
+   * A Playground chat turn on a harness host is running a model the harness
+   * × model evidence table has not verified for the harness's runtime version
+   * (`shared/harness-model-support.ts`). Chat runs it (evals and swarms refuse
+   * it); this makes "which unverified pairs are people actually running" a
+   * query rather than a grep.
+   */
+  "chat.harness_model_unverified": {
+    harness: string;
+    modelId: string;
+    reason: string;
   };
   "chat.session.persist.failed": {
     failureKind:
@@ -318,6 +393,15 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // Saved browser profile download (routes/web/browser-profile-download.ts,
+  // MJ-005): the archive could not be served. `stage` is the hop that failed,
+  // `lookup` (the backend's owner check) or `archive` (reading the archive).
+  // `statusCode` is the upstream answer, when there was one.
+  "browser_profile.download.failed": {
+    stage: "lookup" | "archive";
+    statusCode?: number;
+    errorMessage?: string;
+  };
   // Swarm AI generation (routes/web/swarm-generate.ts): the backend
   // /swarms/* endpoint answered with a server error. The upstream message is
   // deliberately NOT forwarded to the caller (it carries the deployment URL),
@@ -330,7 +414,59 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
   };
+  // Sign-out session revocation (routes/web/auth-session.ts, MJ-011): the
+  // backend did not acknowledge a durable record of the revocation in time.
+  // This replica already refuses the session; `status` says whether retries
+  // were scheduled ("pending") or could not be ("failed"). The sign-out itself
+  // still completed.
+  "auth.session.revoke_incomplete": {
+    reason: "failed" | "timeout";
+    status: "pending" | "failed";
+  };
   "route.operation.failed": RouteOperationFailedFields;
+  /**
+   * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS
+   * key's id, never its value.
+   *
+   * WorkOS rejected `expires_at` when a key was created, so the key was minted
+   * without it. It still expires: the org binding carries the same instant
+   * and the bearer middleware enforces it. Any row here means WorkOS-native
+   * expiry is not in effect for new keys.
+   */
+  "apikey.expiry.workos_refused": { statusCode: number };
+  /**
+   * The backend capped an organization's key inventory, so the page listed
+   * only part of it (and says so to the admin).
+   */
+  "apikey.inventory.truncated": { listed: number };
+  /**
+   * An owner or admin revoked a key bound to their organization, from the
+   * organization inventory or by key id (`DELETE /api/web/api-keys/:id`).
+   * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
+   * the key is gone at WorkOS but its org binding was not removed, so the
+   * backend has not written the revoke's audit row either. The binding is
+   * inert, and revoking the same key id again removes it and writes the row.
+   */
+  "apikey.admin_revoke.completed": {
+    workosKeyId: string;
+    alreadyRevoked: boolean;
+    bindingCleanupFailed: boolean;
+    /**
+     * Tries at removing the binding, at most 3: a transport failure or a
+     * backend 5xx is retried. When `bindingCleanupFailed`, the event also
+     * carries the last cause and is reported to Sentry.
+     */
+    bindingCleanupAttempts: number;
+    bindingStatus?: number;
+  };
+  /**
+   * No authorization decision could be had for an admin revoke (backend
+   * unreachable, or one without the route yet), so nothing was revoked.
+   */
+  "apikey.admin_revoke.unavailable": {
+    workosKeyId: string;
+    errorMessage: string;
+  };
 };
 
 export type SystemEventMap = {
@@ -404,6 +540,7 @@ export type SystemEventMap = {
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
+  "launch.engagement": LaunchEngagement;
   "relay.stats": {
     requests: number;
     res2xx: number;
@@ -416,6 +553,8 @@ export type SystemEventMap = {
     upstreamErrors: number;
     bodyLimitRejects: number;
     rateLimitRejects: number;
+    projectRejects: number;
+    busyRejects: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };
@@ -444,10 +583,37 @@ const ALLOWED_ENVIRONMENTS: Environment[] = [
   "test",
 ];
 
+/**
+ * Spellings of an environment that mean one of {@link ALLOWED_ENVIRONMENTS}.
+ *
+ * The Railway production environment sets `ENVIRONMENT=production`, which is
+ * not `prod` and so was rejected by the allowlist below — the value was
+ * discarded and the answer came from the `NODE_ENV` fallback instead, which
+ * happens to be `prod` and hid the mismatch. Two things made that worth fixing
+ * rather than leaving: the fallback's warning says "ENVIRONMENT not set", so
+ * everyone reading logs was told the variable was missing when it was merely
+ * misspelled; and it left `ENV NODE_ENV=production` in the Dockerfile
+ * load-bearing for which platform MCP worker we dial, where dropping that line
+ * would silently resolve `dev` and point production's first-party servers at
+ * `http://localhost:8787`.
+ */
+const ENVIRONMENT_ALIASES: Record<string, Environment> = {
+  production: "prod",
+  development: "dev",
+};
+
 export function resolveEnvironment(): Environment {
-  const fromEnv = process.env.ENVIRONMENT;
+  // TRIMMED ONCE, then used for both lookups. Trimming only the alias branch
+  // left `ENVIRONMENT=" prod "` falling through to the `dev` default while
+  // `" production "` resolved — the same silent misclassification this alias
+  // exists to remove, reintroduced one branch over.
+  const fromEnv = process.env.ENVIRONMENT?.trim();
   if (fromEnv && ALLOWED_ENVIRONMENTS.includes(fromEnv as Environment)) {
     return fromEnv as Environment;
+  }
+  const aliased = fromEnv ? ENVIRONMENT_ALIASES[fromEnv] : undefined;
+  if (aliased) {
+    return aliased;
   }
   if (process.env.NODE_ENV === "test") return "test";
   if (process.env.NODE_ENV === "production") {

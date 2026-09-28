@@ -297,6 +297,17 @@ export function OverviewPanel({
     return list;
   }, [filteredSuites, suiteSearch, failuresOnly, activeBucket]);
 
+  // Tag choices must use the bucket before the selected tag narrows its suites.
+  const tagOptionBucket = useMemo(
+    () => buildRunTimeline(suites).find((bucket) => bucket.id === selectedBucketId) ?? null,
+    [suites, selectedBucketId],
+  );
+  const availableTags = allTags.filter((tag) => tag === filterTag || suites.some((entry) =>
+    entry.suite.tags?.includes(tag) &&
+    (!tagOptionBucket || tagOptionBucket.suiteIds.has(entry.suite._id)) &&
+    (!suiteSearch || entry.suite.name.toLowerCase().includes(suiteSearch.toLowerCase())) &&
+    (!failuresOnly || entry.latestRun?.result === "failed" || !entry.latestRun)));
+
   // Failure feed entries (also filtered by active bucket)
   const failureEntries = useMemo(() => {
     let list = filteredSuites;
@@ -645,7 +656,7 @@ export function OverviewPanel({
             Failures only
           </button>
 
-          {allTags.length > 0 && (
+          {availableTags.length > 0 && (
             <div className="flex items-center gap-1">
               <button
                 onClick={() => onFilterTagChange(null)}
@@ -658,7 +669,7 @@ export function OverviewPanel({
               >
                 All
               </button>
-              {allTags.map((tag) => (
+              {availableTags.map((tag) => (
                 <button
                   key={tag}
                   onClick={() =>

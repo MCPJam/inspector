@@ -14,8 +14,7 @@
  *      instead of carrying no stamp, which downstream reads as "this run had
  *      no rubric" and would silently shrink every denominator.
  *   2. EVALUATE — the same `evaluatePredicates` the eval runner calls, over a
- *      transcript built the same way `run-predicates-on-chat-session.ts`
- *      builds one.
+ *      transcript built from the stored envelope.
  *   3. COMPLETE or FAIL — verdicts correlated back to `criterionId`
  *      positionally, which is sound here and only here: `entries.map(…)` and
  *      the result array come from a single call with order preserved by
@@ -24,7 +23,8 @@
  * The caller (`swarm-runner.ts`) awaits this inside a try/catch. Grading is
  * never allowed to affect the attempt it graded.
  */
-
+import { extractTranscriptEvidence } from "../evals/transcript-evidence.js";
+import { swarmCheckInventory } from "./swarm-check-evidence.js";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -34,7 +34,7 @@ import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
 import {
   extractToolCallsFromEnvelopeMessages,
   type ChatSessionEnvelope,
-} from "./run-predicates-on-chat-session.js";
+} from "./chat-session-envelope.js";
 import {
   claimSwarmChecks,
   completeSwarmChecks,
@@ -167,13 +167,19 @@ export async function runSwarmChecks(
   const messages = Array.isArray(claim.envelope?.messages)
     ? (claim.envelope.messages as EnvelopeMessage[])
     : null;
-  if (messages === null) {
+  if (
+    messages === null ||
+    messages.length === 0 ||
+    claim.envelope?.traceComplete === false
+  ) {
     return reportFailure("transcript envelope unreadable");
   }
 
   let criterionResults: SwarmCriterionResult[];
   try {
     const transcript = buildIterationTranscript({
+      ...extractTranscriptEvidence(claim.envelope),
+      toolInventory: swarmCheckInventory(claim.envelope),
       trace: {
         messages,
         ...(claim.envelope?.spans
@@ -183,8 +189,8 @@ export async function runSwarmChecks(
       // The SHARED walker, not a copy: two extractors would let an
       // envelope-format or dedupe fix land on one grading path and not the
       // other, so the same session could grade differently depending on who
-      // asked. (Its identity dedupe — same tool + same args collapses to one
-      // entry — is a known limitation, now a single known limitation.)
+      // asked. Distinct call IDs preserve repeated calls; only duplicate
+      // representations of the same call are collapsed.
       toolCalls: extractToolCallsFromEnvelopeMessages(messages),
       // Session-level token totals, materialized backend-side from turn-trace
       // usage and returned on the claim. `null`/absent means no turn reported
@@ -209,6 +215,9 @@ export async function runSwarmChecks(
     criterionResults = claim.criteria.map((entry, index) => ({
       criterionId: entry.id,
       passed: results[index]?.passed ?? false,
+      // Older evaluators omit status on scored rows; only a missing result
+      // or an explicit evaluator error is unmeasured.
+      status: results[index] ? (results[index].status ?? "scored") : "error",
       reason: results[index]?.reason ?? "evaluator returned no verdict",
     }));
   } catch (error) {

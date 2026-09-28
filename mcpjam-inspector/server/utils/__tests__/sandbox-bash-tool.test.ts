@@ -5,9 +5,11 @@ import {
   EVAL_BASH_TOOL_NAME,
 } from "../built-in-tools/sandbox-bash";
 import {
+  DEFAULT_COMMAND_TIMEOUT_S,
   MAX_COMMAND_TIMEOUT_S,
   type BashRunner,
 } from "../computers/run-command";
+import { TimeoutError } from "e2b";
 
 // The sandbox bash tool binds directly to a KNOWN sandbox id (no control-plane
 // reserve/sandbox-info) — exercise it with an injectable runner. The
@@ -50,6 +52,95 @@ describe("buildEvalBashTool", () => {
     const result = await tool.execute!({ command: "false" }, opts);
     expect(result).toMatchObject({ stderr: "boom", exitCode: 2 });
     expect(result).not.toHaveProperty("error");
+  });
+
+  describe("materialized-secret delivery stamp", () => {
+    const secretEnv = { STRIPE_API_KEY: "sk_live_abcdefgh" };
+
+    const runWith = async (runner: BashRunner) => {
+      const onSecretEnvDelivered = vi.fn();
+      const tool = buildSandboxBashTool(
+        { sandboxId: "sbx", secretEnv, onSecretEnvDelivered },
+        runner,
+      );
+      const result = await tool.execute!({ command: "sleep 600" }, opts);
+      return { result, onSecretEnvDelivered };
+    };
+
+    /** A runner that reaches the dispatch boundary, then does `after`. */
+    const dispatching = (
+      after: () => Promise<{
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+      }>,
+    ): BashRunner =>
+      vi.fn(async (a) => {
+        a.onEnvsDispatched?.();
+        return after();
+      });
+
+    it("stamps when the command completes", async () => {
+      const { onSecretEnvDelivered } = await runWith(
+        dispatching(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+      );
+      expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("stamps when the command TIMES OUT after dispatch", async () => {
+      // The box already has the values and the process may still be alive in
+      // there holding them. Recording that as never-delivered is the dangerous
+      // direction: it is the signal read before deciding a credential was never
+      // exposed and needs no rotation.
+      //
+      // The vendor's real `TimeoutError`, not a plain one: the implementation
+      // branches on `instanceof`, so a plain Error would land in the generic
+      // failure path and this test would claim a timeout it never exercised.
+      const { result, onSecretEnvDelivered } = await runWith(
+        dispatching(async () => {
+          throw new TimeoutError("timed out");
+        }),
+      );
+      expect(result).toMatchObject({
+        error: `Command timed out after ${DEFAULT_COMMAND_TIMEOUT_S}s.`,
+      });
+      expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("stamps when a NON-timeout failure follows dispatch", async () => {
+      // The other post-dispatch branch: the values are in the box either way.
+      const { result, onSecretEnvDelivered } = await runWith(
+        dispatching(async () => {
+          throw new Error("boom");
+        }),
+      );
+      expect(result).toMatchObject({
+        error: "Command failed to run in the sandbox.",
+      });
+      expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT stamp when the runner fails before dispatch", async () => {
+      // `Sandbox.connect` (or the workdir create) failing means the values
+      // never moved. Claiming a delivery here would turn "was this credential
+      // exposed?" into "did a turn once intend to send it?".
+      const { onSecretEnvDelivered } = await runWith(
+        vi.fn(async () => {
+          throw new Error("failed to connect to sandbox");
+        }),
+      );
+      expect(onSecretEnvDelivered).not.toHaveBeenCalled();
+    });
+
+    it("does not stamp when no secrets were sent", async () => {
+      const onSecretEnvDelivered = vi.fn();
+      const tool = buildSandboxBashTool(
+        { sandboxId: "sbx", onSecretEnvDelivered },
+        dispatching(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+      );
+      await tool.execute!({ command: "ls" }, opts);
+      expect(onSecretEnvDelivered).not.toHaveBeenCalled();
+    });
   });
 
   it("returns { error } (not throw) when the runner fails", async () => {

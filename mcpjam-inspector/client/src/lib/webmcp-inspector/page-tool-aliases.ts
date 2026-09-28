@@ -18,31 +18,10 @@
  */
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
 import type { WebMcpToolDescriptor } from "@/shared/webmcp-inspector-protocol";
-
-/**
- * FNV-1a, 32-bit, run twice over the preimage with different offsets to fill
- * eight hex characters.
- */
-function fnv1a(input: string, seed: number): number {
-  let hash = seed;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    // The classic FNV prime, as the shift-and-add form that stays in 32 bits.
-    hash +=
-      (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
-    hash >>>= 0;
-  }
-  return hash >>> 0;
-}
-
-function hex8(input: string): string {
-  const high = fnv1a(input, 0x811c9dc5);
-  const low = fnv1a(input, 0x01000193);
-  return (
-    high.toString(16).padStart(8, "0").slice(0, 4) +
-    low.toString(16).padStart(8, "0").slice(0, 4)
-  );
-}
+// The SAME digest the daemon and the server use for declared tools. It moved
+// there when the agent browser needed it too: three copies of one hash is
+// three chances for the client to compute a name the server never minted.
+import { declaredToolHex8 as hex8 } from "@/shared/declared-tools";
 
 /**
  * Deterministic in (sessionId, toolKey), so the same tool keeps its alias
@@ -60,9 +39,10 @@ export function pageToolAlias(
 }
 
 /**
- * Snapshot the page's tools for one chat turn.
+ * Snapshot the page's bound registrations for one chat turn.
  *
- * Descriptions and schemas pass through as the page wrote them: the server
+ * A new registration gets a new alias; an approval cannot move with a stable
+ * display key to the replacement tool. Descriptions and schemas pass through: the server
  * bounds their size, and the model is told which origin each came from so
  * page-authored text is never mistaken for MCPJam's own.
  */
@@ -74,16 +54,19 @@ export function buildPageToolSnapshot(
   const entries: PageToolSnapshotEntry[] = [];
   const used = new Set<string>();
   for (const tool of tools) {
-    let alias = pageToolAlias(sessionId, tool.toolKey);
+    if (!tool.binding) continue;
+    const identity = `${tool.toolKey}\u0000${JSON.stringify(tool.binding)}`;
+    let alias = pageToolAlias(sessionId, identity);
     // Two tools sharing an alias would silently route one call to the other,
     // so re-roll rather than trust the hash.
     for (let salt = 1; used.has(alias) && salt < 16; salt += 1) {
-      alias = pageToolAlias(sessionId, tool.toolKey, salt);
+      alias = pageToolAlias(sessionId, identity, salt);
     }
     if (used.has(alias)) continue;
     used.add(alias);
     entries.push({
       alias,
+      binding: structuredClone(tool.binding),
       sessionId,
       toolKey: tool.toolKey,
       rawName: tool.name,

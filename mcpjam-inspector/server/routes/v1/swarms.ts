@@ -54,7 +54,9 @@ type SwarmRow = {
   name: string;
   description: string | null;
   environmentIds: string[] | null;
-  config: { sessionsPerTarget?: number; maxTurns?: number } | undefined;
+  config:
+    | { sessionsPerTarget?: number; maxTurns?: number; setupWrites?: boolean }
+    | undefined;
   createdAt: number;
   updatedAt: number;
 };
@@ -65,26 +67,63 @@ function toSwarmDto(row: SwarmRow) {
     projectId: row.projectId,
     name: row.name,
     description: row.description,
-    /** Default fan-out for journeys authored under this container. */
+    /** Default fan-out for goals authored under this container. */
     environmentIds: row.environmentIds ?? [],
+    // `create_swarm`/`update_swarm` kept their names through the goal rename,
+    // so this DTO has no renamed twin to carry the new spelling. It emits
+    // both until GA: `iterations` canonically, `sessionsPerTarget` for
+    // callers written against the old one.
+    iterations: row.config?.sessionsPerTarget ?? null,
     sessionsPerTarget: row.config?.sessionsPerTarget ?? null,
     maxTurns: row.config?.maxTurns ?? null,
+    setupWrites: row.config?.setupWrites ?? false,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
 const swarmConfigFields = {
-  sessionsPerTarget: z.number().int().min(1).max(100),
+  iterations: z.number().int().min(1).max(100),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z.boolean().optional(),
 };
 
-const createSwarmSchema = z.strictObject({
-  name: z.string().trim().min(1).max(200),
-  description: z.string().max(2000).optional(),
-  environmentIds: z.array(z.string().min(1)).min(1).optional(),
-  ...swarmConfigFields,
-});
+/**
+ * `iterations` is the per-target session count; `sessionsPerTarget` is the
+ * pre-rename spelling of the same field, accepted until GA. Exactly one of
+ * them — a body carrying both is refused rather than resolved by precedence,
+ * because the number multiplies into what a launch spends.
+ */
+const ITERATIONS_EXCLUSIVE_MESSAGE =
+  "Send iterations or its deprecated sessionsPerTarget alias, not both.";
+
+function bothIterationSpellings(value: {
+  iterations?: number;
+  sessionsPerTarget?: number;
+}): boolean {
+  return (
+    value.iterations !== undefined && value.sessionsPerTarget !== undefined
+  );
+}
+
+const createSwarmSchema = z
+  .strictObject({
+    name: z.string().trim().min(1).max(200),
+    description: z.string().max(2000).optional(),
+    environmentIds: z.array(z.string().min(1)).min(1).optional(),
+    iterations: swarmConfigFields.iterations.optional(),
+    sessionsPerTarget: swarmConfigFields.iterations.optional(),
+    maxTurns: swarmConfigFields.maxTurns,
+    setupWrites: swarmConfigFields.setupWrites,
+  })
+  .refine((value) => !bothIterationSpellings(value), {
+    message: ITERATIONS_EXCLUSIVE_MESSAGE,
+  })
+  .refine(
+    (value) =>
+      value.iterations !== undefined || value.sessionsPerTarget !== undefined,
+    { message: "iterations is required." },
+  );
 
 const updateSwarmSchema = z
   .strictObject({
@@ -94,27 +133,36 @@ const updateSwarmSchema = z
     environmentIds: z
       .union([z.array(z.string().min(1)).min(1), z.null()])
       .optional(),
-    sessionsPerTarget: swarmConfigFields.sessionsPerTarget.optional(),
+    iterations: swarmConfigFields.iterations.optional(),
+    sessionsPerTarget: swarmConfigFields.iterations.optional(),
     maxTurns: swarmConfigFields.maxTurns.optional(),
+    setupWrites: swarmConfigFields.setupWrites,
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Provide at least one swarm field to update.",
   })
+  .refine((value) => !bothIterationSpellings(value), {
+    message: ITERATIONS_EXCLUSIVE_MESSAGE,
+  })
   .refine(
-    (value) =>
-      (value.sessionsPerTarget === undefined) ===
-      (value.maxTurns === undefined),
+    (value) => {
+      const iterations = value.iterations ?? value.sessionsPerTarget;
+      return (
+        (iterations === undefined) === (value.maxTurns === undefined) &&
+        (value.setupWrites === undefined || iterations !== undefined)
+      );
+    },
     {
       // One `config` object upstream; a partial update would need a
       // read-modify-write and could silently clobber a concurrent edit.
       message:
-        "sessionsPerTarget and maxTurns must be updated together — they are one execution config upstream.",
-    }
+        "iterations and maxTurns must be updated together; setupWrites requires that pair.",
+    },
   );
 
 async function parseBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -123,7 +171,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -131,7 +179,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;
@@ -147,13 +195,13 @@ async function parseBody<T>(
 export async function requireSwarmInProject(
   client: ConvexHttpClient,
   projectId: string,
-  swarmId: string
+  swarmId: string,
 ): Promise<SwarmRow> {
   let row: SwarmRow | null;
   try {
     row = (await client.query(
       "swarms:getSwarm" as never,
-      { swarmRefId: swarmId } as never
+      { swarmRefId: swarmId } as never,
     )) as SwarmRow | null;
   } catch (error) {
     throw translateReadError(error);
@@ -172,7 +220,7 @@ swarms.get("/projects/:projectId/swarms", async (c) => {
   try {
     rows = (await client.query(
       "swarms:listSwarms" as never,
-      { projectId } as never
+      { projectId } as never,
     )) as SwarmRow[] | null;
   } catch (error) {
     throw translateReadError(error);
@@ -187,8 +235,8 @@ swarms.get("/projects/:projectId/swarms/:swarmId", async (c) => {
   return v1Resource(
     c,
     toSwarmDto(
-      await requireSwarmInProject(client, projectId, c.req.param("swarmId"))
-    )
+      await requireSwarmInProject(client, projectId, c.req.param("swarmId")),
+    ),
   );
 });
 
@@ -218,12 +266,16 @@ swarms.post("/projects/:projectId/swarms", async (c) => {
         ...(body.environmentIds !== undefined
           ? { environmentIds: body.environmentIds }
           : {}),
+        // Stored under its stored name; only the public spelling moved.
         config: {
-          sessionsPerTarget: body.sessionsPerTarget,
+          sessionsPerTarget: body.iterations ?? body.sessionsPerTarget,
           maxTurns: body.maxTurns,
+          ...(body.setupWrites !== undefined
+            ? { setupWrites: body.setupWrites }
+            : {}),
         },
         ...(idempotencyKey ? { idempotencyKey } : {}),
-      } as never
+      } as never,
     )) as SwarmRow;
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Swarm" });
@@ -254,15 +306,19 @@ swarms.patch("/projects/:projectId/swarms/:swarmId", async (c) => {
         ...(body.environmentIds !== undefined
           ? { environmentIds: body.environmentIds }
           : {}),
-        ...(body.sessionsPerTarget !== undefined && body.maxTurns !== undefined
+        ...((body.iterations ?? body.sessionsPerTarget) !== undefined &&
+        body.maxTurns !== undefined
           ? {
               config: {
-                sessionsPerTarget: body.sessionsPerTarget,
+                sessionsPerTarget: body.iterations ?? body.sessionsPerTarget,
                 maxTurns: body.maxTurns,
+                ...(body.setupWrites !== undefined
+                  ? { setupWrites: body.setupWrites }
+                  : {}),
               },
             }
           : {}),
-      } as never
+      } as never,
     )) as SwarmRow;
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Swarm" });
@@ -289,7 +345,7 @@ swarms.delete("/projects/:projectId/swarms/:swarmId", async (c) => {
   try {
     await client.mutation(
       "swarms:archiveSwarm" as never,
-      { swarmRefId: swarmId } as never
+      { swarmRefId: swarmId } as never,
     );
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Swarm" });

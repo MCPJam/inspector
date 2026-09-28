@@ -1,38 +1,47 @@
+import { useMemo, type ReactNode } from "react";
+import { AlertTriangle, Clock, Info, Plus, RefreshCw, X } from "lucide-react";
 import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import {
-  SIGNALS_VERSION_WITH_THEMES,
   type SankeyStage,
   type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { type InsightsSelection } from "@/hooks/scenario-usage-filters";
-import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { FlowSankeyDiagram } from "@/components/shared/usage-insights/flow-sankey-diagram";
 import {
-  SANKEY_NODE_WIDTH,
   STAGE_ORDER,
   STAGE_TITLES,
-  layoutSankey,
   selectionForLink,
   selectionForNode,
   stageValueLabel,
-  type SankeyLayoutLink,
-  type SankeyLayoutNode,
 } from "@/components/shared/usage-insights/insights-sankey";
+import { useSankeyStageOrder } from "@/components/shared/usage-insights/sankey-stage-order";
+import {
+  analysisStatus,
+  notRunNote,
+  themesNote,
+  type AnalysisStatus,
+} from "@/components/shared/usage-insights/analysis-status";
+import {
+  AnalysisStatusPanel,
+  AnalyzeNowForMembers,
+} from "@/components/shared/usage-insights/analysis-status-panel";
 import { cn } from "@/lib/utils";
 
-interface SessionFlowSankeyProps {
+export interface SessionFlowSankeyProps {
+  questionHeaders?: Partial<Record<SankeyStage, ReactNode>>;
+  questionEditing?: boolean;
+  /** Opens the new-question dialog from the shared add-column menu. */
+  onAddQuestion?: () => void;
   breakdown: UsageBreakdown | null | undefined;
   /** Currently open selection, so its endpoints can read as selected. */
   selection: InsightsSelection | null;
@@ -41,16 +50,16 @@ interface SessionFlowSankeyProps {
   onRebuild: () => void;
   rebuildBusy: boolean;
   /**
-   * Rebuild with explicit clustering settings. Omitted callers get no tuning
-   * control at all — the header is shared with surfaces that only ever want
-   * the plain rebuild affordance.
+   * Analyze now: treat the scope's sessions as finished instead of waiting
+   * out the idle window. Offered only where the empty state's reason
+   * is one it can change (sessions still waiting, a failed pass). Omitted on
+   * scopes that cannot settle sessions by hand, which then show the reason
+   * alone.
    */
-  onApplyTuning?: (
-    tuning: ClusterTuning,
-    opts?: { force?: boolean },
-  ) => void;
+  onAnalyzeNow?: () => void;
   /** False for scopes with no topic map, where link distance means nothing. */
   showLinkThreshold?: boolean;
+  goalGroupsByJourney?: boolean;
   /**
    * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
    * can rename a column without forking the chart.
@@ -67,12 +76,30 @@ interface SessionFlowSankeyProps {
    * for scrollable surfaces like the scenario usage panel.
    */
   fillHeight?: boolean;
+  /**
+   * Opt into the leftover-pane chrome: the diagram bleeds to its already-
+   * padded owning container (no card padding, no `border-b`) and fills that
+   * parent, scrolling columns under sticky titles. This is the swarm
+   * Insights opt-in and is NOT implied by `!fillHeight` — the plain
+   * embedded callers (BenchReport, the explanatory opt-in) keep the card
+   * chrome.
+   */
+  scrollLayout?: boolean;
+  /**
+   * localStorage slot for a dragged column permutation. Omit for an
+   * ephemeral order that resets on remount (embedded / opt-in callers).
+   */
+  stageOrderKey?: string;
 }
 
 /**
  * Per-axis colour. The four columns are independent clusterings, and giving
  * each its own hue is what lets a ribbon read as "this theme flows into that
  * one" rather than as one undifferentiated mass.
+ *
+ * Question columns used to share `var(--foreground)`, so every Jev yes/no bar
+ * — and the ribbon between two of them — painted as one black slab. They sit
+ * in the same diagram-local palette as the four axes (not status tokens).
  */
 const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   goal: { node: "#7fb3a0", head: "#2f8b76" },
@@ -81,60 +108,130 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
 
-const VIEW_WIDTH = 1160;
-/** Reserved to the right of the last column for its labels. */
-const LABEL_GUTTER = 260;
-/** Band at the top of the SVG holding the column headers. */
-const HEADER_HEIGHT = 26;
+/**
+ * One hue per question column, for the same reason the four axes have one
+ * each. Sharing `--foreground` across every question painted all of them, and
+ * the ribbons between them, as a single dark slab — the paragraph above says
+ * why that reads as one mass rather than as a flow.
+ *
+ * Three entries because the backend caps a scope at three questions. They are
+ * literal hex like the four axes above: this is the diagram's own palette, not
+ * a status vocabulary, and a role token would tie a column's identity to a
+ * meaning it does not carry.
+ */
+const QUESTION_COLORS: ReadonlyArray<{ node: string; head: string }> = [
+  { node: "#d89bb0", head: "#b05a78" },
+  { node: "#d4bc7a", head: "#9a7d32" },
+  { node: "#7eb8c0", head: "#3d7a84" },
+];
 
-function contentSankeyHeight(nodeCountWidestColumn: number): number {
-  return Math.max(320, nodeCountWidestColumn * 42 + 40);
+function colorsForStages(
+  stages: readonly SankeyStage[],
+): Record<SankeyStage, { node: string; head: string }> {
+  let questionIndex = 0;
+  return {
+    ...STAGE_COLOR,
+    ...Object.fromEntries(
+      stages
+        .filter((stage) => stage.startsWith("question:"))
+        .map((stage) => [
+          stage,
+          QUESTION_COLORS[questionIndex++ % QUESTION_COLORS.length],
+        ]),
+    ),
+  };
 }
 
-/**
- * Measure a flex child that should absorb leftover viewport height. Returns
- * zero until the first layout so callers can fall back to content height.
- *
- * A callback ref, not useRef + effect: the pane div only mounts once the
- * breakdown arrives (the loading/empty branches skip it), which is after a
- * mount effect keyed on `enabled` has already run against a null ref — it
- * would observe nothing and never re-attach, leaving the diagram at its
- * content floor inside a full-height pane.
- */
-function usePaneSize(enabled: boolean) {
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  const detachRef = useRef<(() => void) | null>(null);
-
-  const ref = useCallback(
-    (element: HTMLDivElement | null) => {
-      detachRef.current?.();
-      detachRef.current = null;
-      if (!enabled || !element) return;
-
-      const update = () => {
-        const width = Math.round(element.clientWidth);
-        const height = Math.round(element.clientHeight);
-        setSize((current) =>
-          current.width === width && current.height === height
-            ? current
-            : { width, height },
-        );
-      };
-
-      update();
-      if (typeof ResizeObserver === "undefined") {
-        window.addEventListener("resize", update);
-        detachRef.current = () => window.removeEventListener("resize", update);
-        return;
-      }
-      const observer = new ResizeObserver(update);
-      observer.observe(element);
-      detachRef.current = () => observer.disconnect();
-    },
-    [enabled],
+function HideColumnButton({
+  label,
+  onHide,
+}: {
+  label: string;
+  onHide: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-no-dnd
+      aria-label={`Remove ${label} column`}
+      className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+      onClick={onHide}
+    >
+      <X className="size-3" />
+    </button>
   );
+}
 
-  return { ref, size };
+function CatalogColumnHeader({
+  title,
+  canHide,
+  onHide,
+}: {
+  title: string;
+  canHide: boolean;
+  onHide: () => void;
+}) {
+  return (
+    <div className="group flex items-center gap-1">
+      <span className="text-[10.5px] font-semibold uppercase tracking-[0.13em]">
+        {title}
+      </span>
+      {canHide ? <HideColumnButton label={title} onHide={onHide} /> : null}
+    </div>
+  );
+}
+
+function AddColumnTrailing({
+  hidden,
+  titles,
+  onRestore,
+  onAddQuestion,
+}: {
+  hidden: SankeyStage[];
+  titles: Record<SankeyStage, string>;
+  onRestore: (stage: SankeyStage) => void;
+  onAddQuestion?: () => void;
+}) {
+  if (hidden.length === 0 && !onAddQuestion) return null;
+  if (hidden.length === 0 && onAddQuestion) {
+    return (
+      <button
+        type="button"
+        data-no-dnd
+        aria-label="Add question column"
+        onClick={onAddQuestion}
+        className="flex shrink-0 text-muted-foreground hover:text-foreground"
+      >
+        <Plus className="size-4" />
+      </button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-no-dnd
+          aria-label="Add column"
+          className="flex shrink-0 text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-40">
+        {hidden.map((stage) => (
+          <DropdownMenuItem key={stage} onSelect={() => onRestore(stage)}>
+            {titles[stage]}
+          </DropdownMenuItem>
+        ))}
+        {onAddQuestion ? (
+          <DropdownMenuItem onSelect={() => onAddQuestion()}>
+            Add question
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function RebuildButton({
@@ -149,7 +246,7 @@ function RebuildButton({
   return (
     <button
       type="button"
-      onClick={onRebuild}
+      onClick={() => onRebuild()}
       disabled={busy}
       className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-muted/50 disabled:opacity-60"
     >
@@ -169,71 +266,84 @@ function RebuildButton({
  */
 export function SessionFlowSankey({
   breakdown,
+  questionHeaders,
+  questionEditing,
+  onAddQuestion,
   selection,
   onSelectNode,
   onSelectLink,
   onRebuild,
   rebuildBusy,
-  onApplyTuning,
-  showLinkThreshold,
+  onAnalyzeNow,
   stageTitles,
   headerActions,
   fillHeight = false,
+  scrollLayout = false,
+  stageOrderKey,
 }: SessionFlowSankeyProps) {
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [readout, setReadout] = useState<string | null>(null);
-  const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
-
   const sankey = breakdown?.sankey;
   const scan = breakdown?.scan;
-  const signalsVersion = breakdown?.latestRun?.signalsVersion ?? null;
+  // Canonical (catalog) order — colors stay pinned to a question's id, not
+  // whichever slot it was dragged into.
+  const rawStages = sankey?.stages?.map((stage) => stage.id) ?? STAGE_ORDER;
+  const { stages, hidden, onReorder, onHide, onRestore } = useSankeyStageOrder(
+    rawStages,
+    stageOrderKey,
+  );
+  const colors = colorsForStages(rawStages);
 
-  const contentHeight = useMemo(() => {
-    const widest = Math.max(
-      1,
-      ...STAGE_ORDER.map(
-        (stage) => sankey?.nodes.filter((n) => n.stage === stage).length ?? 0,
+  /**
+   * Hoisted above the early returns: the empty-flow branch below needs it too.
+   * Offering "Rebuild clusters" while a rebuild is already running was always
+   * wrong there, and on a self-analyzing surface it is the whole bug.
+   */
+  const analysisInFlight = breakdown?.analysis
+    ? breakdown.analysis.pending +
+        breakdown.analysis.running -
+        breakdown.analysis.deferred >
+      0
+    : false;
+  // What the first column is called on this surface, for banner copy —
+  // "journeys" on the swarm panel, "goals" on the scenario one.
+  const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
+
+  const titles = useMemo<Record<SankeyStage, string>>(
+    () => ({
+      ...STAGE_TITLES,
+      ...Object.fromEntries(
+        (sankey?.stages ?? []).map((stage) => [stage.id, stage.label]),
       ),
-    );
-    return contentSankeyHeight(widest);
-  }, [sankey]);
+      ...stageTitles,
+    }),
+    [stageTitles, sankey?.stages],
+  );
 
-  // When filling the viewport, map the chart pane's CSS box into viewBox
-  // units at VIEW_WIDTH so `meet` can occupy the full pane without
-  // letterboxing. Never shrink below the content floor — overflow instead.
-  const height = useMemo(() => {
-    if (
-      !fillHeight ||
-      chartPaneSize.width <= 0 ||
-      chartPaneSize.height <= 0
-    ) {
-      return contentHeight;
+  const headerContent = useMemo(() => {
+    const headers: Partial<Record<SankeyStage, ReactNode>> = {
+      ...questionHeaders,
+    };
+    const canHide = stages.length > 1;
+    for (const stage of stages) {
+      if (headers[stage] || stage.startsWith("question:")) continue;
+      headers[stage] = (
+        <CatalogColumnHeader
+          title={titles[stage]}
+          canHide={canHide}
+          onHide={() => onHide(stage)}
+        />
+      );
     }
-    const available = Math.round(
-      (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH -
-        HEADER_HEIGHT,
-    );
-    return Math.max(contentHeight, available);
-  }, [fillHeight, chartPaneSize.height, chartPaneSize.width, contentHeight]);
+    return headers;
+  }, [onHide, questionHeaders, stages, titles]);
 
-  const layout = useMemo(() => {
-    if (!sankey || sankey.nodes.length === 0) return null;
-    const usable = VIEW_WIDTH - LABEL_GUTTER;
-    const columnX = STAGE_ORDER.map(
-      (_, index) => 40 + (index * (usable - SANKEY_NODE_WIDTH)) / 3,
-    );
-    return layoutSankey(sankey, VIEW_WIDTH, height, columnX);
-  }, [sankey, height]);
-
-  const latestRun = breakdown?.latestRun ?? null;
-  const chartNeedsScroll =
-    fillHeight &&
-    chartPaneSize.height > 0 &&
-    height + HEADER_HEIGHT >
-      (chartPaneSize.width > 0
-        ? (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH
-        : 0) +
-        1;
+  const headerTrailing = (
+    <AddColumnTrailing
+      hidden={hidden}
+      titles={titles}
+      onRestore={onRestore}
+      onAddQuestion={onAddQuestion}
+    />
+  );
 
   /**
    * The tuning control, rendered in EVERY state including the two that return
@@ -244,125 +354,109 @@ export function SessionFlowSankey({
    * flow to look at" hides them precisely when they are most useful. It seeds
    * from the defaults when there is no run to read.
    */
-  const tuningControl = onApplyTuning ? (
-    <ClusterTuningControl
-      value={latestRun?.tuning}
-      onApply={onApplyTuning}
-      busy={rebuildBusy}
-      showLinkThreshold={showLinkThreshold}
-      sessionCount={latestRun?.sessionCount}
-    />
-  ) : null;
-
   if (!breakdown) {
     return (
       <div
         className={cn(
           "flex items-center justify-between gap-3 text-xs text-muted-foreground",
-          fillHeight ? "h-full px-0 py-6" : "px-5 py-10",
+          fillHeight
+            ? "h-full px-0 py-6"
+            : scrollLayout
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         <span className="flex-1 text-center">Loading session flow…</span>
-        <div className="flex items-center gap-2">
-          {headerActions}
-          {tuningControl}
-        </div>
+        <div className="flex items-center gap-2">{headerActions}</div>
       </div>
     );
   }
 
-  if (!sankey || sankey.nodes.length === 0 || !layout) {
+  // Placeholders ("Analyzing", "Other / unclassified", "Sign in to analyze")
+  // are not a flow: four such bars said nothing the reason could not say
+  // better (prod, 2026-09-22). A surface that reports its analysis gets the
+  // reason instead; one that waits to be asked keeps its diagram and banner.
+  const hasContent =
+    sankey?.nodes.some((node) => !node.key.startsWith("__")) ?? false;
+  if (
+    !sankey ||
+    sankey.nodes.length === 0 ||
+    (breakdown.analysis && !hasContent)
+  ) {
+    const status: AnalysisStatus = analysisStatus(
+      breakdown.analysis,
+      Date.now(),
+    ) ?? {
+      kind: analysisInFlight ? "analyzing" : "empty",
+      title: analysisInFlight ? "Analyzing sessions…" : "No session flow yet",
+      body: analysisInFlight
+        ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment.`
+        : "Sessions appear here as analysis completes.",
+    };
     return (
       <div
         className={cn(
-          "flex flex-col items-center gap-2 text-center",
-          fillHeight ? "h-full justify-center px-0 py-6" : "px-5 py-10",
+          "flex flex-col items-center gap-3",
+          fillHeight
+            ? "h-full justify-center px-0 py-6"
+            : scrollLayout
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
-        <Target className="h-6 w-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No session flow yet</p>
-        <p className="max-w-md text-xs text-muted-foreground">
-          {signalsVersion === null
-            ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-            : "Rebuild clusters once there are enough sessions to cluster."}
-        </p>
-        <div className="flex items-center gap-2">
-          {headerActions}
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Rebuild clusters"
-          />
-          {tuningControl}
-        </div>
+        <AnalysisStatusPanel
+          status={status}
+          onAnalyzeNow={onAnalyzeNow}
+          busy={rebuildBusy}
+          testId="session-flow-status"
+        />
+        {/* The one voluntary action is Analyze now, and only where the reason
+            is one it can change. Re-analysis is otherwise automatic (#5277). */}
+        {headerActions ? (
+          <div className="flex items-center gap-2">{headerActions}</div>
+        ) : null}
       </div>
     );
   }
 
-  const needsThemeRebuild =
-    signalsVersion !== null && signalsVersion < SIGNALS_VERSION_WITH_THEMES;
-  const analysisInFlight =
-    latestRun?.status === "queued" || latestRun?.status === "running";
-  // What the first column is called on this surface, for banner copy —
-  // "journeys" on the swarm panel, "goals" on the scenario one.
-  const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
-  const foldedTotal = STAGE_ORDER.reduce(
-    (sum, stage) => sum + (sankey.foldedByStage?.[stage] ?? 0),
-    0,
-  );
-  const selectedKeys = new Set(
-    (selection?.themes ?? []).map(
+  // Drawn, but not finished: say what is still coming, in one line. The
+  // provisional state is the common one for the first half hour of a study:
+  // goal, behavior and sentiment are in, and the outcome column waits.
+  const liveStatus = analysisStatus(breakdown.analysis, Date.now());
+  const liveBanner =
+    liveStatus &&
+    (liveStatus.kind === "analyzing" ||
+      liveStatus.kind === "waiting" ||
+      liveStatus.kind === "deferred" ||
+      liveStatus.kind === "provisional")
+      ? liveStatus
+      : null;
+  const note = themesNote(breakdown.analysis);
+  const notRunLine = notRunNote(breakdown.analysis);
+
+  const selectedKeys = new Set([
+    ...(selection?.themes ?? []).map(
       (theme) => `${theme.dimension}:${theme.clusterId}`,
     ),
-  );
+    ...(selection?.questions ?? []).map(
+      (q) => `question:${q.questionId}:${q.value ? "yes" : "no"}`,
+    ),
+  ]);
 
   return (
     <div
       className={cn(
         "flex flex-col gap-2",
-        fillHeight
-          ? "h-full min-h-0 overflow-hidden px-0 py-1"
-          : "border-b px-5 py-4",
+        fillHeight || scrollLayout
+          ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden px-0 py-1"
+          : // Embedded in a document/opt-in card (BenchReport, the
+            // explanatory opt-in): keep the padded, divided card chrome.
+            "border-b px-5 py-4",
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
+      data-fill-remaining={scrollLayout ? "true" : undefined}
     >
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium">Session flow</h3>
-          <Tooltip delayDuration={200}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="About the session flow"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Info className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-xs">
-              Each column is clustered on its own, so a session&rsquo;s behavior
-              theme says nothing about which outcome theme it lands in &mdash;
-              that is what the ribbons show. Names are generated from the
-              sessions in each group rather than chosen from a fixed list, so
-              they change as the sessions do.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        {foldedTotal > 0 || headerActions || tuningControl ? (
-          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-            {foldedTotal > 0 ? (
-              <span>
-                {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
-                folded
-              </span>
-            ) : null}
-            {headerActions}
-            {tuningControl}
-          </div>
-        ) : null}
-      </div>
-
       {scan?.truncated ? (
         <div
           role="status"
@@ -378,22 +472,31 @@ export function SessionFlowSankey({
         </div>
       ) : null}
 
-      {/* One analysis banner at a time, most-live state first: a rebuild in
-          flight beats advertising the button that starts one, and
-          never-analyzed beats the old-signals nudge (which requires a run to
-          exist at all). */}
-      {analysisInFlight ? (
+      {/* One analysis banner at a time, most-live state first: work in
+          flight (or waiting on its door, or held by the daily limit) beats
+          advertising the button that starts one. The never-analyzed branch
+          only serves surfaces that report no analysis and wait to be asked. */}
+      {liveBanner ? (
         <div
           role="status"
           className="flex shrink-0 items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
-          <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
-          <span>
-            Analyzing sessions &mdash; grouping {goalNoun}s, behaviors,
-            outcomes, and sentiment. This can take a few minutes.
+          {liveBanner.kind === "analyzing" ? (
+            <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="font-medium text-foreground">
+              {liveBanner.title}
+            </span>{" "}
+            {liveBanner.body}
           </span>
+          {liveBanner.action === "analyze_now" && onAnalyzeNow ? (
+            <AnalyzeNowForMembers onAnalyzeNow={onAnalyzeNow} busy={rebuildBusy} />
+          ) : null}
         </div>
-      ) : latestRun === null ? (
+      ) : !breakdown?.analysis ? (
         <div
           role="status"
           className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
@@ -409,293 +512,93 @@ export function SessionFlowSankey({
             label="Analyze sessions"
           />
         </div>
-      ) : needsThemeRebuild ? (
-        <div
-          role="status"
-          className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
-        >
-          <span>
-            These sessions were analyzed before every column was clustered, so
-            only the goal column has themes.
-          </span>
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Rebuild for themes"
-          />
-        </div>
       ) : null}
 
-      <div
-        ref={chartPaneRef}
-        className={cn(
-          "w-full min-w-0",
-          fillHeight && "min-h-0 flex-1",
-          chartNeedsScroll ? "overflow-auto" : "overflow-hidden",
-        )}
-      >
-        <svg
-          viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
-          // Scale to the panel width; viewBox keeps column/header coordinates
-          // aligned. No fixed max-width — the chart should always use the full
-          // horizontal space, at any viewport.
-          // `group`, not `img`: an image is a leaf, so `img` would hide every
-          // node and ribbon button inside it from assistive tech — undoing the
-          // point of making them focusable in the first place.
-          role="group"
-          aria-label="Session flow from goal through behavior and outcome to sentiment"
-          preserveAspectRatio="xMidYMin meet"
-          className={cn(
-            "block w-full",
-            fillHeight && !chartNeedsScroll
-              ? "h-full"
-              : "mt-1 h-auto",
-          )}
-        >
-          {/*
-            Headers live INSIDE the diagram, at the same x as the columns they
-            name. As CSS they were a four-cell grid across the panel while the
-            chart was a fixed-width box, so on a wide panel the last header sat
-            hundreds of pixels from its own column. Sharing one coordinate space
-            is the only way they cannot drift apart.
-          */}
-          <g>
-            {STAGE_ORDER.map((stage, index) => (
-              <text
-                key={stage}
-                x={layout.columnX[index]}
-                y={14}
-                fill={STAGE_COLOR[stage].head}
-                className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
-              >
-                {stageTitles?.[stage] ?? STAGE_TITLES[stage]}
-              </text>
-            ))}
-          </g>
-
-          <defs>
-            {layout.links.map((link) => (
-              <linearGradient
-                key={gradientId(link)}
-                id={gradientId(link)}
-                x1="0"
-                x2="1"
-                y1="0"
-                y2="0"
-              >
-                <stop
-                  offset="0%"
-                  stopColor={
-                    link.discordant
-                      ? "var(--warning)"
-                      : STAGE_COLOR[link.source.stage].node
-                  }
-                />
-                <stop
-                  offset="100%"
-                  stopColor={
-                    link.discordant
-                      ? "var(--warning)"
-                      : STAGE_COLOR[link.target.stage].node
-                  }
-                />
-              </linearGradient>
-            ))}
-          </defs>
-
-          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
-            {layout.links.map((link) => {
-              const id = `${link.source.id}→${link.target.id}`;
-              const next = selectionForLink(link.source, link.target);
-              const base = link.discordant ? 0.44 : 0.26;
-              const label = `${stageValueLabel(
-                link.source,
-              )} to ${stageValueLabel(link.target)}, ${link.count} sessions${
-                link.discordant ? ", outcome and sentiment disagree" : ""
-              }`;
-              const describe = () => {
-                setHovered(id);
-                setReadout(
-                  `${stageValueLabel(link.source)} → ${stageValueLabel(
-                    link.target,
-                  )} · ${link.count.toLocaleString()} sessions${
-                    link.discordant ? " · outcome and sentiment disagree" : ""
-                  }`,
-                );
-              };
-              return (
-                <FlowTarget
-                  key={id}
-                  label={label}
-                  selectable={!!next}
-                  onEnter={describe}
-                  onLeave={() => {
-                    setHovered(null);
-                    setReadout(null);
-                  }}
-                  onActivate={() => next && onSelectLink(next)}
-                  focusClass="[&:focus-visible>path]:stroke-foreground [&:focus-visible>path]:stroke-2"
+      <FlowSankeyDiagram
+        sankey={sankey}
+        stages={stages}
+        stageTitles={titles}
+        stageColors={colors}
+        toolbar={
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium">Session flow</h3>
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="About the session flow"
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p>Each column clusters on its own.</p>
+                  <p>Ribbons connect neighboring columns.</p>
+                </TooltipContent>
+              </Tooltip>
+              {note ? (
+                <span
+                  className="text-[11px] text-muted-foreground"
+                  data-testid="session-flow-themes-note"
                 >
-                  <path
-                    d={link.path}
-                    fill={`url(#${gradientId(link)})`}
-                    fillOpacity={
-                      hovered === id ? Math.min(base + 0.32, 0.82) : base
-                    }
-                  />
-                </FlowTarget>
-              );
-            })}
-          </g>
-
-          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
-            {layout.nodes.map((node) => {
-              const next = selectionForNode(node);
-              const emphasized = selectedKeys.has(`${node.stage}:${node.key}`);
-              return (
-                <FlowTarget
-                  key={node.id}
-                  label={`${stageValueLabel(node)}, ${node.count} sessions, ${
-                    node.share
-                  } percent of ${node.stage}${next ? "" : ", not selectable"}`}
-                  selectable={!!next}
-                  onEnter={() =>
-                    setReadout(
-                      `${stageValueLabel(
-                        node,
-                      )} · ${node.count.toLocaleString()} sessions · ${
-                        node.share
-                      }% of ${node.stage}`,
-                    )
-                  }
-                  onLeave={() => setReadout(null)}
-                  onActivate={() => next && onSelectNode(next)}
-                  focusClass="[&:focus-visible>rect]:stroke-foreground [&:focus-visible>rect]:stroke-2"
+                  {note}
+                </span>
+              ) : null}
+              {notRunLine ? (
+                <span
+                  className="text-[11px] text-muted-foreground"
+                  data-testid="session-flow-not-run-note"
                 >
-                  <FlowNodeShape
-                    node={node}
-                    color={STAGE_COLOR[node.stage]}
-                    emphasized={emphasized}
-                    selectable={!!next}
-                  />
-                </FlowTarget>
-              );
-            })}
-          </g>
-        </svg>
-      </div>
-
-      <div aria-live="polite" className="sr-only">
-        {readout}
-      </div>
-    </div>
-  );
-}
-
-function gradientId(link: SankeyLayoutLink): string {
-  return `flow-${link.source.id}-${link.target.id}`.replace(
-    /[^a-zA-Z0-9_-]/g,
-    "_",
-  );
-}
-
-/**
- * The interactive wrapper every node and ribbon shares.
- *
- * SVG shapes are not controls on their own: without an explicit role, tabindex
- * and key handling, the whole diagram is reachable by mouse only. Anything
- * clickable here is therefore focusable and answers Enter and Space; anything
- * that is not selectable is skipped by the tab order rather than being a focus
- * stop that does nothing.
- */
-function FlowTarget({
-  label,
-  selectable,
-  onEnter,
-  onLeave,
-  onActivate,
-  focusClass,
-  children,
-}: {
-  label: string;
-  selectable: boolean;
-  onEnter: () => void;
-  onLeave: () => void;
-  onActivate: () => void;
-  focusClass: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <g
-      role={selectable ? "button" : "img"}
-      tabIndex={selectable ? 0 : -1}
-      aria-label={label}
-      className={`focus:outline-none ${focusClass}`}
-      style={{ cursor: selectable ? "pointer" : "default" }}
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      onFocus={onEnter}
-      onBlur={onLeave}
-      onClick={() => selectable && onActivate()}
-      onKeyDown={(event) => {
-        if (!selectable) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onActivate();
+                  {notRunLine}
+                </span>
+              ) : null}
+            </div>
+            {headerActions ? (
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                {headerActions}
+              </div>
+            ) : null}
+          </div>
         }
-      }}
-    >
-      {children}
-    </g>
-  );
-}
-
-function FlowNodeShape({
-  node,
-  color,
-  emphasized,
-  selectable,
-}: {
-  node: SankeyLayoutNode;
-  color: { node: string; head: string };
-  emphasized: boolean;
-  selectable: boolean;
-}) {
-  // Every column labels to the right of its bar, the last one included: the
-  // gutter is reserved for it. Flipping the last column inward put its text on
-  // top of the ribbons arriving at it, which read as a rendering fault.
-  const labelX = node.x + SANKEY_NODE_WIDTH + 10;
-  const anchor = "start";
-
-  return (
-    <>
-      <rect
-        x={node.x}
-        y={node.y}
-        width={SANKEY_NODE_WIDTH}
-        height={node.height}
-        rx={3}
-        fill={emphasized ? color.head : color.node}
-        fillOpacity={selectable ? 1 : 0.45}
+        headerContent={headerContent}
+        headerTrailing={headerTrailing}
+        headerHeight={38}
+        onReorderStages={onReorder}
+        reorderDisabled={questionEditing}
+        unitNoun="sessions"
+        discordantHighlight
+        selectedKeys={selectedKeys}
+        labelForNode={(node) => stageValueLabel(node, analysisInFlight)}
+        onSelectNode={(node) => {
+          const next = selectionForNode(node);
+          if (next?.questions)
+            next.questions = next.questions.map((q) => ({
+              ...q,
+              label: `${titles[node.stage]}: ${q.value ? "Yes" : "No"}`,
+            }));
+          if (next) onSelectNode(next);
+        }}
+        onSelectLink={(source, target) => {
+          const next = selectionForLink(source, target);
+          if (next?.questions)
+            next.questions = next.questions.map((q) => ({
+              ...q,
+              label: `${titles[`question:${q.questionId}`]}: ${
+                q.value ? "Yes" : "No"
+              }`,
+            }));
+          if (next) onSelectLink(next);
+        }}
+        isSelectable={(node) => selectionForNode(node) !== null}
+        isLinkSelectable={(source, target) =>
+          selectionForLink(source, target) !== null
+        }
+        ariaLabel="Session flow from goal through behavior and outcome to sentiment"
+        fillHeight={fillHeight}
+        fillRemainingViewport={scrollLayout}
       />
-      <text
-        x={labelX}
-        y={node.y + 12}
-        textAnchor={anchor}
-        className="pointer-events-none fill-foreground text-[12px] font-medium"
-      >
-        {stageValueLabel(node)}
-      </text>
-      {node.height >= 26 ? (
-        <text
-          x={labelX}
-          y={node.y + 27}
-          textAnchor={anchor}
-          className="pointer-events-none fill-muted-foreground text-[10.5px] tabular-nums"
-        >
-          {node.count.toLocaleString()} · {node.share}%
-        </text>
-      ) : null}
-    </>
+    </div>
   );
 }

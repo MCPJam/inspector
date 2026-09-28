@@ -102,6 +102,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => {
       callOrder.push(`attempt:${(args[2] as any).status}`);
       return reportAttemptMock(...args);
@@ -116,6 +117,14 @@ vi.mock("../../swarm-agent.js", async () => {
 import { startJourneyRun } from "../swarm-runner.js";
 
 const TURN_TRACE = {
+  requestPayloads: [
+    {
+      turnId: "trace-turn",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: { system: "swarm system", tools: {}, messages: [] },
+    },
+  ],
   turnId: "turn-1",
   promptIndex: 0,
   startedAt: 0,
@@ -229,6 +238,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
@@ -342,4 +352,27 @@ describe("swarm runner — real core integration", () => {
       harnessSessionId: "hs-1",
     });
   });
+});
+
+it("waits for a transient persona refusal and completes the same session", async () => {
+  vi.useFakeTimers();
+  swarmPersonaNextTurnMock
+    .mockReset()
+    .mockRejectedValueOnce(
+      new Error(
+        'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","retryAfter":15000,"error":"MCPJam model limit reached for the moment."}',
+      ),
+    )
+    .mockResolvedValueOnce({ message: "hello", endSession: false })
+    .mockResolvedValue({ message: "", endSession: true });
+  const run = startJourneyRun(baseOpts());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(15000);
+  await run;
+  expect(
+    reportAttemptMock.mock.calls.some((c) => c[2].status === "succeeded"),
+  ).toBe(true);
+  expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(3);
+  expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
 });

@@ -97,6 +97,51 @@ async function assertModelOverridesSupported(
 }
 
 /**
+ * Refuse a GRANT-bearing write against a deployment that cannot accept one.
+ *
+ * The twin of {@link assertModelOverridesSupported}, for the same reason and
+ * with the same shape: `secretSelection` is a field a deployment may never
+ * have heard of, and an unknown argument surfaces there as an opaque
+ * "unexpected argument" from a validator rather than as anything a user can
+ * act on. Ask first, and fail with a sentence that names the cause.
+ *
+ * ONLY when a grant was actually supplied — no preflight round-trip is spent
+ * by the calls that send none.
+ *
+ * A preflight that itself fails stays an operational error, not a "no": the
+ * capability route already answers `false` for a backend too old to publish
+ * the flag, so collapsing an auth or network failure into "unsupported" would
+ * hide the real problem behind an upgrade notice.
+ */
+async function assertSecretGrantsSupported(
+  options: PlatformOptions,
+  timeoutMs: number,
+  args: { supplied: boolean; project?: string }
+): Promise<void> {
+  if (!args.supplied) return;
+  const result = await runPlatformCommand(
+    options,
+    timeoutMs,
+    ({ client, signal }) =>
+      getEnvironmentCapabilitiesOperation.execute(
+        { project: args.project },
+        { client, signal }
+      ),
+    { announce: false }
+  );
+  if (result.capabilities.secretGrants !== true) {
+    throw usageError(
+      'This MCPJam deployment does not support environment secret grants. Upgrade the platform, or omit --secret / "secretSelection".'
+    );
+  }
+}
+
+/** Whether this call is trying to set (or clear) a credential grant. */
+function suppliesSecretSelection(body: Record<string, unknown>): boolean {
+  return "secretSelection" in body;
+}
+
+/**
  * The project the command will actually write to, in the SAME precedence the
  * write itself uses: `--project`, then the JSON body's `project`, then
  * `MCPJAM_PROJECT`, a project link, then automatic selection.
@@ -285,7 +330,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       )
       .option(
         "--file <path>",
-        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
+        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/secretSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
       .option("--json <json>", "Inline environment JSON (or @file, or -)").action(
     async (
@@ -316,6 +361,16 @@ export function registerEnvironmentsCommands(program: Command): void {
         globalOptions.timeout,
         {
         supplied: options.model !== undefined || "modelId" in body,
+        ...project,
+      });
+      // Same preflight, different field: a grant sent to a deployment that
+      // predates `secretSelection` dies in a validator with a message naming
+      // nothing.
+      await assertSecretGrantsSupported(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        {
+        supplied: suppliesSecretSelection(body),
         ...project,
       });
       const input = validateInput(createEnvironmentOperation, {
@@ -367,6 +422,10 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--secret <id...>",
+        "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
       ).action(
     async (
       options: PlatformOptions & {
@@ -376,11 +435,21 @@ export function registerEnvironmentsCommands(program: Command): void {
         model?: string;
         computer?: string;
         skill?: string[];
+        secret?: string[];
       },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const resolved = resolveEnvironmentProject(options);
+      // A composed stack materializes through the same environment surface, so
+      // a grant on one is the same unknown field to an old deployment.
+      await assertSecretGrantsSupported(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        {
+        supplied: (options.secret?.length ?? 0) > 0,
+        ...projectFields(resolved),
+      });
       const input = validateInput(ensureAdhocEnvironmentOperation, {
         ...projectFields(resolved),
         host: options.host,
@@ -393,6 +462,9 @@ export function registerEnvironmentsCommands(program: Command): void {
           : {}),
         ...(options.skill?.length
           ? { skills: { mode: "explicit", skillIds: options.skill } }
+          : {}),
+        ...(options.secret?.length
+          ? { secrets: { mode: "explicit", secretIds: options.secret } }
           : {}),
       });
       const result = await runPlatformCommand(
@@ -457,7 +529,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       environments
       .command("update")
       .description(
-        "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, pluginVersionIds, or sandboxImageId"
+        "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
       .requiredOption(
@@ -521,6 +593,16 @@ export function registerEnvironmentsCommands(program: Command): void {
           options.model !== undefined ||
           options.clearModel === true ||
           "modelId" in body,
+        ...project,
+      });
+      // `secretSelection: null` is a REVOKE, which the same old deployment
+      // cannot accept either — so the probe keys on the field being present,
+      // not on it being truthy.
+      await assertSecretGrantsSupported(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        {
+        supplied: suppliesSecretSelection(body),
         ...project,
       });
       const input = validateInput(updateEnvironmentOperation, {

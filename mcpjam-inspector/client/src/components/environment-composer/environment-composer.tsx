@@ -21,8 +21,10 @@
  * need a Convex provider.
  */
 import { useCallback, useMemo, type ReactNode } from "react";
+import { useConvexAuth } from "convex/react";
+import { toast } from "@/lib/toast";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
@@ -40,6 +42,8 @@ import {
   type EnvironmentStack,
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
+import { useHostList } from "@/hooks/useClients";
+import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -69,6 +73,11 @@ export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
   "models",
 ];
 
+export const SWARM_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
+
 export function EnvironmentComposer({
   projectId,
   environments,
@@ -82,8 +91,11 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
-  emptyServerLabel = "Server group · client default",
-  serverInfoText = "Optional shared server group for every client in this setup.",
+  emptyServerLabel = "Servers · client default",
+  serverOptional = true,
+  environmentsVocabulary = "environment",
+  showTargetCount = true,
+  lockedSlots,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -95,20 +107,43 @@ export function EnvironmentComposer({
   disabled?: boolean;
   /**
    * Which pills to offer. `models` stays out of the default and is opted
-   * into by evals. Swarm / User Testing omit it so a model-bearing env
-   * cannot silently shed its override.
+   * into by Evals and Swarms. Surfaces without it lock model-bearing stacks
+   * so they cannot silently shed their override.
    */
   slots?: readonly ComposerSlot[];
-  /** Secondary text on the Client-defaults row (previewed host's model). */
-  clientDefaultLabel?: string | null;
   /**
-   * Empty-state label and info tooltip for the servers pill. The defaults are
-   * the strip's own wording, where the group is genuinely optional; a surface
-   * that makes it REQUIRED (evals create) must say so itself rather than
-   * offering "client default" for a choice it will then block on.
+   * Inherited model id (or display name) for the Client-defaults row. When
+   * omitted, the strip derives it from the selected clients: one shared
+   * modelId becomes the pill label; mixed or missing models stay generic.
    */
+  clientDefaultLabel?: string | null;
+  /** Empty-state label for the servers pill; a surface that REQUIRES one must say so. */
   emptyServerLabel?: string;
-  serverInfoText?: string;
+  /** `false` where submit gates on a server: the clear would only empty a field the form refuses. */
+  serverOptional?: boolean;
+  /**
+   * Slots this surface refuses to let anyone change, each with the reason.
+   *
+   * Distinct from `disabled`, which is the strip being busy or unavailable —
+   * this is a standing rule about one control, and the reason is the whole
+   * point. A locked pill stays visible and stays reachable: pressing it says
+   * why rather than doing nothing, which is what a plain greyed-out control
+   * offers someone who does not already know the rule.
+   *
+   * `environments` is lockable for a reason found in review: picking a saved
+   * environment RE-SEEDS the client and the server group (see
+   * `handleEnvironmentsChange`), so a surface that locks those two and leaves
+   * this one open has not locked anything — the same change is one pill to the
+   * left.
+   */
+  lockedSlots?: Partial<Record<"clients" | "servers" | "environments", string>>;
+  /**
+   * Evaluate calls the saved-target picker Clients. Other surfaces keep
+   * Environments so Swarms and the Environments page stay unchanged.
+   */
+  environmentsVocabulary?: "environment" | "client";
+  /** A caller rendering its own execution plan can hide the inline count. */
+  showTargetCount?: boolean;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -119,7 +154,7 @@ export function EnvironmentComposer({
    * Dialog. A portalled popover lands outside the dialog, where the modal
    * overlay's `pointer-events: none` swallows every click — so without this a
    * dialog's environment picker looks present and cannot be used. Same escape
-   * hatch, same name, as `EnvironmentPicker` and `ServerGroupPicker`.
+   * hatch, same name, as `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
   /** Forwarded into the environment picker's popover footer. */
@@ -129,11 +164,26 @@ export function EnvironmentComposer({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
   const modelMatrix = useModelMatrixCapability(
-    modelsOptedIn ? projectId : null
+    modelsOptedIn ? projectId : null,
   );
   const modelsEnabled = modelsOptedIn && modelMatrix === true;
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId: modelsEnabled ? projectId : null,
+  });
+  // The harness each selected client runs, so the models slot can disable the
+  // models none of them can run (with the reason) instead of offering a pair
+  // the run admission will refuse.
+  const harnessByHost = useHostHarnessTargets(
+    modelsEnabled ? value.stack.hostIds : [],
+  );
+  const harnessTargets = useMemo(
+    () => value.stack.hostIds.map((hostId) => harnessByHost[hostId]),
+    [harnessByHost, value.stack.hostIds],
+  );
   // `slots` NARROWS, never widens: a slot must be both asked for by the caller
   // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
   // every existing surface renders exactly the strip it rendered before.
@@ -146,7 +196,7 @@ export function EnvironmentComposer({
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
-    [environments]
+    [environments],
   );
   /**
    * The selection cannot be round-tripped through a stack, so slot edits are
@@ -187,9 +237,60 @@ export function EnvironmentComposer({
     value.environmentIds,
   ]);
   const slotsDisabled = disabled || stackEditBlock !== null;
+
+  /**
+   * A locked pill, wrapped so the refusal is audible.
+   *
+   * The child is genuinely `disabled`, so it dispatches no click of its own —
+   * `pointer-events-none` hands the press to this wrapper instead, which is
+   * the only way to answer a click on a control that must not act.
+   *
+   * NOT a `<button>`: every pill's own trigger already is one, and a button
+   * inside a button is invalid HTML (React says so, loudly) and two nested
+   * interactive roles for a screen reader to reconcile. A span carrying the
+   * role reaches the same place — pressed by mouse, reached by Tab, answered
+   * on Enter and Space — with one interactive element in the tree.
+   */
+  const renderLocked = (reason: string, pill: ReactNode) => (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-disabled
+      className="inline-flex cursor-not-allowed rounded-lg [&>*]:pointer-events-none"
+      onClick={() => toast.error(reason)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        // Space scrolls the page otherwise, which is the opposite of an answer.
+        event.preventDefault();
+        toast.error(reason);
+      }}
+      title={reason}
+    >
+      {pill}
+    </span>
+  );
+  const withLock = (
+    slot: "clients" | "servers" | "environments",
+    pill: ReactNode,
+  ) => {
+    const reason = lockedSlots?.[slot];
+    return reason ? renderLocked(reason, pill) : pill;
+  };
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
   const choiceCount = modelChoiceCount(value.stack.modelSelection);
+  const inheritedClientDefaultLabel = useMemo(() => {
+    if (clientDefaultLabel) return clientDefaultLabel;
+    const selected = new Set(value.stack.hostIds);
+    const modelIds = [
+      ...new Set(
+        hosts
+          .filter((host) => selected.has(host.hostId) && host.modelId)
+          .map((host) => host.modelId),
+      ),
+    ];
+    return modelIds.length === 1 ? modelIds[0] : null;
+  }, [clientDefaultLabel, hosts, value.stack.hostIds]);
   const budget: TargetBudgetContext = {
     hostCount: value.stack.hostIds.length,
     choiceCount,
@@ -205,7 +306,7 @@ export function EnvironmentComposer({
         stack: { ...value.stack, ...patch },
       });
     },
-    [onChange, value]
+    [onChange, value],
   );
 
   const handleEnvironmentsChange = useCallback(
@@ -274,15 +375,15 @@ export function EnvironmentComposer({
       const keptHosts = new Set(remaining.map((e) => e.hostId));
       const removedHosts = new Set(
         resolve(value.environmentIds.filter((id) => !ids.includes(id))).map(
-          (e) => e.hostId
-        )
+          (e) => e.hostId,
+        ),
       );
       onChange({
         environmentIds: ids,
         stack: {
           ...value.stack,
           hostIds: value.stack.hostIds.filter(
-            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId)
+            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId),
           ),
         },
         customized: true,
@@ -298,7 +399,7 @@ export function EnvironmentComposer({
       value.environmentIds,
       value.customized,
       value.stack,
-    ]
+    ],
   );
 
   return (
@@ -307,45 +408,71 @@ export function EnvironmentComposer({
         className="flex min-w-0 flex-wrap items-center gap-2"
         data-testid={testId("lego-strip")}
       >
-        {showEnvironmentsSlot ? (
-          <EnvironmentPicker
-            projectId={projectId}
-            value={
-              maxTargets === 1
-                ? (value.environmentIds[0] ?? null)
-                : value.environmentIds
-            }
-            onChange={(next: string | string[] | null) =>
-              handleEnvironmentsChange(
-                Array.isArray(next) ? next : next ? [next] : []
-              )
-            }
-            multi={maxTargets > 1}
-            max={maxTargets}
-            disabled={disabled}
-            emptyLabel={
-              maxTargets === 1
-                ? "Select an environment"
-                : "No environments · pick some"
-            }
-            triggerTestId={testId("environments-picker")}
-            triggerAriaLabel="Environments"
-            inModal={inModal}
-            footerSlot={environmentPickerFooter}
-          />
-        ) : null}
-        {showClientsSlot ? (
-          <ClientsPill
-            projectId={projectId}
-            value={value.stack.hostIds}
-            onChange={(hostIds) => patchStack({ hostIds })}
-            max={maxTargets}
-            disabled={slotsDisabled}
-            testId={testId("clients-picker")}
-            inModal={inModal}
-            budget={budget}
-          />
-        ) : null}
+        {showEnvironmentsSlot
+          ? withLock(
+              "environments",
+              <EnvironmentPicker
+                projectId={projectId}
+                value={
+                  maxTargets === 1
+                    ? value.environmentIds[0] ?? null
+                    : value.environmentIds
+                }
+                onChange={(next: string | string[] | null) =>
+                  handleEnvironmentsChange(
+                    Array.isArray(next) ? next : next ? [next] : [],
+                  )
+                }
+                multi={maxTargets > 1}
+                max={maxTargets}
+                disabled={disabled || Boolean(lockedSlots?.environments)}
+                emptyLabel={
+                  environmentsVocabulary === "client"
+                    ? maxTargets === 1
+                      ? "Select a client"
+                      : "No clients · pick some"
+                    : maxTargets === 1
+                    ? "Select an environment"
+                    : "No environments · pick some"
+                }
+                headingLabel={
+                  environmentsVocabulary === "client"
+                    ? maxTargets > 1
+                      ? "Clients · run order"
+                      : "Clients"
+                    : undefined
+                }
+                emptyProjectLabel={
+                  environmentsVocabulary === "client"
+                    ? "No clients in this project yet."
+                    : undefined
+                }
+                triggerTestId={testId("environments-picker")}
+                triggerAriaLabel={
+                  environmentsVocabulary === "client"
+                    ? "Clients"
+                    : "Environments"
+                }
+                inModal={inModal}
+                footerSlot={environmentPickerFooter}
+              />,
+            )
+          : null}
+        {showClientsSlot
+          ? withLock(
+              "clients",
+              <ClientsPill
+                projectId={projectId}
+                value={value.stack.hostIds}
+                onChange={(hostIds) => patchStack({ hostIds })}
+                max={maxTargets}
+                disabled={slotsDisabled || Boolean(lockedSlots?.clients)}
+                testId={testId("clients-picker")}
+                inModal={inModal}
+                budget={budget}
+              />,
+            )
+          : null}
         {modelsEnabled ? (
           <ModelsPill
             projectId={projectId}
@@ -362,22 +489,30 @@ export function EnvironmentComposer({
             testId={testId("models-picker")}
             inModal={inModal}
             budget={budget}
-            clientDefaultLabel={clientDefaultLabel}
+            clientDefaultLabel={inheritedClientDefaultLabel}
+            harnessTargets={harnessTargets}
           />
         ) : null}
-        {showServersSlot ? (
-          <ServerGroupPicker
-            projectId={projectId}
-            value={value.stack.serverAttachmentId}
-            onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
-            disabled={slotsDisabled}
-            emptyTriggerLabel={emptyServerLabel}
-            infoText={serverInfoText}
-            triggerTestId={testId("servers-picker")}
-            onClearSelection={() => patchStack({ serverAttachmentId: null })}
-            inModal={inModal}
-          />
-        ) : null}
+        {showServersSlot
+          ? withLock(
+              "servers",
+              <ServerPicker
+                projectId={projectId}
+                value={value.stack.serverAttachmentId}
+                onChange={(serverAttachmentId) =>
+                  patchStack({ serverAttachmentId })
+                }
+                disabled={slotsDisabled || Boolean(lockedSlots?.servers)}
+                emptyTriggerLabel={emptyServerLabel}
+                triggerTestId={testId("servers-picker")}
+                onClearSelection={() =>
+                  patchStack({ serverAttachmentId: null })
+                }
+                offerClear={serverOptional}
+                inModal={inModal}
+              />,
+            )
+          : null}
         {showSkillsSlot ? (
           <SkillsPill
             projectId={projectId}
@@ -416,16 +551,20 @@ export function EnvironmentComposer({
           {stackEditBlock === "pins"
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
             : stackEditBlock === "models"
-              ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
+            ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
             : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
-      {modelsEnabled && !disabled ? (
+      {modelsEnabled &&
+      slots.includes("models") &&
+      showTargetCount &&
+      !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}
         >
-          {targetCount} of {maxTargets} targets
+          {targetCount}
+          {Number.isFinite(maxTargets) ? ` of ${maxTargets}` : ""} targets
         </p>
       ) : null}
     </div>

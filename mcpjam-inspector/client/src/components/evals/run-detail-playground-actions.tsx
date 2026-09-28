@@ -31,6 +31,13 @@ export function RunDetailPlaygroundActions({
   suite: EvalSuite;
   selectedRun: EvalSuiteRun;
   readOnlyConfig?: boolean;
+  /*
+   * NO `configLocked` HERE, deliberately. Every control this component renders
+   * — cancel, rerun, replay, close — runs or stops a run; none of them edits
+   * the suite, so a CI-owned suite needs nothing gated here. Accepting the prop
+   * and ignoring it would be worse than not accepting it: a caller would
+   * reasonably believe passing it did something.
+   */
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
@@ -49,6 +56,7 @@ export function RunDetailPlaygroundActions({
   runsDisabledReason?: string | null;
   className?: string;
 }) {
+  // Spinner only — see the disabled prop below, which is the wider guard.
   const isCancelling = cancellingRunId === selectedRun._id;
   const isRunInProgress =
     selectedRun.status === "running" || selectedRun.status === "pending";
@@ -110,7 +118,7 @@ export function RunDetailPlaygroundActions({
                 variant="outline"
                 size="sm"
                 onClick={() => onCancelRun(selectedRun._id)}
-                disabled={isCancelling}
+                disabled={cancellingRunId !== null}
                 className="gap-2"
               >
                 {isCancelling ? (

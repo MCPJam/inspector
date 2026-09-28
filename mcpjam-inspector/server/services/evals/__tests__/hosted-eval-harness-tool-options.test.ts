@@ -68,6 +68,9 @@ vi.mock("../../../utils/harness/registry.js", () => ({
     // model-facing MCP tools itself instead of consuming `tools`.
     mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
+    // The dispatch reads the evidence-table verdict; this mock's model is one
+    // the (mocked) runtime runs.
+    modelSupport: vi.fn(() => ({ status: "supported", reason: "test" })),
     createHarness: vi.fn(() => ({ harnessId: "codex" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
@@ -158,6 +161,7 @@ function baseParams(
   return {
     promptIndex: 0,
     prompt: "list the open issues",
+    turnTimeoutMs: 5 * 60_000,
     browser: browser as unknown as DriveHostedEvalTurnParams["browser"],
     prepared: {
       allTools: {},
@@ -191,6 +195,7 @@ function baseParams(
     harnessMcpProxy: { plane: "local-mcp" } as never,
     acc: {
       messageHistory: [],
+      traceMessageHistory: [],
       capturedSpans: [],
       accumulatedUsage: {},
       toolsCalledByPrompt: [],

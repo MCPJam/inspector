@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { originOf } from "@mcpjam/sdk";
 import {
+  PROVIDER_NOT_ALLOWLISTED_CODE,
   describeBackendStreamFailure,
   describeStreamErrorChunkFailure,
   isMcpjamOwnedFailureCode,
@@ -9,6 +10,24 @@ import {
 } from "../mcpjam-stream-handler.js";
 
 describe("describeBackendStreamFailure", () => {
+  it.each([401, 502])(
+    "reads a %i fallback_prohibited as the refused fallback, not a key or an outage",
+    (status) => {
+      // The legacy eval /stream answers a Gateway failure on a selection that
+      // forbids the OpenRouter fallback with this code, keeping the
+      // provider's own status. By status alone a 401 blames the user's key
+      // and a 502 pages MCPJam; neither is what happened.
+      const normalized = describeBackendStreamFailure(
+        status,
+        "The Gateway attempt for anthropic/claude-sonnet-4.5 failed and this selection does not permit an OpenRouter fallback.",
+        "fallback_prohibited",
+      );
+
+      expect(normalized.slug).toBe("provider/fallback_prohibited");
+      expect(originOf(normalized)).toBe("ambiguous");
+    },
+  );
+
   it("owns a 5xx from MCPJam's own backend", () => {
     // The reported bug: a chat turn dying on a hosted 502. There is no Error
     // object at this site — only a non-OK Response — so nothing in the
@@ -41,6 +60,23 @@ describe("describeBackendStreamFailure", () => {
     expect(normalized.slug).toBe("provider/quota");
     expect(originOf(normalized)).toBe("user_config");
   });
+
+  it(
+    "reads a 403 free_tier_model_restricted as the MCPJam allowance, not a credential wall",
+    () => {
+      // The 2026-09-15 free-allowance gate refuses frontier-priced models on
+      // the free bucket with 403. By status alone that is `provider/auth_error`
+      // ("the provider rejected the key") — wrong fix, wrong blame.
+      const normalized = describeBackendStreamFailure(
+        403,
+        "This model is not included in the free daily allowance.",
+        "free_tier_model_restricted",
+      );
+
+      expect(normalized.slug).toBe("provider/mcpjam_limit");
+      expect(originOf(normalized)).toBe("user_config");
+    },
+  );
 
   // The regression this change exists for. `categorizeError` in the backend
   // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
@@ -103,7 +139,13 @@ describe("describeBackendStreamFailure", () => {
 });
 
 describe("isUserOwnedDenialCode", () => {
-  it.each(["user_rate_limit", "wallet_locked", "billing_limit_reached"])(
+  it.each([
+    "user_rate_limit",
+    "wallet_locked",
+    "billing_limit_reached",
+    "spend_budget_reached",
+    "free_tier_model_restricted",
+  ])(
     "exempts the routine 200 denial %s from the internal boundary",
     (code) => {
       // These are the backend working correctly and refusing a request for a
@@ -131,7 +173,73 @@ describe("isUserOwnedDenialCode", () => {
   });
 });
 
+describe("provider_not_allowlisted", () => {
+  // The backend's wording for a provider MCPJam's hosted gateway has not
+  // enabled. It rides a 401/403, so read by status it would be
+  // `provider/auth_error` — "update your API key" — for a key never used.
+  const detail = JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message:
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist.',
+    statusCode: 403,
+    isRetryable: false,
+    details:
+      "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.",
+  });
+
+  it.each([401, 403])(
+    "reads a non-OK %i carrying the code as the allowlist slug, owned by MCPJam",
+    (status) => {
+      const normalized = describeBackendStreamFailure(
+        status,
+        detail,
+        PROVIDER_NOT_ALLOWLISTED_CODE,
+      );
+
+      expect(normalized.slug).toBe("provider/not_allowlisted");
+      expect(originOf(normalized)).toBe("mcpjam");
+      expect(normalized.nextSteps.join(" ")).not.toMatch(
+        /update your api key/i,
+      );
+    },
+  );
+
+  it("reads the mid-stream error chunk the same way", () => {
+    const normalized = describeStreamErrorChunkFailure(
+      403,
+      detail,
+      PROVIDER_NOT_ALLOWLISTED_CODE,
+    );
+
+    expect(normalized.slug).toBe("provider/not_allowlisted");
+    expect(originOf(normalized)).toBe("mcpjam");
+  });
+
+  it("is an MCPJam-owned code, never a user-owned denial", () => {
+    expect(isMcpjamOwnedFailureCode(PROVIDER_NOT_ALLOWLISTED_CODE)).toBe(true);
+    expect(isUserOwnedDenialCode(PROVIDER_NOT_ALLOWLISTED_CODE)).toBe(false);
+  });
+
+  it("round-trips the mid-stream body through the chunk parser", () => {
+    expect(parseStreamErrorChunkText(detail)).toMatchObject({
+      code: PROVIDER_NOT_ALLOWLISTED_CODE,
+      statusCode: 403,
+    });
+  });
+});
+
 describe("describeStreamErrorChunkFailure", () => {
+  it("reads a mid-stream fallback_prohibited chunk as the refused fallback", () => {
+    const normalized = describeStreamErrorChunkFailure(
+      503,
+      "the gateway attempt failed and this selection does not permit an openrouter fallback",
+      "fallback_prohibited",
+    );
+
+    expect(normalized.slug).toBe("provider/fallback_prohibited");
+    expect(originOf(normalized)).toBe("ambiguous");
+  });
+
   it.each(["mcpjam_api_error", "mcpjam_rate_limit", "mcpjam_config_error"])(
     "owns a mid-stream failure whose code names us (%s)",
     (code) => {

@@ -15,7 +15,10 @@ const packageVersion = JSON.parse(
 ).version as string;
 
 export default defineConfig({
-  entry: ["server/index.ts"],
+  // Two entries: the server, and the `harness install` subcommand's installer.
+  // The subcommand cannot import the server entry — that module starts a
+  // listening server as a side effect of being imported.
+  entry: ["server/index.ts", "server/harness-install-cli.ts"],
   define: {
     "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
   },
@@ -79,6 +82,14 @@ export default defineConfig({
     // fails on the optional `chromium-bidi` dependency.
     "playwright",
     "playwright-core",
+    // Reached through browserd/electron/** when the local engine runs inside
+    // Electron. The standalone Node server does not load this runtime import.
+    // Inside the desktop app the server runs in the Electron main process, so
+    // the import resolves; this bundle is the STANDALONE server, where it never
+    // runs — but esbuild would still try to follow the specifier and fail the
+    // build outright. External keeps the specifier intact for the one runtime
+    // that can satisfy it.
+    "electron",
   ],
   noExternal: [
     // Force bundling of problematic packages
@@ -119,9 +130,15 @@ export default defineConfig({
       "@mcpjam/sdk/oauth/node": join(rootDir, "../sdk/dist/oauth/node.js"),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
-      "@mcpjam/sdk/model-factory": join(rootDir, "../sdk/dist/model-factory.js"),
+      "@mcpjam/sdk/model-factory": join(
+        rootDir,
+        "../sdk/dist/model-factory.js",
+      ),
       "@mcpjam/sdk/matchers": join(rootDir, "../sdk/dist/matchers.js"),
-      "@mcpjam/sdk/predicates": join(rootDir, "../sdk/dist/predicates/index.js"),
+      "@mcpjam/sdk/predicates": join(
+        rootDir,
+        "../sdk/dist/predicates/index.js",
+      ),
       "@mcpjam/sdk/contract": join(rootDir, "../sdk/dist/contract/index.js"),
       "@mcpjam/sdk/host-config/internal": join(
         rootDir,

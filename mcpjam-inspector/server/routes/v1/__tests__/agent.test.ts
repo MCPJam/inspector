@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import * as routeHelpers from "../../../services/evals/route-helpers.js";
 
 // Covers the v1 agent-turn surface: auth/guest gating, schema limits, the
 // deployment guard, engine failure → code mapping, the per-org concurrency
@@ -39,6 +40,23 @@ const {
     verifyAuthKitTokenMock: vi.fn(),
   };
 });
+
+/**
+ * The deployment switch over scheduled-eval writes.
+ *
+ * ON for this file: the cases below assert the WHOLE offered surface, and the
+ * switch subtracts `set_eval_suite_schedule` from it. Its own case flips it
+ * off. Spread over the real module rather than replaced — the route graph
+ * reads a dozen other config exports, and a bare factory would have to
+ * restate every one of them.
+ */
+const configState = vi.hoisted(() => ({ scheduledEvalsWrite: true }));
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  get SCHEDULED_EVALS_WRITE_ENABLED() {
+    return configState.scheduledEvalsWrite;
+  },
+}));
 
 // `GET /agent-ops` mounts `requireVerifiedAuth` — it never calls Convex, so
 // nothing downstream would re-check the bearer. Tokens here are placeholder
@@ -126,7 +144,13 @@ import {
   type CreatedResource,
 } from "../agent.js";
 import { isMcpjamToolId } from "../../../utils/built-in-tools/mcpjam.js";
+import {
+  AGENT_MAX_STEPS,
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL,
+} from "../../../../shared/mcpjam-agent-model.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
+import { setRevokedSessionCacheForTests } from "../../../services/revoked-session-cache.js";
 import {
   callServerToolOperation,
   cancelEvalRunOperation,
@@ -237,6 +261,87 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     vi.clearAllMocks();
   });
 
+  it.each(["GET", "POST"])(
+    "guards %s job requests without a hosted deployment",
+    async (method) => {
+      const previous = process.env.CONVEX_URL;
+      delete process.env.CONVEX_URL;
+      try {
+        const response = await makeApp().request(
+          `/api/v1/projects/p1/agent/jobs/job${
+            method === "POST" ? "/cancel" : ""
+          }`,
+          { method, headers: { Authorization: "Bearer tok" } },
+        );
+        expect(await response.json()).toMatchObject({
+          code: "FEATURE_NOT_SUPPORTED",
+        });
+        expect(getConvexBearerMock).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.CONVEX_URL;
+        else process.env.CONVEX_URL = previous;
+      }
+    },
+  );
+
+  it.each([
+    { "x-mcpjam-agent-job": "job" },
+    { "x-mcpjam-agent-lease": "lease" },
+    { "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+  ])("rejects dispatch without owned lease proof: %j", async (headers) => {
+    const query = vi.fn().mockResolvedValue(null);
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query } as any);
+    try {
+      const response = await makeApp().request("/api/v1/projects/p1/agent", {
+        method: "POST",
+        headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-inspector-service-token": "svc", ...headers } as Record<string, string>,
+        body: JSON.stringify(OK_BODY),
+      });
+      expect(response.status).toBe(403);
+      expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+      if (headers["x-mcpjam-agent-job"] && headers["x-mcpjam-agent-lease"])
+        expect(query).toHaveBeenCalledWith("agentTurnState:resumeContext", { jobId: "job", token: "lease" });
+      else expect(query).not.toHaveBeenCalled();
+    } finally { client.mockRestore(); }
+  });
+
+  it("rejects durable headers from a non-service caller", async () => {
+    const response = await makeApp().request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+      body: JSON.stringify(OK_BODY),
+    });
+    expect(response.status).toBe(403);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["GET", "POST"])("returns 404 for missing agent jobs on %s", async (method) => {
+    const previous = process.env.CONVEX_URL;
+    process.env.CONVEX_URL = "https://convex.test";
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query: vi.fn().mockResolvedValue(null) } as any);
+    try {
+      const response = await makeApp().request(`/api/v1/projects/p1/agent/jobs/job${method === "POST" ? "/cancel" : ""}`, { method, headers: { Authorization: "Bearer tok" } });
+      expect(response.status).toBe(404);
+    } finally {
+      client.mockRestore();
+      if (previous === undefined) delete process.env.CONVEX_URL; else process.env.CONVEX_URL = previous;
+    }
+  });
+  it("returns a top-level job ID for pending durable turns", async () => {
+    const oldFlag = process.env.DURABLE_AGENT_TURNS_ENABLED;
+    process.env.DURABLE_AGENT_TURNS_ENABLED = "true";
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({} as any);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ jobId: "job" }));
+    try {
+      const response = await turnRequest(makeApp(), OK_BODY);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ jobId: "job", status: "pending" });
+    } finally {
+      client.mockRestore(); fetchMock.mockRestore();
+      if (oldFlag === undefined) delete process.env.DURABLE_AGENT_TURNS_ENABLED; else process.env.DURABLE_AGENT_TURNS_ENABLED = oldFlag;
+    }
+  });
+
   it("requires a bearer token", async () => {
     const app = makeApp();
     const res = await app.request("/api/v1/projects/p1/agent", {
@@ -297,6 +402,41 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(engineOpts.projectId).toBe("p1");
     expect(engineOpts.streamSink).toBe("none");
     expect(engineOpts.approvalMode).toBe("auto-deny");
+  });
+
+  it("bills the turn to MCPJam on the pinned agent model", async () => {
+    // Slack and Discord are the same agent as the in-app panel, so MCPJam pays
+    // for them the same way. The claim only works for the pinned model, which
+    // is why the two assertions belong together: a model change without the
+    // shared constant would silently put these surfaces back on the customer.
+    await turnRequest(makeApp(), OK_BODY);
+    const engineOpts = runUnifiedAssistantTurnMock.mock.calls[0]![0];
+    expect(engineOpts.runtime.extraBodyFields).toMatchObject({
+      billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+    });
+    expect(String(engineOpts.modelDefinition.id)).toBe(MCPJAM_AGENT_MODEL);
+    // The step ceiling the backend enforces per attested step.
+    expect(engineOpts.maxSteps).toBe(AGENT_MAX_STEPS);
+  });
+
+  it("keeps whatever else the runtime resolver put on the body", async () => {
+    // The claim is merged in, not substituted for the resolver's own fields.
+    resolveTurnRuntimeMock.mockResolvedValueOnce({
+      runtime: {
+        kind: "hosted",
+        endpointPath: "/stream",
+        extraBodyFields: { providerKey: "pk_test" },
+      },
+      modelSource: "mcpjam",
+      finalizeUsage: async () => undefined,
+      classifyFailure: () => "failed",
+    });
+    await turnRequest(makeApp(), OK_BODY);
+    const engineOpts = runUnifiedAssistantTurnMock.mock.calls[0]![0];
+    expect(engineOpts.runtime.extraBodyFields).toEqual({
+      providerKey: "pk_test",
+      billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+    });
   });
 
   it("degrades when the docs server is down (turn still runs)", async () => {
@@ -688,7 +828,7 @@ describe("agent tool surface", () => {
       permalinks?: Array<{ url: string }>;
     };
     expect(created).toEqual([]);
-    expect(result.permalinks?.[0]?.url).toContain("/evals/suite/ts_1");
+    expect(result.permalinks?.[0]?.url).toContain("/evaluate/suite/ts_1");
     executeSpy.mockRestore();
   });
 
@@ -882,7 +1022,7 @@ describe("agent tool surface", () => {
         name: "smoke",
         // `?project=` makes the link land on the right project for viewers
         // parked elsewhere (eval routes carry no project segment).
-        url: expect.stringContaining("/evals/suite/ts_1?project=p1"),
+        url: expect.stringContaining("/evaluate/suite/ts_1?project=p1"),
       },
     ]);
     // The model-facing result may be truncated; the collector must not be.
@@ -1580,6 +1720,23 @@ describe("org capability policy", () => {
     }
   });
 
+  // The DEPLOYMENT's own tightening, riding the same seam as the org's. The
+  // op is omitted rather than offered-and-refused, for the same reason a
+  // disabled op is: a tool the model can see is a tool it plans around.
+  it("omits set_eval_suite_schedule when the deployment switch is off", async () => {
+    configState.scheduledEvalsWrite = false;
+    try {
+      const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+      expect(tools[setEvalSuiteScheduleOperation.name]).toBeUndefined();
+      // Every other gated op is untouched — one op, not a kill switch on the
+      // whole gated tier.
+      expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+      expect(tools[cancelEvalRunOperation.name]).toBeDefined();
+    } finally {
+      configState.scheduledEvalsWrite = true;
+    }
+  });
+
   it("ignores an operation name the registry does not know", async () => {
     // Tighten-only: a stale or bogus entry can never GRANT anything, and must
     // not take anything away either.
@@ -1727,10 +1884,14 @@ describe("GET /api/v1/agent-ops", () => {
     resetSlackRateLimitForTests();
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     verifyAuthKitTokenMock.mockResolvedValue({ sub: "workos|alice" });
+    // The catalog itself, in a process without the revoked-session list; how
+    // the list gates this route is covered in session-revocation.test.ts.
+    setRevokedSessionCacheForTests(null);
   });
 
   afterEach(() => {
     delete process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
+    setRevokedSessionCacheForTests(undefined);
     vi.clearAllMocks();
   });
 

@@ -1,0 +1,90 @@
+{
+  "id": "tool-error-rate-limited",
+  "title": "\"Rate limited, retry in 30 seconds\" — good guidance that names no input",
+  "rationale": "Counterexample for `toolErrorNamesInput`. Naming an input is not the same as recovery quality; this message is exemplary and the detector fires on it.",
+  "transcript": {
+    "toolCalls": [
+      {
+        "toolCallId": "c1",
+        "toolName": "sync_inventory",
+        "arguments": {
+          "warehouse": "EU-2"
+        }
+      }
+    ],
+    "toolErrors": [
+      {
+        "toolName": "sync_inventory",
+        "kind": "content-error",
+        "message": "Rate limited. Retry in 30 seconds."
+      }
+    ],
+    "finalAssistantMessage": "The inventory service is rate limiting; I will need to retry in about half a minute.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "sync_inventory",
+        "description": "Force an inventory sync for one warehouse.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "warehouse"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false
+        }
+      }
+    ],
+    "toolResults": [
+      {
+        "toolCallId": "c1",
+        "toolName": "sync_inventory",
+        "text": "Rate limited. Retry in 30 seconds.",
+        "isError": true,
+        "size": {
+          "bytes": 34,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
+    ],
+    "toolCallTimings": [
+      {
+        "toolCallId": "c1",
+        "toolName": "sync_inventory",
+        "durationMs": 45,
+        "provenance": "span"
+      }
+    ],
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
+  },
+  "expect": [
+    {
+      "predicate": {
+        "type": "toolErrorNamesInput",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "misleading",
+      "note": "the message is exactly what a good error looks like; naming an input would add nothing"
+    },
+    {
+      "predicate": {
+        "type": "noToolErrors"
+      },
+      "observation": "fail",
+      "relevance": "useful"
+    }
+  ]
+}

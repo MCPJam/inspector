@@ -30,6 +30,12 @@ import {
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
 import { finalizePassedForEval } from "@mcpjam/sdk";
+import {
+  extractTranscriptEvidence,
+  toTranscriptToolInventory,
+  type SelectionToolLike,
+} from "./transcript-evidence";
+import type { AgentActivityAssessment } from "./agent-activity";
 
 type EvalArgs = Parameters<typeof evaluateMultiTurnResults>;
 type TranscriptArgs = Parameters<typeof buildIterationTranscript>[0];
@@ -63,6 +69,26 @@ export interface EvalIterationVerdictInput {
   renderObservations: TranscriptArgs["renderObservations"];
   /** Pinned tool errors threaded into the case-predicate transcript. */
   toolErrors?: ToolErrorRecord[];
+  /**
+   * The live tool registry as the runner had it THIS iteration, keyed by name.
+   *
+   * Absent ⇒ the transcript carries no inventory and every check that compares
+   * a call against what the server DECLARED reports `status: "error"`. That is
+   * the honest default for a caller that cannot say what the model was shown:
+   * a rule about a declaration cannot be evaluated against no declaration, and
+   * passing would read as "nothing was declared wrong".
+   */
+  selectionTools?: Record<string, SelectionToolLike>;
+  /**
+   * MCP `annotations` by tool name, from {@link collectToolAnnotations}.
+   *
+   * Separate from `selectionTools` because the AI SDK `ToolSet` drops them:
+   * without this channel `destructiveHint` never reaches a check, however
+   * plainly the server declared it.
+   */
+  selectionToolAnnotations?: Record<string, Record<string, unknown>>;
+  toolDeclarations?: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[];
+  declarationsCaptured?: "complete" | "partial" | "absent";
 
   // ── gates ──
   iterationError: string | undefined;
@@ -72,6 +98,8 @@ export interface EvalIterationVerdictInput {
   pinnedToolErrors: ToolErrorRecord[];
   /** Widget interaction-check failures, AFTER the caller flushed active checks. */
   scriptedCheckFailures: { toolName: string; reason: string }[];
+  /** Absent means "do not ask". @see assessAgentActivity */
+  agentActivity?: AgentActivityAssessment;
 }
 
 export interface EvalIterationVerdict {
@@ -99,6 +127,10 @@ export function buildEvalIterationVerdict(
     { skillToolsActive: input.skillToolsActive === true },
   );
 
+  // Extracted once, outside the `effectivePredicates` guard's branch, so the
+  // capture states describe THIS iteration rather than whether anybody
+  // happened to author a check over it.
+  const evidence = extractTranscriptEvidence(input.trace);
   const casePredicateResults = input.effectivePredicates?.length
     ? evaluatePredicates(
         buildIterationTranscript({
@@ -112,6 +144,20 @@ export function buildEvalIterationVerdict(
           ...(input.toolErrors !== undefined
             ? { toolErrors: input.toolErrors }
             : {}),
+          toolResults: evidence.toolResults,
+          resultsCaptured: evidence.resultsCaptured,
+          toolCallTimings: evidence.toolCallTimings,
+          timingsCaptured: evidence.timingsCaptured,
+          toolDeclarations: input.toolDeclarations,
+          declarationsCaptured: input.declarationsCaptured,
+          ...(input.selectionTools
+            ? {
+                toolInventory: toTranscriptToolInventory(
+                  input.selectionTools,
+                  input.selectionToolAnnotations,
+                ),
+              }
+            : {}),
         }),
         input.effectivePredicates,
       )
@@ -121,6 +167,9 @@ export function buildEvalIterationVerdict(
   // `[case, …per-turn]` order (NOT execution order).
   const predicateResults = [...casePredicateResults, ...input.turnCheckResults];
 
+  // Advisory predicate results still persist on `predicateResults` (and
+  // project as advisory score rows). `finalizePassedForEval` ignores them,
+  // so a Warn/Report failure never fails the hosted trial.
   let passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: input.trace,
@@ -141,6 +190,12 @@ export function buildEvalIterationVerdict(
   // never rendered — fails the iteration unconditionally (the assertion is the
   // test). The caller flushes active checks before passing `scriptedCheckFailures`.
   if (passed && input.scriptedCheckFailures.length > 0) {
+    passed = false;
+  }
+
+  // Nothing ran. Enforced here as well as by a score row, because under
+  // `shadow` and `off` grading the rows decide nothing and this boolean does.
+  if (passed && input.agentActivity?.status === "no_agent_activity") {
     passed = false;
   }
 

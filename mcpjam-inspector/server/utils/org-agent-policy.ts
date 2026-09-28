@@ -28,11 +28,18 @@
  * A 404 is NOT a failure in either mode: it means the deployment predates the
  * `/slack/agent-policy/get` route, and "this backend has no policy" is a true
  * and complete answer. That is what lets this ship before the backend does.
+ *
+ * Both exported readers also union in whatever the DEPLOYMENT disables (see
+ * `deploymentDisabledOperations`), because this is already the tighten-only
+ * channel both enforcement seams read. That union sits outside the cache and
+ * outside the strict path's throw, so it holds even when the org's own policy
+ * could not be read.
  */
 import {
   getOrgAgentPolicy,
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
+import { SCHEDULED_EVALS_WRITE_ENABLED } from "../config.js";
 import { logger } from "./logger.js";
 
 /** Matches `org-model-config.ts`: short enough that a change propagates fast. */
@@ -123,6 +130,49 @@ const inflight = new Map<string, Promise<ReadonlySet<string>>>();
 
 /** Nothing disabled. Shared so the common case allocates nothing. */
 const EMPTY: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Operations this DEPLOYMENT disables, whatever the org said.
+ *
+ * `set_eval_suite_schedule` while `MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED` is
+ * off. This set rides the org policy rather than getting its own seam because
+ * the policy is ALREADY the tighten-only channel both enforcement points read
+ * — tool assembly (`agent.ts`, so the op is never offered) and the execute
+ * route (`proposed-actions.ts`, so a proposal minted before the switch flipped
+ * is refused with the existing message rather than reaching the route and
+ * 404-ing). A second seam would have to be wired into both to say the same
+ * thing.
+ *
+ * TIGHTEN-ONLY, in both directions: it only ever ADDS names, and a name the
+ * op registry does not offer filters nothing — so this can never widen what an
+ * org allows, and an org that has already disabled the op stays that way.
+ *
+ * The trade-off worth stating: the agent then cannot DISABLE a schedule
+ * either, while the route deliberately still lets that through. One op name
+ * covers both directions and the policy set is not argument-aware, so the
+ * choice is between an agent that can still enable and an agent that can do
+ * neither. A person can always disable — via the CLI or the API — so the
+ * stricter half costs a convenience, not the ability to stop a live schedule.
+ */
+function deploymentDisabledOperations(): readonly string[] {
+  return SCHEDULED_EVALS_WRITE_ENABLED ? [] : ["set_eval_suite_schedule"];
+}
+
+/**
+ * The org's set, unioned with the deployment's.
+ *
+ * Applied at the exported boundary of BOTH readers rather than inside the
+ * cache, so what is cached stays the org's own answer: the switch is read per
+ * call and a deployment that flips it does not have to wait out a 60s TTL, and
+ * a stale-served entry is still only the org's decision plus today's switch.
+ */
+function withDeploymentDisabled(
+  orgDisabled: ReadonlySet<string>
+): ReadonlySet<string> {
+  const deploymentDisabled = deploymentDisabledOperations();
+  if (deploymentDisabled.length === 0) return orgDisabled;
+  return new Set<string>([...orgDisabled, ...deploymentDisabled]);
+}
 
 /**
  * Bumped by `clearOrgAgentPolicyCache`.
@@ -277,13 +327,22 @@ function isRouteMissing(error: unknown): boolean {
 }
 
 /**
- * The set of operation names this org has disabled — fail-open.
+ * The set of operation names disabled for this caller — fail-open.
  *
- * Callers with no org (an `sk_` or JWT caller whose request never carried one)
- * get the empty set without a round trip: a policy is an ORG's decision, and
- * there is no org here to have made one.
+ * The org's own set, unioned with what the DEPLOYMENT disables. Callers with
+ * no org (an `sk_` or JWT caller whose request never carried one) still get
+ * the deployment's, and nothing else, without a round trip: a policy is an
+ * ORG's decision and there is no org here to have made one, but a deployment
+ * switch does not depend on having one.
  */
 export async function getOrgAgentPolicyCached(
+  organizationId: string | undefined | null
+): Promise<ReadonlySet<string>> {
+  return withDeploymentDisabled(await readOrgPolicyCached(organizationId));
+}
+
+/** The org's own set — every failure semantic above, no deployment union. */
+async function readOrgPolicyCached(
   organizationId: string | undefined | null
 ): Promise<ReadonlySet<string>> {
   if (!organizationId) return EMPTY;
@@ -380,7 +439,8 @@ export async function getOrgAgentPolicyCached(
 /**
  * The same set, fail-closed.
  *
- * Throws when an expired policy could not be refreshed, so the execute route
+ * The deployment's half is unioned in exactly as above. Throws when an expired
+ * ORG policy could not be refreshed, so the execute route
  * can answer "try again in a moment" instead of spending under a policy it no
  * longer knows. A still-fresh cache entry is an answer the org gave us; once
  * its 60-second TTL has elapsed, continuing to serve it during an outage would
@@ -394,6 +454,19 @@ export async function getOrgAgentPolicyCached(
  * out, and the throw stands.
  */
 export async function getOrgAgentPolicyStrict(
+  organizationId: string | undefined | null
+): Promise<ReadonlySet<string>> {
+  return withDeploymentDisabled(await readOrgPolicyStrict(organizationId));
+}
+
+/**
+ * The org's own set, fail-closed — no deployment union.
+ *
+ * The union is applied OUTSIDE the throw, deliberately: a deployment-disabled
+ * op must not become reachable because the org's policy could not be read.
+ * The throw still stands for everything else.
+ */
+async function readOrgPolicyStrict(
   organizationId: string | undefined | null
 ): Promise<ReadonlySet<string>> {
   if (!organizationId) return EMPTY;

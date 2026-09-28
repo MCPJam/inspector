@@ -59,6 +59,20 @@ describe("client sentry init", () => {
     expect(resolveClientSentryConfig().dist).toBe("npm");
   });
 
+  it("reports by default", async () => {
+    const { resolveClientSentryConfig } = await import("../sentry");
+
+    expect(resolveClientSentryConfig().enabled).toBe(true);
+  });
+
+  it("stops reporting when the bundle is built with VITE_DISABLE_SENTRY", async () => {
+    vi.stubEnv("VITE_DISABLE_SENTRY", "true");
+    vi.resetModules();
+    const { resolveClientSentryConfig } = await import("../sentry");
+
+    expect(resolveClientSentryConfig().enabled).toBe(false);
+  });
+
   it("tags hosted when the bundle is built for hosted mode", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.resetModules();
@@ -231,5 +245,90 @@ describe("syncSentryReplayForPath", () => {
       },
     });
     expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+  });
+});
+
+describe("query event processor wiring", () => {
+  it("does not forward events dropped by the browser filter", async () => {
+    vi.resetModules();
+    init.mockClear();
+    const diagnostics = await import("../convex-query-diagnostics");
+    const processor = vi.fn(diagnostics.createConvexQueryEventProcessor());
+    const factory = vi
+      .spyOn(diagnostics, "createConvexQueryEventProcessor")
+      .mockReturnValue(processor);
+    try {
+      const { initSentry } = await import("../sentry");
+      initSentry();
+      const config = init.mock.calls[0][0];
+      const dropped = config.beforeSend(
+        {
+          exception: {
+            values: [
+              {
+                type: "Error",
+                value: "injected script failure",
+                stacktrace: {
+                  frames: [
+                    {
+                      filename: `${window.location.origin}/playground`,
+                      function: "injected",
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+        {},
+      );
+      expect(dropped).toBeNull();
+      expect(processor).not.toHaveBeenCalled();
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
+  it("enriches global errors, deduplicates boundary reports and retains DOM grouping", async () => {
+    vi.resetModules();
+    init.mockClear();
+    const { configureConvexQueryDiagnostics } =
+      await import("../convex-query-diagnostics");
+    configureConvexQueryDiagnostics("https://test.convex.cloud");
+    const { initSentry } = await import("../sentry");
+    initSentry();
+    const config = init.mock.calls[0][0];
+    const makeEvent = () => ({
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value:
+              "[CONVEX Q(scenarios:listScenarios)] [Request ID: ab1234] Server Error",
+          },
+        ],
+      },
+    });
+    expect(config.beforeSend(makeEvent(), {}).tags).toMatchObject({
+      convex_backend: "test.convex.cloud",
+      request_id: "ab1234",
+    });
+    expect(config.beforeSend(makeEvent(), {})).toBeNull();
+    expect(
+      config.beforeSend(
+        {
+          environment: "prod",
+          exception: {
+            values: [
+              {
+                type: "NotFoundError",
+                value: "Failed to execute 'removeChild' on 'Node': not a child",
+              },
+            ],
+          },
+        },
+        {},
+      ).fingerprint,
+    ).toEqual(["dom-mutation-conflict", "prod"]);
   });
 });

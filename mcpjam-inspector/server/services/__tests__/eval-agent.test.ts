@@ -112,6 +112,28 @@ describe("generateTestCases: dual-shape reader", () => {
     expect(cases[1].title).toBe("wave0 case");
   });
 
+  it("forwards user refinement instructions to the generation backend", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, tests: [LEGACY_CASE] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    await generateTestCases(
+      SNAPSHOT,
+      "https://convex.test",
+      "tok",
+      undefined,
+      undefined,
+      { refinement: "Add expired credential failures" },
+    );
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      refinement: "Add expired credential failures",
+    });
+  });
+
   it("defaults a Wave-0 case's optional fields rather than emitting undefined", async () => {
     const [testCase] = await generate([
       {
@@ -149,9 +171,9 @@ describe("generateTestCases: dual-shape reader", () => {
       // The legacy fields cannot stand in — they are derived FROM the steps — so
       // a stepless Wave-0 case would persist as one that can never execute.
       await expect(
-        generate([{ shapeVersion: "wave0", title: "bare", steps }])
+        generate([{ shapeVersion: "wave0", title: "bare", steps }]),
       ).rejects.toThrow(/no usable steps/);
-    }
+    },
   );
 
   it("still fails loudly on a response that is not a generation result", async () => {
@@ -160,10 +182,10 @@ describe("generateTestCases: dual-shape reader", () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({ ok: false, error: "quota exhausted" }),
-      })) as unknown as typeof fetch
+      })) as unknown as typeof fetch,
     );
     await expect(
-      generateTestCases(SNAPSHOT, "https://convex.test", "tok")
+      generateTestCases(SNAPSHOT, "https://convex.test", "tok"),
     ).rejects.toThrow(/quota exhausted/);
   });
 });

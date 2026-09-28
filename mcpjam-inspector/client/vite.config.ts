@@ -1,3 +1,4 @@
+import posthogSourcemaps from "@posthog/rollup-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
@@ -6,6 +7,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
+import { lexerSafeMinify } from "./vite-lexer-safe-minify";
+import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
@@ -53,6 +56,14 @@ const sdkHostCompatEntry = path.resolve(
 // source like its siblings so a clean checkout builds without a prior
 // `npm run build -w @mcpjam/sdk`.
 const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
+const sdkPredicatesEntry = path.resolve(
+  rootDir,
+  "../sdk/src/predicates/index.ts",
+);
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
 const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
@@ -76,6 +87,10 @@ const chatUiThreadHelpersEntry = path.resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+const chatUiJsonTokensEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/json-tokens.ts",
+);
 // Tier B Phase 3c: @mcpjam/widget-react publishes from dist, but a clean
 // checkout has no widget-react/dist until it is built. Resolve from source so
 // the inspector's dev/build/typecheck/test never depend on a widget-react build
@@ -143,6 +158,27 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
+      lexerSafeMinify(),
+      // PostHog has no other way to get maps: Sentry deletes them from
+      // `dist/client` before deploy, so PostHog followed `sourceMappingURL` and
+      // got the SPA's index.html back (`bad json at line 1 column 1`). It must
+      // stay BEFORE `sentryVitePlugin`: its `writeBundle` is sequential, so
+      // Rollup finishes this upload before Sentry's parallel `writeBundle`
+      // (which deletes the maps) starts. It deletes nothing itself, so Sentry
+      // still sees every map and remains the only thing that removes them.
+      // A failed PostHog call warns instead of failing the build, like Sentry.
+      warnOnPosthogFailure(
+        posthogSourcemaps({
+          personalApiKey: env.POSTHOG_PERSONAL_API_KEY,
+          projectId: "212744",
+          sourcemaps: {
+            enabled: Boolean(env.POSTHOG_PERSONAL_API_KEY),
+            releaseName: "inspector-client",
+            releaseVersion: `${appVersion}+${buildSurface}`,
+            deleteAfterUpload: false,
+          },
+        }),
+      ),
       sentryVitePlugin({
         org: "mcpjam-gh",
         project: "inspector-client",
@@ -164,12 +200,15 @@ export default defineConfig(({ mode }) => {
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
         // More specific subpaths must precede the bare alias (first match wins).
+        "@mcpjam/chat-ui/json-tokens": chatUiJsonTokensEntry,
         "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
+        "@mcpjam/sdk/predicates": sdkPredicatesEntry,
+        "@mcpjam/sdk/assertions": sdkAssertionsEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,
@@ -276,6 +315,10 @@ export default defineConfig(({ mode }) => {
       outDir: clientOutDir,
       sourcemap: true,
       emptyOutDir: true,
+      // esbuild, not terser: terser made `build:client` ~2.5x slower on every
+      // surface that builds it. `lexerSafeMinify` (above) covers the
+      // es-module-lexer `of` bug that terser was brought in to avoid.
+      minify: "esbuild",
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),

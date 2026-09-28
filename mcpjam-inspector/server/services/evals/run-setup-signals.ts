@@ -21,9 +21,16 @@
 
 import {
   classifyNegotiationFailureClass,
+  describeError,
+  isNormalizedError,
+  redactForTelemetry,
   unwrapEraNegotiationCause,
+  type BearerChallengeSummary,
+  type NormalizedError,
 } from "@mcpjam/sdk";
 import type { StageSetupPhaseSignal, StageSetupSignals } from "@mcpjam/sdk/contract";
+import { MAX_EVIDENCE_REASONS } from "@mcpjam/sdk/contract";
+import type { WebRouteError } from "../../routes/web/errors.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { HOSTED_MODE } from "../../config.js";
 import { createPinnedFetch } from "../../utils/pinned-fetch.js";
@@ -40,9 +47,24 @@ export type SetupTargetObservation = {
   outcome: "ok" | "failed";
   attribution?: SetupAttribution;
   error?: unknown;
+  /** What the failure was, in words and in fields. Present on a failure only. */
+  detail?: SetupFailureDetail;
   startedAt: number;
   endedAt: number;
 };
+
+export type SetupFailureContext = {
+  serverLabel?: string;
+  challenge?: BearerChallengeSummary;
+};
+
+export type SetupFailureDetail = {
+  attribution: SetupAttribution;
+  line: string;
+  normalized: NormalizedError;
+};
+
+export const MAX_SETUP_FAILURE_LINE_CHARS = 240;
 
 const TRANSPORT_LOCAL_MCP_CODES = new Set([-32000, -32001]);
 const OURS_NODE_CODES = new Set([
@@ -64,7 +86,7 @@ const THEIRS_NODE_CODES = new Set([
 
 const MAX_CULPRIT_SPAN_IDS = 5;
 const CANARY_TIMEOUT_MS = 5_000;
-const SETUP_SIGNALS_METADATA_CAP_BYTES = 2_048;
+const SETUP_SIGNALS_METADATA_CAP_BYTES = 4_096;
 
 function slimPhaseSignal(
   signal: StageSetupPhaseSignal | undefined
@@ -99,18 +121,30 @@ export type SetupAuditRecord = {
 };
 
 /**
- * Hard-cap the producer-owned audit blob. Over the cap, drop span ids so
- * the serialized payload shrinks; `truncated: true` marks the shed.
+ * Bound the producer-owned audit blob. Over the cap, drop reasons before
+ * span ids; `truncated: true` marks the shed.
  */
 export function capSetupAuditMetadata(
-  raw: {
-    signals: StageSetupSignals;
-    egressCanary: unknown;
-  },
+  raw: SetupAuditRecord,
   capBytes: number = SETUP_SIGNALS_METADATA_CAP_BYTES
 ): SetupAuditRecord {
-  const serialized = JSON.stringify(raw);
-  if (serialized.length <= capBytes) return raw;
+  const fits = (record: SetupAuditRecord) =>
+    Buffer.byteLength(JSON.stringify(record), "utf8") <= capBytes;
+  if (fits(raw)) return raw;
+  // Reasons are already on the stage rows. Shed their audit copy before refs.
+  const withoutReasons: SetupAuditRecord = {
+    ...raw,
+    signals: Object.fromEntries(
+      Object.entries(raw.signals).map(([phase, signal]) => {
+        if (!signal) return [phase, signal];
+        const { reasons: _reasons, ...rest } = signal;
+        return [phase, rest];
+      }),
+    ),
+    truncated: true,
+  };
+  if (fits(withoutReasons)) return withoutReasons;
+  // Tier 2: the pre-detail shed — outcome, attribution, canary, duration.
   const signals = raw.signals;
   return {
     signals: {
@@ -187,17 +221,101 @@ function isCancellation(error: unknown, cause: unknown): boolean {
   );
 }
 
+/** Inspect only explicit provenance, including through negotiation/cause wrappers. */
+function credentialFailure(error: unknown): WebRouteError | undefined {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (typeof current !== "object") break;
+    const candidate = current as WebRouteError;
+    if (
+      ["oauth_refresh", "xaa_mint", "authorization_required"].includes(
+        candidate.setupFailureSource ?? "",
+      )
+    ) {
+      return candidate;
+    }
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current = unwrapped !== current ? unwrapped : candidate.cause;
+  }
+  return undefined;
+}
+
+export function describeSetupFailure(
+  error: unknown,
+  ctx?: SetupFailureContext & { serverId?: string },
+): SetupFailureDetail {
+  const credential = credentialFailure(error);
+  const cause = unwrapEraNegotiationCause(error);
+  const refresh =
+    credential?.setupFailureSource === "oauth_refresh"
+      ? credential.details?.authorizationServerUnreachable === true
+        ? { outcome: "authorization_server_unreachable" as const }
+        : credential.details?.refreshTokenInvalid === true
+        ? { outcome: "token_rejected" as const }
+        : undefined
+      : undefined;
+  const existing = [error, credential, cause].find(
+    (value) =>
+      value &&
+      typeof value === "object" &&
+      isNormalizedError((value as WebRouteError).normalized),
+  );
+  const normalized = existing
+    ? (existing as WebRouteError).normalized!
+    : describeError(credential ?? cause, {
+        surface: "mcpServer",
+        credentialOwner: "user",
+        ...(credential ? {} : { challenge: ctx?.challenge }),
+        ...(refresh ? { refresh } : {}),
+      });
+  let attribution = classifySetupAttribution(error);
+  if (
+    !credential &&
+    attribution === "ours" &&
+    (normalized.slug === "oauth/no_bearer_challenge" ||
+      normalized.slug === "auth/proxy_rejected")
+  ) {
+    attribution = "unknown";
+  }
+  // Preserve producer-authored credential messages when the catalog has no
+  // more specific diagnosis. All other copy comes from the shared describer.
+  const explanation =
+    credential && !refresh
+      ? normalized.rawMessage || normalized.oneLine
+      : normalized.oneLine;
+  const line = String(
+    redactForTelemetry(
+      `"${ctx?.serverLabel ?? ctx?.serverId ?? "the server"}": ${explanation}`,
+    ),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  return {
+    attribution,
+    normalized,
+    line:
+      line.length > MAX_SETUP_FAILURE_LINE_CHARS
+        ? `${line.slice(0, MAX_SETUP_FAILURE_LINE_CHARS - 1)}…`
+        : line,
+  };
+}
+
 /**
  * Classify a connect / tools-list failure for D6 attribution.
  *
- *   ours   — our own cancellation, DNS (`EgressResolutionError` /
- *            ENOTFOUND), blocked egress, 401/403 (suite-credential
- *            config), MCP −32000/−32001
- *   theirs — refused / TLS / timeout-to-their-host / 5xx
+ *   ours   — our own cancellation, a tagged credential error (refresh handler,
+ *            XAA mint, tokenless-discover 401 — whatever status it carries),
+ *            DNS (`EgressResolutionError` / ENOTFOUND), blocked egress,
+ *            401/403 (suite-credential config), MCP −32000/−32001
+ *   theirs — refused / TLS / timeout-to-their-host / 5xx FROM THE TARGET
  *   unknown — everything else
  *
  * Reuses hosted-egress-guard error types and the era-negotiation unwrap so a
- * wrapped transport failure is classified on the real cause.
+ * wrapped transport failure is classified on the real cause. The
+ * challenge-informed corrections live in `describeSetupFailure`, which is
+ * what the observer calls; untagged errors retain their existing classification.
  */
 export function classifySetupAttribution(error: unknown): SetupAttribution {
   const cause = unwrapEraNegotiationCause(error);
@@ -205,6 +323,8 @@ export function classifySetupAttribution(error: unknown): SetupAttribution {
   // Before every transport heuristic: a cancelled run says nothing about
   // the target server.
   if (isCancellation(error, cause)) return "ours";
+
+  if (credentialFailure(error)) return "ours";
 
   if (cause instanceof EgressResolutionError) return "ours";
   if (cause instanceof BlockedEgressTargetError) return "ours";
@@ -264,6 +384,29 @@ export function classifySetupAttribution(error: unknown): SetupAttribution {
   }
 
   return "unknown";
+}
+
+/**
+ * One line per failing server, de-duplicated, in expected-server order, under
+ * the analyzer's cap. The deciding attribution's line comes first so a mixed
+ * bag reads with the failure that set the phase's state on top.
+ */
+function foldReasons(failures: readonly SetupTargetObservation[]): string[] {
+  const folded = foldAttribution(failures);
+  const ordered = [
+    ...failures.filter((row) => row.attribution === folded),
+    ...failures.filter((row) => row.attribution !== folded),
+  ];
+  const seen = new Set<string>();
+  const reasons: string[] = [];
+  for (const row of ordered) {
+    const line = row.detail?.line;
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    reasons.push(line);
+    if (reasons.length >= MAX_EVIDENCE_REASONS) break;
+  }
+  return reasons;
 }
 
 function foldAttribution(
@@ -351,12 +494,14 @@ function foldPhase(
 
   if (failures.length > 0) {
     const durationMs = phaseDurationMs();
+    const reasons = foldReasons(failures);
     return {
       outcome: "failed",
       attribution: foldAttribution(failures),
       spanIds: failures
         .map((row) => spanIdFor(row.serverId))
         .slice(0, MAX_CULPRIT_SPAN_IDS),
+      ...(reasons.length > 0 ? { reasons } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
     };
   }
@@ -378,6 +523,7 @@ export type RunSetupObserver = {
     init: {
       outcome: "ok" | "failed";
       error?: unknown;
+      challenge?: BearerChallengeSummary;
       startedAt: number;
       endedAt: number;
     }
@@ -387,6 +533,7 @@ export type RunSetupObserver = {
     init: {
       outcome: "ok" | "failed";
       error?: unknown;
+      challenge?: BearerChallengeSummary;
       startedAt: number;
       endedAt: number;
     }
@@ -403,6 +550,11 @@ export type RunSetupObserver = {
    * it. Hard-capped so a v2 verdict can be recomputed without an unbounded blob.
    */
   buildAuditMetadata: () => Record<string, unknown> | undefined;
+  /** The explanation recorded for one server's phase, if it failed. */
+  failureDetail: (
+    serverId: string,
+    phase: SetupPhase,
+  ) => SetupFailureDetail | undefined;
 };
 
 export type CreateRunSetupObserverOptions = {
@@ -411,6 +563,11 @@ export type CreateRunSetupObserverOptions = {
   /** Injected canary. Tests stub this so we never touch the control plane. */
   canary?: () => Promise<boolean>;
   now?: () => number;
+  /**
+   * What the producer knows about a server, read at failure time. Absent
+   * (or returning nothing) ⇒ the failure is explained from the error alone.
+   */
+  context?: (serverId: string) => SetupFailureContext | undefined;
 };
 
 async function defaultCanary(convexHttpUrl: string): Promise<boolean> {
@@ -438,18 +595,23 @@ export function createRunSetupObserver(
     init: {
       outcome: "ok" | "failed";
       error?: unknown;
+      challenge?: BearerChallengeSummary;
       startedAt: number;
       endedAt: number;
     }
   ) => {
-    const attribution =
+    const detail =
       init.outcome === "failed"
-        ? classifySetupAttribution(init.error)
+        ? describeSetupFailure(init.error, {
+            serverId,
+            ...(options.context?.(serverId) ?? {}),
+            ...(init.challenge ? { challenge: init.challenge } : {}),
+          })
         : undefined;
     into.set(serverId, {
       serverId,
       outcome: init.outcome,
-      ...(attribution ? { attribution } : {}),
+      ...(detail ? { attribution: detail.attribution, detail } : {}),
       ...(init.error !== undefined ? { error: init.error } : {}),
       startedAt: init.startedAt,
       endedAt: init.endedAt,
@@ -506,6 +668,8 @@ export function createRunSetupObserver(
     recordToolsList: (serverId, init) => record(lists, serverId, init),
     ensureEgressCanary,
     buildSignals,
+    failureDetail: (serverId, phase) =>
+      (phase === "connection" ? connects : lists).get(serverId)?.detail,
     buildSyntheticSpans: (runStartedAt) =>
       buildSyntheticSetupSpans({
         expected,

@@ -75,7 +75,7 @@ describe("ResourceSharePanel", () => {
       screen.getByRole("menuitemradio", { name: /Anyone with the link/i }),
     ).toHaveAttribute("data-disabled");
     expect(
-      screen.getByRole("menuitemradio", { name: /Project members/i }),
+      screen.getByRole("menuitemradio", { name: /Team members/i }),
     ).not.toHaveAttribute("data-disabled");
   });
 });

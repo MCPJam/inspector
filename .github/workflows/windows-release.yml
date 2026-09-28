@@ -7,22 +7,12 @@ on:
         description: "Release version label"
         required: true
         type: string
-      apply_release_patch:
-        description: "Apply the shared release patch artifact before building"
-        required: false
-        default: true
-        type: boolean
   workflow_dispatch:
     inputs:
       version:
         description: "Artifact version label"
         required: false
         type: string
-      apply_release_patch:
-        description: "Apply release patch artifact from the current run"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -36,18 +26,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Download release patch
-        if: inputs.apply_release_patch == true
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        if: inputs.apply_release_patch == true
-        run: git apply --binary .release-plan/release.patch
-        shell: bash
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -68,6 +46,12 @@ jobs:
         run: |
           $bytes = [System.Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\\codesign.pfx", $bytes)
+
+      # Must run before the client build that inlines the constant — see the
+      # script for why every user-facing bundle has to write it.
+      - name: Stamp desktop build time
+        run: node .github/scripts/stamp-mcpjam-build-time.mjs
+        shell: powershell
 
       - name: Build app
         run: npm run build -w @mcpjam/inspector

@@ -979,9 +979,15 @@ export function useProjectState({
   ]);
 
   const handleCreateProject = useCallback(
-    async (name: string, switchTo: boolean = false) => {
+    async (
+      name: string,
+      switchTo: boolean = false,
+      // The create dialog lets the user pick which organization the project
+      // lands in, so the target is no longer always the active one.
+      options?: { organizationId?: string },
+    ) => {
       if (isAuthenticated && !shouldUseLocalFallback) {
-        const organizationId = projectOrganizationId;
+        const organizationId = options?.organizationId ?? projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
           !hasResolvedProjectOrganizationSelection ||
@@ -1029,7 +1035,9 @@ export function useProjectState({
         servers: {},
         createdAt: new Date(),
         updatedAt: new Date(),
-        organizationId: isAuthenticated ? projectOrganizationId : undefined,
+        organizationId: isAuthenticated
+          ? (options?.organizationId ?? projectOrganizationId)
+          : undefined,
       };
       dispatch({ type: "CREATE_PROJECT", project: newProject });
 

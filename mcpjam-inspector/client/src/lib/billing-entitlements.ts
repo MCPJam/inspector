@@ -14,19 +14,20 @@ import type {
 export function getDisplayPriceCentsForPlan(
   _plan: OrganizationPlan,
   interval: BillingInterval,
-  catalogEntry: PlanCatalogEntry
+  catalogEntry: PlanCatalogEntry,
 ): number | null {
   return catalogEntry.prices[interval];
 }
 
 export function getAnnualDiscountPercent(
-  planCatalog: PlanCatalog | undefined
+  planCatalog: PlanCatalog | undefined,
+  plan: "pro" | "team" = "team",
 ): number {
   if (!planCatalog) {
     return 0;
   }
-  const monthly = planCatalog.plans.team.prices.monthly;
-  const annual = planCatalog.plans.team.prices.annual;
+  const monthly = planCatalog.plans[plan]?.prices.monthly;
+  const annual = planCatalog.plans[plan]?.prices.annual;
   if (monthly == null || annual == null || monthly <= 0) {
     return 0;
   }
@@ -48,7 +49,7 @@ export const BILLING_FEATURE_BY_TAB = {
 } as const satisfies Record<string, BillingFeatureName>;
 
 export function getRequiredBillingFeatureForTab(
-  tab: string
+  tab: string,
 ): BillingFeatureName | null {
   return (
     BILLING_FEATURE_BY_TAB[tab as keyof typeof BILLING_FEATURE_BY_TAB] ?? null
@@ -57,7 +58,7 @@ export function getRequiredBillingFeatureForTab(
 
 /** Maps inspector tabs to premiumness gate keys (feature gates only). */
 export function getPremiumnessGateForTab(
-  tab: string
+  tab: string,
 ): PremiumnessGateKey | null {
   const feature = getRequiredBillingFeatureForTab(tab);
   if (!feature) return null;
@@ -65,14 +66,14 @@ export function getPremiumnessGateForTab(
 }
 
 export function isBillingEnforcementActive(
-  premiumness: PremiumnessState | undefined
+  premiumness: PremiumnessState | undefined,
 ): boolean {
   return !!premiumness && premiumness.enforcementState !== "disabled";
 }
 
 export function isGateAccessDenied(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey
+  gateKey: PremiumnessGateKey,
 ): boolean {
   const decision = getGateDecision(premiumness, gateKey);
   if (!decision) {
@@ -114,7 +115,7 @@ export function isPremiumnessGateDeniedForShell(params: {
 
 export function getUpgradePlanForDeniedGate(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey | null
+  gateKey: PremiumnessGateKey | null,
 ): OrganizationPlan | null {
   const decision = gateKey ? getGateDecision(premiumness, gateKey) : null;
   if (!decision || decision.canAccess !== false) {
@@ -125,7 +126,7 @@ export function getUpgradePlanForDeniedGate(
 
 export function getGateDecision(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey
+  gateKey: PremiumnessGateKey,
 ): GateDecision | null {
   if (!premiumness) {
     return null;
@@ -185,11 +186,13 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
 }
 
 export function formatPlanName(
-  plan: OrganizationPlan | null | undefined
+  plan: OrganizationPlan | null | undefined,
 ): string {
   switch (plan) {
     case "free":
       return "Free";
+    case "pro":
+      return "Pro";
     case "team":
       return "Team";
     case "enterprise":
@@ -245,7 +248,7 @@ function tryParseJsonPayload(value: string): BillingErrorPayload | null {
 }
 
 function extractBillingErrorPayload(
-  error: unknown
+  error: unknown,
 ): BillingErrorPayload | null {
   if (error instanceof ConvexError) {
     if (error.data && typeof error.data === "object") {
@@ -313,7 +316,7 @@ function resetsSentence(resetsAt: number): string | null {
  * kind of divergence a shared helper exists to prevent.
  */
 function resolveResetsSentence(
-  resetsAt: number | null | undefined
+  resetsAt: number | null | undefined,
 ): string | null {
   return typeof resetsAt === "number" ? resetsSentence(resetsAt) : null;
 }
@@ -325,7 +328,7 @@ export function formatBillingLimitReachedMessage(
   options?: {
     resetsAt?: number | null;
     windowKind?: "day" | "month";
-  }
+  },
 ): string | null {
   if (typeof allowedValue !== "number") {
     return null;
@@ -421,7 +424,7 @@ export interface EvalIterationLimitError {
  * the pre-check instead of the dead-end toast the wall replaced.
  */
 export function getEvalIterationLimitFromError(
-  error: unknown
+  error: unknown,
 ): EvalIterationLimitError | null {
   const payload = extractBillingErrorPayload(error);
   if (!payload || payload.code !== "billing_limit_reached") {
@@ -445,12 +448,12 @@ export function getEvalIterationLimitFromError(
     used,
     resetsAt: typeof payload.resetsAt === "number" ? payload.resetsAt : null,
     // One limit NAME, two windows: the backend enforces `maxEvalIterationsPerMonth`
-    // as a DAILY cap on Free and a MONTHLY per-seat allowance on Team, and says
+    // as a DAILY cap on Free and a MONTHLY allowance on paid plans, and says
     // which through `windowKind`. The wall renders that word literally ("out of
     // eval iterations today" vs "this month"), so a payload that omits the field
     // must not be answered with a constant: hardcoding "month" would tell a Free
     // user a cap that lifts at the next UTC roll is a month-long block — a wait
-    // sold as an upgrade — and hardcoding "day" mislabels the Team allowance.
+    // sold as an upgrade — and hardcoding "day" mislabels the paid-plan allowance.
     // The plan is the field the window is derived FROM, so fall back to it; it
     // also survives payload paths that drop `windowKind` (the v1 route's
     // `billingDetails` allowlist keeps `plan` and not `windowKind`). Unknown plan
@@ -458,7 +461,9 @@ export function getEvalIterationLimitFromError(
     windowKind:
       payload.windowKind === "month" || payload.windowKind === "day"
         ? payload.windowKind
-        : payload.plan === "team" || payload.plan === "enterprise"
+        : payload.plan === "pro" ||
+          payload.plan === "team" ||
+          payload.plan === "enterprise"
         ? "month"
         : "day",
   };
@@ -467,7 +472,7 @@ export function getEvalIterationLimitFromError(
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,
-  canManageBilling = true
+  canManageBilling = true,
 ): string {
   const payload = extractBillingErrorPayload(error);
   if (!payload) {
@@ -475,6 +480,10 @@ export function getBillingErrorMessage(
     // lives on `err.data`; `err.message` is the redacted "Server Error"/Request
     // ID string, which reads as a crash rather than "fix this field".
     return convexErrMessage(error, fallback);
+  }
+
+  if (payload.code === "COLLABORATIVE_EDITING_REQUIRED") {
+    return "Editing another member's work requires Team or Enterprise.";
   }
 
   if (payload.code === "billing_feature_not_included") {
@@ -510,7 +519,7 @@ export function getBillingErrorMessage(
       {
         resetsAt: payload.resetsAt,
         windowKind: payload.windowKind,
-      }
+      },
     );
     if (message) {
       return message;

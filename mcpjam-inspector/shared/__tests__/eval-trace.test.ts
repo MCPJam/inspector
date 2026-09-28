@@ -164,6 +164,28 @@ describe("eval-trace helpers", () => {
   });
 });
 
+/**
+ * The optional fields the Zod mirror must preserve, named so this list and the
+ * backend's `PRESERVED_FIELDS` (tests/convex/traceSpanParity.test.ts) can be
+ * compared at a glance. They were two inline literals in two repos, which is
+ * how one gains a field and the other quietly does not.
+ *
+ * The evidence-provenance entries matter most here: a silent drop does not
+ * lose decoration, it turns "the model claimed this" into "this happened".
+ */
+const PRESERVED_FIELDS = [
+  "finishReason",
+  "provider",
+  "responseId",
+  "responseTimestamp",
+  "ttfcMs",
+  "mcpErrorCode",
+  "outputSource",
+  "wireCorroborated",
+  "evidenceRequestId",
+  "evidenceStatus",
+] as const;
+
 describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
   it("fixture file has accept + reject cohorts and a readme", () => {
     expect(typeof traceSpanFixtures.__readme).toBe("string");
@@ -179,16 +201,9 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
           `Expected accept for "${row.label}":\n${JSON.stringify(parsed.error.issues, null, 2)}`,
         );
       }
-      // OTel metadata (harness gen_ai.* + mcp.* tool fields) must round-trip
-      // through the Zod mirror unchanged.
-      for (const field of [
-        "finishReason",
-        "provider",
-        "responseId",
-        "responseTimestamp",
-        "ttfcMs",
-        "mcpErrorCode",
-      ] as const) {
+      // Every optional field the fixture carries must round-trip through the
+      // Zod mirror unchanged.
+      for (const field of PRESERVED_FIELDS) {
         if (row.value[field] !== undefined) {
           expect((parsed.data as Record<string, unknown>)[field]).toEqual(
             row.value[field],

@@ -18,7 +18,17 @@ import type {
 } from "./types";
 import type { TraceEnvelope } from "./trace-viewer-adapter";
 
-const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
+/**
+ * The provider names a trace's snapshot may legitimately carry.
+ *
+ * A hand-kept list guarding a cast, so an id that is not a provider at all
+ * cannot be laundered into `ModelProvider` by `normalizeModelProvider`. The
+ * cost is drift: a provider added to the union but not here normalizes to
+ * `custom`, and the run reads as an unknown provider forever after — how
+ * `cursor` nearly shipped. `KNOWN_MODEL_PROVIDERS_ARE_EXHAUSTIVE` below turns
+ * that silent mislabel into a typecheck failure.
+ */
+const KNOWN_MODEL_PROVIDERS = [
   "anthropic",
   "azure",
   "bedrock",
@@ -35,10 +45,30 @@ const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "minimax",
   "qwen",
   "custom",
-];
+  // The Cursor CLI harness runs on the customer's own Cursor account; without
+  // this it normalizes to "custom" and the run reads as an unknown provider.
+  "cursor",
+] as const satisfies readonly ModelProvider[];
+
+/**
+ * Compile-time proof the list above covers the whole union. If a new
+ * `ModelProvider` member is added without being listed, `Exclude<...>` is no
+ * longer `never` and this assignment fails to typecheck — naming the missing
+ * member in the error.
+ */
+type UnlistedModelProvider = Exclude<
+  ModelProvider,
+  (typeof KNOWN_MODEL_PROVIDERS)[number]
+>;
+const KNOWN_MODEL_PROVIDERS_ARE_EXHAUSTIVE: UnlistedModelProvider extends never
+  ? true
+  : UnlistedModelProvider = true;
+void KNOWN_MODEL_PROVIDERS_ARE_EXHAUSTIVE;
 
 function normalizeModelProvider(provider?: string): ModelProvider {
-  return KNOWN_MODEL_PROVIDERS.includes(provider as ModelProvider)
+  return (KNOWN_MODEL_PROVIDERS as readonly ModelProvider[]).includes(
+    provider as ModelProvider,
+  )
     ? (provider as ModelProvider)
     : "custom";
 }

@@ -8,11 +8,13 @@ import {
   type StoredPlatformAuth,
 } from "../src/lib/auth-store.js";
 import { CliError } from "../src/lib/output.js";
+import { PlatformApiError } from "@mcpjam/sdk/platform";
 import {
   buildPlatformClient,
   inspectApiUrl,
   resolvePlatformBaseUrl,
   resolvePlatformOrigin,
+  toCliError,
 } from "../src/lib/platform-client.js";
 
 const NOW = 1_750_000_000_000;
@@ -194,4 +196,33 @@ test("a stored login without apiUrl still defaults to prod", async () => {
   await client.getMe();
 
   assert.ok(requested[0].startsWith("https://app.mcpjam.com/api/v1/"));
+});
+
+test("a usage-limit refusal keeps its code and exit, and carries when to retry", () => {
+  const error = toCliError(
+    new PlatformApiError("Daily generation quota reached.", "RATE_LIMITED", {
+      status: 429,
+      retryAfter: 120,
+      details: {
+        code: "generation_rate_limited",
+        gatedBy: "organization",
+        canTopUp: false,
+      },
+    }),
+  );
+  // Not an auth or credit failure: same wire code, same exit code.
+  assert.equal(error.code, "RATE_LIMITED");
+  assert.equal(error.exitCode, 1);
+  assert.equal(
+    error.message,
+    "Daily generation quota reached. Retry after 120s, not sooner. This is a usage limit: topping up credits does not lift it.",
+  );
+  assert.deepEqual((error.details as Record<string, unknown>).refusal, {
+    status: 429,
+    code: "RATE_LIMITED",
+    reason: "generation_rate_limited",
+    gatedBy: "organization",
+    canTopUp: false,
+    retryAfterSeconds: 120,
+  });
 });

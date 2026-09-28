@@ -28,15 +28,30 @@ function controllableExecutor() {
     if (!p) throw new Error(`executor never called for ${commandId}`);
     return p;
   }
+  // Cleared on settle, so a SECOND call with the same id (only reachable for
+  // untracked reads, which re-execute) waits for its own invocation rather
+  // than resolving the previous one's already-settled promise.
   async function release(commandId: string, result: BrowserCommandResult) {
-    (await waitForCall(commandId)).resolve(result);
+    const p = await waitForCall(commandId);
+    pending.delete(commandId);
+    p.resolve(result);
   }
   async function throwFor(commandId: string, error: unknown) {
-    (await waitForCall(commandId)).reject(error);
+    const p = await waitForCall(commandId);
+    pending.delete(commandId);
+    p.reject(error);
   }
   return { executor, calls, release, throwFor };
 }
 
+/**
+ * A command with SIDE EFFECTS, which is what at-most-once exists to protect.
+ *
+ * Deliberately not an `observe`: reads are exempt from id tracking (they have
+ * nothing to protect and would spend the per-boot budget for nothing), so
+ * testing the de-duplication rules with one would assert the opposite of the
+ * behaviour every rule below describes.
+ */
 function cmd(
   commandId: string,
   overrides: Partial<BrowserCommand> = {},
@@ -44,9 +59,20 @@ function cmd(
   return {
     commandId,
     source: "chat",
-    action: { kind: "observe", mode: "url" },
+    action: { kind: "webmcp_invoke", toolKey: "origin::pay", input: {} },
     ...overrides,
   };
+}
+
+/** A read: same envelope, no side effects, not tracked by id. */
+function readCmd(
+  commandId: string,
+  overrides: Partial<BrowserCommand> = {},
+): BrowserCommand {
+  return cmd(commandId, {
+    action: { kind: "observe", mode: "url" },
+    ...overrides,
+  });
 }
 
 describe("browserd CommandQueue", () => {
@@ -72,7 +98,15 @@ describe("browserd CommandQueue", () => {
     expect(calls).toHaveLength(1); // NOT executed twice
     await release("c1", { ok: true, output: 42 });
     const [a, b] = await Promise.all([first, dup]);
-    expect(a).toEqual(b);
+    // Same RESULT — one execution, one answer. The envelopes differ by design
+    // in exactly one field: the duplicate is marked `deduped` so the ledger can
+    // link it to the first caller's row instead of minting a second one, which
+    // would show a retry through a flaky transport as two clicks.
+    expect(b).toMatchObject({ status: "ok", deduped: true });
+    expect(b.status === "ok" && b.result).toEqual(
+      a.status === "ok" && a.result,
+    );
+    expect(a).not.toHaveProperty("deduped");
     expect(calls).toHaveLength(1);
   });
 
@@ -171,7 +205,8 @@ describe("browserd CommandQueue", () => {
       status: "ok",
       result: { ok: false, error: "cdp exploded" },
     });
-    expect(b).toEqual(a);
+    // Identical results, and the duplicate additionally marked as one.
+    expect(b).toEqual({ ...a, deduped: true });
     expect(calls).toHaveLength(1);
   });
 
@@ -283,3 +318,166 @@ describe("browserd CommandQueue", () => {
     expect(b).toMatchObject({ result: { ok: true, output: "recovered" } });
   });
 });
+
+/**
+ * Reads are exempt from at-most-once, and that exemption is what keeps the
+ * daemon alive under a watching inspector.
+ *
+ * Every tracked id is remembered for the whole boot — as a result, then as a
+ * tombstone — against `maxCommandsPerBoot`. The WebMCP inspector polls the
+ * page's tool list for as long as somebody is watching, which is thousands of
+ * observations an hour: enough to exhaust the budget in a day and leave the
+ * daemon answering `at_capacity` to every command, including the ones whose
+ * duplicates actually matter.
+ */
+describe("browserd CommandQueue — reads are not rationed", () => {
+  it("re-executes a duplicate observe rather than replaying a stale answer", async () => {
+    const { executor, calls, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a");
+
+    const first = q.submit(readCmd("obs-1"));
+    await release("obs-1", { ok: true, output: { url: "https://a.test" } });
+    expect(await first).toMatchObject({ status: "ok" });
+
+    // Same id, and it runs again — correct for a read, which should answer
+    // with what the page looks like NOW rather than what it looked like then.
+    const second = q.submit(readCmd("obs-1"));
+    await release("obs-1", { ok: true, output: { url: "https://b.test" } });
+    expect(await second).toMatchObject({
+      status: "ok",
+      result: { ok: true, output: { url: "https://b.test" } },
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("spends no part of the per-boot budget", async () => {
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", {
+      maxRetained: 2,
+      maxCommandsPerBoot: 2,
+    });
+
+    // Far more observations than the ceiling would ever allow.
+    for (let i = 0; i < 10; i += 1) {
+      const p = q.submit(readCmd(`obs-${i}`));
+      await release(`obs-${i}`, { ok: true, output: {} });
+      expect(await p).toMatchObject({ status: "ok" });
+    }
+    expect(q.retainedCount).toBe(0);
+    expect(q.tombstoneCount).toBe(0);
+
+    // ...and the budget is still entirely available to a command that needs it.
+    const write = q.submit(cmd("pay-1"));
+    await release("pay-1", { ok: true, output: {} });
+    expect(await write).toMatchObject({ status: "ok" });
+  });
+
+  it("still queues reads behind the tab FIFO, and still caps their depth", async () => {
+    // Exempt from ID TRACKING, not from ordering or admission control: a
+    // viewer must not be able to stampede the browser with observations.
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", { perQueueDepthCap: 1 });
+
+    const first = q.submit(readCmd("obs-a", { tabId: "t1" }));
+    await tick();
+    const second = await q.submit(readCmd("obs-b", { tabId: "t1" }));
+    expect(second).toMatchObject({ status: "busy" });
+
+    await release("obs-a", { ok: true, output: {} });
+    expect(await first).toMatchObject({ status: "ok" });
+  });
+});
+
+describe("cancellation does not wait its turn", () => {
+  it("reaches the driver while the invocation it cancels is still running", async () => {
+    // THE WHOLE POINT OF STOP. A page tool that hangs is exactly when somebody
+    // presses it, and a cancellation chained behind that tool in the tab's FIFO
+    // could only arrive once the thing it was meant to stop had already
+    // finished or timed out.
+    let releaseInvoke: (() => void) | undefined;
+    const seen: string[] = [];
+    const queue = new CommandQueue(async (command) => {
+      seen.push(command.action.kind);
+      if (command.action.kind === "webmcp_invoke") {
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+      }
+      return { ok: true, output: command.action.kind };
+    }, "boot-1");
+
+    const invoking = queue.submit({
+      commandId: "c-invoke",
+      source: "model",
+      tabId: "tab-1",
+      action: {
+        kind: "webmcp_invoke",
+        toolName: "slow",
+        input: {},
+      },
+    } as never);
+    // Let the invoke actually start before the cancellation is submitted.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(seen).toEqual(["webmcp_invoke"]);
+
+    const cancelled = await queue.submit({
+      commandId: "c-cancel",
+      source: "model",
+      tabId: "tab-1",
+      action: { kind: "webmcp_cancel", commandId: "c-invoke" },
+    } as never);
+
+    // Answered while the invoke is STILL blocked — the assertion the FIFO
+    // version of this cannot make.
+    expect(cancelled.status).toBe("ok");
+    expect(seen).toEqual(["webmcp_invoke", "webmcp_cancel"]);
+
+    releaseInvoke!();
+    expect((await invoking).status).toBe("ok");
+  });
+
+  it("still answers when the tab's queue is saturated", async () => {
+    // The depth cap exists to stop a caller stampeding the browser with work.
+    // A cancellation is not work, and refusing one because the tab is busy
+    // would refuse it in precisely the situation it is for.
+    const release: Array<() => void> = [];
+    const queue = new CommandQueue(
+      async (command) => {
+        if (command.action.kind === "webmcp_cancel") {
+          return { ok: true, output: "cancelled" };
+        }
+        await new Promise<void>((resolve) => release.push(resolve));
+        return { ok: true, output: "done" };
+      },
+      "boot-1",
+      { perQueueDepthCap: 2 },
+    );
+
+    const busy = [0, 1].map((index) =>
+      queue.submit({
+        commandId: `c-${index}`,
+        source: "model",
+        tabId: "tab-1",
+        action: { kind: "webmcp_invoke", toolName: "slow", input: {} },
+      } as never),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const cancelled = await queue.submit({
+      commandId: "c-cancel",
+      source: "model",
+      tabId: "tab-1",
+      action: { kind: "webmcp_cancel", commandId: "c-0" },
+    } as never);
+    expect(cancelled.status).toBe("ok");
+
+    // Drain: the two invokes are chained, so the second only starts (and only
+    // registers its release) once the first has been let go.
+    while (release.length > 0) {
+      release.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all(busy);
+  });
+});
+

@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
@@ -240,7 +247,7 @@ describe("ServerDetailModal", () => {
   });
 
   it("keeps the footer in the DOM but visually hidden when not on configuration tab", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     const footer = screen.getByTestId("modal-footer");
     expect(footer).toBeInTheDocument();
@@ -266,7 +273,7 @@ describe("ServerDetailModal", () => {
 
     // Overview tab uses overflow-y-auto for scrolling
     const { unmount } = render(
-      <ServerDetailModal {...defaultProps} defaultTab="overview" />
+      <ServerDetailModal {...defaultProps} defaultTab="authorization" />
     );
 
     const overviewPanel = document.querySelector(
@@ -411,6 +418,74 @@ describe("ServerDetailModal", () => {
         },
       });
     });
+  });
+
+  it("keeps Save blocked until the last overlapping wire-mode reconnect settles", async () => {
+    // Two quick override changes run two reconnects at once. A boolean guard
+    // was cleared by whichever finished first, which let a configuration save
+    // through while the other reconnect was still in flight.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      installPointerCaptureMocks();
+      mockUseFeatureFlagEnabled.mockReturnValue(true);
+      // The read-back never reports the new override, so each change reaches
+      // the reconnect through its own 1.5s safety net.
+      mockUseQuery.mockReturnValue({
+        projectId: "jh7abc123def456ghi789jk",
+        serverIds: [],
+        overrides: {},
+      });
+      const settle: Array<() => void> = [];
+      const onReconnect = vi.fn(
+        () => new Promise<void>((resolve) => settle.push(resolve))
+      );
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          onReconnect={onReconnect}
+          projectId="jh7abc123def456ghi789jk"
+          hostedServerId="server_123"
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: /connection overrides/i })
+      );
+
+      const startReconnectFor = async (version: RegExp) => {
+        await user.click(getProtocolVersionCombobox());
+        await user.click(await screen.findByRole("option", { name: version }));
+        await act(async () => {
+          vi.advanceTimersByTime(1500);
+        });
+      };
+
+      await startReconnectFor(/2025-11-25/);
+      await waitFor(() => expect(onReconnect).toHaveBeenCalledTimes(1));
+      await startReconnectFor(/2026-07-28/);
+      await waitFor(() => expect(onReconnect).toHaveBeenCalledTimes(2));
+
+      // The footer's only button; its label tracks the reconnect, so match it
+      // by position rather than by text.
+      const saveButton = () =>
+        within(screen.getByTestId("modal-footer")).getByRole("button");
+      expect(saveButton()).toBeDisabled();
+
+      await act(async () => {
+        settle[0]();
+      });
+      expect(saveButton()).toBeDisabled();
+
+      await act(async () => {
+        settle[1]();
+      });
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not fire the fallback reconnect after the modal closes", async () => {
@@ -593,14 +668,196 @@ describe("ServerDetailModal", () => {
   });
 
   it("does not show a conformance launch button in overview", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.queryByRole("button", { name: "Run conformance" })
     ).not.toBeInTheDocument();
   });
 
-  it("renders local OAuth tokens from localStorage in overview", () => {
+  it("overlays the auth panel instead of stacking under the config panel", () => {
+    // The configuration panel is force-mounted and stays `invisible` while
+    // inactive, which still occupies its full height. A sibling panel in
+    // normal flow therefore renders BELOW that height and spills out of the
+    // dialog, so every non-configuration tab has to overlay it.
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
+    // The dialog is portalled, so query the document rather than the container.
+    const panels = screen.getAllByRole("tabpanel", { hidden: true });
+    const auth = panels.find(
+      (panel) => panel.getAttribute("data-state") === "active",
+    );
+    expect(auth).toBeTruthy();
+    for (const positioning of ["absolute", "inset-0", "overflow-y-auto"])
+      expect(auth?.className).toContain(positioning);
+    expect(auth?.className).not.toContain("max-h-[60vh]");
+  });
+
+  const connectedServerInfo = {
+    serverVersion: {
+      name: "Linear MCP",
+      title: "Linear MCP",
+    },
+    protocolVersion: "2026-07-28",
+    transport: "streamable-http",
+    instructions: "When passing string values to tools, send the content directly.",
+    serverCapabilities: { tools: { listChanged: false } },
+  };
+
+  it("keeps handshake metadata on overview, not the auth tab", () => {
+    const server = createServer({
+      useOAuth: true,
+      initializationInfo: connectedServerInfo,
+      oauthTokens: {
+        access_token: "local-access-token",
+        refresh_token: "local-refresh-token",
+        token_type: "Bearer",
+      },
+    });
+
+    const { unmount } = render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    expect(within(authPanel!).getByText("OAuth Tokens")).toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("MCP Protocol Version")
+    ).not.toBeInTheDocument();
+    expect(within(authPanel!).queryByText("Transport")).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Instructions")
+    ).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Server Capabilities")
+    ).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="overview"
+      />
+    );
+
+    const overviewPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(overviewPanel).toBeTruthy();
+    expect(within(overviewPanel!).getByText("Server Name")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).getByText("MCP Protocol Version")
+    ).toBeInTheDocument();
+    expect(within(overviewPanel!).getByText("Instructions")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).queryByText("OAuth Tokens")
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps successful OAuth trace payloads closed until a step is opened", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          lastOAuthTrace: {
+            version: 1,
+            source: "hosted_callback",
+            currentStep: "complete",
+            steps: [
+              {
+                step: "request_authorization_server_metadata",
+                title: "Fetch Authorization Server Metadata",
+                status: "success",
+                message: "Authorization server metadata loaded.",
+                details: {
+                  request: {
+                    url: "https://multiaccount.mcpjam.com/.well-known/oauth-authorization-server",
+                  },
+                },
+                startedAt: 1,
+              },
+              {
+                step: "token_request",
+                title: "Token Request",
+                status: "error",
+                error: "token endpoint rejected the grant",
+                startedAt: 2,
+              },
+            ],
+            httpHistory: [
+              {
+                step: "request_authorization_server_metadata",
+                timestamp: 1,
+                request: {
+                  method: "GET",
+                  url: "https://hidden.example/http-history",
+                  headers: {},
+                },
+              },
+            ],
+          },
+        })}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    const trace = within(authPanel!)
+      .getByText("Last OAuth Trace")
+      .closest("details");
+    expect(trace).not.toBeNull();
+    expect(trace).not.toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("Last OAuth Trace"));
+    expect(trace).toHaveAttribute("open");
+
+    const successStep = within(authPanel!)
+      .getByText("Fetch Authorization Server Metadata")
+      .closest("details");
+    const httpHistory = within(authPanel!)
+      .getByText("HTTP History")
+      .closest("details");
+    const errorStep = within(authPanel!)
+      .getByText("Token Request")
+      .closest("details");
+    expect(successStep).not.toBeNull();
+    expect(httpHistory).not.toBeNull();
+    expect(errorStep).not.toBeNull();
+    expect(successStep).not.toHaveAttribute("open");
+    expect(httpHistory).not.toHaveAttribute("open");
+    expect(errorStep).toHaveAttribute("open");
+    expect(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    ).toHaveClass("text-success");
+    expect(within(authPanel!).getByText("success")).toHaveClass("sr-only");
+    expect(within(authPanel!).getByText("Token Request")).toHaveClass(
+      "text-destructive"
+    );
+    expect(
+      within(authPanel!).getByText("token endpoint rejected the grant")
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    );
+    expect(successStep).toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("HTTP History"));
+    expect(httpHistory).toHaveAttribute("open");
+  });
+
+  it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
       JSON.stringify({
@@ -616,7 +873,7 @@ describe("ServerDetailModal", () => {
       <ServerDetailModal
         {...defaultProps}
         server={createServer({ useOAuth: true })}
-        defaultTab="overview"
+        defaultTab="authorization"
       />
     );
 
@@ -641,14 +898,14 @@ describe("ServerDetailModal", () => {
       />
     );
 
-    // Edit a field so the form has changes and "Save Changes" is active
+    // Edit a field so the form has changes and "Save & Connect" is active
     // (connected servers with no changes show "Reconnect" instead).
     const nameInput = screen.getByDisplayValue("test-server");
     await user.clear(nameInput);
     await user.type(nameInput, "test-server-renamed");
 
     const form = screen
-      .getByRole("button", { name: "Save Changes" })
+      .getByRole("button", { name: "Save & Connect" })
       .closest("form");
 
     expect(form).not.toBeNull();
@@ -699,7 +956,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        defaultTab="overview"
+        defaultTab="authorization"
         onSubmit={onSubmit}
       />
     );
@@ -749,7 +1006,7 @@ describe("ServerDetailModal", () => {
   it("shows a reconnect message instead of crashing when stored auth data is invalid", () => {
     localStorage.setItem("mcp-tokens-test-server", '{"access_token":"broken"');
 
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.getByText(
@@ -776,7 +1033,7 @@ describe("ServerDetailModal", () => {
     const input = screen.getByDisplayValue("test-server");
     await user.type(input, "-edited");
 
-    const saveButton = screen.getByRole("button", { name: "Save Changes" });
+    const saveButton = screen.getByRole("button", { name: "Save & Connect" });
     fireEvent.click(saveButton);
 
     await waitFor(() => {
@@ -786,7 +1043,7 @@ describe("ServerDetailModal", () => {
     resolveSubmit?.({ ok: true, serverName: "test-server" });
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Save Changes" })
+        screen.getByRole("button", { name: "Save & Connect" })
       ).toBeEnabled();
     });
   });
@@ -818,7 +1075,7 @@ describe("ServerDetailModal", () => {
       const nameInput = screen.getByDisplayValue("test-server");
       fireEvent.change(nameInput, { target: { value: name } });
       const form = screen
-        .getByRole("button", { name: "Save Changes" })
+        .getByRole("button", { name: "Save & Connect" })
         .closest("form");
       expect(form).not.toBeNull();
       fireEvent.submit(form!);

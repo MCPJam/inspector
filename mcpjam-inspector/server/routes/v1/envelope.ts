@@ -14,6 +14,7 @@ import {
   type MapRuntimeErrorOptions,
 } from "../web/errors.js";
 import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import { internalErrorResponseView } from "../web/hosted-internal-error.js";
 import {
   v1ErrorBody,
   v1Page,
@@ -21,6 +22,7 @@ import {
   mapInternalCode,
   type V1ErrorCode,
 } from "./contract.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
 
 /** Canonical error response. */
 export function v1Error(
@@ -58,6 +60,13 @@ export function v1Error(
       message,
     });
   }
+  // A hosted INTERNAL_ERROR answers with a generic sentence and the request id
+  // in `details` (MJ-020, MJ-021); the message stashed above is what the log
+  // keeps.
+  const view = internalErrorResponseView(c, V1_ERROR_STATUS[code], code, {
+    message,
+    details,
+  });
   // Cast the dynamic numeric status to satisfy Hono's literal StatusCode union
   // (the web routes sidestep this by typing `c` as `any` in `webError`).
   //
@@ -66,7 +75,7 @@ export function v1Error(
   // only accepts two arguments, and handing them `{}` would change behavior on
   // every error path to plumb a header almost none of them carry.
   return c.json(
-    v1ErrorBody(code, message, details),
+    v1ErrorBody(code, view.message, view.details),
     V1_ERROR_STATUS[code] as any,
     headers && Object.keys(headers).length > 0 ? headers : undefined
   );
@@ -169,7 +178,32 @@ export function mapErrorToV1(
       slug: decision.slug,
     };
   }
-  const routeError = mapRuntimeError(error, options);
+  // A DELIBERATE backend refusal — `ConvexError({ code, message })` — is
+  // translated BEFORE the runtime classifier sees it.
+  //
+  // The classifier has nothing to key on for one of these: a `ConvexError`
+  // is not a transport failure, not an MCP error, and its `error.message` is
+  // Convex's own framing wrapped around the JSON of its data. So it fell to
+  // `internal/unknown`, and a refusal the backend wrote a remedy for reached
+  // the caller as `500 INTERNAL_ERROR: "[Request ID: …] Server Error"` — the
+  // production failure that motivated this branch, where the actual cause
+  // (`ENV_MATERIALIZED_SECRETS_UNSUPPORTED`, naming the fix in its message)
+  // was visible only in `convex logs --prod`.
+  //
+  // Routes that call `translateConvexWriteError` themselves are unaffected:
+  // they throw a `WebRouteError`, which the helper declines. This is the
+  // backstop for the ones that do not, and it is scoped to the boundary
+  // rather than sprayed across every route.
+  //
+  // The translated error goes THROUGH `mapRuntimeError` rather than around
+  // it so the capture decision, the origin stamp and the `normalized` block
+  // are made exactly once, in the one place that makes them — and so a
+  // deliberate 4xx is not paged for, like every other 4xx a v1 handler
+  // throws.
+  const routeError = mapRuntimeError(
+    translateStructuredConvexRefusal(error) ?? error,
+    options,
+  );
   if (
     routeError.code === ErrorCode.UNAUTHORIZED &&
     routeError.details?.oauthRequired === true
@@ -205,6 +239,19 @@ export function mapErrorToV1(
       code: "FORBIDDEN",
       message: routeError.message,
       details: routeError.details,
+      headers: routeError.headers,
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
+    };
+  }
+  // A revoked session (MJ-011). Inspector-only for the same reason as the
+  // branch above; publicly the canonical 401, with the specific reason in
+  // `details` — the convention `ORPHANED_KEY`/`EXPIRED_KEY` already follow.
+  if (routeError.code === ErrorCode.SESSION_REVOKED) {
+    return {
+      code: "UNAUTHORIZED",
+      message: routeError.message,
+      details: { ...(routeError.details ?? {}), reason: "SESSION_REVOKED" },
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
@@ -268,11 +315,30 @@ function isMcpMethodNotFound(error: unknown): boolean {
  * fallback with no message, origin or slug — the same blind spot `app.onError`
  * and `webError` already fixed for their surfaces.
  */
-export function v1OnError(error: unknown, c: Context) {
-  const { code, message, details, headers, origin, slug } = mapErrorToV1(
-    error,
-    { boundary: "mcpjam_internal" }
-  );
+export function v1OnError(
+  error: unknown,
+  c: Context,
+  /**
+   * What the failure may say, when the caller already knows (MJ-001: a hosted
+   * connection failure reports its status line, and `details` rewrites the
+   * mapped details). The mapping still classifies the error for capture and
+   * logging; only the response wording changes.
+   */
+  override?: {
+    message: string;
+    code?: V1ErrorCode;
+    details?: (
+      details: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
+  },
+) {
+  const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
+  const { headers, origin, slug } = mapped;
+  const code = override?.code ?? mapped.code;
+  const message = override?.message ?? mapped.message;
+  const details = override?.details
+    ? override.details(mapped.details)
+    : mapped.details;
   const status = V1_ERROR_STATUS[code];
   // The middleware only trusts meta whose status matches the response it
   // observed, so this has to be the v1 status — which is not always the

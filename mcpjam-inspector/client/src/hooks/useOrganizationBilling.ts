@@ -1,9 +1,12 @@
-import { useAction, useMutation, useQuery } from "convex/react";
-import { useCallback, useRef, useState } from "react";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { canCheckoutPlan } from "@/lib/pricing-catalog";
+import { useAction, useMutation, useQueries, useQuery } from "convex/react";
+import { makeFunctionReference } from "convex/server";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
-export type OrganizationPlan = "free" | "team" | "enterprise";
+export type OrganizationPlan = "free" | "pro" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
@@ -88,6 +91,10 @@ export interface OrganizationEntitlements {
 export interface OrganizationBillingStatus {
   organizationId: string;
   organizationName: string;
+  catalogPlanId?: string;
+  pricingVersion?: "v1" | "v2";
+  priceModel?: BillingModel;
+  topUpEligible?: boolean;
   plan: OrganizationPlan;
   effectivePlan: OrganizationPlan;
   source: "free" | "subscription" | "trial" | "simulation";
@@ -157,6 +164,32 @@ export type SeatPaymentCancelResult = {
 };
 
 export interface PlanCatalogEntry {
+  catalogPlanId?: string;
+  includedCredits?:
+    | { model: "daily_bucket"; dailyCredits: number }
+    | { model: "monthly_ledger"; flat: number }
+    | { model: "monthly_ledger"; perSeat: number }
+    | { model: "monthly_ledger"; negotiated: true };
+  rollover?: { capMultiplier: number; capCredits: number } | null;
+  topUp?: {
+    centsPerCredit: number;
+    monthlyCapCredits: number | null;
+    eligible: boolean;
+  };
+  rateCard?: {
+    id: string;
+    creditsPerProviderDollar: number;
+    platformFees: Record<string, number>;
+  };
+  display?: {
+    features: Array<{
+      key: string;
+      label: string;
+      included: boolean;
+      detail?: string;
+    }>;
+    support: "community" | "email" | "priority" | "dedicated";
+  };
   plan: OrganizationPlan;
   displayName: string;
   billingModel: BillingModel;
@@ -167,7 +200,7 @@ export interface PlanCatalogEntry {
   includedSeats: number | null;
   seatMinimum: number | null;
   checkout: {
-    plan: "team";
+    plan: "pro" | "team";
     supportedIntervals: BillingInterval[];
   } | null;
 }
@@ -176,7 +209,21 @@ export interface PlanCatalog {
   catalogVersion: string;
   currency: string;
   appOrigin?: string;
-  plans: Record<OrganizationPlan, PlanCatalogEntry>;
+  plans: Record<Exclude<OrganizationPlan, "pro">, PlanCatalogEntry> & {
+    pro?: PlanCatalogEntry;
+  };
+}
+
+// One envelope for the five stable billing reads. Bundled server-side because
+// every open page used to hold five separate subscriptions for them, which is
+// what pushed prod into its concurrent-query limit. `projectPremiumness` is
+// null when the caller sent no projectId.
+export interface OrganizationBillingBundle {
+  billingStatus: OrganizationBillingStatus;
+  entitlements: OrganizationEntitlements;
+  organizationPremiumness: PremiumnessState;
+  projectPremiumness: PremiumnessState | null;
+  planCatalog: PlanCatalog;
 }
 
 export interface OrganizationPlanChangeSnapshot {
@@ -186,7 +233,7 @@ export interface OrganizationPlanChangeSnapshot {
   stripeSubscriptionItemId?: string;
   stripePriceId?: string;
   stripeSeatQuantity?: number;
-  stripeScheduledPlan?: "team" | null;
+  stripeScheduledPlan?: "pro" | "team" | null;
   stripeScheduledBillingInterval?: BillingInterval | null;
   stripeScheduledPriceId?: string | null;
   stripeScheduledEffectiveAt?: number | null;
@@ -237,20 +284,50 @@ export interface StartOrganizationPlanChangeOptions {
 
 export function useOrganizationBillingStatus(
   organizationId: string | null,
-  options?: UseOrganizationBillingStatusOptions
+  options?: UseOrganizationBillingStatusOptions,
 ): OrganizationBillingStatus | undefined {
   const isUserReady = useDbUserReady();
   const enabled = (options?.enabled ?? true) && isUserReady;
 
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip"
+    enabled && organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
+}
+
+const billingStatusQuery = makeFunctionReference<
+  "query",
+  { organizationId: string },
+  OrganizationBillingStatus
+>("billing:getOrganizationBillingStatus");
+
+/**
+ * Whether the viewer can manage billing, for surfaces that must keep
+ * rendering when the status query fails. useQueries returns the server error
+ * instead of throwing during render; an error or a pending result reads as
+ * false, so refusal copy falls back to the non-manager wording.
+ */
+export function useCanManageOrganizationBilling(
+  organizationId: string | null | undefined,
+  enabled: boolean,
+): boolean {
+  const isUserReady = useDbUserReady();
+  // Convex keys its subscription callbacks by this object's identity.
+  const queries = useMemo<Parameters<typeof useQueries>[0]>(
+    (): Parameters<typeof useQueries>[0] =>
+      enabled && isUserReady && organizationId
+        ? { status: { query: billingStatusQuery, args: { organizationId } } }
+        : {},
+    [enabled, isUserReady, organizationId],
+  );
+  const result = useQueries(queries).status as
+    OrganizationBillingStatus | Error | undefined;
+  return !(result instanceof Error) && result?.canManageBilling === true;
 }
 
 export function useOrganizationBilling(
   organizationId: string | null,
-  options?: UseOrganizationBillingOptions
+  options?: UseOrganizationBillingOptions,
 ) {
   const projectId = options?.projectId ?? null;
   const isUserReady = useDbUserReady();
@@ -261,56 +338,57 @@ export function useOrganizationBilling(
   const shouldQuerySeatPaymentIntent =
     shouldQueryOrganization && options?.includeSeatPaymentIntent === true;
 
-  const billingStatus = useOrganizationBillingStatus(organizationId, {
-    enabled,
-  });
+  // One subscription instead of five. `useOrganizationBillingStatus` stays a
+  // separate export for callers that only want the status, so it is not reused
+  // here.
+  const bundle = useQuery(
+    "billing:getOrganizationBillingBundle" as any,
+    shouldQueryOrganization
+      ? ({
+          organizationId,
+          ...(shouldQueryProject ? { projectId } : {}),
+        } as any)
+      : "skip",
+  ) as OrganizationBillingBundle | undefined;
 
-  const entitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as OrganizationEntitlements | undefined;
-
-  const organizationPremiumness = useQuery(
-    "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as PremiumnessState | undefined;
-
-  const projectPremiumness = useQuery(
-    "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip"
-  ) as PremiumnessState | undefined;
-
-  const planCatalog = useQuery(
-    "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as PlanCatalog | undefined;
+  const billingStatus = bundle?.billingStatus;
+  const entitlements = bundle?.entitlements;
+  const organizationPremiumness = bundle?.organizationPremiumness;
+  // The bundle says null for "no projectId sent"; callers expect undefined,
+  // which is what the old "skip" subscription gave them. Gate it on
+  // shouldQueryProject too, so a bundle fetched without a project can never
+  // read as a settled project answer.
+  const projectPremiumness = shouldQueryProject
+    ? (bundle?.projectPremiumness ?? undefined)
+    : undefined;
+  const planCatalog = bundle?.planCatalog;
 
   const activeSeatPaymentIntent = useQuery(
     "billing:getActiveOrganizationSeatPaymentIntent" as any,
-    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip"
+    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip",
   ) as OrganizationSeatPaymentIntent | null | undefined;
 
   const startPlanChangeAction = useAction(
-    "billing:startOrganizationPlanChange" as any
+    "billing:startOrganizationPlanChange" as any,
   );
   const createPortal = useAction(
-    "billing:createOrganizationBillingPortalSession" as any
+    "billing:createOrganizationBillingPortalSession" as any,
   );
   const createCancellationPortal = useAction(
-    "billing:createOrganizationBillingPortalCancellationSession" as any
+    "billing:createOrganizationBillingPortalCancellationSession" as any,
   );
   const createIntervalChangePortal = useAction(
-    "billing:createOrganizationBillingPortalIntervalChangeSession" as any
+    "billing:createOrganizationBillingPortalIntervalChangeSession" as any,
   );
   const cancelScheduledBillingChangeAction = useAction(
-    "billing:cancelOrganizationScheduledBillingChange" as any
+    "billing:cancelOrganizationScheduledBillingChange" as any,
   );
   const selectFreeAfterTrialMutation = useMutation(
-    "billing:selectOrganizationFreePlanAfterTrial" as any
+    "billing:selectOrganizationFreePlanAfterTrial" as any,
   );
   const startSeatPaymentAction = useAction("billing:startSeatPayment" as any);
   const completeSeatPaymentAction = useAction(
-    "billing:completeSeatPayment" as any
+    "billing:completeSeatPayment" as any,
   );
   const cancelSeatPaymentAction = useAction("billing:cancelSeatPayment" as any);
   const retrySeatPaymentMutation = useMutation(
@@ -319,7 +397,7 @@ export function useOrganizationBilling(
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
-    "team" | null
+    "pro" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [
@@ -334,15 +412,20 @@ export function useOrganizationBilling(
   const seatPaymentCancelVersionRef = useRef(0);
   const seatPaymentCompletionInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const canManageBilling = billingStatus?.canManageBilling ?? false;
 
   const startPlanChange = useCallback(
     async (
       returnUrl: string,
-      tier: "team" = "team",
+      tier: "pro" | "team" = "team",
       billingInterval: BillingInterval = "monthly",
-      options: StartOrganizationPlanChangeOptions = {}
+      options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
       if (!organizationId) throw new Error("Organization is required");
+      if (!canCheckoutPlan(planCatalog, tier, billingInterval))
+        throw new Error(
+          "This plan or billing interval is not offered to this organization.",
+        );
       setIsStartingPlanChange(true);
       setPendingPlanChangeTarget(tier);
       setError(null);
@@ -356,8 +439,11 @@ export function useOrganizationBilling(
         });
         return result as OrganizationPlanChangeResult;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to change plan";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to change plan",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
@@ -365,7 +451,7 @@ export function useOrganizationBilling(
         setPendingPlanChangeTarget(null);
       }
     },
-    [organizationId, startPlanChangeAction]
+    [organizationId, startPlanChangeAction, planCatalog, canManageBilling],
   );
 
   const openPortal = useCallback(
@@ -380,15 +466,18 @@ export function useOrganizationBilling(
         });
         return result.portalUrl as string;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to open billing portal";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to open billing portal",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
         setIsOpeningPortal(false);
       }
     },
-    [createPortal, organizationId]
+    [createPortal, organizationId, canManageBilling],
   );
 
   const openIntervalChangePortal = useCallback(
@@ -404,17 +493,18 @@ export function useOrganizationBilling(
         });
         return result.portalUrl as string;
       } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to open billing interval change";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to open billing interval change",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
         setIsOpeningPortal(false);
       }
     },
-    [createIntervalChangePortal, organizationId]
+    [createIntervalChangePortal, organizationId, canManageBilling],
   );
 
   const openCancellationPortal = useCallback(
@@ -429,17 +519,18 @@ export function useOrganizationBilling(
         });
         return result.portalUrl as string;
       } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to open cancellation flow";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to open cancellation flow",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
         setIsOpeningPortal(false);
       }
     },
-    [createCancellationPortal, organizationId]
+    [createCancellationPortal, organizationId, canManageBilling],
   );
 
   const cancelScheduledBillingChange = useCallback(async () => {
@@ -452,16 +543,17 @@ export function useOrganizationBilling(
       });
       return result.subscription as OrganizationPlanChangeSnapshot;
     } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to cancel scheduled billing change";
+      const message = getBillingErrorMessage(
+        err,
+        "Failed to cancel scheduled billing change",
+        canManageBilling,
+      );
       setError(message);
       throw err;
     } finally {
       setIsCancelingScheduledBillingChange(false);
     }
-  }, [cancelScheduledBillingChangeAction, organizationId]);
+  }, [cancelScheduledBillingChangeAction, organizationId, canManageBilling]);
 
   const selectFreeAfterTrial = useCallback(async () => {
     if (!organizationId) throw new Error("Organization is required");
@@ -470,14 +562,17 @@ export function useOrganizationBilling(
     try {
       await selectFreeAfterTrialMutation({ organizationId } as any);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to choose free plan";
+      const message = getBillingErrorMessage(
+        err,
+        "Failed to choose free plan",
+        canManageBilling,
+      );
       setError(message);
       throw err;
     } finally {
       setIsSelectingFreeAfterTrial(false);
     }
-  }, [organizationId, selectFreeAfterTrialMutation]);
+  }, [organizationId, selectFreeAfterTrialMutation, canManageBilling]);
 
   const finishSeatPayment = useCallback(
     async (seatPaymentIntentId?: string): Promise<SeatPaymentResult> => {
@@ -522,7 +617,7 @@ export function useOrganizationBilling(
             } catch (cancelError) {
               console.warn(
                 "[billing] Failed to cancel incomplete seat payment",
-                cancelError
+                cancelError,
               );
             }
             throw confirmError;
@@ -555,7 +650,7 @@ export function useOrganizationBilling(
         if (startResult.status === "failed") {
           if (startResult.reason === "missing_payment_method") {
             throw new Error(
-              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again."
+              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again.",
             );
           }
           throw new Error("Payment failed. The member was not added.");
@@ -563,8 +658,11 @@ export function useOrganizationBilling(
 
         return startResult as SeatPaymentResult;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to finish seat payment";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to finish seat payment",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
@@ -574,10 +672,11 @@ export function useOrganizationBilling(
     [
       activeSeatPaymentIntent?._id,
       cancelSeatPaymentAction,
+      canManageBilling,
       completeSeatPaymentAction,
       organizationId,
       startSeatPaymentAction,
-    ]
+    ],
   );
 
   /**
@@ -613,18 +712,26 @@ export function useOrganizationBilling(
       }
       if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
         // Cancelled while we were reopening it. Leave it cancelled.
-        return;
+        return { status: "noop", reason: "seat_payment_canceled" } as const;
       }
       return await finishSeatPayment(result.seatPaymentIntentId);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to retry seat payment";
+      const message = getBillingErrorMessage(
+        err,
+        "Failed to retry seat payment",
+        canManageBilling,
+      );
       setError(message);
       throw err;
     } finally {
       setIsFinishingSeatPayment(false);
     }
-  }, [finishSeatPayment, organizationId, retrySeatPaymentMutation]);
+  }, [
+    finishSeatPayment,
+    organizationId,
+    retrySeatPaymentMutation,
+    canManageBilling,
+  ]);
 
   const cancelSeatPayment = useCallback(
     async (seatPaymentIntentId?: string): Promise<SeatPaymentCancelResult> => {
@@ -649,8 +756,11 @@ export function useOrganizationBilling(
             activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
         } as any)) as SeatPaymentCancelResult;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to cancel seat payment";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to cancel seat payment",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
@@ -661,8 +771,9 @@ export function useOrganizationBilling(
       activeSeatPaymentIntent?._id,
       activeSeatPaymentIntent?.stripeInvoiceId,
       cancelSeatPaymentAction,
+      canManageBilling,
       organizationId,
-    ]
+    ],
   );
 
   // The caller asked for billing and we're only waiting on the `users` row.
@@ -694,7 +805,8 @@ export function useOrganizationBilling(
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
     isLoadingPlanCatalog:
-      isAwaitingUserRow || (shouldQueryOrganization && planCatalog === undefined),
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && planCatalog === undefined),
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,

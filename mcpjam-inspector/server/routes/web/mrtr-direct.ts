@@ -32,17 +32,16 @@
 import type { z } from "zod";
 import type { MCPClientManager, MrtrInputCollector } from "@mcpjam/sdk";
 import {
+  attachHostedRouteLogs,
   createManualHostedConnection,
   ErrorCode,
   WebRouteError,
-  webError,
+  webErrorFromRoute,
   mapRuntimeError,
+  projectRouteFailure,
   readJsonBody,
 } from "./auth.js";
-import {
-  attachHostedRpcLogs,
-  createHostedRpcLogCollector,
-} from "./hosted-rpc-logs.js";
+import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   computeMrtrBindingFingerprint,
@@ -286,16 +285,21 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
         "[mrtr-direct]",
       );
     }
-    return c.json(attachHostedRpcLogs(outcome, rpcCollector), 200);
+    return c.json(attachHostedRouteLogs(outcome, rpcCollector), 200);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
-    return webError(
-      c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+    // Hosted, reported like every other MCP route's failure (MJ-001).
+    const projected = projectRouteFailure(
+      mapRuntimeError(error),
+      error,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
+    // `webErrorFromRoute`, not a hand-rolled `webError`: the by-hand call
+    // dropped `routeError.normalized` and `routeError.origin`, so every
+    // failure on the three routes that come through here — `tools/execute`,
+    // `resources/read`, `prompts/get` — reached `http.request.failed` with no
+    // `origin` and no `slug` at all. Measured 2026-08-22 to 08-25: 22 of 22
+    // rows on `resources/read` and 10 of 10 on `tools/execute` carried
+    // neither, which reads to any origin-keyed monitor as nothing.
+    return webErrorFromRoute(c, projected.routeError, projected.logs);
   }
 }

@@ -11,10 +11,13 @@ import {
   probeIdentityKey,
   shouldSkipExecution,
   assertTestCaseRunWithinCap,
+  authorEvalSuite,
+  buildGithubCheckServerOverride,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
   remapSnapshotServerIdsForAttachment,
+  storedSelectionForCaseModel,
 } from "../evals";
 import { WebRouteError } from "../../web/errors";
 import { SERVER_TOOL_SNAPSHOT_VERSION } from "../../../utils/export-helpers";
@@ -53,6 +56,42 @@ function buildTestCaseRequest(runs?: number): unknown {
     ...(runs === undefined ? {} : { testCaseOverrides: { runs } }),
   };
 }
+
+describe("GitHub check server override", () => {
+  it("pairs the ephemeral PR server name and project row", () => {
+    expect(
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["ephemeral-server-id"],
+        serverNames: ["gh-check-trigger-1"],
+      })
+    ).toEqual([
+      {
+        serverName: "gh-check-trigger-1",
+        projectServerId: "ephemeral-server-id",
+      },
+    ]);
+  });
+
+  it("does not override ordinary suite runs", () => {
+    expect(
+      buildGithubCheckServerOverride({
+        source: "ui",
+        persistedServerRefs: ["server-id"],
+        serverNames: ["server"],
+      })
+    ).toBeUndefined();
+  });
+
+  it("rejects incomplete PR server identity", () => {
+    expect(() =>
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["server-id"],
+      })
+    ).toThrow(WebRouteError);
+  });
+});
 
 describe("RunEvalsRequestSchema environmentId boundary", () => {
   it("accepts AND preserves environmentId (guards the silent-strip failure mode)", () => {
@@ -985,5 +1024,255 @@ describe("shouldSkipExecution", () => {
     // "replayed" — and unknown must never start refusing to run work.
     expect(shouldSkipExecution({})).toBe(false);
     expect(shouldSkipExecution({ status: "completed" })).toBe(false);
+  });
+});
+
+/**
+ * A plain rerun must not WRITE the suite.
+ *
+ * `authorEvalSuite` used to call `testSuites:updateTestSuite` on every launch
+ * that had a suite id. On a bare rerun that call carried nothing — no name, no
+ * description, and (by the snapshot rule above it) no environment — so it was a
+ * mutation whose entire argument list was `undefined`.
+ *
+ * Harmless while every suite was writable. Not harmless once a suite managed by
+ * CI refuses suite edits: it would make EVERY rerun of such a suite fail on a
+ * write it never needed to make, and running a CI-owned suite is precisely what
+ * the read-only lock is meant to keep working.
+ */
+describe("authorEvalSuite — the suite write a rerun does not need", () => {
+  function fakeConvex(overrides: Record<string, unknown> = {}) {
+    const mutations: Array<{ fn: string; args: any }> = [];
+    const client = {
+      mutation: async (fn: string, args: any) => {
+        mutations.push({ fn, args });
+        return { _id: "suite_1" };
+      },
+      query: async (fn: string) => {
+        if (fn === "testSuites:listTestCases") return [];
+        return null;
+      },
+      ...overrides,
+    };
+    return { client, mutations };
+  }
+
+  const BASE = {
+    tests: [] as never[],
+    resolvedServerIds: ["s1"],
+    persistedServerRefs: ["s1"],
+    serverNames: ["alpha"],
+    projectId: "p1",
+    suiteId: "suite_1",
+    suiteName: undefined,
+    suiteDescription: undefined,
+    passCriteria: undefined,
+  };
+
+  it("issues no updateTestSuite for a plain rerun", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+    });
+    expect(mutations.map((m) => m.fn)).not.toContain(
+      "testSuites:updateTestSuite"
+    );
+  });
+
+  it("creates an inline suite with the resolved host attachments", async () => {
+    const { client, mutations } = fakeConvex();
+    const hostAttachments = [
+      { namedHostId: "host-1", selectedServerIds: ["s1"] },
+    ];
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    expect(
+      mutations.find((mutation) => mutation.fn === "testSuites:createTestSuite")
+        ?.args,
+    ).toMatchObject({ hostAttachments });
+  });
+
+  it("creates an environment suite when the backend can and one environment is pinned", async () => {
+    const { client, mutations } = fakeConvex({
+      query: async (fn: string) =>
+        fn === "projectEnvironments:getCapabilities"
+          ? { createSuiteWithEnvironments: true }
+          : null,
+    });
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments: [{ namedHostId: "host-1", selectedServerIds: ["s1"] }],
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    const created = mutations.find(
+      (mutation) => mutation.fn === "testSuites:createTestSuite",
+    )?.args;
+    expect(created.environmentTargets).toEqual([
+      { hostId: "host-1", serverIds: ["s1"] },
+    ]);
+    expect(created).not.toHaveProperty("hostAttachments");
+    expect(created).not.toHaveProperty("environment");
+  });
+
+  it("keeps the legacy create when two clients would need an environment choice", async () => {
+    const { client, mutations } = fakeConvex({
+      query: async (fn: string) =>
+        fn === "projectEnvironments:getCapabilities"
+          ? { createSuiteWithEnvironments: true }
+          : null,
+    });
+    const hostAttachments = [
+      { namedHostId: "host-1", selectedServerIds: ["s1"] },
+      { namedHostId: "host-2", selectedServerIds: ["s1"] },
+    ];
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    const created = mutations.find(
+      (mutation) => mutation.fn === "testSuites:createTestSuite",
+    )?.args;
+    expect(created).toMatchObject({ hostAttachments });
+    expect(created).not.toHaveProperty("environmentTargets");
+  });
+
+  it("still writes the suite when the caller asked to refresh the snapshot", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: true,
+      refreshSnapshot: true,
+    });
+    // This one really does rewrite the suite's persisted configuration, which
+    // is the drift a CI-owned suite is right to refuse.
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args).toMatchObject({
+      suiteId: "suite_1",
+      refreshHostConfigFromEnvironment: true,
+    });
+  });
+
+  it("still writes the suite on a non-rerun launch", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: false,
+      refreshSnapshot: undefined,
+    });
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args?.environment).toBeDefined();
+  });
+
+  it("ignores the name and description a rerun echoes back", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      // What the web client actually sends on a rerun: the suite's own name
+      // and description, read off the row it is looking at. Writing them back
+      // stores what is already stored — and on a CI-owned suite it is the
+      // difference between a rerun that works and a 409.
+      suiteName: "Billing smoke",
+      suiteDescription: "Nightly",
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+    });
+    expect(mutations.map((m) => m.fn)).not.toContain(
+      "testSuites:updateTestSuite"
+    );
+  });
+
+  it("writes a name and description on a non-rerun launch", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteName: "Billing smoke",
+      suiteDescription: "Nightly",
+      suiteRerun: false,
+      refreshSnapshot: undefined,
+    });
+    // Renaming has its own route; this is the authoring path, where the name
+    // arrives with the tests that define the suite.
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args).toMatchObject({
+      suiteId: "suite_1",
+      name: "Billing smoke",
+      description: "Nightly",
+    });
+  });
+});
+
+describe("storedSelectionForCaseModel", () => {
+  const openai = {
+    modelId: "openai/gpt-5.1",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_openai" },
+    fallback: { provider: "none", model: "none" },
+  };
+  const azure = {
+    modelId: "openai/gpt-5.1",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_azure" },
+    nativeModelId: "prod-gpt51",
+    fallback: { provider: "none", model: "none" },
+  };
+  const testCase = {
+    models: [
+      { model: "gpt-5.1", provider: "openai", selection: openai },
+      { model: "gpt-5.1", provider: "azure", selection: azure },
+    ],
+  };
+
+  it("takes the entry of the requested provider when a model id repeats", () => {
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "azure"),
+    ).toMatchObject({ connectionRef: { id: "conn_azure" } });
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "openai"),
+    ).toMatchObject({ connectionRef: { id: "conn_openai" } });
+  });
+
+  it("returns nothing for a provider the case does not list", () => {
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "anthropic"),
+    ).toBeUndefined();
+  });
+
+  it("matches an entry saved without a provider on the model alone", () => {
+    expect(
+      storedSelectionForCaseModel(
+        { models: [{ model: "gpt-5.1", selection: openai }] },
+        "gpt-5.1",
+        "openai",
+      ),
+    ).toMatchObject({ connectionRef: { id: "conn_openai" } });
   });
 });

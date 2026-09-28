@@ -27,7 +27,7 @@ function renderBoundary(projectRouteState: ProjectRouteState | undefined) {
         ],
       },
     ],
-    { initialEntries: [`/p/${A}`] }
+    { initialEntries: [`/p/${A}`] },
   );
   render(<RouterProvider router={router} />);
   return router;
@@ -58,9 +58,13 @@ describe("ProjectRouteBoundary", () => {
   it("shows one generic message for an unavailable project", () => {
     // Deleted, never existed, and not yours are deliberately the same
     // message: distinguishing them would leak which project ids are real.
-    renderBoundary({ status: "inaccessible", requestedProjectId: A });
+    renderBoundary({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "not-a-member",
+    });
     expect(
-      screen.getByTestId("project-route-inaccessible")
+      screen.getByTestId("project-route-inaccessible"),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("project-screen")).toBeNull();
   });
@@ -72,6 +76,7 @@ describe("ProjectRouteBoundary", () => {
     const router = renderBoundary({
       status: "inaccessible",
       requestedProjectId: A,
+      reason: "not-a-member",
     });
     expect(router.state.location.pathname).toBe(`/p/${A}`);
   });
@@ -83,11 +88,12 @@ describe("ProjectRouteBoundary", () => {
     const router = renderBoundary({
       status: "inaccessible",
       requestedProjectId: A,
+      reason: "not-a-member",
     });
     fireEvent.click(screen.getByRole("button", { name: /projects/i }));
     await waitFor(
       () => expect(router.state.location.pathname).toBe("/"),
-      NAVIGATION_TIMEOUT
+      NAVIGATION_TIMEOUT,
     );
   });
 

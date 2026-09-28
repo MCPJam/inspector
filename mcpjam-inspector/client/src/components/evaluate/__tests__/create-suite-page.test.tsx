@@ -7,6 +7,7 @@ import type { EnvironmentComposerState } from "@/components/environment-composer
 
 const {
   flagState,
+  capability,
   environmentsRef,
   resolveMock,
   attachmentsRef,
@@ -14,6 +15,7 @@ const {
   toastError,
 } = vi.hoisted(() => ({
   flagState: { environments: true },
+  capability: { matrix: true as boolean | undefined },
   environmentsRef: { current: [] as unknown[] },
   resolveMock: vi.fn(),
   attachmentsRef: {
@@ -22,15 +24,36 @@ const {
     ] as Array<{ _id: string; name: string; serverIds: string[] }>,
   },
   hostsRef: {
-    current: [
-      { hostId: "host-1", name: "Claude", modelId: "gpt-4" },
-    ] as Array<{ hostId: string; name: string; modelId: string }>,
+    current: [{ hostId: "host-1", name: "Claude", modelId: "gpt-4" }] as Array<{
+      hostId: string;
+      name: string;
+      modelId: string;
+    }>,
   },
   toastError: vi.fn(),
 }));
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
+
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flagState.environments,
+}));
+// Compose mode follows the backend capability now; the flag above only hides
+// the named-environment picker inside the composer.
+vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
+  useEvalComposeCapable: () => ({
+    capable: capability.matrix === true,
+    pending: capability.matrix === undefined,
+  }),
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => environmentsRef.current,
@@ -70,25 +93,34 @@ vi.mock("@/hooks/use-model-matrix-capability", () => ({
 }));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
-    availableModels: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],
+    availableModels: [
+      { id: "gpt-4", name: "GPT-4", provider: "openai" },
+      { id: "claude-test", name: "Claude Haiku", provider: "anthropic" },
+    ],
   }),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
     triggerTestId,
     value,
     onChange,
+    emptyTriggerLabel,
   }: {
     triggerTestId?: string;
     value: string | null;
     onChange: (id: string) => void;
+    emptyTriggerLabel?: string;
   }) => (
     <button
       type="button"
-      data-testid={triggerTestId ?? "server-group-picker"}
+      data-testid={triggerTestId ?? "server-picker"}
+      // Exposed rather than rendered: the page seeds a selection on mount, so
+      // the empty label never reaches the screen here even though it is what
+      // ships for a project with no groups.
+      data-empty-label={emptyTriggerLabel}
       onClick={() => onChange("att-1")}
     >
-      {value ?? "No server group · pick one"}
+      {value ?? emptyTriggerLabel}
     </button>
   ),
 }));
@@ -100,13 +132,17 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
   routePaths: { hosts: "/hosts", environments: "/environments" },
 }));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
 
 import { DEFAULT_CREATE_SUITE_NAME } from "../create-suite-prefill";
 import {
   CreateSuitePage,
-  EVALS_CREATE_RUNS_SLOTS,
   EVALS_CREATE_SERVER_SLOTS,
 } from "../create-suite-page";
+import { buildEvalTargetMatrixRows } from "../eval-target-matrix";
 
 describe("CreateSuitePage", () => {
   const onCancel = vi.fn();
@@ -118,7 +154,11 @@ describe("CreateSuitePage", () => {
     onSubmit.mockResolvedValue(undefined);
     toastError.mockReset();
     flagState.environments = true;
+    capability.matrix = true;
     environmentsRef.current = [];
+    attachmentsRef.current = [
+      { _id: "att-1", name: "Excalidraw", serverIds: ["srv-a"] },
+    ];
     resolveMock.mockReset();
     resolveMock.mockResolvedValue({
       environmentIds: ["env-1"],
@@ -132,6 +172,30 @@ describe("CreateSuitePage", () => {
       createdIds: ["env-1"],
       reusedIds: [],
     });
+  });
+
+  it("blocks in the same vocabulary the field invites", async () => {
+    // `hasServer` is satisfied by ANY serverAttachments row, including the one
+    // minted for a bare server, so a reason that says "server group" tells the
+    // user to go and do something narrower than what would unblock them —
+    // the split BB-142 exists to remove.
+    attachmentsRef.current = [];
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    // The reason lives in a tooltip, which Radix mounts on focus.
+    fireEvent.focus(screen.getByTestId("create-suite-continue").parentElement!);
+
+    // Radix renders the content twice: the visible tip and its announcement.
+    const [reason] = await screen.findAllByText(/first\.$/);
+    expect(reason).toHaveTextContent(/server or group/);
+    expect(screen.queryAllByText(/Pick a server group/)).toHaveLength(0);
   });
 
   it("renders a full page, not a dialog", () => {
@@ -150,21 +214,18 @@ describe("CreateSuitePage", () => {
       screen.getByRole("heading", { name: "Create a new eval suite" }),
     ).toBeTruthy();
     expect(
-      screen.getByText("Set up the environment you will be evaluating."),
+      screen.getByText("Set up the client you will be evaluating."),
     ).toBeTruthy();
     expect(screen.getByText("Evaluate")).toBeTruthy();
     expect(screen.getByText("New suite")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /^continue$/i }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^continue$/i })).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();
   });
 
-  it("maps Servers and Where it runs onto separate lego-strip slot lists", () => {
+  it("uses the Where it runs table to configure client rows and model overrides", async () => {
     expect(EVALS_CREATE_SERVER_SLOTS).toEqual(["servers"]);
-    expect(EVALS_CREATE_RUNS_SLOTS).toEqual(["clients", "models"]);
 
     render(
       <CreateSuitePage
@@ -176,10 +237,138 @@ describe("CreateSuitePage", () => {
     );
 
     expect(screen.getByTestId("create-suite-servers-lego-strip")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-lego-strip")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-clients-picker")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-models-picker")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-servers-servers-picker")).toBeTruthy();
+    expect(
+      screen.getByTestId("create-suite-servers-servers-picker"),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Claude", exact: true }),
+      ).toBeTruthy();
+    });
+    expect(screen.getByTestId("create-suite-target-matrix")).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "Claude" })).toBeTruthy();
+    expect(screen.getByTestId("create-suite-model-host-1")).toBeTruthy();
+    expect(screen.getByTestId("create-suite-add-client")).toHaveTextContent(
+      "Add client",
+    );
+    expect(screen.queryByText("Execution matrix")).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Targets" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Claude" }));
+    expect(screen.queryByRole("button", { name: "Remove Claude" })).toBeNull();
+    expect(screen.getByRole("table")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("create-suite-add-client"));
+    fireEvent.click(screen.getByTestId("client-row-host-1"));
+    expect(screen.getByRole("button", { name: "Remove Claude" })).toBeTruthy();
+  });
+
+  it("opens the New Client modal from Add clients, like Playground", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("create-suite-add-client"));
+    fireEvent.click(screen.getByRole("button", { name: "Add clients" }));
+    expect(screen.getByTestId("create-host-dialog")).toBeTruthy();
+  });
+
+  it("adds and removes models through the playground's searchable picker", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+        "GPT-4",
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add model", exact: true }),
+    );
+    expect(screen.getByPlaceholderText("Search models")).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: /Claude Haiku/ }));
+    expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+      "Claude Haiku",
+    );
+    expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+      "GPT-4",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove Claude Haiku model" }),
+    );
+    expect(
+      screen.getByTestId("create-suite-model-host-1"),
+    ).not.toHaveTextContent("Claude Haiku");
+    expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+      "GPT-4",
+    );
+  });
+
+  it("keeps each client's model overrides independent", () => {
+    expect(
+      buildEvalTargetMatrixRows({
+        hostIds: ["claude", "cursor"],
+        hosts: [
+          { hostId: "claude", name: "Claude", modelId: "claude-default" },
+          { hostId: "cursor", name: "Cursor", modelId: "gpt-default" },
+        ],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: [],
+        },
+        modelSelectionsByHost: {
+          claude: {
+            includeClientDefaults: true,
+            explicitModelIds: ["gpt-5.1"],
+          },
+          cursor: {
+            includeClientDefaults: false,
+            explicitModelIds: ["claude-sonnet"],
+          },
+        },
+        availableModels: [
+          { id: "claude-default", name: "Claude Default" },
+          { id: "gpt-default", name: "GPT Default" },
+          { id: "gpt-5.1", name: "GPT-5.1" },
+          { id: "claude-sonnet", name: "Claude Sonnet" },
+        ],
+      }),
+    ).toEqual([
+      {
+        hostId: "claude",
+        clientName: "Claude",
+        modelLabels: ["Client default · Claude Default", "GPT-5.1"],
+      },
+      {
+        hostId: "cursor",
+        clientName: "Cursor",
+        modelLabels: ["Claude Sonnet"],
+      },
+    ]);
+  });
+
+  it("labels the models pill with the seeded client's default model", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+        "GPT-4",
+      );
+    });
   });
 
   it("seeds a default suite name so Continue is enabled without typing", async () => {
@@ -194,10 +383,7 @@ describe("CreateSuitePage", () => {
 
     const nameInput = screen.getByTestId("create-suite-name");
     expect(nameInput).toHaveValue(DEFAULT_CREATE_SUITE_NAME);
-    expect(nameInput).toHaveAttribute(
-      "placeholder",
-      DEFAULT_CREATE_SUITE_NAME,
-    );
+    expect(nameInput).toHaveAttribute("placeholder", DEFAULT_CREATE_SUITE_NAME);
 
     await waitFor(() => {
       expect(screen.getByTestId("create-suite-continue")).not.toBeDisabled();
@@ -210,6 +396,33 @@ describe("CreateSuitePage", () => {
         expect.objectContaining({ name: DEFAULT_CREATE_SUITE_NAME }),
       );
     });
+  });
+
+  it("increments Suite N from existing numbered suite names", () => {
+    const { rerender } = render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1", "Checkout", "Suite 2"]}
+      />,
+    );
+
+    const nameInput = screen.getByTestId("create-suite-name");
+    expect(nameInput).toHaveValue("Suite 3");
+    expect(nameInput).toHaveAttribute("placeholder", "Suite 3");
+
+    rerender(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1", "Checkout", "Suite 2", "Suite 3"]}
+      />,
+    );
+    expect(screen.getByTestId("create-suite-name")).toHaveValue("Suite 4");
   });
 
   it("disables Continue again if the default name is cleared", async () => {
@@ -247,11 +460,46 @@ describe("CreateSuitePage", () => {
         projectId="proj-1"
         initialName="checkout-server"
         initialServerId="srv-a"
+        existingSuiteNames={["Suite 1"]}
       />,
     );
 
     expect(screen.getByTestId("create-suite-name")).toHaveValue(
       "checkout-server",
+    );
+  });
+
+  it("keeps an edited suite name when a later initialName arrives", () => {
+    const { rerender } = render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1"]}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("create-suite-name"), {
+      target: { value: "My checkout suite" },
+    });
+    expect(screen.getByTestId("create-suite-name")).toHaveValue(
+      "My checkout suite",
+    );
+
+    rerender(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        initialName="checkout-server"
+        existingSuiteNames={["Suite 1"]}
+      />,
+    );
+
+    expect(screen.getByTestId("create-suite-name")).toHaveValue(
+      "My checkout suite",
     );
   });
 
@@ -315,8 +563,8 @@ describe("CreateSuitePage", () => {
     });
   });
 
-  it("Continue sends legacy attachments when environments are off", async () => {
-    flagState.environments = false;
+  it("Continue sends legacy attachments when the backend cannot compose", async () => {
+    capability.matrix = false;
 
     render(
       <CreateSuitePage
@@ -356,7 +604,7 @@ describe("CreateSuitePage", () => {
     // when the user picks a different one, so carrying it into the attachment
     // would attach a server they have since navigated away from. Every other
     // creation path (compose mode, the shipped dialog) sends [].
-    flagState.environments = false;
+    capability.matrix = false;
 
     render(
       <CreateSuitePage
@@ -388,5 +636,30 @@ describe("CreateSuitePage", () => {
         }),
       );
     });
+  });
+});
+
+describe("create suite — what the empty server field says", () => {
+  it("asks for a server or a group, in BB-142's vocabulary", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    const trigger = await screen.findByTestId(
+      "create-suite-servers-servers-picker",
+    );
+    // "server group" is the vocabulary BB-142 replaced; this surface was the
+    // last caller still passing it, and the composer default it overrides
+    // ("Servers · client default") is wrong here because the server is
+    // REQUIRED — `serverOptional={false}` — so there is no client default to
+    // fall back to.
+    const label = trigger.getAttribute("data-empty-label") ?? "";
+    expect(label).not.toMatch(/server group/i);
+    expect(label).toMatch(/pick a server or group/i);
   });
 });

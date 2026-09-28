@@ -1,3 +1,5 @@
+import { useDescribeFlow } from "./describe-flow";
+import { compactEvalContextMessages } from "./eval-chat-context";
 /**
  * Module-level store of live MCPJam Agent `Chat` instances, keyed by
  * chatSessionId.
@@ -15,12 +17,18 @@
  * the instance's closures: the transport `body()` and callbacks read it at
  * call time, and `useMcpjamAgentSession` keeps it in sync each render.
  */
+import { evalTurnScope } from "./eval-scope";
+import { EVAL_AGENT_TOOL_NAMES } from "@/shared/eval-agent-scope";
 import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
 import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
+import {
+  notifyMCPJamLimitError,
+  notifyMCPJamLimitErrorFromResponse,
+} from "@/lib/mcpjam-limit";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
@@ -125,6 +133,11 @@ export interface AgentChatEntry {
 
 const instances = new Map<string, AgentChatEntry>();
 
+/** Stop an abandoned conversation without creating or hydrating an instance. */
+export function stopAgentChat(sessionId: string) {
+  void instances.get(sessionId)?.chat.stop();
+}
+
 /**
  * When a navigation-capable UI tool fires while the session is rendered on a
  * route-bound surface, adopt the session into the always-mounted side panel
@@ -138,7 +151,7 @@ const instances = new Map<string, AgentChatEntry>();
  */
 function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   const onRouteBoundSurface = [...config.attachedSurfaces].some((s) =>
-    ROUTE_BOUND_SURFACES.has(s)
+    ROUTE_BOUND_SURFACES.has(s),
   );
   if (!onRouteBoundSurface) return;
   const panel = useAgentPanelStore.getState();
@@ -264,20 +277,75 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     requireToolApproval: false,
   };
 
+  /**
+   * The approval value the IN-FLIGHT turn was sent with.
+   *
+   * `config.requireToolApproval` is mutable and the switch is a live control,
+   * so reading it in `onToolCall` answers a different question than the server
+   * answered: the server declared every tool's `needsApproval` from the value
+   * in THAT request. Flipping the switch off while the response streams would
+   * otherwise let `handleUiToolCall` run a destructive `ui_*` action — a
+   * computer deletion, a billed swarm launch — immediately, past the pill the
+   * server is already emitting, because the tool-input event arrives before
+   * the approval request.
+   *
+   * Stamped once per send, in the `body` closure below. Mirrors
+   * `turnRequireToolApprovalRef` in `use-chat-session`.
+   */
+  let turnRequireToolApproval = config.requireToolApproval;
+
   const chat: Chat<UIMessage> = new Chat<UIMessage>({
     id: chatSessionId,
     transport: new DefaultChatTransport({
       api: AGENT_API_PATH,
-      fetch: authFetch,
+      // A pre-stream refusal (the daily allowance precheck) is a non-ok JSON
+      // body the AI SDK folds into `new Error(await response.text())`; by
+      // the time `onError` runs the Response is gone. Same hook as
+      // `useChatSession`'s `chatFetch`, so the side panel raises the limit
+      // dialog instead of printing the body.
+      fetch: async (input, init) => {
+        const response = await authFetch(input, init);
+        if (!response.ok) await notifyMCPJamLimitErrorFromResponse(response);
+        return response;
+      },
+      prepareSendMessagesRequest: ({
+        id,
+        messages,
+        trigger,
+        messageId,
+        body,
+      }) => ({
+        body: {
+          ...body,
+          id,
+          messages: evalTurnScope(chatSessionId)
+            ? compactEvalContextMessages(messages)
+            : messages,
+          trigger,
+          messageId,
+        },
+      }),
       body: () => ({
         model: config.model,
         projectId: config.projectId,
         chatSessionId,
-        requireToolApproval: config.requireToolApproval,
+        // Stamped here, where the turn is actually sent, so `onToolCall`
+        // decides with the value the SERVER built this turn's tools from.
+        requireToolApproval: (turnRequireToolApproval =
+          config.requireToolApproval),
         // WebMCP UI tools snapshot, drained fresh at POST time (same
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
-        uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
+        evalScope: evalTurnScope(chatSessionId),
+        uiTools: useUiToolsRegistry
+          .getState()
+          .snapshotForChatBody()
+          .filter((tool) =>
+            evalTurnScope(chatSessionId)
+              ? EVAL_AGENT_TOOL_NAMES.has(tool.name)
+              : !EVAL_AGENT_TOOL_NAMES.has(tool.name) ||
+                tool.name === "ui_ask_user",
+          ),
         // Guided-tour instructions for this session, if any (the route
         // prepends body.systemPrompt to the agent identity prompt). Read at
         // POST time so the tour context survives reloads and Recent Chats
@@ -287,6 +355,11 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         systemPrompt: readTourSystemPrompt(chatSessionId) ?? undefined,
       }),
     }),
+    // A refusal that arrives mid-stream never passes through the fetch
+    // branch above; the SDK surfaces it here with the JSON in the message.
+    onError: (error) => {
+      notifyMCPJamLimitError({ message: error.message });
+    },
     // WebMCP UI tools are no-execute server-side; the stream pauses until
     // the client supplies the result via `addToolOutput`. Non-UI names fall
     // through untouched (this surface has no app tools). `addToolOutput`
@@ -303,7 +376,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         onNavigationToolCall: (toolName) => {
           maybeHandoffToPanel(config, toolName);
         },
-        requireToolApproval: config.requireToolApproval,
+        // The turn's value, not the live one — see `turnRequireToolApproval`.
+        requireToolApproval: turnRequireToolApproval,
         // Duplicate detection is per chat session — this instance's key.
         telemetryScope: chatSessionId,
       });
@@ -314,7 +388,16 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // skill-tool deny/approve path), but never while an approval pill is still
     // pending (BUG-4). Shared with the Playground surface so the two can't
     // drift; see `shouldAutoResumeTurn` for the full rationale.
-    sendAutomaticallyWhen: shouldAutoResumeTurn,
+    sendAutomaticallyWhen: (input) => {
+      const phase = useDescribeFlow.getState().sessions[chatSessionId]?.phase;
+      if (
+        phase === "clarifying" ||
+        phase === "proposed" ||
+        phase === "reviewing"
+      )
+        return false;
+      return shouldAutoResumeTurn(input);
+    },
   });
 
   const handleToolApprovalResponse = createUiAwareApprovalResponseHandler({

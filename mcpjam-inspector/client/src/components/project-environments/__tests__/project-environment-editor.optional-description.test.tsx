@@ -20,7 +20,7 @@ const { mockCreateEnvironment, mockUpdateEnvironment, mockToast } = vi.hoisted(
     mockCreateEnvironment: vi.fn(),
     mockUpdateEnvironment: vi.fn(),
     mockToast: { error: vi.fn(), success: vi.fn() },
-  })
+  }),
 );
 
 vi.mock("@/hooks/useProjectEnvironments", () => ({
@@ -42,11 +42,17 @@ vi.mock("@/components/hosts/HostPicker", () => ({
     <div data-testid="host-picker">{value ?? "none"}</div>
   ),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div />,
 }));
 vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
   ProjectEnvironmentSkillsPicker: () => <div />,
+}));
+// The secrets picker is a sibling section, not what these tests are about. It
+// is stubbed rather than mocked at the hook level because it reads a live
+// Convex query, and a real one here would need the whole provider.
+vi.mock("../ProjectEnvironmentSecretsPicker", () => ({
+  ProjectEnvironmentSecretsPicker: () => <div />,
 }));
 vi.mock("@/components/computer/EnvironmentBuildBadge", () => ({
   EnvironmentBuildBadge: () => null,
@@ -90,7 +96,7 @@ describe("ProjectEnvironmentEditor — optional description", () => {
         environment={null}
         canManage
         initialDraft={{ name: "test environment", hostId: "host_1" }}
-      />
+      />,
     );
 
     const description = screen.getByLabelText("Description");
@@ -117,7 +123,7 @@ describe("ProjectEnvironmentEditor — optional description", () => {
         projectId="proj_1"
         environment={rowWithoutDescription}
         canManage
-      />
+      />,
     );
 
     // Grey at rest because the draft matches the row, NOT because the

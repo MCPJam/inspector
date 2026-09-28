@@ -442,6 +442,10 @@ export function McpAppsModal({
     if (data.type === "mcp-apps:csp-violation") {
       onCspViolation(event);
     }
+    // `mcpjam:view-mode` also arrives here (the modal mounts its own view).
+    // Deliberately ignored: the Sandbox Stack panel describes the inline
+    // view, and both mount on the same origin, so recording the modal's
+    // would just overwrite the inline one with an identical value.
   };
 
   // Modal chrome is host-injected (the inspector's design-system <Dialog>). A
@@ -469,6 +473,8 @@ export function McpAppsModal({
             title={`MCP App Modal: ${title}`}
             hostedMode={host.surface.hostedMode}
             sandboxOrigin={host.surface.sandboxOrigin}
+            mountMode={host.surface.viewMountMode}
+            viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
             className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
             style={{
               height: "100%",

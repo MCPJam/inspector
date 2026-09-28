@@ -44,6 +44,7 @@ const mockState = vi.hoisted(() => ({
   sendsBySession: new Map<string, any[]>(),
   nextSessionNumber: 1,
   lastTransportOptions: null as any,
+  onFinish: null as null | ((event: any) => void),
 }));
 
 const baseModel = {
@@ -60,7 +61,7 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [baseModel]),
   getDefaultModel: vi.fn(() => baseModel),
   isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
-    String(model.id).includes("/")
+    String(model.id).includes("/"),
   ),
 }));
 
@@ -155,73 +156,78 @@ vi.mock("@ai-sdk/react", async () => {
   };
 
   return {
-    useChat: vi.fn(({ id }: { id: string }) => {
-      const currentIdRef = React.useRef(id);
-      currentIdRef.current = id;
-      const getSnapshot = React.useCallback(
-        () => mockState.sessionMessages.get(id) ?? EMPTY_MESSAGES,
-        [id]
-      );
-      const subscribe = React.useCallback(
-        (listener: () => void) => {
-          const listeners = getListeners(id);
-          listeners.add(listener);
-          return () => {
-            listeners.delete(listener);
-          };
-        },
-        [id]
-      );
-      const messages = React.useSyncExternalStore(
-        subscribe,
-        getSnapshot,
-        getSnapshot
-      );
-      const setMessages = React.useCallback(
-        (updater: any[] | ((messages: any[]) => any[])) => {
-          const activeId = currentIdRef.current;
-          const previousMessages =
-            mockState.sessionMessages.get(activeId) ?? [];
-          const nextMessages =
-            typeof updater === "function" ? updater(previousMessages) : updater;
-          mockState.sessionMessages.set(activeId, nextMessages);
-          for (const listener of getListeners(activeId)) {
-            listener();
-          }
-        },
-        []
-      );
+    useChat: vi.fn(
+      ({ id, onFinish }: { id: string; onFinish?: (event: any) => void }) => {
+        mockState.onFinish = onFinish ?? null;
+        const currentIdRef = React.useRef(id);
+        currentIdRef.current = id;
+        const getSnapshot = React.useCallback(
+          () => mockState.sessionMessages.get(id) ?? EMPTY_MESSAGES,
+          [id],
+        );
+        const subscribe = React.useCallback(
+          (listener: () => void) => {
+            const listeners = getListeners(id);
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+          [id],
+        );
+        const messages = React.useSyncExternalStore(
+          subscribe,
+          getSnapshot,
+          getSnapshot,
+        );
+        const setMessages = React.useCallback(
+          (updater: any[] | ((messages: any[]) => any[])) => {
+            const activeId = currentIdRef.current;
+            const previousMessages =
+              mockState.sessionMessages.get(activeId) ?? [];
+            const nextMessages =
+              typeof updater === "function"
+                ? updater(previousMessages)
+                : updater;
+            mockState.sessionMessages.set(activeId, nextMessages);
+            for (const listener of getListeners(activeId)) {
+              listener();
+            }
+          },
+          [],
+        );
 
-      // Bound to THIS render's `id`, mirroring the real hook: `useChat` returns
-      // `chatRef.current.sendMessage`, a per-instance arrow property
-      // (`node_modules/ai/dist/index.mjs`) on a `Chat` that is recreated
-      // whenever `id` changes (`node_modules/@ai-sdk/react/dist/index.mjs`).
-      // A single identity-stable spy shared across ids would make it impossible
-      // to tell "sent on the branch" from "sent on the pre-branch instance" —
-      // the failure mode `rewindToMessage`'s `sendMessageRef` exists to prevent.
-      const sendMessage = React.useCallback(
-        (payload: any) => {
-          const sends = mockState.sendsBySession.get(id);
-          if (sends) {
-            sends.push(payload);
-          } else {
-            mockState.sendsBySession.set(id, [payload]);
-          }
-          return mockState.sendMessage({ sessionId: id, ...payload });
-        },
-        [id]
-      );
+        // Bound to THIS render's `id`, mirroring the real hook: `useChat` returns
+        // `chatRef.current.sendMessage`, a per-instance arrow property
+        // (`node_modules/ai/dist/index.mjs`) on a `Chat` that is recreated
+        // whenever `id` changes (`node_modules/@ai-sdk/react/dist/index.mjs`).
+        // A single identity-stable spy shared across ids would make it impossible
+        // to tell "sent on the branch" from "sent on the pre-branch instance" —
+        // the failure mode `rewindToMessage`'s `sendMessageRef` exists to prevent.
+        const sendMessage = React.useCallback(
+          (payload: any) => {
+            const sends = mockState.sendsBySession.get(id);
+            if (sends) {
+              sends.push(payload);
+            } else {
+              mockState.sendsBySession.set(id, [payload]);
+            }
+            return mockState.sendMessage({ sessionId: id, ...payload });
+          },
+          [id],
+        );
 
-      return {
-        messages,
-        sendMessage,
-        stop: mockState.stop,
-        status: mockState.status,
-        error: undefined,
-        setMessages,
-        addToolApprovalResponse: mockState.addToolApprovalResponse,
-      };
-    }),
+        return {
+          messages,
+          sendMessage,
+          stop: mockState.stop,
+          status: mockState.status,
+          error: undefined,
+          setMessages,
+          addToolApprovalResponse: mockState.addToolApprovalResponse,
+        };
+      },
+    ),
   };
 });
 
@@ -252,7 +258,38 @@ describe("useChatSession fork preservation", () => {
     mockState.sendsBySession.clear();
     mockState.nextSessionNumber = 1;
     mockState.lastTransportOptions = null;
+    mockState.onFinish = null;
     mockState.status = "ready";
+  });
+
+  it("timestamps a completed assistant without dropping its metadata", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const assistant = {
+      id: "assistant-complete",
+      role: "assistant",
+      parts: [{ type: "text", text: "done" }],
+      metadata: { totalTokens: 12 },
+    } as any;
+
+    act(() => result.current.setMessages([assistant]));
+    act(() => {
+      mockState.onFinish?.({ isAbort: false, message: assistant });
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages[0]?.metadata).toMatchObject({
+        totalTokens: 12,
+        timestampMs: expect.any(Number),
+      });
+    });
   });
 
   it("preserves trimmed messages across a fork and updates the hosted transport body", async () => {
@@ -265,7 +302,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -314,7 +351,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -351,7 +388,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -385,7 +422,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -447,8 +484,8 @@ describe("useChatSession fork preservation", () => {
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          }
-        )
+          },
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -459,7 +496,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
 
     act(() => {
@@ -502,7 +539,7 @@ describe("useChatSession fork preservation", () => {
     expect(result.current.resumedVersion).toBe(7);
     expect(result.current.systemPrompt).toBe("Restored prompt");
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://storage.test/restored.json"
+      "https://storage.test/restored.json",
     );
   });
 
@@ -520,8 +557,8 @@ describe("useChatSession fork preservation", () => {
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          }
-        )
+          },
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -538,7 +575,7 @@ describe("useChatSession fork preservation", () => {
         initialProps: {
           selectedServers: ["server-1"],
         },
-      }
+      },
     );
 
     act(() => {
@@ -588,7 +625,7 @@ describe("useChatSession fork preservation", () => {
         initialProps: {
           selectedServers: ["server-1"],
         },
-      }
+      },
     );
     const initialChatSessionId = result.current.chatSessionId;
     const message = {
@@ -619,40 +656,54 @@ describe("useChatSession fork preservation", () => {
     // Transcript with one tool call so the trace timeline can resolve its
     // input/output. The same shape we read from a real session blob via
     // transcriptToUIMessages → dynamic-tool part.
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify([
-            { role: "user", content: "show me barca" },
-            {
-              role: "assistant",
-              content: [
-                {
-                  type: "tool-call",
-                  toolCallId: "call-1",
-                  toolName: "show-squad",
-                  input: { team: "Barcelona" },
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("requests.json")
+        ? new Response(
+            JSON.stringify([
+              {
+                turnId: "turn-1",
+                promptIndex: 0,
+                stepIndex: 0,
+                payload: {
+                  system: "historical",
+                  tools: {},
+                  messages: [{ role: "user", content: "original request" }],
                 },
-              ],
-            },
+              },
+            ]),
+          )
+        : new Response(
+            JSON.stringify([
+              { role: "user", content: "show me barca" },
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool-call",
+                    toolCallId: "call-1",
+                    toolName: "show-squad",
+                    input: { team: "Barcelona" },
+                  },
+                ],
+              },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-1",
+                    toolName: "show-squad",
+                    output: { type: "json", value: { players: [] } },
+                    result: { players: [] },
+                  },
+                ],
+              },
+            ]),
             {
-              role: "tool",
-              content: [
-                {
-                  type: "tool-result",
-                  toolCallId: "call-1",
-                  toolName: "show-squad",
-                  output: { type: "json", value: { players: [] } },
-                  result: { players: [] },
-                },
-              ],
+              status: 200,
+              headers: { "Content-Type": "application/json" },
             },
-          ]),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }
-        )
+          ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -664,7 +715,7 @@ describe("useChatSession fork preservation", () => {
       async (messages) =>
         // Pass-through: the rehydrated UIMessages already carry tool-call /
         // tool-result parts in the shape extractToolData expects.
-        (messages ?? []) as any
+        (messages ?? []) as any,
     );
 
     const { result } = renderHook(() =>
@@ -674,7 +725,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
 
     act(() => {
@@ -684,6 +735,7 @@ describe("useChatSession fork preservation", () => {
         version: 1,
         turnTraces: [
           {
+            requestPayloadsBlobUrl: "https://storage.test/requests.json",
             turnId: "turn-1",
             promptIndex: 0,
             startedAt: 1000,
@@ -697,6 +749,18 @@ describe("useChatSession fork preservation", () => {
       expect(result.current.chatSessionId).toBe("restored-with-tools");
       expect(result.current.messages.length).toBeGreaterThan(0);
     });
+    expect(result.current.messages[0]?.metadata).toMatchObject({
+      timestampMs: 1000,
+    });
+    expect(
+      result.current.messages.find((message) => message.role === "assistant")
+        ?.metadata,
+    ).toMatchObject({ timestampMs: 2000 });
+
+    expect(result.current.requestPayloadHistory[0]?.turnId).toBe("turn-1");
+    expect(result.current.requestPayloadHistory[0]?.payload.system).toBe(
+      "historical",
+    );
 
     // Trace envelope picks up the rehydrated UI transcript, so timeline lookups
     // by toolCallId hit the tool-call/tool-result parts instead of an empty
@@ -705,15 +769,15 @@ describe("useChatSession fork preservation", () => {
       const envelopeMessages = result.current.liveTraceEnvelope?.messages ?? [];
       expect(envelopeMessages.length).toBeGreaterThan(0);
       const assistant = envelopeMessages.find(
-        (m: any) => m.role === "assistant"
+        (m: any) => m.role === "assistant",
       );
       const parts = Array.isArray(assistant?.parts) ? assistant.parts : [];
       expect(
         parts.some(
           (p: any) =>
             (p.type === "dynamic-tool" || p.type === "tool-call") &&
-            p.toolCallId === "call-1"
-        )
+            p.toolCallId === "call-1",
+        ),
       ).toBe(true);
     });
   });
@@ -729,7 +793,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
 
     act(() => {
@@ -771,7 +835,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -842,12 +906,16 @@ describe("useChatSession fork preservation", () => {
     // carry the branch id with the original history and the response would
     // stream into a store nothing renders.
     expect(mockState.sendsBySession.get(branchChatSessionId)).toEqual([
-      { text: "second, rephrased" },
+      {
+        text: "second, rephrased",
+        metadata: { timestampMs: expect.any(Number) },
+      },
     ]);
     expect(mockState.sendsBySession.has(initialChatSessionId)).toBe(false);
     expect(mockState.sendMessage).toHaveBeenCalledWith({
       sessionId: branchChatSessionId,
       text: "second, rephrased",
+      metadata: { timestampMs: expect.any(Number) },
     });
 
     // The feature's central claim: the original session's transcript is intact.
@@ -869,7 +937,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
 
     const user = {
@@ -904,7 +972,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -944,7 +1012,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -983,6 +1051,7 @@ describe("useChatSession fork preservation", () => {
     expect(mockState.sendMessage).toHaveBeenCalledWith({
       sessionId: result.current.chatSessionId,
       text: "retry after failure",
+      metadata: { timestampMs: expect.any(Number) },
     });
   });
 
@@ -1005,7 +1074,7 @@ describe("useChatSession fork preservation", () => {
           selectedServerIds: [],
           ensureServerIds,
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -1045,7 +1114,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -1084,7 +1153,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
     const detachedChatSessionId = result.current.chatSessionId;
 
@@ -1132,7 +1201,10 @@ describe("useChatSession fork preservation", () => {
     // detached session's own store. The transport body alone cannot show this.
     expect(mockState.sendsBySession.has(detachedChatSessionId)).toBe(false);
     expect(mockState.sendsBySession.get(fork!.chatSessionId)).toEqual([
-      { text: "after the detach" },
+      {
+        text: "after the detach",
+        metadata: { timestampMs: expect.any(Number) },
+      },
     ]);
   });
 
@@ -1147,8 +1219,8 @@ describe("useChatSession fork preservation", () => {
           JSON.stringify([
             { id: "restored-user", role: "user", content: "restored question" },
           ]),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1159,7 +1231,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
 
     const user = {
@@ -1201,7 +1273,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      })
+      }),
     );
 
     act(() => {

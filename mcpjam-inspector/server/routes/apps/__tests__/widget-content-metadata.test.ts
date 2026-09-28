@@ -104,6 +104,7 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
       csp: "content",
       permissions: "content",
       prefersBorder: "content",
+      domain: "none",
     });
   });
 
@@ -120,6 +121,7 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
       csp: "listing",
       permissions: "listing",
       prefersBorder: "listing",
+      domain: "none",
     });
   });
 
@@ -141,6 +143,7 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
       csp: "listing",
       permissions: "none",
       prefersBorder: "content",
+      domain: "none",
     });
     expect(body.prefersBorder).toBe(true);
     expect(body.csp).toEqual({ connectDomains: ["https://api.example.com"] });
@@ -273,6 +276,7 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
       csp: "none",
       permissions: "none",
       prefersBorder: "none",
+      domain: "none",
     });
   });
 });

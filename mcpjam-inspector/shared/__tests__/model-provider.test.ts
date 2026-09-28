@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   MODEL_ID_PREFIX_ALIASES,
   MODEL_ID_PREFIX_TO_PROVIDER,
+  RUNTIME_CHOSEN_MODEL_SENTINELS,
   classifyModelIdProvider,
+  isRuntimeChosenModelSentinel,
   providerForModelId,
+  runtimeChosenModelSentinelName,
 } from "../model-provider";
 import { MODEL_PROVIDER_FIXTURES } from "./model-provider-fixtures";
+import { HOSTED_MODEL_IDS } from "../hosted-model-ids.generated";
+import { hostedProviderFromCanonicalId } from "../types";
 
 describe("classifyModelIdProvider", () => {
   for (const fixture of MODEL_PROVIDER_FIXTURES) {
@@ -55,11 +60,81 @@ describe("prefix map", () => {
     }
   });
 
+  it("is the table hosted ids take their provider from", () => {
+    // `hostedProviderFromCanonicalId` used to keep its own copy of these
+    // aliases. Both now read one table, so they agree on every alias and on
+    // every id in the hosted snapshot.
+    for (const [prefix, provider] of Object.entries(MODEL_ID_PREFIX_ALIASES)) {
+      expect(hostedProviderFromCanonicalId(`${prefix}/some-model`)).toBe(
+        provider
+      );
+    }
+    for (const id of HOSTED_MODEL_IDS) {
+      // Vendors the classifier has no prefix for (`cohere/...`) are outside
+      // the shared table; the hosted path uses their prefix verbatim.
+      if (!(id.slice(0, id.indexOf("/")) in MODEL_ID_PREFIX_TO_PROVIDER)) {
+        continue;
+      }
+      expect(hostedProviderFromCanonicalId(id)).toBe(providerForModelId(id));
+    }
+  });
+
   it("classifies every mapped prefix from a real-shaped id", () => {
     for (const [prefix, provider] of Object.entries(
       MODEL_ID_PREFIX_TO_PROVIDER
     )) {
       expect(providerForModelId(`${prefix}/some-model`)).toBe(provider);
+    }
+  });
+});
+
+describe("runtime-chosen sentinels", () => {
+  it("recognizes cursor/auto and names it Cursor Auto", () => {
+    expect(isRuntimeChosenModelSentinel("cursor/auto")).toBe(true);
+    expect(runtimeChosenModelSentinelName("cursor/auto")).toBe("Cursor Auto");
+  });
+
+  it("still classifies the sentinel's provider honestly", () => {
+    // Being a sentinel does NOT make the id providerless to the classifier —
+    // `cursor` is a registered ModelProvider precisely so the id does not fall
+    // through the bare-id rule to `ollama`. The two answers are independent:
+    // one says who serves it, the other says "nobody, and that is the point".
+    expect(providerForModelId("cursor/auto")).toBe("cursor");
+  });
+
+  it("says no for ordinary models, other cursor ids, and non-strings", () => {
+    expect(isRuntimeChosenModelSentinel("anthropic/claude-haiku-4.5")).toBe(
+      false
+    );
+    // Only the exact sentinel — a hypothetical real `cursor/...` id is not one.
+    expect(isRuntimeChosenModelSentinel("cursor/gpt-5")).toBe(false);
+    expect(isRuntimeChosenModelSentinel("")).toBe(false);
+    expect(isRuntimeChosenModelSentinel(undefined)).toBe(false);
+    expect(isRuntimeChosenModelSentinel(null)).toBe(false);
+    expect(runtimeChosenModelSentinelName("anthropic/claude-haiku-4.5")).toBe(
+      undefined
+    );
+  });
+
+  it("tolerates surrounding whitespace, like the classifier does", () => {
+    expect(isRuntimeChosenModelSentinel("  cursor/auto  ")).toBe(true);
+    expect(runtimeChosenModelSentinelName(" cursor/auto")).toBe("Cursor Auto");
+  });
+
+  it("cannot be answered by Object.prototype keys", () => {
+    // The table is null-prototype; a bare index would return a FUNCTION here
+    // and read as a truthy display name.
+    expect(isRuntimeChosenModelSentinel("constructor")).toBe(false);
+    expect(runtimeChosenModelSentinelName("toString")).toBe(undefined);
+  });
+
+  it("gives every declared sentinel a non-empty display name", () => {
+    const entries = Object.entries(RUNTIME_CHOSEN_MODEL_SENTINELS);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [id, name] of entries) {
+      expect(name.trim().length).toBeGreaterThan(0);
+      expect(isRuntimeChosenModelSentinel(id)).toBe(true);
+      expect(runtimeChosenModelSentinelName(id)).toBe(name);
     }
   });
 });

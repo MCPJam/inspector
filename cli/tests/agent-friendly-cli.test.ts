@@ -1,54 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import path from "node:path";
 import test from "node:test";
 import { startMockStreamableHttpServer } from "../../sdk/tests/mock-servers/index.js";
-
-const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
-  ? process.cwd()
-  : path.join(process.cwd(), "cli");
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
-
-async function runCli(
-  args: string[],
-  input?: string,
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args], {
-      cwd: CLI_DIR,
-      env: {
-        ...process.env,
-        MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
-        MCPJAM_TELEMETRY_DISABLED: "1",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      if (code === null) {
-        reject(new Error(`CLI terminated by signal ${signal}`));
-        return;
-      }
-      resolve({ exitCode: code, stdout, stderr });
-    });
-
-    child.stdin.end(input ?? "");
-  });
-}
+import { runCli } from "./support/task-cli-harness.js";
 
 test("--format junit-xml is rejected for conformance commands", async () => {
   const protocol = await runCli([

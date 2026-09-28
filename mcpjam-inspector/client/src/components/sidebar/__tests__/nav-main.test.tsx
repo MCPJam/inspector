@@ -220,6 +220,38 @@ describe("NavMain", () => {
   });
 });
 
+describe("NavMain — the active pill", () => {
+  /**
+   * Both halves of the pill are pinned, and for the same reason: the
+   * primitive's own `data-[active=true]:*` utilities tie these on specificity,
+   * so the winner would otherwise be whichever one Tailwind ordered last.
+   *
+   * The label matters as much as the fill. `sidebarMenuButtonVariants` sets
+   * `text-sidebar-accent-foreground`, a per-preset value — the brutalist light
+   * preset makes it white, and that preset's --background is white too, so the
+   * active label vanished into its own pill.
+   */
+  it("pins the fill and the label so neither depends on preset tokens", () => {
+    render(
+      <NavMain
+        items={[
+          { title: "Home", url: "/home", icon: FakeIcon, isActive: true },
+          { title: "Connect", url: "/connect", icon: FakeIcon },
+        ]}
+      />
+    );
+
+    const active = screen.getByRole("button", { name: "Home" });
+    expect(active.className).toContain("[&[data-active=true]]:bg-background!");
+    expect(active.className).toContain("[&[data-active=true]]:text-foreground!");
+
+    // The idle sibling carries neither — it reads off the linen ground.
+    const idle = screen.getByRole("button", { name: "Connect" });
+    expect(idle.className).not.toContain("bg-background");
+    expect(idle.className).not.toContain("text-foreground");
+  });
+});
+
 describe("NavMain — section heading inset", () => {
   const ITEMS = [{ title: "Home", url: "/home", icon: FakeIcon }];
 

@@ -13,12 +13,22 @@ export type SuiteOverviewView =
 export type EvalRoute =
   | { type: "list" }
   | { type: "create" }
+  /** Frontend-first preview of suites we'd generate from a connected server. */
+  | { type: "eval-server"; serverId: string }
   | {
       type: "suite-overview";
       suiteId: string;
       view?: SuiteOverviewView;
       /** CI: commit sidebar when drilling from Group by commit */
       fromCommit?: string;
+      /**
+       * Open the import review on one authoring job's drafts.
+       *
+       * How an API import hands its unfinished cases back to a person: the
+       * reply's `reviewUrl` carries this, and the drafts are read from the
+       * job rather than from whatever this browser happens to remember.
+       */
+      importJob?: string;
     }
   | {
       type: "run-detail";
@@ -29,6 +39,7 @@ export type EvalRoute =
       testCaseId?: string;
       insightsFocus?: boolean;
       compareToRunId?: string;
+      comparison?: boolean;
     }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
   | {
@@ -37,10 +48,13 @@ export type EvalRoute =
       testId: string;
       /** Deep-link: open compare run surface (same as View results) when iterations exist. */
       openCompare?: boolean;
+      checks?: boolean;
       /** Deep-link: prefer the clicked iteration/session when hydrating compare results. */
       iteration?: string;
+      /** Return to the Eval my server first-run preview after editing. */
+      fromEvalServer?: string;
     }
-  | { type: "suite-edit"; suiteId: string }
+  | { type: "suite-edit"; suiteId: string; fromCaseChecks?: string }
   | {
       type: "commit-detail";
       commitSha: string;

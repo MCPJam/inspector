@@ -1,3 +1,4 @@
+import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 // Inspector boundary shim over @mcpjam/chat-ui/trace.
 //
 // The Tier-A-compatible trace/replay adaptation LOGIC is single-sourced in the
@@ -23,6 +24,7 @@ import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type {
   EvalTraceBrowserInteractionStepView,
+  EvalTraceVideoMeta,
   EvalTraceSpan,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
@@ -35,7 +37,7 @@ export type {
   TraceWidgetSnapshot,
 } from "@mcpjam/chat-ui/trace";
 
-type ToolResultDisplay = "sibling-text" | "attached-to-tool";
+type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
 
 /**
  * Inspector trace envelope: the package's structural trace input plus
@@ -43,6 +45,12 @@ type ToolResultDisplay = "sibling-text" | "attached-to-tool";
  * stays free of eval-domain types.
  */
 export interface TraceEnvelope {
+  requestPayloads?: PersistedRequestPayloadEntry[];
+  requestPayloadsJson?: string;
+  /** Saved requests exist for this session but did not load. */
+  requestPayloadsError?: string;
+  /** Saved requests are still loading. */
+  requestPayloadsPending?: true;
   traceVersion?: 1;
   messages?: TraceSourceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
@@ -55,6 +63,14 @@ export interface TraceEnvelope {
    * absent when no browser ran or the upload failed → no replay player.
    */
   videoUrl?: string | null;
+  /**
+   * What that recording says about itself — duration, the rate it was asked
+   * for, how many distinct frames it holds, and whether it stopped at its size
+   * cap before the run ended. Absent for every trace written before recordings
+   * reported anything, and for the local widget harness, which knows none of
+   * it: the player shows what is there rather than guessing.
+   */
+  videoMeta?: EvalTraceVideoMeta | null;
   traceStartedAtMs?: number;
   traceEndedAtMs?: number;
   [key: string]: unknown;

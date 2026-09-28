@@ -14,6 +14,7 @@ import { ALL_OPERATIONS } from "../operations.js";
 import {
   PLATFORM_PERMALINK_ROUTES,
   derivePermalinksFor,
+  buildAppPermalink,
   type PlatformNoPermalinkReason,
 } from "../permalinks.js";
 
@@ -34,11 +35,11 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   build_sandbox_image: "computer/images/:imageId",
   promote_sandbox_image: "computer/images/:imageId",
   // Journeys and personas: edited inside the Swarms surface as component state.
-  list_journeys: "swarms/journeys/:journeyId",
-  get_journey: "swarms/journeys/:journeyId",
-  create_journey: "swarms/journeys/:journeyId",
-  update_journey: "swarms/journeys/:journeyId",
-  generate_journeys: "swarms/journeys/:journeyId",
+  list_goals: "swarms/journeys/:journeyId",
+  get_goal: "swarms/journeys/:journeyId",
+  create_goal: "swarms/journeys/:journeyId",
+  update_goal: "swarms/journeys/:journeyId",
+  generate_goals: "swarms/journeys/:journeyId",
   list_personas: "swarms/personas/:personaId",
   // Readiness runs: the /conformance section rediscovers the LATEST run for a
   // server, so no query parameter or segment can address a specific one.
@@ -60,6 +61,23 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   create_persona: "swarms/personas/:personaId",
   update_persona: "swarms/personas/:personaId",
   generate_personas: "swarms/personas/:personaId",
+  // Project secrets: the Secrets tab lives inside project settings and selects
+  // a row as component state, so there is nothing to address. Note that a
+  // permalink here would be to the METADATA row — a secret's value is not
+  // readable anywhere, by anyone, so there is no page that could show one.
+  list_secrets: "secrets/:secretId",
+  get_secret: "secrets/:secretId",
+  // Trace destinations: the org Observability section lists every destination
+  // and selects one as component state (the editor is a dialog), so there is
+  // no page a single destination can be opened at. The SECTION is addressable
+  // — `/organizations/:organizationId/observability` — but a collection
+  // standing in for one row is exactly what the registry forbids.
+  list_trace_destinations:
+    "organizations/:organizationId/observability/:destinationId",
+  get_trace_destination:
+    "organizations/:organizationId/observability/:destinationId",
+  list_trace_destination_backfills:
+    "organizations/:organizationId/observability/:destinationId",
 };
 
 const VALID_REASONS: ReadonlySet<PlatformNoPermalinkReason> = new Set([
@@ -139,14 +157,14 @@ describe("every catalog operation declares a permalink policy", () => {
       "generate_eval_cases",
       "create_project",
       "create_persona",
-      "launch_journey_run",
+      "launch_goal_run",
       "start_conformance_run",
       "get_conformance_run",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
       "list_chat_sessions",
       "get_chat_session",
-      "publish_scenario",
+      "publish_study",
     ];
     const byName = new Map(ALL_OPERATIONS.map((op) => [op.name, op]));
     for (const name of mustDerive) {
@@ -167,6 +185,12 @@ describe("every catalog operation declares a permalink policy", () => {
     expect(byName.get("search_sessions")!.permalink.kind).toBe("response");
   });
 
+  it("omits trace links when an older response has no project scope", () => {
+    const operation = ALL_OPERATIONS.find(op => op.name === "get_chat_session_trace")!;
+    const errors: unknown[] = [];
+    expect(derivePermalinksFor(operation as never, { sessionId: "s", chatSessionId: "wire", turns: [] } as never, {} as never, { appOrigin: "https://app.mcpjam.com" }, error => errors.push(error))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
   it("links a CONTINUED chat session, which resolves no scope of its own", () => {
     // `send_chat_message` deliberately skips `resolveProjectOrThrow` when
     // continuing an existing session, so there is no scope receipt and the
@@ -193,6 +217,12 @@ describe("every catalog operation declares a permalink policy", () => {
     expect(permalinks.map((permalink) => permalink.url)).toEqual([
       "https://app.mcpjam.com/sessions?session=cs_1&project=p1",
     ]);
+  });
+
+  it("opens the browser pane only when the session has a browser", () => {
+    const ref = { type: "playground_conversation" as const, id: "wire-id", projectId: "p1" };
+    expect(buildAppPermalink(ref, { appOrigin: "https://app.mcpjam.com" }).url).not.toContain("browser=open");
+    expect(buildAppPermalink({ ...ref, browser: true }, { appOrigin: "https://app.mcpjam.com" }).url).toContain("browser=open");
   });
 
   it("names no route that the registry does not have", () => {

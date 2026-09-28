@@ -1,15 +1,43 @@
-import { useMemo, type MouseEvent } from "react";
+import {
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
+import {
+  EvalListFilter,
+  ALL_EVAL_FILTER_VALUES,
+} from "../evals/eval-list-filter";
+import { useMemo, useState, type MouseEvent } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
-import { getEffectiveSuiteServers } from "../evals/helpers";
-import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "../evals/types";
+import { useConvexAuth } from "convex/react";
+import { useHostList } from "@/hooks/useClients";
+import {
+  useProjectEnvironments,
+  type ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
+import { compactModelIdTail } from "@/lib/environment-label";
+import {
+  getEffectiveSuiteServers,
+  suiteHasRunnableServers,
+} from "../evals/helpers";
+import type {
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "../evals/types";
 
 interface SuitesOverviewProps {
+  environments?: readonly Pick<
+    ProjectEnvironmentView,
+    "environmentId" | "hostId" | "modelId"
+  >[];
+  hostNamesById?: ReadonlyMap<string, string>;
+  hostModelsById?: ReadonlyMap<string, string>;
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
@@ -33,8 +61,31 @@ interface SuitesOverviewProps {
 // extra so Run/Cancel don't steal space from Suite/Client/Server.
 const ROW_PAD = "flex w-full items-center gap-4 px-3";
 const DATA_COLS =
-  "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
-const ACTION_COL = "flex w-[7.5rem] shrink-0 items-center justify-end gap-1";
+  "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
+const ACTION_COL = "flex w-40 shrink-0 items-center justify-end gap-1";
+
+export function ConnectedSuitesOverview({
+  projectId,
+  ...props
+}: SuitesOverviewProps & { projectId?: string | null }) {
+  const { isAuthenticated } = useConvexAuth();
+  const environments = useProjectEnvironments(projectId ?? null, {
+    includeAdhoc: true,
+  });
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId: projectId ?? null,
+    includePrivateBacking: true,
+  });
+  return (
+    <SuitesOverview
+      {...props}
+      environments={environments}
+      hostNamesById={new Map(hosts.map((host) => [host.hostId, host.name]))}
+      hostModelsById={new Map(hosts.map((host) => [host.hostId, host.modelId]))}
+    />
+  );
+}
 
 export function SuitesOverview(props: SuitesOverviewProps) {
   return (
@@ -44,12 +95,12 @@ export function SuitesOverview(props: SuitesOverviewProps) {
           className="flex flex-col items-center justify-center px-6 py-16 text-center"
           data-testid="evals-suites-overview-error"
         >
-          <AlertTriangle className="size-8 text-amber-500" />
+          <AlertTriangle className="size-8 text-warning" />
           <h2 className="mt-4 text-base font-semibold">
             Couldn&apos;t show your suites
           </h2>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            The list failed to render. Reload the page — this doesn&apos;t mean
+            The list failed to render. Reload the page. This doesn&apos;t mean
             anything happened to your suites.
           </p>
         </div>
@@ -61,6 +112,9 @@ export function SuitesOverview(props: SuitesOverviewProps) {
 }
 
 function OverviewBody({
+  environments = [],
+  hostNamesById = new Map(),
+  hostModelsById = new Map(),
   overview,
   onSelectSuite,
   onRerun,
@@ -72,6 +126,89 @@ function OverviewBody({
   deletingSuiteId = null,
 }: SuitesOverviewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [serverFilter, setServerFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  // Resolved once per suite per data change, not four times per render: the
+  // model pass alone is a scan of `environments` for every environment id.
+  const resolved = useMemo(() => {
+    const environmentsById = new Map(
+      environments.map((environment) => [
+        environment.environmentId,
+        environment,
+      ]),
+    );
+    const entries = overview.map(({ suite }) => {
+      const ids = suite.environmentIds?.length
+        ? suite.environmentIds
+            .map((id) => environmentsById.get(id)?.hostId)
+            .filter((hostId): hostId is string => Boolean(hostId))
+        : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
+      // A host id is not a name. Until `useHostList` resolves, an unnamed id
+      // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
+      // the column and, worse, in the filter's option list.
+      const clients = [
+        ...new Set(
+          ids
+            .map(
+              (id) =>
+                hostNamesById.get(id)?.trim() ||
+                suite.hostAttachments
+                  ?.find((host) => host.namedHostId === id)
+                  ?.hostName?.trim() ||
+                null,
+            )
+            .filter((name): name is string => Boolean(name)),
+        ),
+      ];
+      // `null` where the model is not resolved YET, so the placeholder stays a
+      // display string and never becomes a value the Model filter offers.
+      const models = [
+        ...new Set(
+          suite.environmentIds?.length
+            ? suite.environmentIds.map((id) => {
+                const environment = environmentsById.get(id);
+                return environment
+                  ? environment.modelId ||
+                      hostModelsById.get(environment.hostId) ||
+                      null
+                  : null;
+              })
+            : [suite.defaultConfig?.modelId || null],
+        ),
+      ];
+      return [suite._id, { clients, models }] as const;
+    });
+    return new Map(entries);
+  }, [overview, environments, hostNamesById, hostModelsById]);
+  const clientsForSuite = (suite: EvalSuite) =>
+    resolved.get(suite._id)?.clients ?? [];
+  const modelsForSuite = (suite: EvalSuite) =>
+    resolved.get(suite._id)?.models ?? [];
+  const options = dependentFilterOptions(overview, {
+    client: {
+      selected: selectedFilter(clientFilter),
+      values: ({ suite }) => clientsForSuite(suite),
+    },
+    model: {
+      selected: selectedFilter(modelFilter),
+      values: ({ suite }) =>
+        modelsForSuite(suite).filter((model): model is string =>
+          Boolean(model),
+        ),
+    },
+    server: {
+      selected: selectedFilter(serverFilter),
+      values: ({ suite }) => getEffectiveSuiteServers(suite),
+    },
+  });
+  const clientOptions = options.client;
+  const modelOptions = options.model;
+  const serverOptions = options.server;
+  const isFiltering =
+    modelFilter !== ALL_EVAL_FILTER_VALUES ||
+    clientFilter !== ALL_EVAL_FILTER_VALUES ||
+    serverFilter !== ALL_EVAL_FILTER_VALUES;
 
   const sortedOverview = useMemo(
     () =>
@@ -83,29 +220,97 @@ function OverviewBody({
     [overview],
   );
 
+  const filteredOverview = sortedOverview.filter(
+    ({ suite }) =>
+      (clientFilter === ALL_EVAL_FILTER_VALUES ||
+        clientsForSuite(suite).includes(clientFilter)) &&
+      (modelFilter === ALL_EVAL_FILTER_VALUES ||
+        modelsForSuite(suite).includes(modelFilter)) &&
+      (serverFilter === ALL_EVAL_FILTER_VALUES ||
+        getEffectiveSuiteServers(suite).includes(serverFilter)),
+  );
+
   if (sortedOverview.length === 0) {
     return null;
   }
 
   return (
-    <div className="min-w-0" data-testid="evals-suites-overview">
-      <div
-        className={cn(
-          ROW_PAD,
-          "border-b border-border/40 pb-2 text-xs font-medium text-muted-foreground",
-        )}
-      >
+    <div
+      className="@container/suites min-w-0"
+      data-testid="evals-suites-overview"
+    >
+      <div className={cn(ROW_PAD, "border-b border-border/40 pb-3")} role="row">
         <div className={DATA_COLS}>
-          <span>Suite</span>
-          <span>Client</span>
-          <span>Server</span>
-          <span className="text-right">Pass rate</span>
-          <span className="text-right">Last run</span>
+          <span
+            role="columnheader"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Suite
+          </span>
+          <div role="columnheader" aria-label="Client" className="min-w-0">
+            <EvalListFilter
+              label="Client"
+              variant="header"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
+              value={clientFilter}
+              options={clientOptions}
+              onChange={setClientFilter}
+            />
+          </div>
+          <div role="columnheader" aria-label="Model" className="min-w-0">
+            <EvalListFilter
+              label="Model"
+              variant="header"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
+              value={modelFilter}
+              options={modelOptions}
+              formatOption={compactModelIdTail}
+              onChange={setModelFilter}
+            />
+          </div>
+          <div role="columnheader" aria-label="Server" className="min-w-0">
+            <EvalListFilter
+              label="Server"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
+              variant="header"
+              value={serverFilter}
+              options={serverOptions}
+              onChange={setServerFilter}
+            />
+          </div>
+          <span
+            role="columnheader"
+            className="text-right text-xs font-medium text-muted-foreground"
+          >
+            Pass rate
+          </span>
+          <span
+            role="columnheader"
+            className="text-right text-xs font-medium text-muted-foreground"
+          >
+            Last run
+          </span>
         </div>
-        <span className={ACTION_COL} aria-hidden />
+        <div className={ACTION_COL}>
+          {isFiltering ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px]"
+              aria-label="Clear filters"
+              onClick={() => {
+                setClientFilter(ALL_EVAL_FILTER_VALUES);
+                setModelFilter(ALL_EVAL_FILTER_VALUES);
+                setServerFilter(ALL_EVAL_FILTER_VALUES);
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
       </div>
       <ul className="mt-1">
-        {sortedOverview.map((entry) => (
+        {filteredOverview.map((entry) => (
           <li key={entry.suite._id}>
             <div
               className={cn(
@@ -128,7 +333,12 @@ function OverviewBody({
                 <span className="min-w-0 truncate text-sm font-medium text-foreground">
                   {entry.suite.name || "Untitled suite"}
                 </span>
-                <ClientCell suite={entry.suite} themeMode={themeMode} />
+                <ClientCell
+                  names={clientsForSuite(entry.suite)}
+                  themeMode={themeMode}
+                  className="flex"
+                />
+                <ModelCell models={modelsForSuite(entry.suite)} />
                 <span className="min-w-0 truncate text-sm text-muted-foreground">
                   {serverLabel(entry.suite)}
                 </span>
@@ -163,6 +373,11 @@ function OverviewBody({
           </li>
         ))}
       </ul>
+      {filteredOverview.length === 0 && (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          No suites match these filters.
+        </p>
+      )}
     </div>
   );
 }
@@ -188,13 +403,13 @@ function RowRunControl({
   cancellingRunId: string | null;
 }) {
   const suiteTitle = suite.name || "Untitled suite";
-  const hasServers = getEffectiveSuiteServers(suite).length > 0;
+  // An environment suite runs its environments' servers, not its legacy
+  // server fields (which are usually empty for it).
+  const hasServers = suiteHasRunnableServers(suite);
   const latestRunInProgress =
     latestRun?.status === "running" || latestRun?.status === "pending";
   const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;
-  const isCancelling = Boolean(
-    latestRun && cancellingRunId === latestRun._id,
-  );
+  const isCancelling = Boolean(latestRun && cancellingRunId === latestRun._id);
 
   if (latestRunInProgress && latestRun) {
     return (
@@ -223,7 +438,7 @@ function RowRunControl({
     return (
       <Button
         type="button"
-        variant="default"
+        variant="outline"
         size="sm"
         className="h-7 px-2.5"
         data-testid="evals-suites-overview-running"
@@ -238,11 +453,13 @@ function RowRunControl({
   return (
     <Button
       type="button"
-      variant="default"
+      variant="outline"
       size="sm"
-      className="h-7 px-2.5"
+      className="h-7 gap-1.5 px-2.5"
       data-testid="evals-suites-overview-run"
-      aria-label={hasServers ? `Run ${suiteTitle}` : "No servers configured"}
+      aria-label={
+        hasServers ? `Setup Run ${suiteTitle}` : "No servers configured"
+      }
       title={hasServers ? undefined : "No servers configured"}
       disabled={!hasServers}
       onClick={(event) => {
@@ -250,7 +467,8 @@ function RowRunControl({
         onRerun(suite);
       }}
     >
-      Run
+      <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      Setup Run
     </Button>
   );
 }
@@ -291,52 +509,51 @@ function RowDeleteControl({
 }
 
 function ClientCell({
-  suite,
+  names,
   themeMode,
+  className,
 }: {
-  suite: EvalSuite;
+  names: string[];
   themeMode: "light" | "dark";
+  className?: string;
 }) {
-  const attachments = suite.hostAttachments ?? [];
-  if (attachments.length === 0) {
-    return <span className="text-sm text-muted-foreground">—</span>;
+  if (names.length === 0) {
+    return (
+      <span className={cn(className, "text-sm text-muted-foreground")}>-</span>
+    );
   }
 
-  const name = attachments[0].hostName?.trim() || attachments[0].namedHostId;
-  const extra = attachments.length - 1;
-  const logoSrc = resolveHostLogoByDisplayName(name, themeMode);
-
   return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background">
-        {logoSrc ? (
-          <img
-            src={logoSrc}
-            alt=""
-            className="size-3.5 object-contain"
-          />
-        ) : (
+    <span
+      className={cn(className, "min-w-0 items-center gap-2")}
+      title={names.join(", ")}
+    >
+      <span className="flex shrink-0 -space-x-1.5">
+        {names.map((name, index) => (
           <span
-            aria-hidden
-            className="text-[8px] font-semibold uppercase text-muted-foreground"
+            key={`${name}-${index}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background ring-1 ring-background"
           >
-            {name.slice(0, 2)}
+            <img
+              src={resolveHostLogoByName(name, themeMode)}
+              alt=""
+              className="size-3.5 object-contain"
+            />
           </span>
-        )}
+        ))}
       </span>
-      <span className="min-w-0 truncate text-sm text-foreground">{name}</span>
-      {extra > 0 ? (
-        <span className="shrink-0 text-sm text-muted-foreground">+{extra}</span>
-      ) : null}
+      <span className="hidden min-w-0 truncate text-sm text-foreground @min-[1100px]/suites:inline">
+        {names.join(", ")}
+      </span>
     </span>
   );
 }
 
 function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
   return (
-    entry.suite.updatedAt ??
     entry.latestRun?.completedAt ??
     entry.latestRun?.createdAt ??
+    entry.suite.updatedAt ??
     entry.suite._creationTime ??
     0
   );
@@ -345,18 +562,53 @@ function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
 function serverLabel(suite: EvalSuite): string {
   const names = getEffectiveSuiteServers(suite);
   if (names.length > 0) return names[0];
-  return "—";
+  return "-";
 }
 
 function passRateLabel(entry: EvalSuiteOverviewEntry): string {
   const rate = entry.latestRun?.summary?.passRate;
-  if (typeof rate !== "number") return "—";
+  if (
+    typeof rate !== "number" ||
+    !Number.isFinite(rate) ||
+    !entry.latestRun?.summary?.total
+  )
+    return "—";
   return `${Math.round(rate * 100)}%`;
 }
 
 function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
   const timestamp =
     entry.latestRun?.completedAt ?? entry.latestRun?.createdAt ?? null;
-  if (!timestamp) return "—";
+  if (!timestamp) return "-";
   return formatDistanceToNow(timestamp, { addSuffix: true });
+}
+
+/** `null` is a model this view could not resolve; it is shown, never filtered on. */
+function ModelCell({ models }: { models: (string | null)[] }) {
+  const labels = models.map((model) => model ?? "-");
+  return (
+    <span
+      className="min-w-0 text-sm text-muted-foreground"
+      title={labels.join(", ")}
+    >
+      <span className="hidden truncate @min-[1100px]/suites:block">
+        {models
+          .map((model) => (model ? compactModelIdTail(model) : "-"))
+          .join(", ")}
+      </span>
+      <span
+        className="flex min-w-0 items-center gap-1 @min-[1100px]/suites:hidden"
+        data-testid="suite-compact-models"
+      >
+        <span className="truncate">
+          {models[0] ? compactModelIdTail(models[0]) : "-"}
+        </span>
+        {models.length > 1 && (
+          <span className="shrink-0" title={labels.slice(1).join(", ")}>
+            +{models.length - 1}
+          </span>
+        )}
+      </span>
+    </span>
+  );
 }

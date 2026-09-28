@@ -6,11 +6,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { track } from "@/lib/analytics";
 
 export type ConnectViewValue =
-  | "servers"
-  | "host"
-  | "compare"
-  | "computer"
-  | "skills";
+  "servers" | "host" | "compare" | "computer" | "skills";
 
 interface ConnectViewHeaderProps {
   value: ConnectViewValue;
@@ -21,6 +17,7 @@ interface ConnectViewHeaderProps {
    * Servers-view "add server" slot). Default is an empty placeholder so the
    * centered selector stays centered.
    */
+  leftSlot?: ReactNode;
   rightSlot?: ReactNode;
   testId?: string;
 }
@@ -29,6 +26,7 @@ export function ConnectViewHeader({
   value,
   previewedHostId,
   onChange,
+  leftSlot,
   rightSlot,
   testId = "hosts-tab-header-chrome",
 }: ConnectViewHeaderProps) {
@@ -65,7 +63,13 @@ export function ConnectViewHeader({
           and the container — not the window — is narrow. Below the container
           breakpoint the selector and right slot stack into one column. */}
       <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
-        <div className="hidden @2xl:block" aria-hidden="true" />
+        {leftSlot ? (
+          <div className="flex min-w-0 justify-center @2xl:justify-start">
+            {leftSlot}
+          </div>
+        ) : (
+          <div className="hidden @2xl:block" aria-hidden="true" />
+        )}
         <div className="flex min-w-0 justify-center">
           <ViewModeSelector
             value={value}

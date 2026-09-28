@@ -1,3 +1,4 @@
+import { useSettingsDraft } from "../settings/SettingsDraftProvider";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,15 @@ export function EditableText({
   const [isEditing, setIsEditing] = useState(false);
   const [editedValue, setEditedValue] = useState(value);
   const [isSaving, setIsSaving] = useState(false);
+
+  useSettingsDraft(
+    isEditing && editedValue !== value,
+    () => {
+      setEditedValue(value);
+      setIsEditing(false);
+    },
+    isSaving,
+  );
 
   // Sync with external value changes
   useEffect(() => {

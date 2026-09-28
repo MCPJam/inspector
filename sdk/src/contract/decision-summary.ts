@@ -17,7 +17,7 @@
  *
  * ── It EXPLAINS the verdict; it never DECIDES it ─────────────────────────────
  *
- * Nothing here aggregates trials into a verdict. Under verdict policy v2 the
+ * Nothing here aggregates trials into a verdict. Under per-case grading the
  * authority is the run's own {@link EvalVerdictDecision}: its verdict, its
  * rates, its validity phase, its reasons, its per-case stability and mixed-
  * verdict flags are COPIED after validation and never recomputed from the
@@ -72,10 +72,13 @@ import {
 import { opaqueIdSchema } from "./identity.js";
 import {
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
 } from "./decision-labels.js";
 import {
   STAGE_ANALYZER_VERSION,
+  STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE,
   stageDerivationSchema,
   stageResultRowSchema,
   type StageResultRow,
@@ -166,7 +169,8 @@ export const evalRunMeasurementUnitSchema = z.enum(EVAL_RUN_MEASUREMENT_UNITS);
 /**
  * Why no verdict was established.
  *
- *   - `runNotTerminal`           — the run is still pending or running. Poll it.
+ *   - `runNotTerminal`           — the run is still pending, running, or held
+ *                                   in `grading` for its judge. Poll it.
  *   - `runStatusNotAVerdict`     — a legacy run that stopped at `cancelled`,
  *     `timed_out` or `failed`. Its stored summary describes the iterations it
  *     happened to record, not the run it was asked to perform, so gating on it
@@ -645,6 +649,13 @@ export type EvalRunDecisionAssemblyInput = {
  * Mirrors the CLI's `TERMINAL_RUN_STATUSES`; kept here because the summary is
  * assembled on the server too, and a server that read "still running" as
  * "no verdict" for a finished run would report `notEstablished` forever.
+ *
+ * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has
+ * finished every trial but has not been decided: its `result` is `pending` and
+ * `finalizeAfterJudge` is what will set it. Adding it here would let a reader
+ * quote a stale `verdictSummary` — the one written before the judge's rows
+ * landed — as the run's verdict, which is precisely the number the hold exists
+ * to prevent anybody using.
  */
 const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -826,8 +837,92 @@ function assembleDiagnostic(
     evidence: assembleEvidence(input, iteration, chain),
     nextAction: category
       ? NEXT_ACTION_BY_FAILURE_CATEGORY[category]
-      : DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+      : uncategorisedNextAction(chain, iteration.result),
   };
+}
+
+/**
+ * What to tell a reader when the chain established no failure category.
+ *
+ * Two of these runs are not the same thing, and the old single line described
+ * both as an absence of information:
+ *
+ *   - The chain measured everything it could and found nothing wrong, while
+ *     the recorded verdict says failed. That is not missing information — it
+ *     is two things we hold disagreeing, which is a different investigation.
+ *   - Anything else (an unverified chain, a stage that never measured, a run
+ *     that did not fail): no category and nothing more to say.
+ *
+ * The disagreement is asserted only when all four halves of it are
+ * STRUCTURALLY established: the chain validated, at least one stage actually
+ * passed, every applicable stage passed, and the verdict is `failed`. Nothing
+ * here guesses at a cause — the chain cannot see one from here, and a guess
+ * dressed as a finding is what this vocabulary exists to prevent.
+ */
+function uncategorisedNextAction(
+  chain: EvalRunDecisionChain,
+  result: EvalRunDecisionIterationInput["result"]
+): string {
+  if (chain.status !== "verified" || result !== "failed") {
+    return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
+  }
+  // A disagreement needs the chain to be COMPLETE and clean, not merely
+  // un-failed. Every stage must have `passed`, except the ones the case does
+  // not exercise at all.
+  //
+  // "Something passed and nothing failed" is too weak, and its gap is the same
+  // mistake in slower motion: a chain with connection and discovery passed and
+  // selection `notMeasured / noEvidenceCaptured` has nothing failed and
+  // something measured, but the verdict may be failing on exactly the stage
+  // the chain could not read. That is a measurement GAP, and telling someone
+  // two things they hold are in conflict sends them looking for a
+  // contradiction that is not there.
+  //
+  // `notApplicable` is the one state that does not block the claim: a stage
+  // the case never exercises is not missing evidence, it is out of scope, and
+  // requiring it to pass would make the claim unreachable for every case that
+  // does not use all six stages.
+  const measuredSomething = chain.stages.some((row) => row.state === "passed");
+  const everyApplicableStagePassed = chain.stages.every(
+    (row) => row.state === "passed" || row.state === "notApplicable"
+  );
+  if (!measuredSomething || !everyApplicableStagePassed) {
+    return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
+  }
+
+  // A pre-7 chain gets a different INSTRUCTION, not a different diagnosis.
+  //
+  // The version establishes that this analyzer measured strictly less than the
+  // current one — before 7 an errored tool call on a case with no authored
+  // tool expectation had no stage able to report it — so re-deriving may
+  // attribute what this row could not. It does NOT establish that such a call
+  // occurred, which is why the wording names the analyzer and not a cause.
+  return chain.analyzerVersion !== undefined &&
+    chain.analyzerVersion < STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE
+    ? DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION
+    : DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION;
+}
+
+/**
+ * One iteration's stage rows, as the chain a reader may believe.
+ *
+ * EXPORTED because a second surface needs the SAME answer. D9's diagnostics
+ * cover non-passing trials only — the filter is deliberate and lives in
+ * `assembleDiagnostics` — so a reader that wants a PASSING trial's chain has
+ * to go to the iterations resource, and it must arrive at `verified` /
+ * `unverified` / `absent` by exactly this route.
+ *
+ * The whole DERIVATION is parsed, never the rows one at a time. Row-level
+ * validation accepts five rows, or six in the wrong order, and a renderer that
+ * numbers cards by position would then publish a different claim about which
+ * stages were blocked — `notReached` is derived from POSITION. The
+ * six-rows-in-order refinement lives in `stageDerivationSchema`, and this is
+ * the only client-reachable way to apply it.
+ */
+export function assembleEvalRunDecisionChain(
+  iteration: EvalRunDecisionIterationInput
+): EvalRunDecisionChain {
+  return assembleChain(iteration);
 }
 
 function assembleChain(
@@ -1023,10 +1118,24 @@ export const EVAL_RUN_DECISION_VERDICT_LABELS = Object.freeze({
   notEstablished: "no verdict established",
 } satisfies Record<EvalRunDecisionVerdict, string>);
 
-/** @see EVAL_RUN_DECISION_VERDICT_SOURCES */
+/**
+ * @see EVAL_RUN_DECISION_VERDICT_SOURCES
+ *
+ * The words name WHICH CRITERION decided the run, not which version of the
+ * platform produced it. `policyV2` and `legacy` are wire spellings and stay
+ * that way; what a reader sees is the question each one answered, because that
+ * is the fact they need in order to trust the counts beside it.
+ *
+ * "verdict policy v2" and "legacy percent-threshold run" told a reader their
+ * run was decided by something old — which is not a difference they can act on
+ * — while hiding the difference they must act on: one is a per-case rate over
+ * each case's own iterations, the other one suite-wide percentage over the
+ * whole run. Two runs of the same suite with the same evidence can disagree
+ * across that line, and "legacy" does not say so.
+ */
 export const EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS = Object.freeze({
-  policyV2: "verdict policy v2",
-  legacy: "legacy percent-threshold run",
+  policyV2: "per-case grading",
+  legacy: "suite accuracy threshold",
   none: "no verdict source",
 } satisfies Record<EvalRunDecisionVerdictSource, string>);
 
@@ -1039,7 +1148,7 @@ export const EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS = Object.freeze({
  */
 export const EVAL_RUN_MEASUREMENT_UNIT_LABELS = Object.freeze({
   caseVariant: { one: "case variant", many: "case variants" },
-  trial: { one: "trial", many: "trials" },
+  trial: { one: "iteration", many: "iterations" },
 } satisfies Record<EvalRunMeasurementUnit, { one: string; many: string }>);
 
 /** @see EVAL_RUN_DECISION_UNDECIDED_REASONS */
@@ -1049,7 +1158,7 @@ export const EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS = Object.freeze({
     "the run stopped before it finished, so its recorded counts describe a sample rather than the run",
   runResultNotAVerdict: "the run finished without recording a verdict",
   verdictSummaryUnavailable:
-    "the run was decided under verdict policy v2 and its decision could not be read",
+    "the run was decided by per-case grading and its decision could not be read",
 } satisfies Record<EvalRunDecisionUndecidedReason, string>);
 
 /** The unit's word for `count`, singular or plural. */

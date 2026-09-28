@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Users,
 } from "lucide-react";
+import { useGuestSharingSignUp } from "@/hooks/useGuestSharingSignUp";
 import { toast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { getInitials } from "@/lib/utils";
@@ -44,6 +45,14 @@ import type {
 
 const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * "Anyone with the link" in both preset vocabularies: resource shares pass the
+ * `ShareMode` through as the preset value, scenarios pass their own names.
+ */
+function isAnyoneWithLinkPreset(preset: string): boolean {
+  return preset === "link_guests" || preset === "anyone_with_link";
+}
+
 export type ShareSectionProps<TEnvelope> = {
   envelope: TEnvelope;
   onUpdated?: (next: TEnvelope) => void;
@@ -63,6 +72,12 @@ export type ShareSectionProps<TEnvelope> = {
   onRotateLink?: () => Promise<TEnvelope>;
   onRevokeAll?: () => Promise<TEnvelope>;
   disabledReason?: string | null;
+  /**
+   * Render the "Has access" / "Invited" rosters. Off for surfaces that only
+   * hand out the link — the compact Share modal — where membership management
+   * stays on the settings page rather than being duplicated into a dialog.
+   */
+  showMembers?: boolean;
   footerSlot?: ReactNode;
   activeNote?: ReactNode;
   copy: ShareSectionCopy;
@@ -94,11 +109,13 @@ export function ShareSection<TEnvelope>({
   onRotateLink,
   onRevokeAll,
   disabledReason,
+  showMembers = true,
   footerSlot,
   activeNote,
   copy,
   testIds,
 }: ShareSectionProps<TEnvelope>) {
+  const { handleGuestSharingError, guestSharingPrompt } = useGuestSharingSignUp();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [isModeBusy, setIsModeBusy] = useState(false);
@@ -140,6 +157,7 @@ export function ShareSection<TEnvelope>({
     try {
       updateSettings(await onSetPreset(preset));
     } catch (error) {
+      if (handleGuestSharingError(error)) return;
       toast.error(
         error instanceof Error
           ? error.message
@@ -193,6 +211,10 @@ export function ShareSection<TEnvelope>({
       toast.success("Share link rotated");
       setRotateOpen(false);
     } catch (error) {
+      if (handleGuestSharingError(error)) {
+        setRotateOpen(false);
+        return;
+      }
       toast.error(
         error instanceof Error ? error.message : "Failed to rotate link",
       );
@@ -217,11 +239,11 @@ export function ShareSection<TEnvelope>({
   };
 
   const currentOption = presets.find((p) => p.value === currentPreset);
+  const anyoneWithLink = isAnyoneWithLinkPreset(currentPreset);
   const AccessIcon =
     currentPreset === "project" || currentPreset === "project_members"
       ? Users
-      : currentPreset === "link_guests" ||
-          currentPreset === "anyone_with_link"
+      : anyoneWithLink
         ? Globe
         : Lock;
 
@@ -234,7 +256,8 @@ export function ShareSection<TEnvelope>({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
+      {guestSharingPrompt}
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor={testIds.linkOutput}>
           {copy.linkLabel}
@@ -247,7 +270,7 @@ export function ShareSection<TEnvelope>({
           >
             <span className="truncate text-sm text-muted-foreground">
               {disabledReason
-                ? (copy.withheldLabel ?? "Withheld — this can't be shared.")
+                ? (copy.withheldLabel ?? "Withheld: this can't be shared.")
                 : (displayLink ??
                   (copy.emptyLinkLabel ?? "No share link yet."))}
             </span>
@@ -303,11 +326,15 @@ export function ShareSection<TEnvelope>({
             data-testid={testIds.unrunnable}
           >
             {disabledReason} Point this at a working environment to share it
-            again — its link and its sessions are unchanged.
+            again. Its link and its sessions are unchanged.
           </p>
         ) : null}
       </div>
 
+      {/* Not while anyone with the link can open it: the invite grants the
+          recipient nothing the link already gives them, and asking for an
+          email after that choice reads as a step still owed (BB-205). */}
+      {anyoneWithLink ? null : (
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor={testIds.email}>
           {copy.inviteLabel ?? "Invite with email"}
@@ -347,6 +374,7 @@ export function ShareSection<TEnvelope>({
           <p className="text-sm text-destructive">{emailValidationError}</p>
         ) : null}
       </div>
+      )}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">
@@ -386,8 +414,7 @@ export function ShareSection<TEnvelope>({
                       {option.value === "project" ||
                       option.value === "project_members" ? (
                         <Users className="size-4" />
-                      ) : option.value === "link_guests" ||
-                        option.value === "anyone_with_link" ? (
+                      ) : isAnyoneWithLinkPreset(option.value) ? (
                         <Globe className="size-4" />
                       ) : (
                         <Lock className="size-4" />
@@ -411,6 +438,7 @@ export function ShareSection<TEnvelope>({
         {activeNote}
       </div>
 
+      {showMembers ? (
       <div className="space-y-2">
         <label className="text-sm font-medium">
           {copy.hasAccessLabel ?? "Has access"}
@@ -494,8 +522,9 @@ export function ShareSection<TEnvelope>({
           ) : null}
         </div>
       </div>
+      ) : null}
 
-      {pendingInvitees.length > 0 ? (
+      {showMembers && pendingInvitees.length > 0 ? (
         <div className="space-y-2">
           <label className="text-sm font-medium">
             {copy.invitedLabel ?? "Invited"}
@@ -512,7 +541,7 @@ export function ShareSection<TEnvelope>({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{member.email}</p>
                   <p className="text-xs text-muted-foreground">
-                    Invitation pending — they can access after signing in
+                    Invitation pending. They can access after signing in
                   </p>
                 </div>
                 <DropdownMenu>

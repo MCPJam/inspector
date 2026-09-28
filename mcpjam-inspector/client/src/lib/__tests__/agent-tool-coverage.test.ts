@@ -204,6 +204,47 @@ describe("tool hygiene: global catalog + every group", () => {
     }
   });
 
+  it("every tool states whether browser-native agents get it", () => {
+    // `shouldPublishNatively` defaults to NO, so a tool that forgets this is
+    // simply invisible to an external agent rather than dangerous — which is
+    // exactly why it needs a test: a silent omission reads as a working
+    // decision. Say it outright, at the definition.
+    for (const { label, tool } of allTools) {
+      const publication = tool.nativePublication;
+      expect(
+        publication,
+        `${label}/${tool.name} must declare nativePublication (PUBLISH_NATIVE, PUBLISH_NATIVE_UNTRUSTED, or nativeInternal("why"))`,
+      ).toBeDefined();
+      if (publication?.kind === "publish") {
+        expect(
+          typeof publication.untrustedContent,
+          `${label}/${tool.name} must say whether its result can carry third-party content`,
+        ).toBe("boolean");
+      } else {
+        expect(
+          publication?.reason?.length ?? 0,
+          `${label}/${tool.name} stays internal — say why`,
+        ).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("only conversation-bound tools are kept off the native surface", () => {
+    // The internal set is small and deliberate: tools whose meaning depends
+    // on an Ask MCPJam conversation. Anything else an external agent should
+    // be able to drive, so growing this list is a conscious edit here.
+    const internal = allTools
+      .filter(({ tool }) => tool.nativePublication?.kind !== "publish")
+      .map(({ tool }) => tool.name)
+      .sort();
+    expect(internal).toEqual([
+      "ui_ask_user",
+      "ui_eval_context",
+      "ui_eval_propose_cases",
+      "ui_eval_question",
+    ]);
+  });
+
   it("catalog + the largest group fit the snapshot budget with headroom", () => {
     // 56 = 8 headroom under the server's 64-entry snapshot cap, assuming a
     // single surface is mounted at a time (one group live alongside the

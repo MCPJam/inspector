@@ -453,9 +453,29 @@ export const EVAL_VERDICT_DECISION_REASONS = [
 ] as const;
 export type EvalVerdictDecisionReason =
   (typeof EVAL_VERDICT_DECISION_REASONS)[number];
-export const evalVerdictDecisionReasonSchema = z.enum(
-  EVAL_VERDICT_DECISION_REASONS
-);
+export const evalVerdictDecisionReasonSchema = z
+  .enum(EVAL_VERDICT_DECISION_REASONS)
+  // Carried into `openapi.json` by `generate-swarm-report-schema.ts`: the spec
+  // is the only place a third-party integrator can read what a reason MEANS.
+  .describe(
+    "Why the verdict is what it is. The validity reasons are evaluated " +
+      "FIRST and make a run `inconclusive`; the task reasons decide " +
+      "`passed` / `failed` once validity holds. " +
+      "`configuredTrialsNotAttempted` — some configured trial never ran. " +
+      "`noGradeableTrials` — nothing in the suite was gradeable. " +
+      "`eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was " +
+      "not reached. `completionRateBelowMinimum` — measured, and under the " +
+      "floor. `completionRateNotMeasured` — nothing was attempted, so the " +
+      "floor is unsatisfiable; a not-measured rate never passes one. " +
+      "`evaluatorErrorRateAboveMaximum` — the grader failed too often for " +
+      "the run to describe the server. `evaluatorErrorRateNotMeasured` — " +
+      "the same unsatisfiable case for the ceiling. " +
+      "`caseHasNoEligibleTrials` — a case graded nothing, which is " +
+      "inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` " +
+      "— a case's own passing reason. `casePassRateBelowThreshold` — a case " +
+      "failed its threshold, and so therefore did the suite. " +
+      "`allMeasuredCasesMetThreshold` — the suite's only passing reason."
+  );
 
 export function isEvalVerdictDecisionReason(
   value: unknown
@@ -723,6 +743,28 @@ export const evalCaseVerdictAggregationSchema =
 export type EvalCaseVerdictAggregation = z.infer<
   typeof evalCaseVerdictAggregationSchema
 >;
+
+/**
+ * How many passing trials a case needs to meet its threshold.
+ *
+ * The case decision rule above is `passRate.value >= effectivePassThreshold`
+ * (equality passes at every threshold including `0` and `1`). This restates
+ * that rule as a count for display: the smallest `k` such that
+ * `k / configuredTrials` meets the threshold. It does not decide a verdict —
+ * a case with zero eligible trials is inconclusive regardless of this number.
+ */
+export function casePassesNeeded(
+  configuredTrials: number,
+  passThreshold: number
+): number {
+  if (!Number.isFinite(configuredTrials) || configuredTrials <= 0) return 0;
+  if (!Number.isFinite(passThreshold) || passThreshold <= 0) return 0;
+  const n = Math.floor(configuredTrials);
+  const threshold = Math.min(1, passThreshold);
+  let needed = 0;
+  while (needed < n && needed / n < threshold) needed += 1;
+  return needed;
+}
 
 // ── the decision ─────────────────────────────────────────────────────────────
 /** Suite-level trial totals and the two validity rates measured over them. */

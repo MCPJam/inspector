@@ -21,9 +21,8 @@ const PROXY_PATH = "/api/web/apps/mcp-apps/sandbox-proxy";
  */
 async function buildApp() {
   vi.resetModules();
-  const { applySandboxHostPartition, SANDBOX_HOST_OPEN_PATHS } = await import(
-    "../sandbox-host-partition.js"
-  );
+  const { applySandboxHostPartition, SANDBOX_HOST_OPEN_PATHS } =
+    await import("../sandbox-host-partition.js");
 
   // Adding a third path to an origin that exists to hold untrusted content is
   // a decision, not a detail. Make it fail here first.
@@ -61,7 +60,7 @@ describe("sandbox host", () => {
 
   it("serves the proxy with the renderer's cache-buster attached", async () => {
     expect(
-      await status(app, `${PROXY_PATH}?v=1750000000000`, SANDBOX_HOST)
+      await status(app, `${PROXY_PATH}?v=1750000000000`, SANDBOX_HOST),
     ).toBe(200);
   });
 
@@ -82,6 +81,50 @@ describe("sandbox host", () => {
   it("matches the host regardless of port or case", async () => {
     expect(await status(app, "/", `${SANDBOX_HOST}:6274`)).toBe(404);
     expect(await status(app, "/", SANDBOX_HOST.toUpperCase())).toBe(404);
+  });
+});
+
+describe("per-server view host", () => {
+  // `<label>.<sandbox host>` is minted per MCP server so one server's views
+  // get their own origin — cookie and storage isolation between apps.
+  const LABEL_HOST = `0123456789abcdef.${SANDBOX_HOST}`;
+  let app: Hono;
+
+  beforeAll(async () => {
+    vi.stubEnv("SANDBOX_HOSTS", SANDBOX_HOST);
+    app = await buildApp();
+  });
+  afterAll(() => vi.unstubAllEnvs());
+
+  it("serves the sandbox proxy", async () => {
+    expect(await status(app, PROXY_PATH, LABEL_HOST)).toBe(200);
+  });
+
+  it("does not serve /health", async () => {
+    // Nothing derived from a server id has business describing this service's
+    // infrastructure, and no operator probes such a name.
+    expect(await status(app, "/health", LABEL_HOST)).toBe(404);
+  });
+
+  it("404s everything else, as the parent host does", async () => {
+    expect(await status(app, "/", LABEL_HOST)).toBe(404);
+    expect(await status(app, "/api/web/projects", LABEL_HOST)).toBe(404);
+    expect(await status(app, "/assets/index.js", LABEL_HOST)).toBe(404);
+  });
+
+  it("only matches a label this service would actually mint", async () => {
+    // Not hex, wrong length, nested, or under a host that is not ours — none
+    // are names the deriver produces, so they are not partitioned at all and
+    // fall through to the ordinary app.
+    for (const host of [
+      `zzzzzzzzzzzzzzzz.${SANDBOX_HOST}`,
+      `0123456789abcde.${SANDBOX_HOST}`,
+      `0123456789abcdef0.${SANDBOX_HOST}`,
+      `a.0123456789abcdef.${SANDBOX_HOST}`,
+      "0123456789abcdef.evil.example",
+    ]) {
+      expect(await status(app, "/api/web/projects", host), host).toBe(200);
+    }
   });
 });
 
@@ -173,9 +216,8 @@ async function bootWith(env: {
     logged.push(message);
   });
 
-  const { assertSandboxIsolation } = await import(
-    "../sandbox-host-partition.js"
-  );
+  const { assertSandboxIsolation } =
+    await import("../sandbox-host-partition.js");
   const { buildHealthMeta } = await import("../../utils/health-payload.js");
 
   assertSandboxIsolation();

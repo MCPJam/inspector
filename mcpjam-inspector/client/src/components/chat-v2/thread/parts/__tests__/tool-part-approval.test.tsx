@@ -36,7 +36,13 @@ vi.mock("@/stores/widget-debug-store", () => ({
     }),
 }));
 
-vi.mock("../../thread-helpers", () => ({
+// `importOriginal` rather than a bare factory: this module re-exports the
+// package's graph-free `@mcpjam/chat-ui/thread-helpers` subpath, and the parts
+// this file does not care about (notably `readTraceDisplayText`, which decides
+// whether a readable tool result is shown at all) have to behave like the real
+// thing rather than be re-stubbed in every test file that shadows one helper.
+vi.mock("../../thread-helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../thread-helpers")>()),
   getToolNameFromType: () => "test-tool",
   getToolStateMeta: () => ({
     Icon: (props: any) => <div data-testid="status-icon" {...props} />,
@@ -145,6 +151,32 @@ describe("ToolPart approval expansion", () => {
     expect(
       screen.queryByRole("button", { name: /^approve$/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("shows why an approved call did not run, instead of a bare denial", async () => {
+    // An approval the server refuses after the user approved — it expired, or
+    // it was already used — arrives as an error with the reason (MJ-008).
+    const user = userEvent.setup();
+    const reason =
+      "Not run: this approval expired before it was used, so nothing was run.";
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            state: "output-error",
+            output: undefined,
+            errorText: reason,
+            approval: { id: "approval-1", approved: true },
+          } as any
+        }
+        uiType="mcp-apps"
+      />,
+    );
+
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    await user.click(getHeaderButton()!);
+    expect(await screen.findByText(reason)).toBeInTheDocument();
   });
 
   it("shows an Edit control when inline edit is allowed", () => {
@@ -486,6 +518,39 @@ describe("ToolPart approval expansion", () => {
       "Readable output"
     );
     expect(screen.getAllByTestId("json-editor")).toHaveLength(1);
+  });
+
+  it("falls back to the raw result when it cannot read the display mode", async () => {
+    // The gate now lives in `readTraceDisplayText`, shared with the package's
+    // own tool card, so an unrecognised mode drops back to the payload on both
+    // surfaces instead of one of them rendering an unknown format as markdown.
+    const user = userEvent.setup();
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            input: { prompt: "read me" },
+            output: { type: "json", value: { ignored: true } },
+            traceDisplayText: "Readable output",
+            traceDisplayMode: "some-future-mode",
+          } as any
+        }
+        uiType="mcp-apps"
+      />
+    );
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) {
+      await user.click(headerButton);
+    }
+
+    expect(screen.queryByTestId("text-part")).not.toBeInTheDocument();
+    // Input and result, rather than the single input editor the readable
+    // branch leaves behind.
+    expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
   });
 
   it("does not expand attached readable output in minimal mode", async () => {

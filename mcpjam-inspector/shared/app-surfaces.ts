@@ -73,8 +73,9 @@ export interface AppSurfaceManifest {
   /**
    * Not reachable in hosted deployments — this field is the SOURCE OF TRUTH
    * for that, and `hosted-tab-policy.ts` derives its block list from it. Set
-   * it only when the screen genuinely cannot work hosted (Tracing needs the
-   * local OTLP collector); a screen that merely isn't ready yet belongs
+   * it only when the screen genuinely cannot work hosted (Tracing streams
+   * from the local Inspector's RPC bus, which hosted does not run); a screen
+   * that merely isn't ready yet belongs
    * behind a feature flag instead.
    * Kept out of the atlas when the atlas is built for a hosted surface, so
    * the model isn't handed a map to a door that is locked.
@@ -137,7 +138,11 @@ export const APP_SURFACES = [
     id: "servers",
     scope: "project",
     canonicalPath: "/servers",
-    routePatterns: ["servers", "servers/plugins/:pluginId", "servers/:serverId"],
+    routePatterns: [
+      "servers",
+      "servers/plugins/:pluginId",
+      "servers/:serverId",
+    ],
     // `client-config` renders nothing of its own (it redirects here), but it
     // IS still a tab segment that resolves to this surface, so it stays a
     // valid `ui_navigate` target and a valid `pathnameToActiveTab` result.
@@ -413,9 +418,11 @@ export const APP_SURFACES = [
     routePatterns: [
       "evaluate",
       "evaluate/create",
+      "evaluate/eval-server/:serverId",
       "evaluate/suite/:suiteId",
       "evaluate/suite/:suiteId/edit",
       "evaluate/suite/:suiteId/runs/:runId",
+      "evaluate/suite/:suiteId/runs/:runId/compare",
       "evaluate/suite/:suiteId/test/:testId",
       "evaluate/suite/:suiteId/test/:testId/edit",
     ],
@@ -425,6 +432,7 @@ export const APP_SURFACES = [
       "Preview of the redesigned Evaluate tab: a suites landing with a Runs view, a full-page create-suite flow, and a suite overview built around run history. Same suites and same data as Evaluate — only the screens differ.",
     userActivities: [
       "Browse eval suites from the landing table",
+      "Start a first-run preview from a connected server",
       "Create a suite on the full-page create flow",
       "Open a suite's overview to see its run history and cases",
       "Open a run to inspect each step, tool call, and score",
@@ -654,6 +662,8 @@ export const APP_SURFACES = [
     // coverage test matches these against `kind: "screen"` routes exactly.
     routePatterns: [
       "settings",
+      "settings/about",
+      "settings/appearance",
       "settings/api-keys",
       "settings/integrations",
       "settings/integrations/github",
@@ -679,7 +689,11 @@ export const APP_SURFACES = [
     id: "project-settings",
     scope: "project",
     canonicalPath: "/project-settings",
-    routePatterns: ["project-settings"],
+    routePatterns: [
+      "project-settings",
+      "project-settings/members",
+      "project-settings/secrets",
+    ],
     navSegments: ["project-settings"],
     title: "Project settings",
     purpose:
@@ -699,7 +713,17 @@ export const APP_SURFACES = [
     routePatterns: [
       "organizations",
       "organizations/:orgId",
+      "organizations/:orgId/integrations",
+      "organizations/:orgId/members",
+      "organizations/:orgId/sharing",
+      "organizations/:orgId/audit-log",
+      "organizations/:orgId/data-management",
+      "organizations/:orgId/api-keys",
+      "organizations/:orgId/plans",
       "organizations/:orgId/billing",
+      "organizations/:orgId/billing/byok",
+      "organizations/:orgId/models/usage",
+      "organizations/:orgId/billing/usage",
       "organizations/:orgId/models",
       // Slack agent settings. Listed so the route-coverage test passes, but
       // deliberately NOT added to `userActivities` while the section is behind
@@ -710,6 +734,10 @@ export const APP_SURFACES = [
       // Discord agent settings — same reasoning as Slack directly above,
       // including staying out of `userActivities` while `discord-agent` is off.
       "organizations/:orgId/discord",
+      // Trace destinations — where this org's traces are streamed. Same
+      // reasoning again: listed for route coverage, kept out of
+      // `userActivities` while `trace-destinations` is off.
+      "organizations/:orgId/observability",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -746,8 +774,8 @@ export const APP_SURFACES = [
   {
     id: "support",
     scope: "global",
-    canonicalPath: "/support",
-    routePatterns: ["support"],
+    canonicalPath: "/settings/support",
+    routePatterns: ["settings/support"],
     navSegments: ["support"],
     title: "Support",
     purpose: "Get help and contact MCPJam support.",
@@ -773,10 +801,12 @@ export const APP_SURFACES = [
       "Invoke a page tool with structured input and read its result",
       "Review the activity timeline across navigations, with screenshots",
     ],
-    // The browser runs on the machine running this inspector, so a hosted
-    // replica has nothing to open. The routes are local-only for the same
-    // reason; this keeps the tab from appearing where it cannot work.
-    hostedBlocked: true,
+    // No longer hostedBlocked. It was, because the browser ran on the machine
+    // running this inspector and a hosted replica had nothing to open — but a
+    // hosted session drives a browser on the member's own MCPJam computer
+    // instead, so the surface works there. Client visibility is still gated on
+    // the `webmcp-inspector-enabled` flag, and the server on its own hosted
+    // switch.
     agentTools: {
       kind: "none",
       reason:
@@ -800,7 +830,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s])
+  listAppSurfaces().map((s) => [s.id, s]),
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -812,7 +842,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
 );
 
 /**
@@ -821,7 +851,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string
+  segment: string,
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -864,7 +894,7 @@ export function listHostedBlockedNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -880,7 +910,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n")
+      ].join("\n"),
     ),
   ].join("\n");
 }

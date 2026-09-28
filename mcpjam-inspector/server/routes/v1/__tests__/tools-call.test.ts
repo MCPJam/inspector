@@ -58,30 +58,34 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
   });
 
   it("returns the MCP CallToolResult plus additive durationMs", async () => {
-    // The delay is comfortably above the threshold asserted below, because
-    // this raced when the two were equal: a `setTimeout(…, 5)` can be observed
-    // as 4ms elapsed (the timer may fire fractionally early, and the duration
-    // is computed from whole-millisecond `Date.now()` reads), so the assertion
-    // failed intermittently in CI on code that was working correctly.
-    const executeTool = vi.fn().mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return {
-        content: [{ type: "text", text: "ok" }],
-      };
+    const executeTool = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
     });
     stubConnection(executeTool);
+    // The route measures with `Date.now()`, whose whole-millisecond truncation
+    // does not line up with the timer clock: a real `setTimeout(5)` here
+    // measured 4ms on CI and failed a `>= 5` assertion. Do not go back to
+    // sleeping for longer than the threshold — that only makes the race rarer,
+    // and pays real wall-clock time for it. Stubbing the route's two reads
+    // — the same technique as the clock-backward test below — pins the exact
+    // number instead of asserting a lower bound against a coarse clock.
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValueOnce(1_000).mockReturnValueOnce(1_005);
 
-    const res = await postToolsCall();
+    try {
+      const res = await postToolsCall();
 
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      content?: unknown[];
-      durationMs?: number;
-    };
-    expect(body.content).toEqual([{ type: "text", text: "ok" }]);
-    expect(typeof body.durationMs).toBe("number");
-    expect(body.durationMs).toBeGreaterThanOrEqual(5);
-    expect(executeTool).toHaveBeenCalledWith("s1", "echo", {});
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        content?: unknown[];
+        durationMs?: number;
+      };
+      expect(body.content).toEqual([{ type: "text", text: "ok" }]);
+      expect(body.durationMs).toBe(5);
+      expect(executeTool).toHaveBeenCalledWith("s1", "echo", {});
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("clamps durationMs to zero when the clock moves backward", async () => {

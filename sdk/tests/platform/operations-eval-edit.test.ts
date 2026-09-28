@@ -6,6 +6,7 @@ import {
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalCaseOperation,
   getEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -30,6 +31,7 @@ function makeClient(): {
   calls: Array<{
     method: string;
     path: string;
+    query: Record<string, string>;
     body?: any;
     headers: Record<string, string>;
   }>;
@@ -37,6 +39,7 @@ function makeClient(): {
   const calls: Array<{
     method: string;
     path: string;
+    query: Record<string, string>;
     body?: any;
     headers: Record<string, string>;
   }> = [];
@@ -51,19 +54,49 @@ function makeClient(): {
     )) {
       headers[key.toLowerCase()] = value;
     }
-    calls.push({ method, path, body, headers });
+    calls.push({
+      method,
+      path,
+      query: Object.fromEntries(url.searchParams),
+      body,
+      headers,
+    });
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
     if (/\/environments$/.test(path))
       return Response.json({ items: ENVIRONMENTS });
     if (/\/eval-suites$/.test(path)) return Response.json({ items: SUITES });
-    // `/cases/generate` must precede the `/cases/:caseId` branch — "generate"
-    // is itself a single path segment that the :caseId regex would match.
+    // `/cases/generate` and `/cases/import` must precede the `/cases/:caseId`
+    // branch — each verb is itself a single path segment that the :caseId
+    // regex would match.
+    if (/\/eval-suites\/[^/]+\/cases\/import$/.test(path))
+      return Response.json({
+        generationModel: "anthropic/claude-haiku-4.5",
+        created: [],
+        counts: {},
+      });
     if (/\/eval-suites\/[^/]+\/cases\/generate$/.test(path))
       return Response.json({
         generationModel: "anthropic/claude-haiku-4.5",
         created: [],
         counts: {},
+      });
+    if (/\/eval-suites\/[^/]+\/cases\/batch$/.test(path))
+      return Response.json({
+        created: (body.cases ?? []).map(
+          (testCase: { title?: string }, index: number) => ({
+            index,
+            id: `c-batch-${index}`,
+            title: testCase.title,
+            kind: "prompt",
+          })
+        ),
+        failed: [],
+        duplicatePolicy: {
+          effectivePolicy: "block",
+          coerced: false,
+        },
+        warnings: [],
       });
     if (/\/eval-suites\/[^/]+\/cases$/.test(path) && method === "GET")
       return Response.json({ items: CASES });
@@ -370,10 +403,124 @@ describe("eval-edit operation execution", () => {
     expect(gen?.headers["idempotency-key"]).toBeUndefined();
   });
 
-  it("generate_eval_cases is labelled as spending", () => {
+  it("generate_eval_cases is NOT labelled as spending", () => {
     // `operationDescription` appends the "COSTS MONEY" warning to the MCP tool
-    // off this facet, and the operation spends the organization's credits.
-    expect(generateEvalCasesOperation.risk).toBe("spend");
+    // off this facet, and the authoring model is platform-paid: the
+    // organization's credits are not touched, so that warning would be a lie.
+    // What generation DOES consume is a bounded daily request quota, which is
+    // why the agent surface still gates it (TIER_EXCEPTIONS in the
+    // inspector's `agent-op-registry.test.ts`) rather than deriving `direct`.
+    expect(generateEvalCasesOperation.risk).toBe("none");
+    expect(generateEvalCasesOperation.description).not.toMatch(/spends/i);
+    expect(generateEvalCasesOperation.description).toContain(
+      "no customer credits consumed"
+    );
+    // The quota is the organization's, not the project's.
+    expect(generateEvalCasesOperation.description).not.toMatch(
+      /project's daily generation quota/
+    );
+  });
+
+  it("import_eval_cases takes a document with nothing said about its shape", () => {
+    // No `format`: the model reads a CSV as a CSV without being told, and the
+    // flag only asked the caller to restate what the text already showed.
+    expect(
+      importEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        content: "title,prompt\nSearch,Find my projects",
+      }).success
+    ).toBe(true);
+    expect(
+      importEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        content: "",
+      }).success
+    ).toBe(false);
+  });
+
+  it("import_eval_cases refuses an over-size document before spending a request", async () => {
+    // The document IS the payload. Sending 100 KiB only to have the route
+    // reject it wastes the round trip the caller is paying for.
+    const { client, calls } = makeClient();
+    await expect(
+      importEvalCasesOperation.execute(
+        {
+          suite: "s1",
+          content: "x".repeat(100 * 1024 + 1),
+        },
+        { client }
+      )
+    ).rejects.toThrow(/limit is 102400/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("import_eval_cases refuses a duplicate policy with no reason, before any request", async () => {
+    const { client, calls } = makeClient();
+    await expect(
+      importEvalCasesOperation.execute(
+        {
+          suite: "s1",
+          content: "# Case",
+          duplicatePolicy: "create_anyway",
+        },
+        { client }
+      )
+    ).rejects.toThrow(/overrideReason/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("import_eval_cases forwards the document and duplicate handling", async () => {
+    const { client, calls } = makeClient();
+    await importEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        content: "title,prompt\nSearch,Find my projects",
+        fileName: "cases.csv",
+        duplicatePolicy: "warn",
+        overrideReason: "Re-importing a corrected row",
+      },
+      { client }
+    );
+    const call = calls.find((c) => /\/cases\/import$/.test(c.path));
+    expect(call?.body).toEqual({
+      content: "title,prompt\nSearch,Find my projects",
+      fileName: "cases.csv",
+      duplicatePolicy: "warn",
+      overrideReason: "Re-importing a corrected row",
+    });
+  });
+
+  it("import_eval_cases forwards the idempotency key on BOTH channels", async () => {
+    // Import spends per call, so a dropped key means paying to author the same
+    // document twice. Same two channels as generation, carrying one key.
+    const { client, calls } = makeClient();
+    await importEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        format: "markdown",
+        content: "# Case",
+        idempotencyKey: "cli-import-3",
+      },
+      { client }
+    );
+    const call = calls.find((c) => /\/cases\/import$/.test(c.path));
+    expect(call?.body).toMatchObject({ idempotencyKey: "cli-import-3" });
+    expect(call?.headers["idempotency-key"]).toBe("cli-import-3");
+  });
+
+  it("import_eval_cases is NOT labelled as spending, same as generation", () => {
+    // `operationDescription` appends the "COSTS MONEY" warning off this facet.
+    // Import is platform-paid: the backend bills it as `markdown_case_import`,
+    // which sits in PLATFORM_PAID_INTERNAL_LLM beside `eval_generation`, so
+    // nothing is debited from the customer and the warning would be a lie.
+    expect(importEvalCasesOperation.risk).toBe("none");
+    expect(importEvalCasesOperation.risk).toBe(generateEvalCasesOperation.risk);
+    expect(importEvalCasesOperation.description).not.toContain("COSTS MONEY");
+    // The way out of a partial import, stated where a model will read it.
+    expect(importEvalCasesOperation.description).toContain("reviewUrl");
+    expect(importEvalCasesOperation.description).toMatch(
+      /re-import(ing)? ONLY that case|re-import ONLY/i
+    );
   });
 
   it("generate_eval_cases omits varyUserStyles when not enabled", async () => {
@@ -489,4 +636,255 @@ describe("eval suites × project environments", () => {
         .success
     ).toBe(false);
   });
+});
+
+/**
+ * The suite-file sync marker on the write operations.
+ *
+ * A CI-owned suite — one whose configuration lives in a repository — refuses
+ * these writes. The file's own sync is the exception, and it says so by naming
+ * the suite's own `suite.id`. What these tests pin is that the marker actually
+ * reaches the wire, in the right place for each verb, and that it never becomes
+ * part of the thing being written.
+ */
+/**
+ * ONE PLACE, EVERY VERB: the marker rides the QUERY STRING.
+ *
+ * Never the body. Every one of these `/v1` bodies is `.strict()`, on this
+ * Inspector and on every Inspector that predates the CI-owned lock, and a
+ * strict object refuses an unknown key with a 400. This package is versioned
+ * independently of the deployment it talks to, so a body field would turn
+ * `eval run --file` into a 400 against any self-hosted Inspector the user had
+ * not upgraded in lockstep. A query parameter is read by deployments that know
+ * it and ignored by those that do not.
+ *
+ * These assertions are what stop that regressing: a marker that moved back
+ * into a body would still reach a current server, and would still pass a test
+ * that only checked "the value arrived".
+ */
+describe("declaredSuiteId reaches the wire", () => {
+  it("rides the query string on update_eval_suite", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute(
+      { suite: "s1", name: "Renamed", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ name: "Renamed" });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on update_eval_case, without joining the case definition", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      {
+        suite: "s1",
+        case: "c2",
+        title: "Renamed",
+        declaredSuiteId: "s_from_file",
+      },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ title: "Renamed" });
+    // A marker is not a case field. If it ever became one, a suite file's
+    // cases would each carry the id of the suite that contains them.
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+    expect(write?.body?.suite).toBeUndefined();
+  });
+
+  it("rides the query string on create_eval_cases", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        declaredSuiteId: "s_from_file",
+        cases: [
+          {
+            title: "One",
+            steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          },
+        ],
+      } as never,
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "POST");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    // One marker for the batch, not one per case: a batch is one write to one
+    // suite, and a per-item marker would invite items that disagreed. And not
+    // in the body at all — that is the 400 against an older Inspector.
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+    expect(write?.body?.cases?.[0]).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on delete_eval_case", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    // A DELETE with no body cannot carry a body field; making one route the
+    // exception is a shape callers get wrong. So assert the QUERY STRING —
+    // the wire, not just that a request happened.
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toBeUndefined();
+  });
+
+  it("rides the query string on delete_eval_suite", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalSuiteOperation.execute(
+      { suite: "s1", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+  });
+
+  it("rides the query string on set_eval_suite_schedule", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteScheduleOperation.execute(
+      { suite: "s1", enabled: false, declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ enabled: false });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on create_eval_case", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCaseOperation.execute(
+      {
+        suite: "s1",
+        title: "From the file",
+        query: "list the invoices",
+        declaredSuiteId: "s_from_file",
+      },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "POST");
+    // Single-case sync has to reach the same file-sync exception the batch
+    // form does, or a one-case suite file could not write itself.
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("omits the marker entirely on an ordinary edit", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalCaseOperation.execute({ suite: "s1", case: "c2" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
+    const write = calls.find((call) => call.method === "DELETE");
+    // Not a capability: an app edit sends nothing, and gets the refusal a
+    // CI-owned suite is right to give it.
+    expect(write?.query).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on set_eval_suite_environments", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteEnvironmentsOperation.execute(
+      { suite: "s1", environments: null, declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ environmentIds: null });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("sends nothing at all when the caller named no id", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute({ suite: "s1", name: "Renamed" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
+    // An ordinary edit must not carry an empty marker: the route would forward
+    // it, and a platform that predates the lock rejects unknown arguments.
+    expect(
+      calls.find((call) => call.method === "PATCH")?.body
+    ).not.toHaveProperty("declaredSuiteId");
+  });
+});
+
+describe("judge rubric parity", () => {
+  it("accepts instructions with the same shape exposed through MCP", () => {
+    const result = updateEvalSuiteOperation.inputSchema.safeParse({
+      suite: "s1",
+      settings: { judge: { rubric: { instructions: "Check evidence" } } },
+    });
+    expect(result.success).toBe(true);
+  });
+  it("rejects an invalid instruction even beside valid criteria", () => {
+    expect(
+      updateEvalSuiteOperation.inputSchema.safeParse({
+        suite: "s1",
+        settings: {
+          judge: {
+            rubric: {
+              instructions: "x".repeat(2001),
+              criteria: [{ id: "a", label: "A" }],
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe("update_eval_suite grading scope", () => {
+  it.each([
+    {
+      settings: { policy: "legacy" },
+      edit: { repetitions: 5, passThreshold: 0.9 },
+      error: /no default iteration count/,
+    },
+    {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+      edit: { minimumIterations: 3 },
+      error: /no iteration minimum/,
+    },
+    {
+      settings: {},
+      edit: { passThreshold: 0.9 },
+      error: /deployment does not report/,
+    },
+    {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+      edit: { repetitions: 5, passThreshold: 0.9 },
+    },
+  ])(
+    "guards grading fields before PATCH: $edit",
+    async ({ settings, edit, error }) => {
+      const { client, calls } = makeClient();
+      vi.spyOn(client, "getEvalSuite").mockResolvedValue({ settings } as any);
+      const result = updateEvalSuiteOperation.execute(
+        { suite: "My Suite", settings: edit },
+        { client }
+      );
+      if (error) {
+        await expect(result).rejects.toThrow(error);
+        expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+      } else {
+        await result;
+        expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
+          settings: edit,
+        });
+      }
+    }
+  );
 });

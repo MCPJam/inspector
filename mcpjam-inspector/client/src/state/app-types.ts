@@ -244,6 +244,7 @@ export type AppAction =
     }
   | {
       type: "RECONNECT_REQUEST";
+      preserveConnected?: boolean;
       name: string;
       config: MCPServerConfig;
       select?: boolean;
@@ -254,6 +255,7 @@ export type AppAction =
       error?: string;
       normalized?: NormalizedError;
     }
+  | { type: "CONNECT_CANCELLED"; name: string; wasConnected: boolean }
   | { type: "REMOVE_SERVER"; name: string }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }
   | { type: "SELECT_SERVER"; name: string }

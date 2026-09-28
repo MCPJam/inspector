@@ -92,6 +92,14 @@ export {
 } from "./derive.js";
 
 export {
+  EMIT_CANONICAL_ROLE,
+  authoredRequiredRole,
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+  roleForDeployment,
+} from "./policy-spelling.js";
+
+export {
   LEGACY_TEST_SCORER_ID,
   LEGACY_TEST_VERSION,
   TOOL_MATCH_SCORER_ID,
@@ -156,6 +164,7 @@ export type {
   StageSetupPhaseSignal,
   StageSetupSignals,
   StageSpanLike,
+  StageStepErrorLike,
   StageToolErrorLike,
 } from "./stage-derivation.js";
 export {
@@ -165,11 +174,138 @@ export {
   STAGE_METADATA_KEYS,
   STAGE_REASONS,
   deriveStageResults,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
+  projectStageDerivation,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,
   stageResultRowSchema,
 } from "./stage-derivation.js";
+
+// ── grader → stage map (B7) ──────────────────────────────────────────────────
+/**
+ * Which stage of the chain each grader measures.
+ *
+ * Exported so a settings surface can group graders by what they MEASURE
+ * instead of by how they happen to be implemented, and so it does that from
+ * the same table the analyzer routes with rather than a second copy of it.
+ */
+export {
+  GRADER_PRESENTATION_GROUP,
+  GRADER_STAGE,
+  PREDICATE_KINDS,
+  PREDICATE_STAGE,
+  RECOMMENDED_DEFAULT_PREDICATES,
+  isRecommendedDefaultPredicateKind,
+  isSelectionStagePredicateKind,
+  type PredicateKind,
+} from "./grader-stage.js";
+
+/**
+ * The same tables under the canonical vocabulary. Same objects, not copies —
+ * `EVALUATOR_STAGE === GRADER_STAGE` is an identity a test pins, because two
+ * tables that merely agree today are two tables that can stop agreeing.
+ */
+export {
+  ASSERTION_KINDS,
+  ASSERTION_STAGE,
+  EVALUATOR_PRESENTATION_GROUP,
+  EVALUATOR_STAGE,
+  isSelectionStageAssertionKind,
+  type AssertionKind,
+} from "./evaluator-stage.js";
+
+/**
+ * The seed under its canonical name. Declared in `grader-stage.ts` and
+ * re-exported here rather than moved — the backend pins the literal through a
+ * whole-file capture, and a capture that matches nothing passes forever. See
+ * the note on the declaration.
+ */
+export {
+  RECOMMENDED_DEFAULT_PREDICATES as RECOMMENDED_DEFAULT_ASSERTIONS,
+  isRecommendedDefaultPredicateKind as isRecommendedDefaultAssertionKind,
+} from "./grader-stage.js";
+
+/**
+ * The canonical evaluator contract: one word per concept, and one result shape
+ * for assertions and judges alike. See
+ * `docs/evals-vocabulary-consolidation.md`.
+ */
+export {
+  EVALUATOR_KINDS,
+  EVALUATOR_RESULT_SCHEMA_VERSION,
+  evaluatorKindOf,
+} from "./evaluator-types.js";
+export type {
+  Assertion,
+  AssertionResult,
+  AssertionScope,
+  EvaluatorConfigSnapshot,
+  EvaluatorContextV1,
+  EvaluatorDefinition,
+  EvaluatorErrorPolicy,
+  EvaluatorIdSource,
+  EvaluatorKind,
+  EvaluatorRawOutcome,
+  EvaluatorResult,
+  EvaluatorRole,
+  EvaluatorStatus,
+  ResolvedEvaluatorDefinition,
+} from "./evaluator-types.js";
+export {
+  allGatingEvaluatorsPassed,
+  errorEvaluatorResult,
+  evaluatorDefinitionHash,
+  finalizeEvaluatorResult,
+  fromEvaluatorResult,
+  notApplicableEvaluatorResult,
+  resolveEvaluatorDefinition,
+  skippedEvaluatorResult,
+  toEvaluatorResult,
+  toScoreRawOutcome,
+} from "./evaluator-derive.js";
+export {
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
+  evaluatorResultSchema,
+  evaluatorStatusSchema,
+} from "./evaluator-schemas.js";
+
+// ── server facts (F1) ────────────────────────────────────────────────────────
+/**
+ * What the SERVER SNAPSHOT a run was taken against looked like, and what the
+ * setup phase observed. Facts, not checks: nothing here becomes a stage state.
+ */
+export {
+  MAX_SERVER_FACTS_PRECHECKS,
+  MAX_SERVER_FACTS_RELATED,
+  MAX_SERVER_FACTS_SERVERS,
+  SERVER_FACTS_PAYLOAD_BASES,
+  SERVER_FACTS_PRECHECK_CLASSES,
+  SERVER_FACTS_REFERENCE_WINDOW_TOKENS,
+  SERVER_FACTS_SCHEMA_VERSION,
+  SERVER_FACTS_SOURCE_VERSION,
+  SERVER_FACTS_TOKEN_METHOD,
+  SERVER_FACTS_TOKEN_NOTE,
+  SERVER_FACTS_UNAVAILABLE_REASONS,
+  estimateTokensFromJson,
+  evalRunServerFactsSchema,
+  parseEvalRunServerFacts,
+  referenceWindowShare,
+  serverFactsPrecheckSchema,
+  serverFactsRelatedAssessmentSchema,
+  serverFactsServerSchema,
+  serverFactsSetupPhaseSchema,
+  type EvalRunServerFactsV1,
+  type ServerFactsPayloadBasis,
+  type ServerFactsPrecheck,
+  type ServerFactsPrecheckClass,
+  type ServerFactsRelatedAssessment,
+  type ServerFactsServer,
+  type ServerFactsSetupPhase,
+  type ServerFactsUnavailableReason,
+} from "./server-facts.js";
 
 // ── stage analytics (D5) ─────────────────────────────────────────────────────
 /**
@@ -357,13 +493,18 @@ export type {
   EvalSuiteFile,
   EvalSuiteFileCase,
   EvalSuiteFileCaseImport,
+  EvalSuiteFileCaseV2,
   EvalSuiteFileDefaults,
+  EvalSuiteFileDefaultsV2,
   EvalSuiteFileHost,
   EvalSuiteFileProvenance,
   EvalSuiteFileServer,
   EvalSuiteFileTarget,
   EvalSuiteFileToolPolicy,
+  EvalSuiteFileV1,
+  EvalSuiteFileV2,
   EvalSuiteFileValidity,
+  EvalSuiteSchemaVersion,
 } from "./suite-file.js";
 export type {
   ToolPolicyDecision,
@@ -381,11 +522,15 @@ export {
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
+  EVAL_SUITE_SCHEMA_ID_V2,
   EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  EVAL_SUITE_SCHEMA_VERSIONS,
   MAX_BATCH_CREATE_CASES,
   MAX_CASE_ASSERTIONS,
   MAX_IMPORT_NOTE_CHARS,
   MAX_IMPORT_SOURCE_CASE_KEY_CHARS,
+  MAX_ITERATIONS,
   MAX_REPETITIONS,
   MAX_SUITE_FILE_CASES,
   MAX_SUITE_FILE_TITLE_CHARS,
@@ -394,7 +539,9 @@ export {
   RESERVED_REPORTING_MODES,
   evalSuiteFileCaseImportSchema,
   evalSuiteFileCaseSchema,
+  evalSuiteFileCaseV2Schema,
   evalSuiteFileDefaultsSchema,
+  evalSuiteFileDefaultsV2Schema,
   evalSuiteFileHostSchema,
   evalSuiteFileProvenanceSchema,
   evalSuiteFileSchema,
@@ -402,23 +549,26 @@ export {
   evalSuiteFileStructuralSchema,
   evalSuiteFileTargetSchema,
   evalSuiteFileToolPolicySchema,
+  evalSuiteFileV2StructuralSchema,
   evalSuiteFileValiditySchema,
 } from "./suite-file.js";
 
 /**
- * The generated JSON Schema (draft 2020-12) for the suite file.
+ * The generated JSON Schema (draft 2020-12) for each suite-file dialect.
  *
- * Re-exported from the generated `.ts` twin rather than the `.json` artifact:
- * the contract subpath is consumed by three toolchains and only Node-only code
- * in this repo uses JSON import attributes. The `.json` file is the artifact
- * published at the schema's `$id`; the two are byte-identical documents and a
- * test proves it.
+ * Re-exported from the generated `.ts` twins rather than the `.json`
+ * artifacts: the contract subpath is consumed by three toolchains and only
+ * Node-only code in this repo uses JSON import attributes. Each `.json` file
+ * is the artifact published at its dialect's `$id`; the pairs are
+ * byte-identical documents and a test proves it.
  */
 export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
+export { evalSuiteFileV2JsonSchema } from "./eval-suite.v2.schema.generated.js";
 
 // ── the run verdict policy (v2) ──────────────────────────────────────────────
 export type {
   EvalCaseVerdictAggregation,
+  EvalExecutionVariant,
   EvalRateMeasurement,
   EvalRateMeasurementState,
   EvalRunVerdict,
@@ -434,6 +584,7 @@ export type {
   ResolvedEvalValidityPolicy,
 } from "./verdict-policy.js";
 export {
+  EVAL_CASE_AGGREGATION_KEY_SEPARATOR,
   EVAL_RATE_MEASUREMENT_STATES,
   EVAL_RUN_VERDICTS,
   EVAL_TASK_DECISION_REASONS,
@@ -442,8 +593,10 @@ export {
   EVAL_VERDICT_DECISION_REASONS,
   EVAL_VERDICT_POLICY_SCHEMA_ID,
   EVAL_VERDICT_POLICY_VERSION,
+  evalCaseAggregationKey,
   evalCaseVerdictAggregationSchema,
   evalCaseVerdictAggregationStructuralSchema,
+  evalExecutionVariantSchema,
   evalFractionSchema,
   evalRateMeasurementSchema,
   evalRateMeasurementStateSchema,
@@ -456,6 +609,7 @@ export {
   evalVerdictDecisionSchema,
   evalVerdictDecisionStructuralSchema,
   evalVerdictPolicyVersionSchema,
+  casePassesNeeded,
   isEvalRunVerdict,
   isEvalTrialExclusionReason,
   isEvalValidityDecisionReason,
@@ -473,17 +627,125 @@ export {
  */
 export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";
 
+// ── the one grading policy (canonical read model + boundary adapters) ────────
+/**
+ * ONE policy, read out of every contract that has expressed one.
+ *
+ * `verdict-policy.ts` above pins what a DECISION looks like; this pins the
+ * RULES a producer is handed to reach one, so a suite file, a per-case hosted
+ * suite and a suite-wide hosted suite can be described in a single vocabulary
+ * without any of them being restated under another's semantics. The criterion
+ * SCOPE travels with the threshold precisely because `minimumAccuracy` and
+ * `passThreshold` are not one number in two units.
+ *
+ * `planEvalGradingPolicyEdit` is the only sanctioned way an edit against that
+ * model reaches the wire: it writes the field the current scope already uses,
+ * writes nothing at all for an edit that changes nothing, and refuses whole
+ * rather than dropping a field it cannot represent.
+ */
+export type {
+  EvalEmptyPopulationRate,
+  EvalGradingCaseOverride,
+  EvalGradingPolicyEdit,
+  EvalGradingPolicyOrigin,
+  EvalGradingPolicyRefusal,
+  EvalGradingPolicySettingsPatch,
+  EvalGradingPolicyWritePlan,
+  EvalGradingValidity,
+  EvalIterationRule,
+  EvalPassCriterion,
+  EvalPassCriterionScope,
+  EvalRunReportingProducer,
+  EvalSuiteWidePopulation,
+  HostedSuiteGradingStorage,
+  ResolvedEvalGradingPolicy,
+  SuiteFileGradingInput,
+} from "./grading-policy.js";
+export {
+  EVAL_GRADING_POLICY_ORIGINS,
+  EVAL_GRADING_POLICY_REFUSALS,
+  EVAL_RUN_REPORTING_PRODUCERS,
+  EVAL_SUITE_WIDE_POPULATIONS,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  MAX_MINIMUM_ITERATIONS,
+  SUITE_FILE_DEFAULT_COVERAGE,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  evalEmptyPopulationRateSchema,
+  evalGradingCaseOverrideSchema,
+  evalGradingPolicySchema,
+  evalGradingPolicyStructuralSchema,
+  evalGradingValiditySchema,
+  evalIterationRuleSchema,
+  evalPassCriterionFraction,
+  evalPassCriterionSchema,
+  hostedGradingStorageFromDto,
+  planEvalGradingPolicyEdit,
+  resolveEvalGradingIterations,
+  resolveEvalGradingValidityPolicy,
+  resolveGradingPolicyFromHostedSuite,
+  resolveGradingPolicyFromRunReporting,
+  resolveGradingPolicyFromSuiteFile,
+} from "./grading-policy.js";
+
 // ── user-facing words for the closed vocabularies ────────────────────────────
 export {
+  SWARM_FINDING_DISPOSITION_LABELS,
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  SWARM_FINDING_SUMMARY_KIND_LABELS,
+  SWARM_FINDING_BASIS_LABELS,
+  SWARM_FINDING_SIGNAL_LABELS,
   DECISION_LABEL_VOCABULARIES,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   EVAL_VERDICT_DECISION_REASON_LABELS,
+  EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
+  FRICTION_NOT_MEASURED_REASON_LABELS,
+  FRICTION_SIGNAL_LABELS,
+  SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+  SUSPECTED_CONDITION_LABELS,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
+  STAGE_REASONS_WITHOUT_REMEDY,
   STAGE_REASON_LABELS,
+  STAGE_REASON_REMEDIES,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  USER_VALUE_STAGE_QUESTIONS,
+  describeExcludedTrialDetail,
 } from "./decision-labels.js";
+export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
+
+// ── the words for ONE grading policy ─────────────────────────────────────────
+/**
+ * The authoring and rendering vocabulary for `./grading-policy.ts`, exported
+ * next to `decision-labels` rather than merged into it: that module renders
+ * what a run DECIDED, this renders what a suite is CONFIGURED with, and the
+ * second audience is about to edit what it reads. No label here names a policy
+ * version or offers a scope conversion.
+ */
+export {
+  EVAL_EMPTY_POPULATION_RATE_LABELS,
+  EVAL_GRADING_POLICY_ORIGIN_LABELS,
+  EVAL_GRADING_POLICY_READ_REFUSAL_LABELS,
+  EVAL_GRADING_POLICY_REFUSAL_LABELS,
+  EVAL_GRADING_VALIDITY_FIELD_HINTS,
+  EVAL_GRADING_VALIDITY_FIELD_LABELS,
+  EVAL_GRADING_VALIDITY_HINTS,
+  EVAL_GRADING_VALIDITY_LABELS,
+  EVAL_ITERATION_RULE_HINTS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_HINTS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_UNITS,
+  EVAL_RUN_REPORTING_PRODUCER_LABELS,
+  EVAL_SUITE_WIDE_POPULATION_HINTS,
+  EVAL_SUITE_WIDE_POPULATION_LABELS,
+  SUITE_GRADING_LABEL_VOCABULARIES,
+  describeEvalIterationRule,
+  describeEvalPassCriterion,
+} from "./suite-grading-labels.js";
 
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {
@@ -514,6 +776,7 @@ export {
   EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
   EVAL_RUN_MEASUREMENT_UNITS,
   EVAL_RUN_MEASUREMENT_UNIT_LABELS,
+  assembleEvalRunDecisionChain,
   assembleEvalRunDecisionSummary,
   decisionDiagnosticFailureCategory,
   decisionDiagnosticFirstFailedStage,
@@ -532,3 +795,381 @@ export {
   evalRunMeasurementUnitSchema,
   measurementUnitLabel,
 } from "./decision-summary.js";
+
+// ── route facts (report-only; never a verdict input) ─────────────────────────
+export type {
+  CaseRouteRollup,
+  DerivedTrialRoute,
+  EvalCaseRoutes,
+  EvalExpectedMismatchRow,
+  EvalOtherRoutes,
+  EvalRouteCaseTruncation,
+  EvalRouteCatalogState,
+  EvalRouteFrictionSignals,
+  EvalRouteLoopedOn,
+  EvalRouteMismatchFacts,
+  EvalRouteMismatchState,
+  EvalRouteRow,
+  EvalRouteTag,
+  EvalRunRouteFacts,
+  EvalRunRouteFactsCase,
+  EvalRunRouteFactsSchemaVersion,
+  EvalSubstitutionRow,
+  EvalToolCatalogMembership,
+  EvalUnexpectedMismatchRow,
+  RouteFactsCatalog,
+  RouteFactsInput,
+  RouteFactsRunInput,
+  RouteFactsTrialInput,
+  RouteFactsVersion,
+} from "./route-facts.js";
+export {
+  EVAL_ROUTE_CATALOG_STATES,
+  EVAL_ROUTE_MISMATCH_STATES,
+  EVAL_ROUTE_TAGS,
+  EVAL_RUN_ROUTE_FACTS_SCHEMA_ID,
+  EVAL_RUN_ROUTE_FACTS_SCHEMA_VERSION,
+  EVAL_TOOL_CATALOG_MEMBERSHIPS,
+  MAX_MISMATCH_TOOLS,
+  MAX_ROUTES_PER_CASE,
+  MAX_ROUTE_TOOL_CALLS,
+  ROUTE_FACTS_VERSION,
+  ROUTE_LOOPING_THRESHOLD,
+  buildEvalRunRouteFacts,
+  classifyRouteTrial,
+  deriveTrialRoute,
+  evalRouteCatalogStateSchema,
+  evalRouteMismatchFactsSchema,
+  evalRouteMismatchStateSchema,
+  evalRouteTagSchema,
+  evalRunRouteFactsSchema,
+  evalRunRouteFactsStructuralSchema,
+  evalToolCatalogMembershipSchema,
+  evalTrialRate,
+  isEvalRouteCatalogState,
+  isEvalRouteTag,
+  isEvalToolCatalogMembership,
+  mismatchFacts,
+  readToolName,
+  rollupCaseRoutes,
+} from "./route-facts.js";
+
+// ── friction signals (observable patterns; never a verdict) ──────────────────
+export type {
+  ChangedRetrySignal,
+  EvalTrialFrictionSignals,
+  FrictionCallRecord,
+  FrictionCallResult,
+  FrictionIdentifierSignals,
+  FrictionNotMeasuredReason,
+  FrictionOrdering,
+  FrictionResultEntry,
+  FrictionSignal,
+  FrictionSignalKind,
+  FrictionSignalsVersion,
+  IdenticalRetrySignal,
+  IdentifierSurfacedUnusedSignal,
+  PaginationArgKey,
+  PaginationContinuationSignal,
+  SearchRepeatedAfterIdentifierSignal,
+  SuspectedCondition,
+  SuspectedConditionConfidence,
+  SuspectedConditionEvidence,
+  SuspectedConditionSkipReason,
+  SuspectedConditionVerdict,
+} from "./friction-signals.js";
+export {
+  FRICTION_NOT_MEASURED_REASONS,
+  FRICTION_ORDERINGS,
+  FRICTION_SIGNAL_KINDS,
+  FRICTION_SIGNALS_VERSION,
+  IDENTIFIER_WALK_ARRAY_ITEMS,
+  IDENTIFIER_WALK_DEPTH,
+  MAX_FRICTION_CALLS,
+  MAX_FRICTION_SIGNALS,
+  MAX_IDENTIFIER_CANDIDATES,
+  MAX_IDENTIFIER_KEY_PATHS,
+  MAX_PAGINATION_KEYS,
+  MAX_REPEAT_CALL_INDEXES,
+  MIN_IDENTIFIER_LENGTH,
+  PAGINATION_ARG_KEYS,
+  availableBefore,
+  buildFrictionCallRecords,
+  buildResultsByToolCallIdFromMessages,
+  deriveTrialFrictionSignals,
+  deriveTrialFrictionSignalsFromCalls,
+  evalTrialFrictionSignalsSchema,
+  evalTrialFrictionSignalsStructuralSchema,
+  extractResultIdentifiers,
+  frictionIdentifierSignalsSchema,
+  frictionNotMeasuredReasonSchema,
+  frictionResultIsError,
+  frictionSignalKindSchema,
+  frictionSignalObservationIndex,
+  frictionSignalSchema,
+  isFrictionNotMeasuredReason,
+  isFrictionSignalKind,
+  MAX_SUSPECTED_CONDITION_FIELD_PATH_CHARS,
+  MAX_SUSPECTED_CONDITION_REMEDIATION_CHARS,
+  SUSPECTED_CONDITIONS,
+  SUSPECTED_CONDITION_CONFIDENCES,
+  SUSPECTED_CONDITION_SKIP_REASONS,
+  isSuspectedCondition,
+  normalizeFrictionResult,
+  projectFrictionSignals,
+  projectSuspectedConditionVerdict,
+  suspectedConditionConfidenceSchema,
+  suspectedConditionSchema,
+  suspectedConditionVerdictSchema,
+} from "./friction-signals.js";
+
+// ── description-experiment report (report-only; never a verdict input) ───────
+export type {
+  DescriptionExperimentArm,
+  DescriptionExperimentArmFrozen,
+  DescriptionExperimentArmInput,
+  DescriptionExperimentFrozenField,
+  DescriptionExperimentArmSample,
+  DescriptionExperimentAssignment,
+  DescriptionExperimentAssignmentMethod,
+  DescriptionExperimentCaseFlip,
+  DescriptionExperimentEnvironmentReset,
+  DescriptionExperimentEvidenceLabel,
+  DescriptionExperimentExclusionReason,
+  DescriptionExperimentExclusions,
+  DescriptionExperimentFrozen,
+  DescriptionExperimentInterval,
+  DescriptionExperimentOutcomeSource,
+  DescriptionExperimentPerCase,
+  DescriptionExperimentPooled,
+  DescriptionExperimentRegression,
+  DescriptionExperimentRegressionStatus,
+  DescriptionExperimentReport,
+  DescriptionExperimentReportInput,
+  DescriptionExperimentSchemaVersion,
+  DescriptionExperimentSecondary,
+  DescriptionExperimentTrialInput,
+  DescriptionExperimentVerdict,
+  DescriptionWordDiff,
+  DescriptionWordDiffToken,
+} from "./description-experiment.js";
+export {
+  DESCRIPTION_EXPERIMENT_ARMS,
+  DESCRIPTION_EXPERIMENT_ASSIGNMENT_METHODS,
+  DESCRIPTION_EXPERIMENT_ENVIRONMENT_RESETS,
+  DESCRIPTION_EXPERIMENT_EVIDENCE_LABELS,
+  DESCRIPTION_EXPERIMENT_EXCLUSION_REASONS,
+  DESCRIPTION_EXPERIMENT_OUTCOME_SOURCES,
+  DESCRIPTION_EXPERIMENT_REGRESSION_STATUSES,
+  DESCRIPTION_EXPERIMENT_SCHEMA_ID,
+  DESCRIPTION_EXPERIMENT_SCHEMA_VERSION,
+  DESCRIPTION_EXPERIMENT_VERDICTS,
+  buildDescriptionExperimentReport,
+  classifyDescriptionExperimentTrial,
+  descriptionExperimentArmSampleSchema,
+  descriptionExperimentArmSchema,
+  descriptionExperimentAssignmentSchema,
+  descriptionExperimentEvidenceLabelSchema,
+  descriptionExperimentExclusionReasonSchema,
+  DESCRIPTION_EXPERIMENT_FROZEN_FIELDS,
+  descriptionExperimentFrozenFieldSchema,
+  descriptionExperimentFrozenSchema,
+  descriptionExperimentIntervalSchema,
+  descriptionExperimentReportSchema,
+  descriptionExperimentReportStructuralSchema,
+  descriptionExperimentVerdictSchema,
+  diffDescriptionWords,
+  isDescriptionExperimentArm,
+  isDescriptionExperimentEvidenceLabel,
+  isDescriptionExperimentExclusionReason,
+} from "./description-experiment.js";
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+  toolNamesFromPathKey,
+} from "./tool-path.js";
+
+// ── suite quality-gate contract (B0) ─────────────────────────────────────────
+export type {
+  SuiteGateBaselineEvidenceV1,
+  SuiteGateBaselineKind,
+  SuiteGateBaselineSelectorV1,
+  SuiteGateBaseReportInput,
+  SuiteGateComposedOutcome,
+  SuiteGateComposedReportV1,
+  SuiteGateConditionName,
+  SuiteGateConditionStatus,
+  SuiteGateConditionVerdictV1,
+  SuiteGateDeterministicRegressionV1,
+  SuiteGateEvaluationConfigV1,
+  SuiteGateEvaluatorVersion,
+  SuiteGateEvidenceV1,
+  SuiteGateNonGateableReason,
+  SuiteGateOutcomeV1,
+  SuiteGatePolicyParseResult,
+  SuiteGatePolicyV1,
+  SuiteGatePopulationWeightV1,
+  SuiteGateReportV1,
+  SuiteGateRunEvidenceV1,
+  SuiteGateSchemaVersion,
+  SuiteGateScoreRowV1,
+  SuiteGateScorerSummaryV1,
+  SuiteGateWaiverInput,
+} from "./suite-gate.js";
+export {
+  SUITE_GATE_BASELINE_KINDS,
+  SUITE_GATE_COMPARATIVE_CONDITIONS,
+  SUITE_GATE_COMPOSED_OUTCOMES,
+  SUITE_GATE_CONDITION_NAMES,
+  SUITE_GATE_CONDITION_REQUIRED_FIELDS,
+  SUITE_GATE_CONDITION_STATUSES,
+  SUITE_GATE_EVALUATOR_VERSION,
+  SUITE_GATE_NON_GATEABLE_REASONS,
+  SUITE_GATE_OUTCOMES,
+  SUITE_GATE_SCHEMA_ID,
+  SUITE_GATE_SCHEMA_VERSION,
+  composeSuiteGateWithBaseReport,
+  evaluateSuiteGateEvidence,
+  hasComparativeSuiteGateConditions,
+  isSuiteGateConditionName,
+  isSuiteGateNonGateableReason,
+  normalizeSuiteGatePolicy,
+  parseSuiteGatePolicyForAuthoring,
+  parseSuiteGatePolicyForRead,
+  suiteGateActiveConditions,
+  suiteGateBaselineEvidenceSchema,
+  suiteGateBaselineSelectorSchema,
+  suiteGateConditionVerdictSchema,
+  suiteGateDeterministicRegressionSchema,
+  suiteGateEvaluatorVersionSchema,
+  suiteGateEvaluationConfigSchema,
+  suiteGateEvidenceSchema,
+  suiteGateNonGateableReasonSchema,
+  suiteGatePolicyHash,
+  suiteGatePolicySchema,
+  suiteGatePopulationWeightSchema,
+  suiteGateReportSchema,
+  suiteGateRunEvidenceSchema,
+  suiteGateSchemaVersionSchema,
+  suiteGateScoreRowSchema,
+  suiteGateScorerSummarySchema,
+} from "./suite-gate.js";
+
+// ── per-run scorer rollup (R2-B0 / D4 + D10) ─────────────────────────────────
+/**
+ * Contract and pure comparability helpers for a per-run scorer rollup.
+ *
+ * R2-B0 is contract-only: no Convex table, no UI, no CLI. R2-B1 mirrors
+ * these shapes; R2-B2 consumes the deployed document. Every digest is the
+ * full normalized snapshot — never an undocumented approximation.
+ */
+export type {
+  EvalScorerRollupV1,
+  ScorerRollupConfiguredTrialV1,
+  ScorerRollupEffectiveModelIdentityV1,
+  ScorerRollupEntryV1,
+  ScorerRollupExecutionIdentityV1,
+  ScorerRollupFrozenExecutionDimension,
+  ScorerRollupHostHarnessIdentityV1,
+  ScorerRollupMaterializationState,
+  ScorerRollupObservedWeightV1,
+  ScorerRollupParityBlocker,
+  ScorerRollupParityKey,
+  ScorerRollupSchemaVersion,
+  ScorerRollupScoreIntegrity,
+  ScorerRollupServerEnvironmentIdentityV1,
+  ScorerRollupSourceVersion,
+  ScorerRollupTruncationV1,
+} from "./scorer-rollup.js";
+export {
+  MAX_SCORER_ROLLUP_ENTRIES,
+  SCORER_ROLLUP_FROZEN_EXECUTION_DIMENSIONS,
+  SCORER_ROLLUP_PARITY_BLOCKERS,
+  SCORER_ROLLUP_SCHEMA_ID,
+  SCORER_ROLLUP_SCHEMA_VERSION,
+  SCORER_ROLLUP_SOURCE_VERSION,
+  countableOf,
+  evalScorerRollupSchema,
+  evalScorerRollupStructuralSchema,
+  isScorerRollupParityBlocker,
+  meanValueOf,
+  normalizeScorerRollupConfiguredTrials,
+  normalizeScorerRollupExecutionIdentity,
+  normalizeScorerRollupObservedPopulation,
+  passRateOf,
+  scorerRollupConfiguredTrialFingerprint,
+  scorerRollupConfiguredTrialIdentity,
+  scorerRollupConfiguredTrialSchema,
+  scorerRollupEffectiveModelIdentitySchema,
+  scorerRollupEntryKey,
+  scorerRollupEntryStructuralSchema,
+  scorerRollupExecutionFingerprint,
+  scorerRollupExecutionIdentity,
+  scorerRollupExecutionIdentitySchema,
+  scorerRollupFrozenExecutionBlockers,
+  scorerRollupHostHarnessIdentitySchema,
+  scorerRollupObservedPopulationFingerprint,
+  scorerRollupObservedPopulationIdentity,
+  scorerRollupObservedWeightSchema,
+  scorerRollupParityBlockers,
+  scorerRollupSchemaVersionSchema,
+  scorerRollupServerEnvironmentIdentitySchema,
+  scorerRollupSourceVersionSchema,
+  scorerRollupTruncationSchema,
+  scorerRollupsComparable,
+  stampScorerRollupIdentities,
+} from "./scorer-rollup.js";
+
+export { caseSourceSchema, type CaseSource } from "./case-source.js";
+
+export {
+  EXECUTION_BUDGET_CEILINGS,
+  EXECUTION_BUDGET_DEFAULTS,
+  EXECUTION_BUDGET_EXCEEDS_CEILING,
+  RESOLVED_EXECUTION_BUDGET_FIELDS,
+  UNIT_TIMEOUT_FIELD,
+  evalExecutionBudgetsSchema,
+  executionBudgetCoreShape,
+  lowerExecutionBudgetCeilings,
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  resolveExecutionBudgetsForSurface,
+  resolvedExecutionBudgetsSchema,
+  swarmExecutionBudgetsSchema,
+} from "./execution-budgets.js";
+export type {
+  AuthoredExecutionBudgets,
+  EvalExecutionBudgets,
+  ExecutionBudgetResolution,
+  ExecutionBudgetSource,
+  ExecutionBudgetSurface,
+  ExecutionBudgetViolation,
+  ResolvedExecutionBudgetField,
+  ResolvedExecutionBudgets,
+  ResolvedExecutionBudgetValues,
+  SwarmExecutionBudgets,
+} from "./execution-budgets.js";
+
+export {
+  evalBacktestDraftSchema,
+  evalBacktestRequestSchema,
+  evalBacktestContinuationSchema,
+} from "./eval-backtest.js";
+export type {
+  EvalBacktestDraft,
+  EvalBacktestContinuation,
+  EvalBacktestDifference,
+  EvalBacktestReport,
+} from "./eval-backtest.js";
+export * from "./standard-check-ids.js";
+export * from "./standard-checks.js";
+export * from "./goal-completion.js";
+export * from "./judge-settings.js";
+export * from "./swarm-session-verdict.js";
+export * from "./swarm-report.js";
+export * from "./eval-authoring.js";
+export * from "./eval-authoring-review.js";
+export * from "./swarm-finding.js";

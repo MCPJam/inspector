@@ -120,12 +120,32 @@ describe("prepareChatV2", () => {
         provider: "openai",
         hosted: true,
         supportedParameters: ["tools", "max_tokens"],
+        supportedParametersComplete: true,
       } as any,
       systemPrompt: "Base prompt.",
       temperature: 0.5,
     });
 
     expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature when the catalog's parameter list is partial", async () => {
+    // Only a complete list may withdraw it: the legacy DTO reported just
+    // `structured_outputs` for every hosted row.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/gpt-4o",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["structured_outputs"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
   });
 
   it("keeps temperature when the catalog lists it", async () => {
@@ -515,6 +535,57 @@ describe("prepareChatV2", () => {
         linkedResources: { blob: { image: true } },
       },
     });
+  });
+
+  it("forwards description overrides into MCP conversion and changes only description", async () => {
+    const original = {
+      description: "Look up a user by id.",
+      parameters: { jsonSchema: { type: "object", properties: { id: {} } } },
+      _serverId: "srv",
+      _meta: { ui: { visibility: ["model", "app"] } },
+      execute: async () => ({}),
+    };
+    const manager = mockManager({});
+    manager.hasServer = vi.fn((id: string) => id === "srv");
+    manager.getToolsForAiSdk = vi.fn(
+      async (_ids: string[], options?: { toolDescriptionOverrides?: Record<string, string> }) => {
+        const description =
+          options?.toolDescriptionOverrides?.get_user ?? original.description;
+        return {
+          get_user: { ...original, description },
+        };
+      }
+    );
+
+    const rewritten = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+    });
+    const baseline = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(1, ["srv"], {
+      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(
+      2,
+      ["srv"],
+      undefined
+    );
+    const rewrittenTool = rewritten.allTools.get_user as typeof original;
+    const baselineTool = baseline.allTools.get_user as typeof original;
+    expect(rewrittenTool.description).toBe("Find the user record for this id.");
+    expect(baselineTool.description).toBe(original.description);
+    expect(rewrittenTool.parameters).toEqual(baselineTool.parameters);
+    expect(rewrittenTool._serverId).toBe(baselineTool._serverId);
+    expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
   describe("progressive discovery", () => {
@@ -1440,7 +1511,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBeFalsy();
   });
 
-  it("promises a destructive gate in default mode ONLY when the snapshot is annotation-aware", () => {
+  it("describes the switch's actual state, and never promises a pause it cannot deliver", () => {
     const annotated: UiToolEntry[] = [
       {
         name: "ui_navigate",
@@ -1456,23 +1527,53 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       },
     ];
 
-    // Strict mode: every mutating tool pauses, regardless of annotations.
-    expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true })
-    ).toContain("Every mutating `ui_*` action pauses");
+    // NOTHING pauses whatever the settings say any more, so nothing may claim
+    // to. A model told a browser action will be checked by a human plans as if
+    // someone is reading along — the expensive direction of this mistake.
+    for (const prompt of [
+      buildUiToolsSystemPrompt(annotated),
+      buildUiToolsSystemPrompt(uiTools),
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: false }),
+    ]) {
+      expect(prompt).not.toContain("always pause");
+      expect(prompt).not.toContain("whatever the settings say");
+      expect(prompt).toContain("Tool approval is OFF");
+      expect(prompt).toContain("apply immediately");
+      // The families it names as running unchecked are the ones a model is
+      // most likely to assume are gated.
+      expect(prompt).toContain("driving a browser");
+      expect(prompt).toContain("on the user's own machine");
+    }
 
-    // Default mode, annotation-aware: the destructive-gate promise holds.
-    const annotatedDefault = buildUiToolsSystemPrompt(annotated);
-    expect(annotatedDefault).toContain("Destructive `ui_*` actions pause");
-    expect(annotatedDefault).toContain("other actions apply immediately");
+    // Switch ON: every family that acts pauses, named so the model can plan
+    // around the checkpoint rather than guess at it.
+    const strict = buildUiToolsSystemPrompt(annotated, {
+      requireToolApproval: true,
+    });
+    expect(strict).toContain("Tool approval is ON");
+    expect(strict).toContain("every tool call that ACTS pauses");
+    expect(strict).toContain("driving a browser");
+    expect(strict).toContain("A denial is final");
 
-    // Default mode, LEGACY snapshot (the fixture has no annotations): the
-    // predicate is `requireToolApproval && !readOnly`, so with the flag off
-    // NOTHING pauses. The prompt must not promise a destructive gate that
-    // isn't enforced.
-    const legacyDefault = buildUiToolsSystemPrompt(uiTools);
-    expect(legacyDefault).not.toContain("Destructive `ui_*` actions pause");
-    expect(legacyDefault).toContain("applies immediately");
+    // What never pauses is stated in BOTH modes: it does not change with the
+    // switch, and it is the half a model most often gets wrong.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("never pause");
+      expect(prompt).toContain("`app_*`");
+      expect(prompt).toContain("discovery meta-tools");
+    }
+
+    // And so is the ONE thing that still asks whatever the switch says. This
+    // is the opposite mistake and the worse one: a server-origin skill ref
+    // pauses in either setting, so an approval-off prompt that claimed nothing
+    // would stop the model has it plan straight past a real checkpoint.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("skill that a connected MCP server provides");
+      expect(prompt).toContain("always asks");
+    }
+    expect(buildUiToolsSystemPrompt(annotated)).not.toContain(
+      "Nothing will stop you",
+    );
   });
 });
 
@@ -1651,5 +1752,223 @@ describe("prepareChatV2 — a live resolved source", () => {
       (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
         .needsApproval
     ).toBe(true);
+  });
+});
+
+describe("first-class page tools in prepareChatV2", () => {
+  function pageTool(name: string) {
+    return {
+      description: `[WebMCP page tool — https://pizza.test] ${name}`,
+      inputSchema: { jsonSchema: { type: "object", properties: {} } },
+      execute: async () => ({ ok: true }),
+    } as any;
+  }
+
+  const base = () => ({
+    selectedServers: [],
+    modelDefinition: { id: "gpt-4.1-mini", provider: "openai" } as any,
+    systemPrompt: "Base prompt.",
+  });
+
+  it("RESERVES the webmcp_ namespace against an MCP server, and never throws", async () => {
+    // The concern this settles is real: letting a web page shadow a tool the
+    // host configured would have the model call `webmcp_deploy` believing it
+    // was the one it was told about. Arbitrating each collision in the page's
+    // disfavour was one answer; reserving the namespace is the better one,
+    // because the name means something to more than the model.
+    //
+    // A tool card reads a result's `pageTool` block and renders the page's own
+    // name and origin beside it, and it decides whether to from the prefix. A
+    // server free to call its tool `webmcp_pay` would be free to put an origin
+    // chip of its choosing on its own card. So `webmcp_` has exactly one
+    // meaning — "the open page declared this" — and a server that claims it
+    // loses the name rather than the page losing its tool.
+    //
+    // Still never throws: a name collision must not be able to fail a turn.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({
+        webmcp_deploy: {
+          description: "the host's own deploy tool",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+        ordinary_tool: {
+          description: "unaffected",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      }),
+      builtInTools: {
+        webmcp_deploy: pageTool("deploy"),
+        webmcp_safe: pageTool("safe"),
+      },
+    } as any);
+    expect((result.allTools.webmcp_deploy as any)?.description).not.toContain(
+      "the host's own",
+    );
+    expect(result.allTools.webmcp_safe).toBeDefined();
+    // Only the reserved name goes; the server keeps everything else.
+    expect(result.allTools.ordinary_tool).toBeDefined();
+  });
+
+  it("tells the model where the `webmcp_*` tools came from", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: { webmcp_pay: pageTool("pay") },
+    } as any);
+    // Tool DEFINITIONS are not fenced, so the provenance header on each
+    // description is the model's only in-band cue — and this is what says what
+    // that header means.
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+    expect(result.enhancedSystemPrompt).toContain("MCPJAM_PAGE_CONTENT");
+  });
+
+  it("says nothing about page tools when there are none", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      // A NON-PAGE BUILT-IN, so the negative case is about the `webmcp_` names
+      // rather than about an empty built-in set. Without one this would pass
+      // for a regression that keyed the section on "any built-in is present".
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+    } as any);
+    expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
+  });
+
+  it.each([false, true])(
+    "explains inspector aliases even when browser tools may grow: %s",
+    async (mayGrow) => {
+      const result = await prepareChatV2({
+        ...base(),
+        mcpClientManager: mockManager({}),
+        pageTools: [
+          {
+            alias: "page_1a2b3c4d",
+            sessionId: "s",
+            toolKey: "add_topping",
+            rawName: "add_topping",
+            origin: "https://pizza.test",
+          },
+        ],
+        pageToolsMayGrow: mayGrow,
+      } as any);
+      expect(result.allTools.page_1a2b3c4d).toBeDefined();
+      expect(result.allTools.webmcp_add_topping).toBeUndefined();
+      expect(result.enhancedSystemPrompt).toContain(
+        "exact names in the current tool definitions",
+      );
+      expect(result.enhancedSystemPrompt).toContain(
+        "including any `page_` aliases",
+      );
+      expect(result.enhancedSystemPrompt).not.toContain(
+        "None are available right now",
+      );
+    },
+  );
+
+  it("explains page tools AHEAD of their arrival when the set may grow", async () => {
+    // The model navigates on one step and sees `webmcp_*` tools on the next.
+    // A section that appeared only once a tool existed would leave it reading
+    // a `[WebMCP page tool — origin]` header nobody had explained, on the
+    // step it matters most.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+      pageToolsMayGrow: true,
+    } as any);
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("None are available right now");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+  });
+});
+
+describe("account routing snapshots", () => {
+  it("keeps an in-flight turn on its selected account after a default change", async () => {
+    const { jsonSchema } = await import("ai");
+    const { setManagerConnections } = await import("../mcp-connections.js");
+    const a = {
+      serverId: "server",
+      connectionId: "a".repeat(32),
+      key: "server",
+      label: "Acme",
+      isDefault: true,
+    };
+    const b = {
+      serverId: "server",
+      connectionId: "b".repeat(32),
+      key: "server#" + "b".repeat(32),
+      label: "Side",
+      isDefault: false,
+    };
+    const executeA = vi.fn(async () => ({
+      content: [{ type: "text", text: "A" }],
+    }));
+    const executeB = vi.fn(async () => ({
+      content: [{ type: "text", text: "B" }],
+    }));
+    const schema = jsonSchema({ type: "object", properties: {} });
+    const manager = mockManager({});
+    manager.getToolsForAiSdkByServer = vi
+      .fn()
+      .mockResolvedValue({
+        [a.key]: { search: { inputSchema: schema, execute: executeA } },
+        [b.key]: { search: { inputSchema: schema, execute: executeB } },
+      });
+    setManagerConnections(manager, { server: [a, b] });
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    setManagerConnections(manager, {
+      server: [
+        { ...a, key: "other", isDefault: false },
+        { ...b, key: "server", isDefault: true },
+      ],
+    });
+    await result.allTools.search.execute!(
+      { link_id: b.connectionId },
+      { toolCallId: "b-call", messages: [] },
+    );
+    expect(executeA).not.toHaveBeenCalled();
+    expect(executeB).toHaveBeenCalledOnce();
+    expect(result.toolConnections?.get("b-call")).toMatchObject({
+      connectionId: b.connectionId,
+      key: b.key,
+    });
+    expect(JSON.parse(JSON.stringify(result.connectionsAtTurn))).toEqual(
+      [a, b].map((c) => ({
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+      })),
+    );
+    // Eval callers explicitly opt out even when using a local manager with aliases.
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      connectionsByServerId: {},
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+      ["server"],
+      undefined,
+    );
   });
 });

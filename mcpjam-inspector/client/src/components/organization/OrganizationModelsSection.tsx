@@ -1,3 +1,6 @@
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
+import { useAppNavigate, useCurrentPathname } from "@/lib/app-navigation";
+import { useSettingsDraft } from "../settings/SettingsDraftProvider";
 import { useEffect, useState } from "react";
 import {
   BarChart3,
@@ -12,12 +15,7 @@ import {
 import { toast } from "@/lib/toast";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@mcpjam/design-system/card";
+import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import { Input } from "@mcpjam/design-system/input";
 import {
   Dialog,
@@ -56,8 +54,12 @@ import {
 // Provider catalog -- defines known providers and their configuration fields
 // ---------------------------------------------------------------------------
 
+// "api-key-models": an OpenAI-compatible provider the backend reaches at a
+// fixed base URL (Moonshot, Z.ai, Qwen, MiniMax). The admin supplies a key and
+// the model ids to offer, since no static list covers them.
 type ProviderKind =
   | "api-key-only"
+  | "api-key-models"
   | "azure"
   | "bedrock"
   | "ollama"
@@ -69,6 +71,8 @@ interface ProviderCatalogEntry {
   name: string;
   kind: ProviderKind;
   logo?: string;
+  /** Example model ids for an "api-key-models" provider's field. */
+  modelIdsPlaceholder?: string;
 }
 
 const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -103,6 +107,34 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     logo: "/mistral_logo.png",
   },
   { key: "xai", name: "xAI", kind: "api-key-only", logo: "/xai_logo.png" },
+  {
+    key: "moonshotai",
+    name: "Moonshot AI",
+    kind: "api-key-models",
+    logo: "/moonshot_light.png",
+    modelIdsPlaceholder: "kimi-k2-0905-preview",
+  },
+  {
+    key: "z-ai",
+    name: "Z.ai",
+    kind: "api-key-models",
+    logo: "/z-ai.png",
+    modelIdsPlaceholder: "glm-4.6",
+  },
+  {
+    key: "qwen",
+    name: "Qwen",
+    kind: "api-key-models",
+    logo: "/qwen_logo.png",
+    modelIdsPlaceholder: "qwen-plus",
+  },
+  {
+    key: "minimax",
+    name: "MiniMax",
+    kind: "api-key-models",
+    logo: "/minimax_logo.svg",
+    modelIdsPlaceholder: "MiniMax-M2",
+  },
   {
     key: "azure",
     name: "Azure OpenAI",
@@ -143,7 +175,7 @@ function bedrockEndpointFromRegionInput(input: string): string {
 function bedrockRegionFromEndpoint(baseUrl: string | undefined): string {
   if (!baseUrl) return "";
   const match = baseUrl.match(
-    /^https:\/\/bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com\/?$/i
+    /^https:\/\/bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com\/?$/i,
   );
   return match ? match[1] : baseUrl;
 }
@@ -182,17 +214,41 @@ interface OrganizationModelsSectionProps {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function OrganizationModelsSection({
+export function OrganizationModelsSection(
+  props: OrganizationModelsSectionProps,
+) {
+  const pathname = useCurrentPathname();
+  return /\/models\/usage\/?$/.test(pathname) ? (
+    <OrganizationModelUsage {...props} />
+  ) : (
+    <OrganizationProviderSettings {...props} />
+  );
+}
+
+export function OrganizationModelUsage({
+  organizationId,
+  isAdmin,
+}: OrganizationModelsSectionProps) {
+  const { summary, isLoading } = useOrgModelUsageSummary(organizationId, {
+    enabled: isAdmin,
+    rangeDays: 30,
+  });
+  if (!isAdmin)
+    return (
+      <p className="text-sm text-foreground">
+        Only organization owners and admins can view model usage.
+      </p>
+    );
+  return <UsageSummaryCard summary={summary} isLoading={isLoading} />;
+}
+
+function OrganizationProviderSettings({
   organizationId,
   isAdmin,
 }: OrganizationModelsSectionProps) {
   const { providers, isLoading, upsertProvider, deleteProvider, isSaving } =
     useOrgModelConfig(organizationId);
-  const { summary: usageSummary, isLoading: isUsageLoading } =
-    useOrgModelUsageSummary(organizationId, {
-      enabled: isAdmin,
-      rangeDays: 30,
-    });
+  const navigate = useAppNavigate();
 
   // Dialog state
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
@@ -209,7 +265,7 @@ export function OrganizationModelsSection({
   } | null>(null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [editingCustom, setEditingCustom] = useState<OrgModelProvider | null>(
-    null
+    null,
   );
 
   // -----------------------------------------------------------------------
@@ -218,7 +274,7 @@ export function OrganizationModelsSection({
 
   const openConfigDialog = (
     entry: ProviderCatalogEntry,
-    existing?: OrgModelProvider
+    existing?: OrgModelProvider,
   ) => {
     setConfigTarget({
       providerKey: entry.key,
@@ -241,7 +297,7 @@ export function OrganizationModelsSection({
       toast.success(`${deleteTarget.name} removed`);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to remove provider"
+        err instanceof Error ? err.message : "Failed to remove provider",
       );
     } finally {
       setDeleteConfirmOpen(false);
@@ -278,20 +334,19 @@ export function OrganizationModelsSection({
 
   return (
     <>
-      <Card className="border-border/60">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-xl">
-            <Settings2 className="size-4 text-muted-foreground" />
-            Model Providers
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
+      <Card className="border-0 bg-transparent shadow-none">
+        <CardHeader className="px-0 pb-6">
+          <h1 className="text-2xl font-semibold text-accent-foreground">
+            AI providers
+          </h1>
+          <SettingsPageDescription>
             {isAdmin
               ? "Configure AI model providers for your organization. API keys are stored securely and shared with all members."
               : "View which AI model providers are configured for your organization."}
-          </p>
+          </SettingsPageDescription>
         </CardHeader>
 
-        <CardContent className="space-y-1 pt-0">
+        <CardContent className="space-y-1 p-0">
           {isLoading ? (
             <div className="flex items-center gap-2 py-4 text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
@@ -326,17 +381,29 @@ export function OrganizationModelsSection({
                   onRemove={() =>
                     openDeleteConfirm(
                       cp.providerKey,
-                      cp.displayName || cp.providerKey
+                      cp.displayName || cp.providerKey,
                     )
                   }
                 />
               ))}
 
               {isAdmin ? (
-                <div className="pt-3">
+                <div className="flex flex-wrap items-center gap-2 pt-3">
                   <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
                     Add Custom Provider
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      navigate(
+                        `/organizations/${encodeURIComponent(organizationId)}/models/usage`,
+                      )
+                    }
+                  >
+                    <BarChart3 className="mr-2 size-4" />
+                    See usage
                   </Button>
                 </div>
               ) : null}
@@ -344,10 +411,6 @@ export function OrganizationModelsSection({
           )}
         </CardContent>
       </Card>
-
-      {isAdmin ? (
-        <UsageSummaryCard summary={usageSummary} isLoading={isUsageLoading} />
-      ) : null}
 
       {/* Config dialog for known providers */}
       {configTarget ? (
@@ -367,7 +430,7 @@ export function OrganizationModelsSection({
               setConfigTarget(null);
             } catch (err) {
               toast.error(
-                err instanceof Error ? err.message : "Failed to save provider"
+                err instanceof Error ? err.message : "Failed to save provider",
               );
             }
           }}
@@ -390,7 +453,7 @@ export function OrganizationModelsSection({
             toast.success(
               editingCustom
                 ? "Custom provider updated"
-                : "Custom provider added"
+                : "Custom provider added",
             );
             setCustomDialogOpen(false);
             setEditingCustom(null);
@@ -398,7 +461,7 @@ export function OrganizationModelsSection({
             toast.error(
               err instanceof Error
                 ? err.message
-                : "Failed to save custom provider"
+                : "Failed to save custom provider",
             );
           }
         }}
@@ -545,7 +608,14 @@ function ProviderRow({
 // UsageSummaryCard
 // ---------------------------------------------------------------------------
 
-function UsageSummaryCard({
+/**
+ * The 30-day model-usage breakdown.
+ *
+ * Exported so the Budget section can mount it beneath the meter: "what did we
+ * spend it on" is the next question after "how much have we spent", and
+ * building a second breakdown there would be a second thing to keep honest.
+ */
+export function UsageSummaryCard({
   summary,
   isLoading,
 }: {
@@ -559,18 +629,15 @@ function UsageSummaryCard({
   const topModels = summary?.byModel.slice(0, 4) ?? [];
 
   return (
-    <Card className="border-border/60">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-xl">
-          <BarChart3 className="size-4 text-muted-foreground" />
-          Usage
-        </CardTitle>
-        <p className="text-sm text-muted-foreground">
+    <Card className="border-0 bg-transparent shadow-none">
+      <CardHeader className="px-0 pb-6">
+        <h1 className="text-2xl font-semibold text-accent-foreground">Usage</h1>
+        <SettingsPageDescription>
           Organization-managed model requests recorded over the last 30 days.
-        </p>
+        </SettingsPageDescription>
       </CardHeader>
 
-      <CardContent className="space-y-4 pt-0">
+      <CardContent className="space-y-4 p-0">
         {isLoading ? (
           <div className="flex items-center gap-2 py-4 text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
@@ -578,7 +645,7 @@ function UsageSummaryCard({
           </div>
         ) : !hasUsage ? (
           <div className="rounded-md border border-dashed border-border/60 px-3 py-4 text-sm text-muted-foreground">
-            No BYOK model requests have been recorded in this period.
+            No AI provider requests have been recorded in this period.
           </div>
         ) : (
           <>
@@ -610,11 +677,7 @@ function UsageSummaryCard({
                   {formatCost(total?.knownCostUsd)}
                 </div>
               </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">
-                Provider cost is not reported for these requests yet.
-              </div>
-            )}
+            ) : null}
 
             <div className="grid gap-4 lg:grid-cols-2">
               <UsageBreakdown title="By Provider" rows={topProviders} />
@@ -694,12 +757,16 @@ function KnownProviderConfigDialog({
     secret?: string;
     baseUrl?: string;
     selectedModels?: string[];
+    modelIds?: string[];
   }) => Promise<void>;
   onCancel: () => void;
 }) {
   const [secret, setSecret] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState("");
+  // Azure deployment names, Ollama model names, and the model ids of an
+  // "api-key-models" provider. All stored as the provider's `modelIds`.
+  const [modelIds, setModelIds] = useState("");
 
   // Reset fields when dialog opens
   useEffect(() => {
@@ -708,12 +775,32 @@ function KnownProviderConfigDialog({
       setBaseUrl(
         kind === "bedrock"
           ? bedrockRegionFromEndpoint(existing?.baseUrl)
-          : existing?.baseUrl ?? ""
+          : (existing?.baseUrl ?? ""),
       );
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
+      setModelIds(existing?.modelIds?.join(", ") ?? "");
     }
   }, [open, existing, kind]);
 
+  const storedBaseUrl =
+    kind === "bedrock"
+      ? bedrockRegionFromEndpoint(existing?.baseUrl)
+      : (existing?.baseUrl ?? "");
+  useSettingsDraft(
+    open &&
+      (!!secret ||
+        baseUrl !== storedBaseUrl ||
+        selectedModels !== (existing?.selectedModels?.join(", ") ?? "") ||
+        modelIds !== (existing?.modelIds?.join(", ") ?? "")),
+    () => {
+      setSecret("");
+      setBaseUrl(storedBaseUrl);
+      setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
+      setModelIds(existing?.modelIds?.join(", ") ?? "");
+      onCancel();
+    },
+    open && isSaving,
+  );
   const catalogEntry = findCatalogEntry(providerKey);
   const logo = catalogEntry?.logo;
 
@@ -723,6 +810,12 @@ function KnownProviderConfigDialog({
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const parsedModelIds = modelIds
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const takesModelIds =
+    kind === "azure" || kind === "ollama" || kind === "api-key-models";
 
   const handleSave = () => {
     const args: Parameters<typeof onSave>[0] = { providerKey };
@@ -739,6 +832,9 @@ function KnownProviderConfigDialog({
     ) {
       args.selectedModels = parsedSelectedModels;
     }
+    if (takesModelIds && parsedModelIds.length > 0) {
+      args.modelIds = parsedModelIds;
+    }
     void onSave(args);
   };
 
@@ -746,8 +842,16 @@ function KnownProviderConfigDialog({
     switch (kind) {
       case "api-key-only":
         return !!secret.trim() || existing?.hasSecret;
+      case "api-key-models":
+        return (
+          (!!secret.trim() || existing?.hasSecret) && parsedModelIds.length > 0
+        );
       case "azure":
-        return (!!secret.trim() || existing?.hasSecret) && !!baseUrl.trim();
+        return (
+          (!!secret.trim() || existing?.hasSecret) &&
+          !!baseUrl.trim() &&
+          parsedModelIds.length > 0
+        );
       case "bedrock":
         return (
           (!!secret.trim() || existing?.hasSecret) &&
@@ -755,7 +859,7 @@ function KnownProviderConfigDialog({
           parsedSelectedModels.length > 0
         );
       case "ollama":
-        return !!baseUrl.trim();
+        return !!baseUrl.trim() && parsedModelIds.length > 0;
       case "openrouter":
         return (
           (!!secret.trim() || existing?.hasSecret) &&
@@ -784,7 +888,7 @@ function KnownProviderConfigDialog({
               <DialogTitle className="text-left">Configure {name}</DialogTitle>
               <DialogDescription className="text-left">
                 {existing?.hasSecret
-                  ? "Update the configuration. Leave API key blank to keep the existing key."
+                  ? "Update the configuration."
                   : `Set up ${name} for your organization.`}
               </DialogDescription>
             </div>
@@ -795,30 +899,12 @@ function KnownProviderConfigDialog({
           {/* API key field -- all except ollama */}
           {kind !== "ollama" ? (
             <div>
-              <label
-                htmlFor="org-provider-secret"
-                className="text-sm font-medium"
-              >
-                API Key
-                {existing?.hasSecret ? (
-                  <span className="text-muted-foreground font-normal ml-1">
-                    (leave blank to keep current)
-                  </span>
-                ) : null}
-              </label>
-              <Input
+              <ProviderKeyField
                 id="org-provider-secret"
-                type="password"
+                configured={!!existing?.hasSecret}
                 value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-                placeholder={
-                  existing?.hasSecret
-                    ? "********"
-                    : kind === "bedrock"
-                    ? "Bedrock API key"
-                    : "sk-..."
-                }
-                className="mt-1"
+                onChange={setSecret}
+                placeholder={kind === "bedrock" ? "Bedrock API key" : "sk-..."}
               />
               {kind === "bedrock" ? (
                 <p className="text-xs text-muted-foreground mt-1">
@@ -871,6 +957,45 @@ function KnownProviderConfigDialog({
                 Region of the Bedrock runtime endpoint. Paste a full URL instead
                 to use a custom endpoint.
               </p>
+            </div>
+          ) : null}
+
+          {/* Model ids -- azure deployments, ollama models, api-key-models */}
+          {takesModelIds ? (
+            <div>
+              <label
+                htmlFor="org-provider-model-ids"
+                className="text-sm font-medium"
+              >
+                {kind === "azure" ? "Deployment Names" : "Model Names"}{" "}
+                <span className="text-muted-foreground font-normal">
+                  (comma-separated)
+                </span>
+              </label>
+              <Input
+                id="org-provider-model-ids"
+                type="text"
+                value={modelIds}
+                onChange={(e) => setModelIds(e.target.value)}
+                placeholder={
+                  kind === "azure"
+                    ? "prod-gpt-5-1, eval-gpt-5-mini"
+                    : kind === "ollama"
+                      ? "llama3.2:latest, qwen3:8b"
+                      : (catalogEntry?.modelIdsPlaceholder ?? "")
+                }
+                className="mt-1"
+              />
+              {kind === "azure" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  The deployment names you created on this Azure OpenAI
+                  resource. Requests run on the deployment you pick.
+                </p>
+              ) : kind === "api-key-models" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  The model ids to offer, as {name} names them in its API.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -972,6 +1097,21 @@ function OrgCustomProviderDialog({
       setValidationError(null);
     }
   }, [open, editProvider]);
+
+  useSettingsDraft(
+    open &&
+      (!!secret ||
+        displayName !==
+          (editProvider?.displayName || editProvider?.providerKey || "") ||
+        protocol !== (editProvider?.protocol || "openai-compatible") ||
+        baseUrl !== (editProvider?.baseUrl || "") ||
+        modelIds !== (editProvider?.modelIds?.join(", ") ?? "")),
+    () => {
+      setSecret("");
+      onOpenChange(false);
+    },
+    open && isSaving,
+  );
 
   const handleSave = () => {
     setValidationError(null);
@@ -1091,21 +1231,12 @@ function OrgCustomProviderDialog({
           </div>
 
           <div>
-            <label htmlFor="org-cp-secret" className="text-sm font-medium">
-              API Key{" "}
-              <span className="text-muted-foreground font-normal">
-                (optional
-                {editProvider?.hasSecret ? ", leave blank to keep current" : ""}
-                )
-              </span>
-            </label>
-            <Input
+            <ProviderKeyField
               id="org-cp-secret"
-              type="password"
+              configured={!!editProvider?.hasSecret}
               value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              placeholder={editProvider?.hasSecret ? "********" : "sk-..."}
-              className="mt-1"
+              onChange={setSecret}
+              optional
             />
           </div>
 
@@ -1139,11 +1270,76 @@ function OrgCustomProviderDialog({
             {isSaving
               ? "Saving..."
               : editProvider
-              ? "Save Changes"
-              : "Add Provider"}
+                ? "Save Changes"
+                : "Add Provider"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProviderKeyField({
+  id,
+  configured,
+  value,
+  onChange,
+  placeholder = "sk-...",
+  optional = false,
+}: {
+  id: string;
+  configured: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  optional?: boolean;
+}) {
+  const [replacing, setReplacing] = useState(false);
+  if (configured && !replacing) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+        <span className="flex items-center gap-2 text-sm">
+          <CheckCircle2 aria-hidden="true" className="size-4" />
+          API key configured
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setReplacing(true)}
+        >
+          Replace key
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <label htmlFor={id} className="text-sm font-medium">
+        {configured ? "New API key" : "API Key"}
+        {optional && !configured ? " (optional)" : ""}
+      </label>
+      <Input
+        id={id}
+        type="password"
+        autoComplete="new-password"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+      {configured && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            onChange("");
+            setReplacing(false);
+          }}
+        >
+          Keep existing key
+        </Button>
+      )}
+    </div>
   );
 }

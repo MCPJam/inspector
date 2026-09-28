@@ -25,6 +25,19 @@ describe("RunPluginSnapshot", () => {
     expect(screen.queryByText("Plugins")).not.toBeInTheDocument();
   });
 
+  it("discloses a rewritten tool description on the rewrite arm", () => {
+    render(
+      <RunPluginSnapshot
+        pluginVersions={[]}
+        toolDescriptionOverride={{ toolName: "get_user" }}
+      />,
+    );
+    expect(
+      screen.getByText(/this run deliberately rewrote the description of/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("`get_user`")).toBeInTheDocument();
+  });
+
   it("labels pinned plugins, and carries the badge alongside them", () => {
     render(
       <RunPluginSnapshot

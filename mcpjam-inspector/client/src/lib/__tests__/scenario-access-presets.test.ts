@@ -10,29 +10,28 @@ import {
 
 describe("scenarioAccessPresetFromSettings", () => {
   it("maps invited-only mode regardless of legacy guest flag", () => {
-    expect(
-      scenarioAccessPresetFromSettings("invited_only", true),
-    ).toBe("invited_only");
+    expect(scenarioAccessPresetFromSettings("invited_only", true)).toBe(
+      "invited_only",
+    );
   });
 
   it("maps project_members mode to the project preset", () => {
-    expect(
-      scenarioAccessPresetFromSettings("project_members", false),
-    ).toBe("project");
+    expect(scenarioAccessPresetFromSettings("project_members", false)).toBe(
+      "project",
+    );
   });
 
-  it("treats legacy anyone_with_link + guests-off rows as project", () => {
-    // Back-compat: rows persisted before the project_members split
-    // should still surface as the project preset in the UI.
-    expect(
-      scenarioAccessPresetFromSettings("anyone_with_link", false),
-    ).toBe("project");
+  it("keeps account-required links in the link audience preset", () => {
+    // Authentication policy does not change the audience mode.
+    expect(scenarioAccessPresetFromSettings("anyone_with_link", false)).toBe(
+      "link_guests",
+    );
   });
 
   it("maps link mode with guests to link_guests preset", () => {
-    expect(
-      scenarioAccessPresetFromSettings("anyone_with_link", true),
-    ).toBe("link_guests");
+    expect(scenarioAccessPresetFromSettings("anyone_with_link", true)).toBe(
+      "link_guests",
+    );
   });
 });
 
@@ -74,8 +73,12 @@ describe("scenario access ceiling", () => {
       SCENARIO_ACCESS_OPTIONS,
       "project_members",
     );
-    expect(options.find((o) => o.value === "project")?.disabled).toBeUndefined();
-    expect(options.find((o) => o.value === "invited_only")?.disabled).toBe(true);
+    expect(
+      options.find((o) => o.value === "project")?.disabled,
+    ).toBeUndefined();
+    expect(options.find((o) => o.value === "invited_only")?.disabled).toBe(
+      true,
+    );
     expect(options.find((o) => o.value === "link_guests")?.disabled).toBe(true);
   });
 

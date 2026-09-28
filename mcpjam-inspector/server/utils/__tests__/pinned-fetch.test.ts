@@ -15,6 +15,12 @@
  * and that is what these are: they call `createPinnedFetch` at real reserved
  * addresses and assert the class that comes back, so a reworded SDK message
  * fails here instead of silently downgrading a refusal.
+ *
+ * `allowPrivateNetwork: false` is passed EXPLICITLY throughout the strict
+ * suites below. The option now defaults to `!HOSTED_MODE`, so a bare
+ * `createPinnedFetch()` in a test process is a LOCAL inspector and reaches
+ * private addresses on purpose — which is the subject of the last describe
+ * block, not of these. Naming it here keeps each suite testing one policy.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,7 +32,10 @@ import {
   EgressResolutionError,
 } from "../hosted-egress-guard.js";
 
-const pinnedFetch = createPinnedFetch({ timeoutMs: 2_000 });
+const pinnedFetch = createPinnedFetch({
+  allowPrivateNetwork: false,
+  timeoutMs: 2_000,
+});
 
 describe("refusals keep their class", () => {
   it("refuses a literal loopback address as a blocked target", async () => {
@@ -83,7 +92,9 @@ describe("the loopback opt-in is real in both directions", () => {
 
   it("refuses loopback by default", async () => {
     await expect(
-      createPinnedFetch({ timeoutMs: 2_000 })("http://127.0.0.1:9/mcp")
+      createPinnedFetch({ allowPrivateNetwork: false, timeoutMs: 2_000 })(
+        "http://127.0.0.1:9/mcp"
+      )
     ).rejects.toBeInstanceOf(BlockedEgressTargetError);
   });
 
@@ -95,6 +106,7 @@ describe("the loopback opt-in is real in both directions", () => {
     // a connection error would fail for a reason unrelated to what it proves.
     const outcome = await createPinnedFetch({
       allowLoopback: true,
+      allowPrivateNetwork: false,
       timeoutMs: 2_000,
     })("http://127.0.0.1:9/mcp").catch((e: unknown) => e);
 
@@ -104,7 +116,11 @@ describe("the loopback opt-in is real in both directions", () => {
   it("still refuses non-loopback private addresses even with the opt-in", async () => {
     // The carve-out is for loopback ONLY. It never relaxes the guard for LAN,
     // link-local, CGNAT, multicast, documentation, or NAT64-private targets.
-    const pinned = createPinnedFetch({ allowLoopback: true, timeoutMs: 2_000 });
+    const pinned = createPinnedFetch({
+      allowLoopback: true,
+      allowPrivateNetwork: false,
+      timeoutMs: 2_000,
+    });
 
     await expect(pinned("http://169.254.169.254/")).rejects.toBeInstanceOf(
       BlockedEgressTargetError
@@ -164,9 +180,14 @@ describe("every hop's scheme is checked, not just the last one", () => {
     // The carve-out is for reaching `http://127.0.0.1:3000/mcp` in local
     // development. A dev-mode probe that leaves loopback for a public http host
     // is refused exactly like a hosted one would be.
+    //
+    // `example.com` rather than a `.example` name that cannot resolve: the
+    // refusal is now made on the RESOLVED address, so a host that never
+    // resolves fails as a resolution error — a different, retryable class —
+    // and would prove nothing about the plaintext rule.
     await expect(
-      createPinnedFetch({ allowLoopback: true, timeoutMs: 2_000 })(
-        "http://public.example/mcp"
+      createPinnedFetch({ allowLoopback: true, timeoutMs: 5_000 })(
+        "http://example.com/mcp"
       )
     ).rejects.toBeInstanceOf(BlockedEgressTargetError);
   });
@@ -432,5 +453,76 @@ describe("the caller's AbortSignal actually ends the request", () => {
     );
 
     expect((outcome as Error).name).toBe("AbortError");
+  });
+});
+
+/**
+ * The local inspector's side of the same transport.
+ *
+ * `allowPrivateNetwork` defaults to `!HOSTED_MODE`, so a bare
+ * `createPinnedFetch()` in a local process reaches the developer's own
+ * network. These assert the two halves of that: what it now permits, and the
+ * floor it still will not cross.
+ */
+describe("the private-network allowance follows the deployment", () => {
+  it("dials a loopback server by default, because that IS the local product", async () => {
+    // As above, reaching the socket layer is the proof: assert the guard did
+    // not refuse, not that the connection succeeded.
+    const outcome = await createPinnedFetch({ timeoutMs: 2_000 })(
+      "http://127.0.0.1:9/mcp"
+    ).catch((e: unknown) => e);
+
+    expect(outcome).not.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("dials a LAN address by default", async () => {
+    const outcome = await createPinnedFetch({ timeoutMs: 2_000 })(
+      "http://10.0.0.1/mcp"
+    ).catch((e: unknown) => e);
+
+    expect(outcome).not.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("still refuses cloud metadata, which no local server ever needs", async () => {
+    await expect(
+      createPinnedFetch({ timeoutMs: 2_000 })(
+        "http://169.254.169.254/latest/meta-data/"
+      )
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("still refuses a non-http scheme and a credentialed URL", async () => {
+    const pinned = createPinnedFetch({ timeoutMs: 2_000 });
+    await expect(pinned("file:///etc/passwd")).rejects.toBeInstanceOf(
+      BlockedEgressTargetError
+    );
+    await expect(
+      pinned("https://user:pass@example.com/mcp")
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("keeps refusing private targets when the caller opts out", async () => {
+    // HTTPS on purpose: over `http://` the scheme check refuses first and the
+    // address classifier never runs, so the assertion would pass for a reason
+    // that has nothing to do with the address and would survive a regression
+    // that let private targets through.
+    await expect(
+      createPinnedFetch({ allowPrivateNetwork: false, timeoutMs: 2_000 })(
+        "https://10.0.0.1/mcp"
+      )
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("dials a plaintext host that only DNS knows is private", async () => {
+    // The case the whole change exists for, and the one a hostname-based chain
+    // rule silently refused: a name that reads as public, answers loopback, and
+    // is served over http. Nothing about the string says "private" — only the
+    // resolver does — so this is the regression test for deciding the chain's
+    // character from where the first hop landed.
+    const outcome = await createPinnedFetch({ timeoutMs: 2_000 })(
+      "http://localtest.me:9/mcp"
+    ).catch((e: unknown) => e);
+
+    expect(outcome).not.toBeInstanceOf(BlockedEgressTargetError);
   });
 });

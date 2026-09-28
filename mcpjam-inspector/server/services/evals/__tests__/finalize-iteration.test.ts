@@ -186,6 +186,55 @@ describe("finalizeEvalIteration", () => {
     expect(update!.args.messages).toBeDefined();
   });
 
+  test("sends the structured usage field alongside tokensUsed", async () => {
+    // Hosted finalize historically sent only `tokensUsed` + metadata, so
+    // `testIteration.usage` stayed undefined on every hosted iteration and
+    // the run-vs-run diff fell back to trace tokens with no cost at all.
+    const { client, calls } = makeClient();
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
+      messages,
+    });
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    expect(update).toBeDefined();
+    expect(update!.args.usage).toEqual({
+      inputTokens: 120,
+      outputTokens: 80,
+      totalTokens: 200,
+    });
+    // Beside, never instead of — old readers keep working unchanged.
+    expect(update!.args.tokensUsed).toBe(200);
+    expect(update!.args.metadata).toMatchObject({
+      inputTokens: 120,
+      outputTokens: 80,
+    });
+  });
+
+  test("omits usage entirely when the iteration reported no tokens", async () => {
+    // An empty object would claim the iteration reported usage when it
+    // reported nothing, and would be stored verbatim by the backend.
+    const { client, calls } = makeClient();
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: {},
+      messages,
+    });
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    expect(update).toBeDefined();
+    expect("usage" in update!.args).toBe(false);
+  });
+
   test("W1 fallback omits systemPrompt when unset", async () => {
     const { client, calls } = makeClient({
       appendThrows: new Error("fanout pre-turn failure"),
@@ -525,6 +574,7 @@ describe("finalizeEvalIteration", () => {
 
       await finalizeEvalIteration({
         convexClient: client,
+        convexAuthToken: "user-bearer",
         iterationId: "iter1",
         passed: true,
         toolsCalled: [],
@@ -552,6 +602,11 @@ describe("finalizeEvalIteration", () => {
       // Serialize-once: one upload per artifact total, even though the same
       // serialized records feed BOTH the (failed) W2 fanout and the W1 fallback.
       expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
+      // Uploaded as the run's own identity, scoped to the iteration's chat.
+      expect(uploadScreenshotBlob).toHaveBeenCalledWith(
+        { convexAuthToken: "user-bearer", chatSessionId: "eval_iter1" },
+        "c2hvdA==",
+      );
     });
 
     test("W1 fallback omits browser arrays when none were collected", async () => {
@@ -582,6 +637,7 @@ describe("finalizeEvalIteration", () => {
 
       await finalizeEvalIteration({
         convexClient: client,
+        convexAuthToken: "user-bearer",
         iterationId: "iter1",
         passed: true,
         toolsCalled: [],
@@ -601,6 +657,32 @@ describe("finalizeEvalIteration", () => {
       // Still serialized exactly once.
       expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
     });
+
+    test("keeps the rows but uploads no screenshot without a bearer", async () => {
+      const { client, calls } = makeClient({
+        appendThrows: new Error("fanout pre-turn failure"),
+      });
+
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+        widgetRenderObservations: [obs],
+        browserInteractionSteps: [step],
+      });
+
+      expect(uploadScreenshotBlob).not.toHaveBeenCalled();
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      const obsOut = update!.args.widgetRenderObservations as any[];
+      expect(obsOut).toHaveLength(1);
+      expect(obsOut[0]).not.toHaveProperty("screenshotBlobId");
+      expect(obsOut[0]).not.toHaveProperty("screenshotBase64");
+    });
   });
 
   describe("replay video", () => {
@@ -609,6 +691,7 @@ describe("finalizeEvalIteration", () => {
       const { client, calls } = makeClient({});
       await finalizeEvalIteration({
         convexClient: client,
+        convexAuthToken: "user-bearer",
         iterationId: "iter1",
         passed: true,
         toolsCalled: [],
@@ -620,6 +703,11 @@ describe("finalizeEvalIteration", () => {
         .filter((c) => c.ref === "testSuites:appendEvalTurnTrace")
         .at(-1);
       expect(lastAppend?.args.videoBlobId).toBe("vid-store-1");
+      expect(uploadVideoBlob).toHaveBeenCalledWith(
+        { convexAuthToken: "user-bearer", chatSessionId: "eval_iter1" },
+        expect.any(Buffer),
+        {},
+      );
     });
 
     test("upload failure does NOT fail the iteration (best-effort)", async () => {
@@ -630,6 +718,7 @@ describe("finalizeEvalIteration", () => {
       await expect(
         finalizeEvalIteration({
           convexClient: client,
+          convexAuthToken: "user-bearer",
           iterationId: "iter1",
           passed: true,
           toolsCalled: [],
@@ -638,6 +727,7 @@ describe("finalizeEvalIteration", () => {
           videoBytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
         }),
       ).resolves.toBeUndefined();
+      expect(uploadVideoBlob).toHaveBeenCalledTimes(1);
 
       // The iteration still finalized with the right status...
       const update = calls.find(

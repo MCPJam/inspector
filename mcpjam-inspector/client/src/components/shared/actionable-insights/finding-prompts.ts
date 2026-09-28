@@ -151,7 +151,7 @@ function affectedLine(finding: ActionableFinding): string {
 
 export type FindingPromptContext = {
   /** What the reader should re-run to verify, in their words — e.g.
-   * "this eval suite", "this swarm wave", "this user-testing scenario". */
+   * "this eval suite", "this swarm wave", "this user-testing study". */
   rerunLabel: string;
 };
 

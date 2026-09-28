@@ -1,0 +1,1324 @@
+/**
+ * The codemod's own guard rail.
+ *
+ * The scanner's whole value is that it refuses to propose a rename it cannot
+ * justify. That refusal is the thing most likely to rot: a mapping widens, a
+ * protected path is dropped to make a run go green, and the next person reads a
+ * report that quietly proposes renaming a GitHub check run. So the refusal gets
+ * its own test, driven over a throwaway tree rather than the repository — a
+ * test that scanned the real repo would go red the day somebody legitimately
+ * moved a file.
+ */
+
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  symlinkSync,
+  existsSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { afterEach, describe, expect, it } from "vitest";
+
+const SCANNER = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "scripts",
+  "codemod",
+  "evals-vocabulary",
+  "index.mjs"
+);
+
+/**
+ * Run a child process WITHOUT blocking the worker's event loop.
+ *
+ * This file shells out for nearly every test (git for the throwaway repos, node
+ * for the scanner). With `spawnSync` those calls block the vitest worker thread
+ * outright, so it cannot answer the host's RPC while the file runs; on a loaded
+ * CI runner the blocked stretch crossed vitest's 60s RPC timeout and the host
+ * recorded `Timeout calling "onTaskUpdate"` as an unhandled error, failing the
+ * whole workspace with every test green. Awaiting `spawn` keeps the loop free.
+ */
+function run(
+  command: string,
+  args: string[]
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+const trees: string[] = [];
+afterEach(() => {
+  for (const tree of trees.splice(0))
+    rmSync(tree, { recursive: true, force: true });
+});
+
+function tree(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "codemod-"));
+  trees.push(root);
+  for (const [path, contents] of Object.entries(files)) {
+    const full = join(root, path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, contents);
+  }
+  return root;
+}
+
+/**
+ * A throwaway tree that is also a git repository, with everything added.
+ *
+ * The scanner enumerates through `git ls-files` whenever its root is a work
+ * tree, so ignore rules and tracked-but-absent paths can only be exercised in
+ * one. Nothing is committed: `git add` is enough to make a path "cached".
+ */
+async function gitTree(files: Record<string, string>): Promise<string> {
+  const root = tree(files);
+  const git = async (...gitArgs: string[]) => {
+    const result = await run("git", ["-C", root, ...gitArgs]);
+    if (result.status !== 0) throw new Error(result.stderr);
+  };
+  await git("init", "-q");
+  await git("add", "-A");
+  return root;
+}
+
+async function scan(root: string, mappingOverride?: unknown) {
+  const extra: string[] = [];
+  if (mappingOverride !== undefined) {
+    const path = join(root, "__mapping.json");
+    writeFileSync(path, JSON.stringify(mappingOverride));
+    extra.push("--mapping", path);
+  }
+  const result = await run(process.execPath, [
+    SCANNER,
+    "--root",
+    root,
+    "--json",
+    ...extra,
+  ]);
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    json: result.stdout.trim() ? JSON.parse(result.stdout) : null,
+  };
+}
+
+/** The markdown report, which is what a reviewer actually reads. */
+async function render(root: string, mappingOverride?: unknown) {
+  const extra: string[] = [];
+  if (mappingOverride !== undefined) {
+    const path = join(root, "__mapping.json");
+    writeFileSync(path, JSON.stringify(mappingOverride));
+    extra.push("--mapping", path);
+  }
+  const result = await run(process.execPath, [
+    SCANNER,
+    "--root",
+    root,
+    ...extra,
+  ]);
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+describe("the evaluator-vocabulary scanner", () => {
+  it("proposes the renames the contract names, and says where", async () => {
+    const root = tree({
+      "sdk/src/scorers/run.ts":
+        `import type { Scorer } from "./types.js";\n` +
+        `export async function runScorers(list: Scorer[]) { return list; }\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.status).toBe("ok");
+    const proposed = json.findings.map((f: { from: string }) => f.from);
+    expect(proposed).toContain("Scorer");
+    expect(proposed).toContain("runScorers");
+    expect(json.findings[0].file).toBe("sdk/src/scorers/run.ts");
+  });
+
+  it("fails rather than proposing a rename inside a protected path", async () => {
+    const root = tree({
+      "mcpjam-inspector/server/routes/v1/eval-checks.ts":
+        `import type { Scorer } from "@mcpjam/sdk";\n` +
+        `export const repo: { scorer?: Scorer } = {};\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(2);
+    expect(json.status).toBe("protected");
+    expect(json.violations[0].reason).toBe("protected path");
+    expect(json.violations[0].file).toBe(
+      "mcpjam-inspector/server/routes/v1/eval-checks.ts"
+    );
+  });
+
+  it("fails rather than proposing a rename OF a protected term", async () => {
+    const root = tree({
+      "sdk/src/platform/types.ts": `export type Row = { checkRunId: number };\n`,
+    });
+    // The committed mapping proposes no protected word, so the refusal is
+    // exercised against one that does — which is the failure mode this guard
+    // exists for: a mapping widened later until it swallows a GitHub check run.
+    const { status, json } = await scan(root, {
+      renames: [
+        { from: "checkRunId", to: "iterationRunId", scope: "wire-field" },
+      ],
+    });
+
+    expect(status).toBe(2);
+    expect(json.status).toBe("protected");
+    expect(json.violations[0].matched).toBe("checkRunId");
+    expect(json.violations[0].reason).toBe("protected term");
+  });
+
+  it("treats a grading check beside a GitHub check-run id as review, not refusal", async () => {
+    const root = tree({
+      // Both words on one line in an adapter the mapping covers. The first is
+      // in scope, the second is not, and they are told apart by the token
+      // rather than by the line — so this reports rather than refusing.
+      "sdk/src/platform/types.ts": `export type Row = { checks: string[]; checkRunId: number };\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { matched: string }) => f.matched)).toEqual([
+      "checks",
+    ]);
+    expect(json.reviewByHand[0].nearby).toContain("checkRunId");
+  });
+
+  it("reports a rename that merely sits beside a protected term, without failing", async () => {
+    const root = tree({
+      // `evaluatorErrorRate` is the EXISTING evaluator-error vocabulary and
+      // already means the right thing. It lives beside real evaluator code all
+      // over the verdict policy, so proximity is a review note, not a refusal.
+      "sdk/src/contract/verdict-policy.ts":
+        `import type { ScoreResult } from "./types.js";\n` +
+        `export const rate = (rows: ScoreResult[], evaluatorErrorRate: number) => rows.length + evaluatorErrorRate;\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.reviewByHand.length).toBeGreaterThan(0);
+    expect(json.reviewByHand[0].nearby).toContain("evaluatorErrorRate");
+  });
+
+  it("leaves the word alone when it is prose, not an identifier", async () => {
+    const root = tree({
+      "sdk/src/notes.ts":
+        `// A Scorer is mentioned here in a comment, and "Scorer" in a string.\n` +
+        `export const label = "Scorer";\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(0);
+  });
+
+  it("leaves prose alone when it follows an interpolation", async () => {
+    const root = tree({
+      // The regression that sent the first report wrong. A raw token scanner
+      // has no parser context, so everything after `${...}` in a template came
+      // back as ordinary identifiers — and the committed report proposed
+      // renaming `Scorer` out of two error messages.
+      "sdk/src/scorers/collide.ts":
+        "export const message = (id: string) =>\n" +
+        '  `Scorer id "${id}" is already used. Scorer ids must be unique.`;\n',
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(0);
+  });
+
+  it("leaves JSX text alone", async () => {
+    const root = tree({
+      "mcpjam-inspector/client/src/components/evals/Row.tsx":
+        "export const Row = () => <div>No Scorer configured</div>;\n",
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(0);
+  });
+
+  it("finds a wire field however it is declared or read", async () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        "export type A = { predicates?: string[] };\n" +
+        "export type B = { predicates: string[] };\n" +
+        "export const readOptional = (row: A) => row?.predicates;\n" +
+        "export const readPlain = (row: B) => row.predicates;\n" +
+        "export const shorthand = (predicates: string[]) => ({ predicates });\n",
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    // Five shapes, five findings. The token lookahead this replaced saw only
+    // the required declaration, which is why an optional field in the
+    // platform types was missing from the inventory it exists to produce.
+    expect(
+      json.findings.filter((f: { from: string }) => f.from === "predicates")
+    ).toHaveLength(5);
+  });
+
+  it("matches a whole flag, not a prefix of one", async () => {
+    const root = tree({
+      "cli/src/commands/eval.ts":
+        `const a = "--scorer-timeout";\n` +
+        `const b = "--scorer-timeout=3";\n` +
+        `const c = "--scorer-timeout-old";\n`,
+    });
+    // An override, so the matcher is tested apart from whichever flags the
+    // committed mapping happens to rename.
+    const { status, json } = await scan(root, {
+      renames: [
+        {
+          from: "--scorer-timeout",
+          to: "--evaluator-timeout",
+          scope: "flag",
+          paths: ["cli/"],
+        },
+      ],
+    });
+
+    expect(status).toBe(0);
+    // `--scorer-timeout-old` is a DIFFERENT flag. Proposing to rename it would
+    // be proposing to break it.
+    const lines = json.findings
+      .filter((f: { from: string }) => f.from === "--scorer-timeout")
+      .map((f: { line: number }) => f.line);
+    expect(lines).toEqual([1, 2]);
+  });
+
+  it("keeps a subpath rename inside its own allowlist", async () => {
+    const root = tree({
+      "cli/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
+      "sdk/src/b.ts": `import "@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = await scan(root, {
+      renames: [
+        {
+          from: "@mcpjam/sdk/predicates",
+          to: "@mcpjam/sdk/assertions",
+          scope: "subpath",
+          paths: ["sdk/"],
+        },
+      ],
+    });
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/b.ts",
+    ]);
+  });
+
+  it("fails closed when a path cannot be inspected", async () => {
+    const root = await gitTree({
+      "sdk/src/a.ts": "export const a = 1;\n",
+      "sdk/src/b.ts": "export const b = 1;\n",
+    });
+    // A path git says is a source file and the disk says is a directory. Chmod
+    // would not do — the suite may run as a user for whom no file is
+    // unreadable, and a guard that only fires for some users is not a guard.
+    rmSync(join(root, "sdk/src/b.ts"));
+    mkdirSync(join(root, "sdk/src/b.ts"));
+    const { status, stderr } = await scan(root);
+
+    // An inventory with a hole in it reads as complete, and the next person
+    // renames from it.
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/could not be inspected/);
+    expect(stderr).toMatch(/sdk\/src\/b\.ts/);
+  });
+
+  it("skips a dangling symlink instead of refusing the whole run", async () => {
+    const root = tree({
+      "sdk/src/a.ts": "export type A = Scorer;\n",
+    });
+    // The shape that sank a real run: an untracked skill symlink whose target
+    // was never checked out. It names no source, so there is nothing in it to
+    // rename — and failing on it made the tool unrunnable on a normal laptop.
+    symlinkSync(join(root, "gone"), join(root, "sdk/src/b.ts"));
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/a.ts",
+    ]);
+    expect(json.skipped.map((s: { file: string }) => s.file)).toEqual([
+      "sdk/src/b.ts",
+    ]);
+  });
+
+  it("enumerates what git sees, so ignored directories are never walked", async () => {
+    const root = await gitTree({
+      ".gitignore": "worktrees/\nbuild-output/\n",
+      "sdk/src/a.ts": "export type A = Scorer;\n",
+      // A whole second checkout under an ignored directory: the reason a real
+      // run took four and a half minutes and reported someone else's branch.
+      "worktrees/other/sdk/src/a.ts": "export type A = Scorer;\n",
+      "build-output/sdk/src/a.ts": "export type A = Scorer;\n",
+    });
+    // Untracked but not ignored is still the developer's source.
+    writeFileSync(join(root, "sdk/src/new.ts"), "export type B = Scorer;\n");
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      [...new Set(json.findings.map((f: { file: string }) => f.file))].sort()
+    ).toEqual(["sdk/src/a.ts", "sdk/src/new.ts"]);
+  });
+
+  it("fails closed when it read nothing, even from a non-empty root", async () => {
+    const root = tree({ "assets/logo.png": "not really a png" });
+    const { status, stderr } = await scan(root);
+
+    // The walk found a file. It read no SOURCE, so a clean empty report here
+    // would be indistinguishable from a clean real one.
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/No supported files were read/);
+  });
+
+  it("does not propose a wire-field rename outside the adapters that own it", async () => {
+    const root = tree({
+      // `checks` as an object key, but in a file the mapping does not list —
+      // GitHub check settings, conformance results, a UI reducer. Out of scope
+      // is out of scope; it is not a finding and not a failure.
+      "mcpjam-inspector/client/src/state/app-reducer.ts": `export const state = { checks: [] as string[] };\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(0);
+  });
+
+  it("fails closed when it scanned nothing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codemod-empty-"));
+    trees.push(root);
+    const { status, stderr } = await scan(root);
+
+    // A scanner that reports "no occurrences" after reading zero files has said
+    // nothing, and it looks exactly like a clean run.
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/refusing to report a clean run/);
+  });
+
+  it("fails closed when the parser reports a diagnostic", async () => {
+    const root = tree({
+      "sdk/src/a.ts": "export const a = 1;\n",
+      // `createSourceFile` does NOT throw on this. It recovers, and the
+      // recovery swallows everything after the unterminated template — so
+      // `Scorer` is simply absent from the tree, and a scanner that trusted
+      // the absence of a throw would report this file as clean.
+      "sdk/src/broken.ts": "const a = `unterminated\ntype Y = Scorer;\n",
+    });
+    const { status, stderr } = await scan(root);
+
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/could not be inspected/);
+    expect(stderr).toMatch(/parse diagnostic/);
+    expect(stderr).toMatch(/Unterminated template literal/);
+  });
+
+  it("reports a subpath named somewhere other than an import", async () => {
+    const root = tree({
+      // The three shapes that broke the builds rather than the imports: an
+      // alias key, an alias `find` value, and an `external` list entry.
+      "mcpjam-inspector/server/tsup.config.ts":
+        `export default { external: ["@mcpjam/sdk/predicates"],\n` +
+        `  alias: { "@mcpjam/sdk/predicates": "../../sdk/src/predicates/index.ts" } };\n`,
+      "mcpjam-inspector/server/vitest.config.ts": `export default { alias: [{ find: "@mcpjam/sdk/predicates", replacement: x }] };\n`,
+      "sdk/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    const subpath = json.findings
+      .filter((f: { scope: string }) => f.scope === "subpath")
+      // Sorted: the walk's order is the filesystem's, and this test is about
+      // what gets reported, not about which directory was listed first.
+      .map(
+        (f: { file: string; line: number; shape: string }) =>
+          `${f.file}:${f.line} ${f.shape}`
+      )
+      .sort();
+    // The shape is told apart, so a reviewer knows which one is an import.
+    expect(subpath).toEqual([
+      "mcpjam-inspector/server/tsup.config.ts:1 module reference",
+      "mcpjam-inspector/server/tsup.config.ts:2 module reference",
+      "mcpjam-inspector/server/vitest.config.ts:1 module reference",
+      "sdk/src/a.ts:1 import specifier",
+    ]);
+  });
+
+  it("reports a wire field named in a string, still bounded by its paths", async () => {
+    const root = tree({
+      // A Zod issue path and a settings-key array: both name the field, and
+      // neither is a property declaration.
+      "sdk/src/platform/operations.ts": `const issue = { path: ["predicates"], message: "x" };\n`,
+      "mcpjam-inspector/client/src/components/evals/rows.ts": `const keys = { checks: ["defaultPredicates"] };\n`,
+      // Same string, outside every allowlist. Path scope still governs.
+      "mcpjam-inspector/client/src/state/app-reducer.ts": `const k = ["predicates"];\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map(
+          (f: { file: string; matched: string; shape: string }) =>
+            `${f.file} ${f.matched} ${f.shape}`
+        )
+        .sort()
+    ).toEqual([
+      "mcpjam-inspector/client/src/components/evals/rows.ts defaultPredicates field named in a string",
+      "sdk/src/platform/operations.ts predicates field named in a string",
+    ]);
+  });
+
+  it("reads a destructured field as the property, not the local it binds", async () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        // The field is `checks`; `localChecks` is a local that happens to
+        // hold it. Blaming the local both misses the rename and proposes one
+        // nobody asked for.
+        `const { checks: localChecks } = row;\n` +
+        // Shorthand: one identifier, both the field and the local.
+        `const { predicates } = row;\n` +
+        // An ARRAY binding reads a position. Its local is spelled like the
+        // field and names no field at all.
+        `const [defaultPredicates] = values;\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter((f: { scope: string }) => f.scope === "wire-field")
+        .map((f: { line: number; matched: string }) => `${f.line} ${f.matched}`)
+        .sort()
+    ).toEqual(["1 checks", "2 predicates"]);
+  });
+
+  it("sees an identifier rename destructured out of an import", async () => {
+    const root = tree({
+      // The import site is the one line that MUST change when the export is
+      // renamed, and a shorthand binding was being counted as a field only —
+      // so identifier renames pulled in this way were absent from the report
+      // while their call sites in the same file were listed.
+      "sdk/src/a.ts":
+        `const { runScorers } = await import("./scorers/run.js");\n` +
+        `const rows = await runScorers([], ctx);\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings.map(
+        (f: { line: number; shape: string }) => `${f.line} ${f.shape}`
+      )
+    ).toEqual(["1 identifier", "2 identifier"]);
+  });
+
+  it("reports a subpath named in a manifest or in prose", async () => {
+    const root = tree({
+      // No AST for these, so the subpath scope could not see them at all: a
+      // packaging assertion that imports the subpath from inside a shell
+      // string, and a docs example a reader copies.
+      "sdk/package.json": `{ "scripts": { "a": "node -e \\"await import('@mcpjam/sdk/predicates')\\"" } }\n`,
+      "docs/guide.mdx": `Predicates live in \`@mcpjam/sdk/predicates\` today.\n`,
+      // A DIFFERENT module that merely starts with the same text. Renaming it
+      // would be proposing to break it.
+      "docs/other.mdx": `See \`@mcpjam/sdk/predicates-legacy\` for the old shape.\n`,
+      // `checks` in an English sentence is English. Wire fields stay out of
+      // text files, which is the noise this design exists to avoid.
+      "docs/prose.mdx": `The suite runs its checks and reports repetitions.\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map(
+          (f: { file: string; line: number; shape: string }) =>
+            `${f.file}:${f.line} ${f.shape}`
+        )
+        .sort()
+    ).toEqual([
+      "docs/guide.mdx:1 text reference",
+      "sdk/package.json:1 text reference",
+    ]);
+  });
+
+  it("lists every occurrence rather than the first sixty", async () => {
+    // The defect this pins is specific: the committed report stated 74
+    // occurrences of one rename and listed 60, so the 14 a reader most needed
+    // the tool for were the 14 it withheld.
+    const lines = Array.from(
+      { length: 70 },
+      (_, i) => `export const s${i}: Scorer = x;`
+    ).join("\n");
+    const root = tree({ "sdk/src/many.ts": `${lines}\n` });
+    const { status, stdout } = await render(root);
+
+    expect(status).toBe(0);
+    const rows = stdout
+      .split("\n")
+      .filter((line) => line.startsWith("| `sdk/src/many.ts:"));
+    expect(rows).toHaveLength(70);
+    expect(stdout).toMatch(/70 occurrence\(s\)/);
+    expect(stdout).not.toMatch(/more occurrence/);
+  });
+
+  it.each([
+    "githubCheckRunId",
+    "githubCheckTriggerId",
+    "GithubCheckRepoConfigRow",
+    "GITHUB_CHECKS_ENABLED",
+    "connectEvalCheckRepoOperation",
+  ])("refuses %s because its whole family is protected", async (member) => {
+    const root = tree({
+      "sdk/src/platform/types.ts": `export const ${member} = 1;\n`,
+    });
+    // An exact-string denylist protected `githubCheck` and nothing spelled
+    // after it, so a mapping proposing `githubCheckRunId` exited 0.
+    const { status, json } = await scan(root, {
+      renames: [{ from: member, to: "iterationRunId", scope: "identifier" }],
+    });
+
+    expect(status).toBe(2);
+    expect(json.status).toBe("protected");
+    expect(
+      json.violations.every(
+        (v: { reason: string }) => v.reason === "protected term"
+      )
+    ).toBe(true);
+    expect(json.violations.map((v: { from: string }) => v.from)).toContain(
+      member
+    );
+  });
+
+  it("refuses a protected family in the mapping even where no file uses it", async () => {
+    const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
+    // A mapping is a proposal whether or not today's tree happens to contain
+    // the word. The next checkout that does must not be the first to find out.
+    const { status, json } = await scan(root, {
+      renames: [{ from: "githubCheckRunId", to: "runId", scope: "identifier" }],
+    });
+
+    expect(status).toBe(2);
+    expect(json.violations[0].from).toBe("githubCheckRunId");
+    expect(json.violations[0].shape).toBe("mapping");
+  });
+
+  it("refuses to rename a billing trial, however it is spelled", async () => {
+    const root = tree({
+      "sdk/src/a.ts":
+        "export const trialPlan = 'pro';\nexport const isTrial = true;\n",
+    });
+    for (const from of ["trialPlan", "isTrial", "starterTrialsEnabled"]) {
+      const { status, json } = await scan(root, {
+        renames: [{ from, to: "iterationPlan", scope: "identifier" }],
+      });
+      // A bad sweep here changes who gets charged.
+      expect(status, from).toBe(2);
+      expect(json.violations[0].reason, from).toBe("protected term");
+    }
+  });
+
+  it.each([
+    "mcpjam-inspector/client/src/components/sidebar/sidebar-trial-countdown.tsx",
+    "mcpjam-inspector/client/src/hooks/useOrganizationBilling.ts",
+    "mcpjam-inspector/client/src/components/organization/OrganizationCurrentPlanPanel.tsx",
+    "convex/migrations/resetTrialsForBillingLaunch.ts",
+    "convex/lib/entitlements.ts",
+    "convex/billing.ts",
+    "convex/billingNode.ts",
+    "convex/billing/teamAllowance.ts",
+    "convex/lib/pricing/resolve.ts",
+  ])("refuses any rename inside billing file %s", async (file) => {
+    const root = tree({ [file]: "export type T = Scorer;\n" });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(2);
+    expect(json.violations[0].reason).toBe("protected path");
+  });
+
+  it("leaves eval verdict counters out of billing protection", async () => {
+    const root = tree({
+      "sdk/src/contract/verdict-policy.ts":
+        "export const c = { configuredTrials: 1, attemptedTrials: 1, minGradeableTrials: 1 };\n",
+    });
+    // Path-based billing protection is what lets a later eval-trial rename
+    // proceed without touching billing. A pattern that swallowed these would
+    // turn that rename into a fight with the guard.
+    const { status, json } = await scan(root, {
+      renames: [
+        "configuredTrials",
+        "attemptedTrials",
+        "minGradeableTrials",
+      ].map((from) => ({
+        from,
+        to: from.replace("Trials", "Iterations"),
+        scope: "wire-field",
+        paths: ["sdk/src/contract/"],
+      })),
+    });
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(3);
+  });
+
+  it.each([
+    "mcpjam-inspector/server/routes/mcp/xaa.ts",
+    "mcpjam-inspector/server/routes/web/xaa.ts",
+    "mcpjam-inspector/server/routes/xaa-confidential-cimd.ts",
+    "mcpjam-inspector/server/routes/xaa-client-metadata.ts",
+    "mcpjam-inspector/server/services/xaa-mint.ts",
+    "mcpjam-inspector/shared/xaa.ts",
+    "mcpjam-inspector/client/src/lib/xaa/identity.ts",
+    "sdk/src/oauth/client-identity.ts",
+  ])(
+    "refuses an assertion rename inside identity-assertion file %s",
+    async (file) => {
+      const root = tree({ [file]: "export const assertion = sign(jwt);\n" });
+      // These are identity assertions from a standards protocol (ID-JAG, SAML,
+      // RFC 7523 client assertions), not eval assertions.
+      const { status, json } = await scan(root, {
+        renames: [{ from: "assertion", to: "check", scope: "identifier" }],
+      });
+
+      expect(status).toBe(2);
+      expect(json.violations[0].reason).toBe("protected path");
+    }
+  );
+
+  it("scans GitHub Checks code for eval renames, since it may import the eval SDK", async () => {
+    const root = tree({
+      "mcpjam-inspector/server/services/github-checks/check-plan.ts":
+        `import type { Scorer } from "@mcpjam/sdk";\n` +
+        `export const githubCheckRunId = 1;\n`,
+    });
+    const { status, json } = await scan(root);
+
+    // The directory is not categorically denied; its GitHub-owned identifiers
+    // are. An eval import in it is an eval import.
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { matched: string }) => f.matched)).toEqual([
+      "Scorer",
+    ]);
+  });
+
+  it("refuses to rename the customer-authored `checks:` key of mcpjam.yml", async () => {
+    const root = tree({
+      "mcpjam-inspector/server/services/github-checks/resolver/mcpjamYaml.ts":
+        "export const read = (root: { checks: unknown }) => root.checks;\n",
+    });
+    // Customers wrote that key into their own repositories. Renaming the
+    // reader breaks every one of them on the next pull request.
+    const scoped = await scan(root, {
+      renames: [
+        {
+          from: "checks",
+          to: "assertions",
+          scope: "wire-field",
+          paths: ["mcpjam-inspector/server/services/github-checks/"],
+        },
+      ],
+    });
+    expect(scoped.status).toBe(2);
+    expect(scoped.json.violations[0].reason).toBe("protected field");
+
+    // Repository-wide is the same proposal with less honesty about it.
+    const unscoped = await scan(root, {
+      renames: [{ from: "checks", to: "assertions", scope: "wire-field" }],
+    });
+    expect(unscoped.status).toBe(2);
+    expect(unscoped.json.violations[0].reason).toBe("protected field");
+  });
+
+  it("has retired the two count rows, and keeps the flag rows and the frozen keys", async () => {
+    // `repetitions` is the legacy spelling of the configured count, and the
+    // count rename was ORDERED: the legacy per-case field that answered to
+    // `iterations` (read as a FLOOR) became `legacyIterations` first, then
+    // `repetitions` became `iterations`. Both rows are gone now, on purpose:
+    // the wire speaks both spellings under `x-mcpjam-eval-vocabulary`, and
+    // the SDK types, the CLI and the v1 route hold the legacy floor beside
+    // the exact count BY DESIGN (`PlatformEvalCaseV2.legacyIterations` next
+    // to `PlatformEvalCase.iterations`) — the shape the per-file
+    // target-in-use guard reads as two fields merging into one. A committed
+    // row would refuse the expand phase it was written to sequence. The flag
+    // rows stay (they name what a user types), and the revision-payload key
+    // never moves at all.
+    const dir = dirname(SCANNER);
+    const mapping = JSON.parse(
+      readFileSync(join(dir, "mapping.json"), "utf8")
+    ) as {
+      renames: Array<{
+        from: string;
+        to: string;
+        scope: string;
+        after?: string;
+        sameMeaning?: boolean;
+      }>;
+    };
+    // `sameMeaning` is picked on purpose: a floor and an exact count are two
+    // fields, so neither count rename may claim the exemption.
+    const pick = (from: string) =>
+      mapping.renames
+        .filter((r) => r.from === from)
+        .map((r) => ({
+          from: r.from,
+          to: r.to,
+          scope: r.scope,
+          after: r.after,
+          sameMeaning: r.sameMeaning,
+        }));
+
+    expect(pick("iterations")).toEqual([]);
+    expect(pick("repetitions")).toEqual([]);
+    expect(pick("--repetitions")).toEqual([
+      { from: "--repetitions", to: "--iterations", scope: "flag" },
+    ]);
+    expect(pick("--max-trials")).toEqual([
+      { from: "--max-trials", to: "--max-iterations", scope: "flag" },
+    ]);
+
+    const protectedSpec = JSON.parse(
+      readFileSync(join(dir, "protected.json"), "utf8")
+    ) as { fields: Array<{ name: string; paths?: string[] }> };
+    // Every key the configuration-revision payload names, plus `role` — whose
+    // VALUE is frozen in that payload for the same reason the keys are: the
+    // payload is an identity, and rotating it renames nothing while orphaning
+    // everything.
+    expect(
+      protectedSpec.fields
+        .filter((f) => f.paths?.includes("convex/lib/evalConfigRevision.ts"))
+        .map((f) => f.name)
+        .sort()
+    ).toEqual([
+      "defaultPredicates",
+      "predicates",
+      "repetitions",
+      "role",
+      "runs",
+    ]);
+  });
+
+  it("protects `role` inside both hash payloads, not just the revision one", () => {
+    // `definitionHash` is the join key between a stored score row and its
+    // definition, and the selector `eval gate --baseline` resolves a scorer
+    // set with. A rename that reached `derive.ts` would turn this program's
+    // value rename into a rehash: every historical row stops joining, every
+    // baseline reports its whole scorer set replaced, and both sides of the
+    // rehash agree with each other so nothing goes red.
+    const dir = dirname(SCANNER);
+    const protectedSpec = JSON.parse(
+      readFileSync(join(dir, "protected.json"), "utf8")
+    ) as { fields: Array<{ name: string; paths?: string[] }> };
+    const role = protectedSpec.fields.find((f) => f.name === "role");
+    expect(role, "`role` must be a protected field").toBeDefined();
+    for (const owner of [
+      "evaluators/src/contract/derive.ts",
+      "sdk/src/contract/derive.ts",
+      "convex/lib/scoreContract.ts",
+      "convex/lib/evalConfigRevision.ts",
+    ]) {
+      expect(role!.paths, owner).toContain(owner);
+    }
+  });
+
+  it("proposes no rename of the role VALUE — it is an alias, not a move", () => {
+    // `gating` → `required` is deliberately absent from the mapping. The two
+    // are one value with two spellings and the legacy one is frozen in the
+    // hash payload forever, so there is nothing for a codemod to rewrite. The
+    // scanner would refuse it anyway: `required` is already in use as a word.
+    const dir = dirname(SCANNER);
+    const mapping = JSON.parse(
+      readFileSync(join(dir, "mapping.json"), "utf8")
+    ) as { renames: Array<{ from: string; to: string }> };
+    expect(
+      mapping.renames.filter((r) => r.from === "gating" || r.to === "required")
+    ).toEqual([]);
+  });
+
+  const COUNT_CASE = {
+    "sdk/src/platform/types.ts":
+      "export type Case = { iterations: number; repetitions?: number };\n",
+  };
+  const COUNT_PATHS = ["sdk/src/platform/"];
+  const LEGACY_FIRST = {
+    from: "iterations",
+    to: "legacyIterations",
+    scope: "wire-field",
+    paths: COUNT_PATHS,
+  };
+  const COUNT = {
+    from: "repetitions",
+    to: "iterations",
+    scope: "wire-field",
+    paths: COUNT_PATHS,
+  };
+
+  it("refuses to rename a field onto a name its files still use", async () => {
+    const root = tree(COUNT_CASE);
+    // The legacy `iterations` is a floor and `repetitions` is exact. Renaming
+    // one onto the other's name makes one field out of two counts.
+    const { status, json } = await scan(root, { renames: [COUNT] });
+
+    expect(status).toBe(2);
+    expect(
+      json.violations.map(
+        (v: { reason: string; matched: string }) => `${v.reason} ${v.matched}`
+      )
+    ).toEqual(["rename target in use iterations"]);
+  });
+
+  it("lets a rename join a target that already means the same thing", async () => {
+    const root = tree({
+      // The suite file's deprecated `assertions` IS its `checks`: one list of
+      // rules, two spellings. Joining them is the rename, not a merge of two
+      // fields.
+      "cli/src/lib/eval-run-file.ts":
+        "export const f = (c: { assertions: string[] }) => ({ checks: c.assertions });\n",
+    });
+    const rename = {
+      from: "checks",
+      to: "assertions",
+      scope: "wire-field",
+      paths: ["cli/src/lib/eval-run-file.ts"],
+    };
+
+    const refused = await scan(root, { renames: [rename] });
+    expect(refused.status).toBe(2);
+    expect(refused.json.violations[0].reason).toBe("rename target in use");
+
+    const joined = await scan(root, {
+      renames: [{ ...rename, sameMeaning: true }],
+    });
+    expect(joined.status).toBe(0);
+    expect(
+      joined.json.findings.map((f: { matched: string }) => f.matched)
+    ).toEqual(["checks"]);
+  });
+
+  it("refuses a rename onto a vacated name that does not say it lands after", async () => {
+    const root = tree(COUNT_CASE);
+    const { status, json } = await scan(root, {
+      renames: [LEGACY_FIRST, COUNT],
+    });
+
+    // Both halves are present, but nothing says which lands first, and running
+    // them in the wrong order is the blind sweep.
+    expect(status).toBe(2);
+    expect(json.violations).toHaveLength(1);
+    expect(json.violations[0]).toMatchObject({
+      reason: "unordered rename",
+      shape: "mapping",
+      from: "repetitions",
+    });
+  });
+
+  it("refuses an `after` that names no rename", async () => {
+    const root = tree(COUNT_CASE);
+    const { status, json } = await scan(root, {
+      renames: [{ ...COUNT, to: "count", after: "iterations" }],
+    });
+
+    expect(status).toBe(2);
+    expect(json.violations[0].reason).toBe("after names no rename");
+  });
+
+  it("proposes both halves of an ordered rename, and says which lands first", async () => {
+    const root = tree(COUNT_CASE);
+    const mapping = {
+      renames: [LEGACY_FIRST, { ...COUNT, after: "iterations" }],
+    };
+    const { status, json } = await scan(root, mapping);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map((f: { from: string; to: string }) => `${f.from} → ${f.to}`)
+        .sort()
+    ).toEqual(["iterations → legacyIterations", "repetitions → iterations"]);
+    const report = await render(root, mapping);
+    expect(report.status).toBe(0);
+    expect(report.stdout).toMatch(
+      /Lands after `iterations → legacyIterations`/
+    );
+  });
+
+  it("refuses to move the `repetitions` key of the configuration-revision payload", async () => {
+    const root = tree({
+      "convex/lib/evalConfigRevision.ts":
+        "export const sig = (tc: { runs: number; repetitions?: number }) =>\n" +
+        "  ({ runs: tc.runs, repetitions: tc.repetitions });\n",
+    });
+    // The committed mapping never reaches this file.
+    expect((await scan(root)).status).toBe(0);
+
+    // A widened one does. The literal key is part of every suite's revision
+    // identity, so it stays frozen after the field is renamed, like `predicates`.
+    for (const paths of [undefined, ["convex/lib/"]]) {
+      const { status, json } = await scan(root, {
+        renames: [{ ...COUNT, paths }],
+      });
+      expect(status, String(paths)).toBe(2);
+      expect(
+        json.violations.some(
+          (v: { reason: string }) => v.reason === "protected field"
+        ),
+        String(paths)
+      ).toBe(true);
+    }
+  });
+
+  it("keeps the scanner's refusal code through the report command", async () => {
+    const REPORT = join(dirname(SCANNER), "report.mjs");
+    const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
+    const mappingPath = join(root, "__mapping.json");
+    writeFileSync(
+      mappingPath,
+      JSON.stringify({
+        renames: [
+          { from: "trialEndsAt", to: "iterationEndsAt", scope: "identifier" },
+        ],
+      })
+    );
+    const out = join(root, "REPORT.md");
+
+    const refused = await run(process.execPath, [
+      REPORT,
+      "--root",
+      root,
+      "--mapping",
+      mappingPath,
+      "--out",
+      out,
+    ]);
+    // Exit 2 is the refusal. The old npm chain flattened it to 1, the code for
+    // "scanned nothing", so a caller could not tell the two apart.
+    expect(refused.status).toBe(2);
+    expect(existsSync(out)).toBe(false);
+    expect(existsSync(`${out}.tmp`)).toBe(false);
+
+    const clean = await run(process.execPath, [
+      REPORT,
+      "--root",
+      root,
+      "--out",
+      out,
+    ]);
+    expect(clean.status).toBe(0);
+    expect(readFileSync(out, "utf8")).toMatch(/proposed renames/);
+  });
+
+  it("labels a string in a type as such, not as a field", async () => {
+    const root = tree({
+      // An enum value in a literal union spells `iterations` without naming a
+      // field. It stays in the inventory, under a shape that says what it is.
+      "sdk/src/platform/types.ts":
+        `export type Rate = { unit: "iterations" | "sessions" };\n` +
+        `export const issue = { path: ["iterations"] };\n`,
+    });
+    const { status, json } = await scan(root, { renames: [LEGACY_FIRST] });
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map((f: { line: number; shape: string }) => `${f.line} ${f.shape}`)
+        .sort()
+    ).toEqual(["1 string in a type", "2 field named in a string"]);
+  });
+
+  it("lists the count outside its paths as work left, and marks frozen keys", async () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        "export type Case = { legacyIterations: number; repetitions?: number };\n",
+      // Outside the rename's paths, and still the count: work left.
+      "mcpjam-inspector/client/src/settings.ts":
+        "export const draft = { repetitions: 3 };\n",
+      // The revision-payload key never moves: listed, but never work.
+      "convex/lib/evalConfigRevision.ts":
+        "export const sig = { repetitions: 1 };\n",
+      // A protected path is another program's word, not this inventory's.
+      "sdk/src/xaa/mint.ts": "export const plan = { repetitions: 1 };\n",
+      // `checks` does not opt in, so it is never listed outside its paths.
+      "mcpjam-inspector/client/src/state/app-reducer.ts":
+        "export const state = { checks: [] };\n",
+    });
+    const mapping = {
+      renames: [
+        { ...COUNT, inventoryOutsidePaths: true },
+        {
+          from: "checks",
+          to: "assertions",
+          scope: "wire-field",
+          sameMeaning: true,
+          paths: COUNT_PATHS,
+        },
+      ],
+    };
+    const { status, json } = await scan(root, mapping);
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/platform/types.ts",
+    ]);
+    expect(
+      json.outsideMapping
+        .map(
+          (e: { file: string; line: number; frozen: boolean }) =>
+            `${e.file}:${e.line} ${e.frozen ? "frozen" : "work"}`
+        )
+        .sort()
+    ).toEqual([
+      "convex/lib/evalConfigRevision.ts:1 frozen",
+      "mcpjam-inspector/client/src/settings.ts:1 work",
+    ]);
+    expect((await render(root, mapping)).stdout).toMatch(
+      /## Outside the mapping: `repetitions → iterations`/
+    );
+  });
+
+  it("counts a flag named twice on one line as two occurrences", async () => {
+    const root = tree({
+      "cli/src/commands/eval.ts": `const help = "use --repetitions, not --repetitions=0";\n`,
+    });
+    const { status, json } = await scan(root, {
+      renames: [
+        {
+          from: "--repetitions",
+          to: "--iterations",
+          scope: "flag",
+          paths: ["cli/"],
+        },
+      ],
+    });
+
+    // The report says every occurrence is listed. A line is not an occurrence.
+    expect(status).toBe(0);
+    expect(
+      json.findings.filter((f: { scope: string }) => f.scope === "flag")
+    ).toHaveLength(2);
+  });
+
+  it("counts a subpath named twice on one text line as two occurrences", async () => {
+    const root = tree({
+      "docs/sdk.mdx":
+        "Import `@mcpjam/sdk/predicates`, not a copy of `@mcpjam/sdk/predicates`.\n",
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings.filter(
+        (f: { matched: string }) => f.matched === "@mcpjam/sdk/predicates"
+      )
+    ).toHaveLength(2);
+  });
+
+  it("finds a subpath in a code comment, and only in real comments", async () => {
+    const root = tree({
+      "sdk/src/predicates/index.ts":
+        `/**\n * \`@mcpjam/sdk/predicates\` - the predicate library.\n */\n` +
+        `import "@mcpjam/sdk/predicates"; // re-exported as @mcpjam/sdk/predicates\n` +
+        // `//` inside a string is not a comment, and the whole string is not
+        // the subpath either.
+        `export const url = "https://x.test//@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter(
+          (f: { matched: string }) => f.matched === "@mcpjam/sdk/predicates"
+        )
+        .map((f: { line: number; shape: string }) => `${f.line} ${f.shape}`)
+        .sort()
+    ).toEqual([
+      "2 comment reference",
+      "4 comment reference",
+      "4 import specifier",
+    ]);
+  });
+
+  it("lists the producer side of the subpath rename", async () => {
+    const root = tree({
+      "sdk/package.json":
+        `{\n  "exports": {\n    "./predicates": {\n` +
+        `      "types": "./dist/predicates/index.d.ts",\n` +
+        `      "import": "./dist/predicates/index.js"\n    }\n  }\n}\n`,
+      "sdk/tsup.config.ts": `export default { entry: ["src/index.ts", "src/predicates/index.ts"] };\n`,
+      "mcpjam-inspector/client/vitest.config.ts": `export const alias = ["../sdk/src/predicates/index.ts"];\n`,
+    });
+    const { status, json } = await scan(root);
+
+    // An import of the new subpath resolves only once the package exports it,
+    // so the export, its targets and its build entry are part of the rename.
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter((f: { scope: string }) => f.scope === "subpath")
+        .map(
+          (f: { file: string; line: number; from: string }) =>
+            `${f.file}:${f.line} ${f.from}`
+        )
+        .sort()
+    ).toEqual([
+      "mcpjam-inspector/client/vitest.config.ts:1 ../sdk/src/predicates/index.ts",
+      "sdk/package.json:3 ./predicates",
+      "sdk/package.json:4 ./dist/predicates/index",
+      "sdk/package.json:5 ./dist/predicates/index",
+      "sdk/tsup.config.ts:1 src/predicates/index.ts",
+    ]);
+  });
+
+  it("writes --json whole through a pipe, past the pipe buffer", async () => {
+    const body = Array.from(
+      { length: 1500 },
+      (_, i) => `type T${i} = Scorer;`
+    ).join("\n");
+    const root = tree({ "sdk/src/big.ts": `${body}\n` });
+    // `scan` parses stdout, so a truncated document fails here.
+    const { status, stdout, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(stdout.length).toBeGreaterThan(65_536);
+    expect(json.findings).toHaveLength(1500);
+  });
+
+  it("skips its own test, whose mappings are fixtures", async () => {
+    const root = tree({
+      "sdk/tests/codemod-evals-vocabulary.test.ts": `const fixture = { from: "@mcpjam/sdk/predicates" };\n`,
+      "sdk/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = await scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/a.ts",
+    ]);
+    expect(json.skipped.map((s: { file: string }) => s.file)).toContain(
+      "sdk/tests/codemod-evals-vocabulary.test.ts"
+    );
+  });
+
+  it("does not read an object-rest binding as a field", async () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        "export const f = (row: any) => { const { ...checks } = row; const { checks: real } = row; return [checks, real]; };\n",
+    });
+    const { status, json } = await scan(root);
+
+    // `...checks` gathers the remaining properties. Only `checks: real` reads
+    // the field.
+    expect(status).toBe(0);
+    expect(
+      json.findings.filter((f: { matched: string }) => f.matched === "checks")
+    ).toHaveLength(1);
+  });
+
+  it("sets aside a line its rule marks as another meaning, and lists it", async () => {
+    const root = tree({
+      "sdk/src/platform/operations.ts":
+        "export type Eval = { checks: PublicCheck[] };\n" +
+        "export type Repos = { checks: PlatformEvalCheckRepos };\n",
+      // Not an eval adapter at all: outside the rename's paths.
+      "sdk/src/platform/show-servers.ts":
+        "export const f = (report: any) => report.checks.tools;\n",
+      // A list of iteration RECORDS. With the count rows retired this is no
+      // longer anybody's rename target, so it is neither proposed nor set
+      // aside — it is simply not in the inventory.
+      "mcpjam-inspector/server/routes/v1/evals.ts":
+        "export const page = { iterations: (rows ?? []).map(toIterationDto) };\n",
+    });
+    const { status, json } = await scan(root);
+    const key = (f: { file: string; line: number; from: string }) =>
+      `${f.file}:${f.line} ${f.from}`;
+
+    expect(status).toBe(0);
+    expect(json.findings.map(key).sort()).toEqual([
+      "sdk/src/platform/operations.ts:1 checks",
+    ]);
+    expect(json.excludedByRule.map(key).sort()).toEqual([
+      "sdk/src/platform/operations.ts:2 checks",
+    ]);
+  });
+
+  it("never lets a rule hide a protected occurrence", async () => {
+    const root = tree({ "sdk/src/xaa/mint.ts": "export type S = Scorer;\n" });
+    const { status, json } = await scan(root, {
+      renames: [
+        {
+          from: "Scorer",
+          to: "Evaluator",
+          scope: "identifier",
+          notOnLinesContaining: ["Scorer"],
+        },
+      ],
+    });
+
+    expect(status).toBe(2);
+    expect(json.violations[0].reason).toBe("protected path");
+    expect(json.excludedByRule).toHaveLength(0);
+  });
+
+  it("proposes the default-assertions rename only at its re-export", async () => {
+    const root = tree({
+      "sdk/src/contract/grader-stage.ts":
+        "export const RECOMMENDED_DEFAULT_PREDICATES = [];\n",
+      "sdk/src/contract/index.ts":
+        'export { RECOMMENDED_DEFAULT_PREDICATES } from "./grader-stage.js";\n',
+    });
+    const { status, json } = await scan(root);
+
+    // The declaration stays: the backend pins that file. Only the export site
+    // gains the new name.
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter(
+          (f: { from: string }) => f.from === "RECOMMENDED_DEFAULT_PREDICATES"
+        )
+        .map((f: { file: string }) => f.file)
+    ).toEqual(["sdk/src/contract/index.ts"]);
+  });
+
+  it("has no --write, and says why rather than ignoring the flag", async () => {
+    const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
+    const result = await run(process.execPath, [
+      SCANNER,
+      "--root",
+      root,
+      "--write",
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/no --write/);
+  });
+});

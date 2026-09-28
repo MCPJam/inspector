@@ -25,6 +25,7 @@
       "@mcpjam/sdk/browser": ["../../sdk/src/browser.ts"],
       "@mcpjam/sdk/*": ["../../sdk/src/*"],
       "@mcpjam/chat-ui": ["../../chat-ui/src/index.ts"],
+      "@mcpjam/chat-ui/json-tokens": ["../../chat-ui/src/json-tokens.ts"],
       "@mcpjam/chat-ui/thread-helpers": [
         "../../chat-ui/src/thread-helpers.ts"
       ],

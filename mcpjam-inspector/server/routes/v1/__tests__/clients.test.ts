@@ -236,11 +236,11 @@ describe("v1 client routes", () => {
     });
 
     it("returns host detail and forwards the path projectId to getHost", async () => {
-      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      mockQuery({ "hosts:getHost": { ...DETAIL_ROW, versionId: "version1", versionNumber: 1 } });
       const res = await request("GET", "/api/v1/projects/p1/clients/h1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
-      expect(body).toMatchObject({ id: "h1", name: "Alpha" });
+      expect(body).toMatchObject({ id: "h1", name: "Alpha", configId: "hc1", versionId: "version1", versionNumber: 1 });
       expect(body).not.toHaveProperty("hostId");
       // Project scope is enforced inside Convex — the route must pass projectId.
       expect(convexQueryMock).toHaveBeenCalledWith("hosts:getHost", {

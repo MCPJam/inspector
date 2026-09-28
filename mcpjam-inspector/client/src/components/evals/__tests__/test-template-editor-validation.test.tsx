@@ -23,6 +23,8 @@ const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
 
+const convexClientMock = vi.hoisted(() => ({ query: vi.fn() }));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
 }));
@@ -36,6 +38,10 @@ vi.mock("@/hooks/use-ai-provider-keys", () => ({
 
 vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
@@ -53,6 +59,11 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  // ONE client, not a fresh object per render. `useConvex()` returns a stable
+  // client from context in the app, and any hook that lists it as an effect
+  // dependency (capability probes do) re-fires forever against a mock that
+  // does not — the failure lands as a heap OOM, not a React warning.
+  useConvex: () => convexClientMock,
 }));
 
 describe("getStepsBlockReason", () => {
@@ -197,7 +208,7 @@ describe("getStepsBlockReason: widget steps", () => {
           target: { testId: "" },
         }),
       ),
-    ).toBe("Pick an element target for the element visible check.");
+    ).toBe("Pick an element target for the element visible assertion.");
   });
 
   it("blocks a widget assertion on its empty view tool", () => {
@@ -205,7 +216,7 @@ describe("getStepsBlockReason: widget steps", () => {
       getStepsBlockReason(
         withAssertion({ kind: "textVisible", toolName: "", text: "Saved!" }),
       ),
-    ).toBe("Pick a view (tool) for the text visible check.");
+    ).toBe("Pick a view (tool) for the text visible assertion.");
   });
 
   it("blocks widgetToolCalled with no called tool", () => {
@@ -251,7 +262,7 @@ describe("getStepsBlockReason: widget steps", () => {
       getStepsBlockReason(
         withAssertion({ kind: "teleported", toolName: "create_view" }),
       ),
-    ).toBe("Pick a check type for the widget check.");
+    ).toBe("Pick a type for the widget assertion.");
   });
 
   it("names the turn when the case has more than one", () => {

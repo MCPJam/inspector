@@ -18,6 +18,8 @@ import {
   openPlaygroundAction,
 } from "../ui-actions";
 import {
+  PUBLISH_NATIVE,
+  PUBLISH_NATIVE_UNTRUSTED,
   asOptionalString,
   ensurePlaygroundOpen,
   errorResult,
@@ -55,6 +57,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) =>
         fromActionResult(
@@ -90,6 +93,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -145,6 +149,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -192,6 +197,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         const model = asOptionalString(args.model);
@@ -231,6 +237,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         // Free text, so accept it verbatim — including the empty string, which
@@ -269,6 +276,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async () => {
         const notOpen = await ensurePlaygroundOpen("resetChat");
@@ -297,6 +305,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async () => {
         const notOpen = await ensurePlaygroundOpen("stopGeneration");

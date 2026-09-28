@@ -42,6 +42,7 @@ import { CliError, usageError, writeResult } from "./output.js";
 export type PlatformOptions = {
   apiKey?: string;
   apiUrl?: string;
+  apiHeader?: string[];
 };
 
 export type CloudClientContext = {
@@ -133,6 +134,10 @@ export function addPlatformOptions(command: Command): Command {
     .option(
       "--api-url <url>",
       "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
+    )
+    .option(
+      "--api-header <header...>",
+      'Extra request header for a deployment behind an edge authenticator, as "Name: value" (repeatable; also MCPJAM_API_HEADERS, newline-separated)'
     );
 }
 

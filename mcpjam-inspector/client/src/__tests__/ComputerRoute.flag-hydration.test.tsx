@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
 
 // Controls the tri-state PostHog flag the route guard reads. `undefined`
@@ -8,15 +8,24 @@ import { routePaths } from "../lib/app-navigation";
 // redirect during it (only on an explicit `false`).
 let flagState: boolean | undefined = undefined;
 
-const { mockRouteContext, mockNavigate } = vi.hoisted(() => ({
+const { memberActor, mockRouteContext, mockNavigate } = vi.hoisted(() => ({
+  // The Convex actor the personal computer is gated on. Tri-state: `undefined`
+  // is the window before `users:getCurrentUser` answers.
+  memberActor: { value: true as boolean | undefined },
   mockRouteContext: {
     convexProjectId: "project-1" as string | null,
     isAuthenticated: true,
+    isGuestProjectActor: false,
   },
   mockNavigate: vi.fn(),
 }));
 
-vi.mock("../hooks/useComputersEnabled", () => ({
+vi.mock("../hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => memberActor.value,
+}));
+
+vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => flagState,
   useComputersEnabled: () => flagState === true,
@@ -41,7 +50,15 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 vi.mock("../components/computer/ComputerView", () => ({
-  ComputerView: () => <div data-testid="computer-view" />,
+  // `data-member` is the whole point of the actor assertions below: it is what
+  // becomes `effectiveProjectId`, the skip argument for the member-only status
+  // query.
+  ComputerView: (props: { isSignedInMember: boolean | undefined }) => (
+    <div
+      data-testid="computer-view"
+      data-member={String(props.isSignedInMember)}
+    />
+  ),
 }));
 
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
@@ -94,6 +111,7 @@ import { ComputerRoute } from "../App";
 
 afterEach(() => {
   flagState = undefined;
+  memberActor.value = true;
   vi.clearAllMocks();
 });
 
@@ -144,5 +162,50 @@ describe("ComputerRoute — flag hydration", () => {
     expect(nav).toBeInTheDocument();
     expect(nav).toHaveAttribute("data-to", routePaths.servers);
     expect(screen.queryByTestId("computer-view")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The personal computer is gated on the identity CONVEX HOLDS, not on the
+ * route context's eager boolean.
+ *
+ * `isGuestProjectActor` is `currentUser?.isAnonymous === true`, so for the
+ * whole time that query is in flight a GUEST reads as "not a guest" and the
+ * eager `isAuthenticated && !isGuestProjectActor` is `true`. That value used to
+ * be handed to `ComputerTabView`, and two components down it becomes
+ * `effectiveProjectId` — the skip argument for
+ * `projectComputers:getComputerStatus`. So a guest asked a member-only query
+ * and got the member pane while the backend refused it (CONVEX-19R).
+ *
+ * The route context is pinned to its worst case throughout: `isAuthenticated`
+ * true and `isGuestProjectActor` false, which is exactly what a guest looks
+ * like mid-flight. Only the actor tells them apart.
+ */
+describe("ComputerRoute — the actor behind the computer", () => {
+  beforeEach(() => {
+    flagState = true;
+    memberActor.value = true;
+    mockRouteContext.isAuthenticated = true;
+    mockRouteContext.isGuestProjectActor = false;
+  });
+
+  it("passes the unresolved actor through instead of the eager boolean", () => {
+    memberActor.value = undefined;
+    renderRoute(<ComputerRoute />);
+    expect(screen.getByTestId("computer-view").dataset.member).toBe(
+      "undefined"
+    );
+  });
+
+  it("passes a resolved guest through as a guest", () => {
+    memberActor.value = false;
+    renderRoute(<ComputerRoute />);
+    expect(screen.getByTestId("computer-view").dataset.member).toBe("false");
+  });
+
+  it("passes a resolved member through as a member", () => {
+    memberActor.value = true;
+    renderRoute(<ComputerRoute />);
+    expect(screen.getByTestId("computer-view").dataset.member).toBe("true");
   });
 });

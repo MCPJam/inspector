@@ -1,0 +1,93 @@
+---
+title: "The User-Value Chain"
+description: "Which link of the chain each check you write measures"
+icon: "link"
+---
+
+A run of one eval case walks six links, in order. MCPJam reports where it stopped being good, rather than a single pass or fail, because the six answer different questions and have different owners.
+
+| # | Link | The question it answers | What good looks like |
+|---|------|-------------------------|----------------------|
+| 1 | **Connection** | Could the client reach the server and initialize a session? | Session connected |
+| 2 | **Discovery** | Did the client receive usable primitives and metadata? | Tools and resources discovered |
+| 3 | **Selection** | Did the model choose the right tool for the request? | Right tool selected |
+| 4 | **Tool call** | Was the call made with usable arguments? | Valid call made |
+| 5 | **Response** | Did the server return data the model could use? | Usable response returned |
+| 6 | **User value** | Was the user's actual request satisfied? | Request satisfied |
+
+Most documentation describes the chain as something you read after a run. This page is the other direction: when you write a check, you are choosing a link.
+
+## Which links you can write a check for
+
+Four of the six. Every [predicate](/sdk/reference/eval-reporting#predicate-gate) you author is filed at one link, and the count per link is uneven:
+
+| Link | Checks you can author |
+|------|-----------------------|
+| Connection | none |
+| Discovery | `toolDescriptionsPresent`, `toolAnnotationsPresent`, `toolNamesUnique`, `noDeprecatedToolExposed`, `toolInputSchemasWellFormed`, `toolOutputSchemasPresent` |
+| Selection | 9 |
+| Tool call | 2 |
+| Response | 7 |
+| User value | 9 |
+
+**Connection, Discovery, Tool call, and Response each carry a built-in runner check.** The runner measures these four stages on every iteration whether or not you author anything there. Each check appears on the scorecard with a **Built-in** badge — it reports what the stage analysis decided, in the same Expected / Actual form as your evaluators, but it never gates a trial and is never a score row.
+
+- **Connection** — passes when the session initializes; fails when the configured server was reached but initialize failed.
+- **Discovery** — passes when tools/list succeeds; fails when listing tools failed. Discovery also supports optional catalog assertions (six kinds) that inspect the raw per-server catalog before deduplication.
+- **Tool call** — passes when the call returned a result; fails when the call never produced one (protocol error). Present on the scorecard only when the case gives the runner a call to measure.
+- **Response** — passes when the result came back without a tool error; fails when the server reported a tool error. Present only when the case implies a measurable response.
+
+When a stage fails for an evaluator's reason — a required assertion, a rejected argument, a widget that did not render — the runner check for that stage stays undecided rather than also showing failed. The failure already has its evaluator's row; two red rows for one failure would read as two failures.
+
+Missing or partial catalog capture at Discovery reports an evaluator error, not a pass. Scored gating catalog failures can fail Discovery; advisory failures remain visible evaluator results without failing the stage. A description-based deprecation check is advisory only.
+
+## The stage is where the evidence is filed
+
+A check's link says where its evidence is recorded. It does not assert that a failure originated there.
+
+`noToolErrors` is the clearest case. It files at **Response**, because a tool error is the server's answer. Until analyzer version 11 it filed at User value, and the same defect was counted twice: the analyzer already failed Response on an observed tool error, while the predicate row failed User value. Which link a reader saw as the first break depended on which row they looked at first.
+
+Two consequences worth keeping in mind:
+
+- A failure at one link is frequently caused upstream of it. Selection failing because two tools have near-identical descriptions is a Discovery problem wearing a Selection label.
+- Moving a check to a different link changes where historical failures are attributed, so it is a versioned analyzer change rather than an edit anyone can make locally. The three `widget*` kinds are current candidates to move to Response.
+
+## Graders that are not predicates
+
+Four graders file at a link without being checks you write in a list:
+
+| Grader | Link | What it is |
+|--------|------|------------|
+| Tool-call matcher | Selection | The `expectedToolCalls` comparison, configured by [match options](/sdk/reference/validators) rather than authored as a predicate |
+| Goal completion judge | User value | The hosted LLM judge scoring whether the request was satisfied |
+| Groundedness judge | User value | Advisory only, run on demand; it has no score definition and never decides a link |
+| Rubric checks | User value | Advisory only: one row per suite criterion or authored question, graded with the goal completion judge; never decides a link |
+
+A **gating** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
+
+## What a suite is not measuring
+
+Coverage is the question the six links exist to answer, and it is easy to write a plausible-looking suite that leaves most of the chain untouched.
+
+A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection, Discovery, Tool call, and Response each show their built-in runner check, but a runner check is not an authored assertion: it reports what the stage analysis decided and never closes the gap a predicate would fill.
+
+To cover Tool call, add `argumentsMatchToolSchema` for arguments that are valid against the tool's schema, or `toolInputMatches` for input that carries what the request asked for — every pattern matching within one call, with `min` and `max` counting matching calls. On its own, a `toolInputMatches` whose tool was never called also files at Tool call; pair it with `toolCalledWith` so that case fails at Selection first. Its output-side twin, `toolResultMatches`, files at Response: every pattern within one result, with `min` and `max` counting matching results. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner check.
+
+Two habits keep coverage honest:
+
+- Read the chain on a passing run, not only a failing one. Six links reading `notMeasured` is not the same as six links passing, and only one of those is worth shipping on.
+- Treat a link with no check as unmeasured rather than fine. `notMeasured` is an absence, and absence is not a pass.
+
+## Observations never decide a link
+
+Five kinds are marked **Observation** in the reference tables: `noEndingQuestion`, `noRepeatedIdenticalCall`, `noDeprecatedToolCalled`, `toolErrorNamesInput` and `fullPageHasContinuation`.
+
+Each is a heuristic that can be right about what it saw and wrong about what it means. A poll loop and a wasteful retry are the same shape; a full page is not proof that more results exist; "Rate limited. Retry in 30 seconds." names no input key and is a good error message. So they carry one rule everywhere: `role: "advisory"` is required, a required one is refused when written, and they are recorded beside a verdict without changing it.
+
+They still file at a link, which is what places them in the right group when you are reading what a suite measures. They do not make that link pass or fail.
+
+## Where to go next
+
+- [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) — every kind, its fields, and the link it measures
+- [Running evals](/sdk/concepts/running-evals) — authoring a suite and reading its results
+- [Validators](/sdk/reference/validators) — the tool-call matcher that files at Selection

@@ -9,13 +9,13 @@ import {
 import type { ShareAccessOption } from "@/components/sharing/share-types";
 
 const PRESETS: readonly ShareAccessOption[] = [
-  { value: "project_members", label: "Project members", description: "" },
+  { value: "project_members", label: "Team members", description: "" },
   { value: "invited_only", label: "Invited users only", description: "" },
   { value: "anyone_with_link", label: "Anyone with the link", description: "" },
 ];
 
 describe("share-mode-ceiling", () => {
-  it("ranks modes from project members to anyone with the link", () => {
+  it("ranks modes from team members to anyone with the link", () => {
     expect(SHARE_MODE_RANK.project_members).toBe(0);
     expect(SHARE_MODE_RANK.invited_only).toBe(1);
     expect(SHARE_MODE_RANK.anyone_with_link).toBe(2);

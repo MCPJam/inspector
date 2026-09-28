@@ -10,13 +10,19 @@ const deleteComputer = vi.fn(async () => ({ deleted: true }));
 const hibernateComputer = vi.fn(async () => ({ hibernated: true }));
 const mintToken = vi.fn(async () => ({ token: "t", expiresAt: 0 } as never));
 let mockStatus: ComputerViewModel | null | undefined;
+let statusQueryArg: string | null | undefined;
 let mockUsage: ComputerUsageView | null | undefined;
 let mockDataPlane:
   | { localConfigured: boolean; remoteDataPlaneUrl: string | null }
   | undefined;
 
 vi.mock("@/hooks/useProjectComputer", () => ({
-  useComputerStatus: () => mockStatus,
+  useComputerStatus: (projectId: string | null) => {
+    // Recorded, not just returned: `null` here IS the skip, and it is the only
+    // thing standing between a guest and `projectComputers:getComputerStatus`.
+    statusQueryArg = projectId;
+    return mockStatus;
+  },
   useComputerUsage: () => mockUsage,
   useReserveComputer: () => reserve,
   useDeleteComputer: () => deleteComputer,
@@ -70,6 +76,7 @@ import { ComputerView } from "../ComputerView";
 afterEach(() => {
   vi.clearAllMocks();
   mockStatus = undefined;
+  statusQueryArg = undefined;
   mockUsage = undefined;
   mockEnvironments = [];
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
@@ -97,6 +104,40 @@ function usage(overrides: Partial<ComputerUsageView> = {}): ComputerUsageView {
 mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
 
 describe("ComputerView", () => {
+  /**
+   * The window `useIsMemberActor` exists for. `isGuestProjectActor` is
+   * `currentUser?.isAnonymous === true`, so while `users:getCurrentUser` is in
+   * flight a GUEST reads as "not a guest" and the eager member boolean is
+   * `true`. That boolean used to arrive here and become `effectiveProjectId`,
+   * which is the skip argument for the member-only status query — so a guest
+   * asked, and got the member pane while the backend refused (CONVEX-19R).
+   *
+   * `undefined` is the honest third answer, and neither face is right for it:
+   * failing closed to the sign-in prompt tells a signed-in member to sign in.
+   */
+  it("skips the status query while the actor is unresolved", () => {
+    render(<ComputerView projectId="p1" isSignedInMember={undefined} />);
+    expect(statusQueryArg).toBeNull();
+  });
+
+  it("shows neither face while the actor is unresolved", () => {
+    const { queryByText, getByText } = render(
+      <ComputerView projectId="p1" isSignedInMember={undefined} />
+    );
+    expect(queryByText(/Sign in to use a personal computer/i)).toBeNull();
+    expect(getByText(/Checking your account/i)).toBeTruthy();
+  });
+
+  it("asks for the status once the actor resolves to a member", () => {
+    render(<ComputerView projectId="p1" isSignedInMember />);
+    expect(statusQueryArg).toBe("p1");
+  });
+
+  it("keeps the status query skipped for a resolved guest", () => {
+    render(<ComputerView projectId="p1" isSignedInMember={false} />);
+    expect(statusQueryArg).toBeNull();
+  });
+
   it("prompts to sign in when unauthenticated with an actionable Sign in button", () => {
     const { getByText, getByRole } = render(
       <ComputerView projectId="p1" isSignedInMember={false} />

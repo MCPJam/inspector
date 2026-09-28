@@ -62,6 +62,93 @@ const reportingSuite = new EvalSuite({
 
 ## Methods
 
+### runWithClient()
+
+Run code-authored tests with the latest saved client in your project:
+
+```typescript
+import { EvalSuite, EvalTest, MCPClientManager } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  local: { url: "http://localhost:3000/mcp" },
+});
+const suite = new EvalSuite({ name: "Saved client checks" });
+suite.add(new EvalTest({
+  id: "list_tools",
+  name: "Can use my server",
+  test: async (client) => {
+    const result = await client.run("Use the server to list the available items.");
+    return result.text.length > 0;
+  },
+}));
+
+try {
+  await manager.connectToServer("local");
+  await suite.runWithClient({
+    client: "My client", // A saved client name or ID
+    projectId: process.env.MCPJAM_PROJECT_ID!,
+    apiKey: process.env.MCPJAM_API_KEY!,
+    manager,
+  }, { iterations: 3, runTimeoutMs: 120_000 });
+} finally {
+  await manager.disconnectAllServers();
+}
+```
+
+The client is fetched once when the run starts. Its model, system prompt,
+temperature, and supported tool visibility settings stay fixed for every test
+and iteration. Starting another run fetches the latest saved settings again.
+Client lookup and tool setup share the run's timeout and cancellation signal.
+
+Results are saved to the selected project with the client name and version used.
+The results table shows the name; hover or focus shows **My client · v3**.
+Later edits, renames, and deletion do not change previously saved results.
+Set `mcpjam.enabled: false` to run without uploading results.
+
+`runWithClient` uses MCPJam inference for Anthropic Claude and OpenAI GPT-5 models, billed to
+that project. It requires a backend that returns saved client versions. The
+optional `baseUrl` is the MCPJam app origin for a custom deployment.
+
+Your code owns server connections, credentials, and MCP connection settings;
+the client's saved server IDs and connection overrides are not applied to those
+connections. The first release does not launch cloud computers, browsers, saved
+skills, built-in tools, progressive tool discovery, or interactive approvals.
+Clients requiring these features fail before tests execute. Existing
+`run(executor)` calls keep their current behavior.
+
+#### Several clients at once
+
+Pass a list to run the same cases against each saved client:
+
+```typescript
+const result = await suite.runWithClient({
+  client: ["Claude Opus", "chatGPT Astra"],
+  projectId: process.env.MCPJAM_PROJECT_ID!,
+  apiKey: process.env.MCPJAM_API_KEY!,
+  manager,
+}, { iterations: 3, runTimeoutMs: 300_000 });
+
+result.clients["Claude Opus"].aggregate.accuracy;
+result.clients["Claude Opus"].receipt.report?.runId;
+result.failures; // clients whose setup or run threw
+```
+
+- The clients run in parallel and share one `runTimeoutMs`.
+- Each client uploads its own run. The runs share one run number and appear
+  together as a run group in MCPJam, the same as a multi-client launch from the
+  app. Up to 10 clients.
+- One client failing does not cancel the others; it lands in `failures`. The
+  call throws only if every client fails, or if any fails under
+  `mcpjam.strict`.
+- The top-level `aggregate` covers every client that ran, and `tests` is keyed
+  `"<client> / <test>"`.
+- `mcpjam.externalRunId` becomes a prefix: each client's run is
+  `<id>:<client>`, so a retry lands on the same runs.
+- An MCPJam backend that predates run groups stores the runs without grouping
+  them.
+
+A single string keeps today's single-client result: no `clients`, `failures` or `runGroupId`, and setup errors throw as before.
+
 ### add()
 
 Adds a test to the suite.
@@ -431,7 +518,11 @@ async function main() {
 
 ## Patterns
 
-### CI Quality Gate
+### CI gate on suite accuracy
+
+`accuracy()` is the suite-wide rate: one number over every iteration the run
+executed. Gating on it asks the same question a hosted suite's **suite accuracy
+threshold** asks.
 
 ```typescript
 await suite.run(agent, { iterations: 30 });
@@ -442,6 +533,29 @@ if (suite.accuracy() < 0.90) {
 }
 
 console.log("✅ All quality gates passed");
+```
+
+### CI gate on per-case pass rates
+
+A per-test threshold asks the OTHER question — the one a hosted suite's
+**per-case pass rate** asks — and the two do not agree. Nine of ten tests
+always passing and one always failing gives a suite accuracy of 0.9, which
+clears the gate above, while the tenth test's own rate is 0. Gate on whichever
+question you actually mean; a fraction is not a percentage of the other one.
+
+```typescript
+await suite.run(agent, { iterations: 30 });
+
+// Every test must clear its own bar, whatever the suite-wide rate says.
+const belowThreshold = suite
+  .getAll()
+  .filter((test) => test.accuracy() < 0.9)
+  .map((test) => test.getName());
+
+if (belowThreshold.length > 0) {
+  console.error(`❌ Below 90% per case: ${belowThreshold.join(", ")}`);
+  process.exit(1);
+}
 ```
 
 ### Per-Test Thresholds
@@ -491,3 +605,6 @@ for (const { model, key } of providers) {
 - [EvalTest Reference](/sdk/reference/eval-test) - Individual test API
 - [Saving Eval Results](/sdk/reference/eval-reporting) - Save results to MCPJam
 - [Testing Across Providers](/sdk/concepts/multi-provider) - Compare LLMs
+
+
+See [Reliable evals in CI](/sdk/concepts/enterprise-evals) for canonical evaluators, reporting receipts, explicit limits, metadata compatibility, and migration guidance.

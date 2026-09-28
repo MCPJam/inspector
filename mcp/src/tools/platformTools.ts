@@ -7,6 +7,10 @@
  * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
  * helpers here.
  */
+import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 import {
   callServerToolOperation,
   renderServerWidgetOperation,
@@ -35,16 +39,29 @@ import {
   createProjectOperation,
   updateProjectOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   cancelEvalRunOperation,
+  backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
-  getScenarioOperation,
+  getStudyOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
   getEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
@@ -52,18 +69,24 @@ import {
   ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
+  describePlatformRefusal,
   isPlatformApiError,
-  listScenariosOperation,
+  platformRefusalHint,
+  listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listImagesOperation,
   getImageOperation,
@@ -97,51 +120,53 @@ import {
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  listSecretsOperation,
+  getSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   listClientsOperation,
   getClientOperation,
   createClientOperation,
@@ -166,6 +191,7 @@ import {
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
+  PLATFORM_WIDGETS_ENABLED,
   PLATFORM_WIDGET_RESOURCE_URIS,
   tagPlatformWidgetPayload,
   type PlatformWidgetView,
@@ -204,6 +230,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // do with it is produce a private link for the requester to open.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -239,6 +266,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // for asking ahead of that decision, same rationale as `get_capabilities`.
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  // The suite's settings HISTORY, beside the edit that writes it: "who changed
+  // this, and when" is the first question after an unexplained result, and its
+  // `revisionNumber` is what makes an `update_eval_suite` a compare-and-set.
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -249,7 +280,17 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
+  // The DENOMINATOR half of the chain story, beside the run read that is
+  // the numerator half. `get_eval_run` says what one trial did and where it
+  // stopped; these say how much of the run was measured at all — and until
+  // now nothing outside the web app could ask.
+  getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already
   // carries `gateWaiver`, so withholding the dedicated read would hide nothing
@@ -260,7 +301,22 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  // The description-rewrite experiment, beside the judge request it most
+  // resembles: propose and start are spends with a stated cap, so they carry
+  // the same risk metadata the judge request does, and the read closes the
+  // loop an agent opened. Both routes are wired now (PR-E3), so the earlier
+  // catalog exclusion no longer applies.
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
+  // The pre-rename spellings of the two above, still advertised so an agent
+  // already calling one keeps its tool. `check` in these names is a GITHUB
+  // check, never a case's grading check; the new names say so out loud.
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
@@ -288,8 +344,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // agent that cannot list them cannot use the tools that demand them.
   listProjectSkillsOperation,
   getProjectSkillOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
+  getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   // Agent Playground: drive a conversation against a project's MCP servers
@@ -302,6 +358,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // remain deliberately narrow elsewhere, because taking an id the caller
   // produced is not the same claim as enumerating an org's conversations.
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
 
@@ -329,51 +387,57 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  // PROJECT SECRETS — the metadata reads plus the revoke. The two write ops
+  // that carry a plaintext are in EXCLUDED_FROM_CATALOG; `delete_secret` is
+  // here because revoking a leaked credential is exactly the thing an
+  // unattended caller should be able to do without a human in the loop.
+  listSecretsOperation,
+  getSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   // Clients — the product's own primary noun, and until now the one thing an
   // MCP agent could read nowhere and write nowhere. The two reads plus the
   // four bounded writes; `delete_client` stays out (see the exclusion map).
@@ -468,7 +532,7 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
   // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
-  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // rotate is already `rotate_study_link`. The I5 operations span three
   // resource types and belong with the Share dialog / agent-op registry until
   // this catalog grows a dedicated share group — same decision as CLI
   // `op-bindings.ts`.
@@ -485,29 +549,69 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   revoke_eval_gate_waiver:
     "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
   get_share_settings:
-    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+    "Scenario share already appears on get_study. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
   set_share_mode:
-    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+    "Scenario exposure is already update_study. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
   rotate_share_link:
-    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
+    "Scenario rotation is already rotate_study_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
+  // PROJECT SECRET WRITES. Excluded for a reason that has nothing to do with
+  // how destructive they are, and everything to do with their INPUT: the
+  // plaintext credential is an argument, so it would transit model context and
+  // be written into chat transcripts before any approval card could render.
+  // An approval that runs after the value has already been logged is not an
+  // approval. The reads (list_secrets, get_secret) are in the catalog — they
+  // return metadata only and cannot produce a value.
+  create_secret:
+    "The plaintext value is an argument, so it would transit model context and be written into chat transcripts before any approval could run — an approval that fires after the credential is already logged is not one. Available on REST, the SDK and the CLI, where the caller controls where the value comes from. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  update_secret:
+    "Same as create_secret: a rotation carries the new plaintext as an argument, so it would reach model context and the transcript before any approval could run. Available on REST, the SDK and the CLI. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  // TRACE DESTINATIONS. The two credential writes are excluded on exactly the
+  // `create_secret` argument above: the vendor headers are arguments, so they
+  // would transit model context and be written into chat transcripts before
+  // any approval card could render.
+  //
+  // The other eight — including the three metadata READS, which is where this
+  // departs from the secrets precedent — are excluded because the whole
+  // surface is organization administration whose effects land in a third
+  // party's system. A catalog that could read an organization's vendor
+  // bindings but not act on them would be an admin console with the buttons
+  // removed; the Observability section in organization settings is the view,
+  // and REST/SDK/CLI are the programmatic route.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would transit model context and be written into chat transcripts before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same pre-approval exposure. Available on REST, the SDK and the CLI.",
+  delete_trace_destination:
+    "Discards a live export and its stored credentials, and cannot retract what has already been delivered to the vendor. An organization-admin decision, available on REST, the SDK and the CLI.",
+  pause_trace_destination:
+    "Nothing is queued while a destination is paused, so an unattended pause becomes a permanent gap in a customer's observability. Available on REST, the SDK and the CLI.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something about it was wrong. Whether the cause is fixed is a judgement about a third party's system. Available on REST, the SDK and the CLI.",
+  test_trace_destination:
+    "An outbound call to a third party's intake on the organization's credentials. Available on REST, the SDK and the CLI.",
+  backfill_trace_destination:
+    "Can queue a month of an organization's history at a vendor that bills on ingest. Available on REST, the SDK and the CLI.",
+  list_trace_destinations:
+    "Organization observability configuration — an admin surface, not a catalog one. Available on REST, the SDK and the CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: admin configuration. Available on REST, the SDK and the CLI.",
+  list_trace_destination_backfills:
+    "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name),
+  ALL_OPERATIONS.map((operation) => operation.name)
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name),
+  (name) => !allOperationNames.has(name)
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(
-      EXCLUDED_FROM_CATALOG,
-      operation.name,
-    ),
+    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -515,10 +619,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ",",
+      ","
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`,
+      .join(",")}`
   );
 }
 
@@ -562,8 +666,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
-  ).map((operation) => operation.name),
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
+  ).map((operation) => operation.name)
 );
 
 /**
@@ -585,10 +689,36 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   // not retryable), never looser.
   renderServerWidgetOperation.name,
   deletePersonaOperation.name,
-  archiveJourneyOperation.name,
+  // A HARD delete of a credential: the row and the ciphertext both go, and a
+  // second call cannot find the row to report the same outcome.
+  deleteSecretOperation.name,
+  archiveGoalOperation.name,
   archiveSwarmOperation.name,
-  removeUserTestingMemberOperation.name,
-  rotateUserTestingLinkOperation.name,
+  removeStudyMemberOperation.name,
+  rotateStudyLinkOperation.name,
+]);
+
+/**
+ * Non-destructive writes a client MAY safely repeat.
+ *
+ * The default for this branch is `false`, and for its usual inhabitants that is
+ * right: starting a run or creating a suite twice produces two of them, so a
+ * client that auto-retried a dropped response would silently double the work.
+ *
+ * Cancelling is the opposite shape. The backend treats cancelling an
+ * already-terminal request as a no-op that returns the row rather than an
+ * error, so a repeat after a dropped response lands on exactly the state the
+ * first call produced. Declaring that is not a nicety: `idempotentHint: false`
+ * tells a client NOT to retry, which on a lost response leaves the request
+ * holding one of the owner's connection slots — the precise failure this
+ * operation exists to clear.
+ *
+ * OPT-IN, one name at a time. Idempotency is a promise about a specific
+ * handler's behavior, and the honest default for anything not examined is the
+ * conservative `false` above.
+ */
+const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
+  cancelProjectServerConnectionOperation.name,
 ]);
 
 /**
@@ -607,26 +737,47 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listScenariosOperation.name]: "scenarios",
-  [getScenarioOperation.name]: "scenario",
+  [listStudiesOperation.name]: "scenarios",
+  [getStudyOperation.name]: "scenario",
+};
+
+/**
+ * Advice that belongs to the CALLER's situation, not the operation's contract.
+ *
+ * Kept off the SDK schema on purpose: a CLI user passes exact flags and reads
+ * the result themselves, so a hint would be noise in `--help`. A model calling
+ * the same operation has to be told what to do with a partial outcome, or it
+ * reaches for the only move it knows — send everything again.
+ */
+const OPERATION_HINTS: Readonly<Record<string, string>> = {
+  [importEvalCasesOperation.name]:
+    "Send the whole document as `content` ONCE. If the reply lists `skipped` cases, do not re-send the document: import only that case's corrected text, or give the person `reviewUrl` to finish it in the app. Re-importing the document re-authors and re-bills every case in it, and a reworded case is not recognised as a duplicate.",
 };
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext,
+  context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
-    const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
+    // `PLATFORM_WIDGETS_ENABLED` off ⇒ no view, so every tool takes the plain
+    // branch below and registers with no UI resource and no tagged payload.
+    const view = PLATFORM_WIDGETS_ENABLED
+      ? PLATFORM_TOOL_WIDGET_VIEWS[operation.name]
+      : undefined;
     registrar.registerTool(
       operation.name,
       {
         title: operation.title,
-        description: operationDescription(operation),
+        description: OPERATION_HINTS[operation.name]
+          ? `${operationDescription(operation)} HINT: ${
+              OPERATION_HINTS[operation.name]
+            }`
+          : operationDescription(operation),
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined,
+      view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
 }
@@ -641,7 +792,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView,
+  view: PlatformWidgetView
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -654,13 +805,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload),
+        tagPlatformWidgetPayload(view, payload)
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>,
+  operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -685,8 +836,13 @@ export function operationAnnotations(
     return { readOnlyHint: false };
   }
   // Remaining non-read operations (run_eval_suite, create_eval_suite) create
-  // resources but never destroy or overwrite them.
-  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+  // resources but never destroy or overwrite them — and creating twice makes
+  // two, so only the names that have been checked claim a safe repeat.
+  return {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
+  };
 }
 
 /**
@@ -703,7 +859,7 @@ export function operationAnnotations(
  * before the call, not from the invoice.
  */
 export function operationDescription(
-  operation: PlatformOperation<unknown, unknown>,
+  operation: PlatformOperation<unknown, unknown>
 ): string {
   return operation.risk === "spend"
     ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
@@ -714,7 +870,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object,
+  transformPayload?: (payload: TOutput) => object
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -728,6 +884,20 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
+    // Declared on every eval-run launch this call may make, so a run started
+    // by an agent reads as MCP rather than as the generic API badge every
+    // hosted launch used to show. `client` names WHICH agent, when the request
+    // said; see `PlatformToolContext.callerUserAgent` on why it is the
+    // request's user-agent and not the `initialize` handshake's `clientInfo`.
+    //
+    // Set on the CLIENT rather than on the operation's input, deliberately: an
+    // operation's `inputSchema` is exposed verbatim as the MCP tool's own
+    // input, so a launcher field there would let the agent whose run it is
+    // choose its own badge.
+    launcher: {
+      kind: "mcp",
+      ...(context.callerUserAgent ? { client: context.callerUserAgent } : {}),
+    },
   });
 
   try {
@@ -761,7 +931,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error),
+      errorStructuredContent(error)
     );
   }
 }
@@ -772,10 +942,21 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown,
+  error: unknown
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
-    return { error: { code: error.code, message: error.message } };
+    // A usage-limit refusal also carries WHEN to come back and whether credits
+    // would help — allowlisted by `describePlatformRefusal`, never the raw
+    // server envelope — so an agent can wait instead of looping or suggesting
+    // a top-up that cannot lift it.
+    const refusal = describePlatformRefusal(error);
+    return {
+      error: {
+        code: error.code,
+        message: error.message,
+        ...(refusal ? { refusal } : {}),
+      },
+    };
   }
   return undefined;
 }
@@ -784,7 +965,12 @@ function describeOperationError(error: unknown): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
-    return error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    const base =
+      error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    // Hosts vary in whether the model sees `structuredContent`, so the retry
+    // guidance is in the text too.
+    const refusal = describePlatformRefusal(error);
+    return refusal ? `${base} ${platformRefusalHint(refusal)}` : base;
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -809,6 +995,7 @@ export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
 export const MODEL_CONTRACT_JSON_CAP = 600;
 
 type EnvelopeLike = {
+  journeyFindings?: SwarmJourneyFindings | null;
   schemaVersion: number;
   findings: Array<Record<string, unknown>>;
   truncation: {
@@ -834,9 +1021,103 @@ function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
   );
 }
 
-function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+export const MODEL_MAX_SESSION_IDS_PER_FINDING = 5;
+export const MODEL_EXCERPT_CAP = 400;
+export const MODEL_PHRASE_CAP = 240;
+
+/**
+ * Cut `text` to at most `cap` characters, ellipsis included, preferring the
+ * last word boundary. Text with no space to cut at is hard-cut rather than
+ * collapsed to a bare ellipsis.
+ */
+export function clampAtWord(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const head = text.slice(0, cap - 1);
+  const space = head.lastIndexOf(" ");
+  return (space > 0 ? head.slice(0, space) : head).trimEnd() + "…";
+}
+
+const JOURNEY_BASIS_RANK: Record<SwarmJourneyFinding["basis"], number> = {
+  verifiedMechanism: 0,
+  populationFact: 1,
+  sessionReport: 2,
+};
+
+/**
+ * Compact a swarm run's `journeyFindings` the way {@link compactEnvelope}
+ * compacts the envelope's own findings: verified mechanisms first, a head
+ * slice, evidence capped per finding, model phrases clamped. Personas and
+ * populations are never touched: they are the counts every sentence rests on.
+ */
+export function compactJourneyFindings(value: SwarmJourneyFindings) {
   let omittedEvidence = 0;
   let contractTruncated = false;
+  const clampPhrase = (phrase: string | null, cap: number) => {
+    if (phrase === null || phrase.length <= cap) return phrase;
+    contractTruncated = true;
+    return clampAtWord(phrase, cap);
+  };
+  const findings = [...value.findings]
+    .sort((a, b) => JOURNEY_BASIS_RANK[a.basis] - JOURNEY_BASIS_RANK[b.basis])
+    .slice(0, MODEL_MAX_FINDINGS)
+    .map((finding) => {
+      omittedEvidence += Math.max(
+        0,
+        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+      );
+      omittedEvidence += Math.max(
+        0,
+        finding.sessionIds.length - MODEL_MAX_SESSION_IDS_PER_FINDING
+      );
+      let reportExcerpt = finding.reportExcerpt;
+      if (reportExcerpt) {
+        omittedEvidence += Math.max(
+          0,
+          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+        );
+        reportExcerpt = {
+          actual: clampPhrase(reportExcerpt.actual, MODEL_EXCERPT_CAP)!,
+          // This object is REBUILT rather than spread, so a field left out
+          // here is silently dropped from everything the model reads.
+          ...(reportExcerpt.account
+            ? {
+                account: clampPhrase(reportExcerpt.account, MODEL_EXCERPT_CAP)!,
+              }
+            : {}),
+          citations: reportExcerpt.citations.slice(
+            0,
+            MODEL_MAX_EVIDENCE_PER_FINDING
+          ),
+        };
+      }
+      return {
+        ...finding,
+        sessionIds: finding.sessionIds.slice(
+          0,
+          MODEL_MAX_SESSION_IDS_PER_FINDING
+        ),
+        citations: finding.citations.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING),
+        outcomePhrase: clampPhrase(finding.outcomePhrase, MODEL_PHRASE_CAP),
+        mechanismPhrase: clampPhrase(finding.mechanismPhrase, MODEL_PHRASE_CAP),
+        fixPhrase: clampPhrase(finding.fixPhrase, MODEL_PHRASE_CAP),
+        reportExcerpt,
+      };
+    });
+  const omittedFindings = value.findings.length - findings.length;
+  return {
+    value: { ...value, findings },
+    omittedFindings,
+    omittedEvidence,
+    contractTruncated,
+  };
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  const journey = envelope.journeyFindings
+    ? compactJourneyFindings(envelope.journeyFindings)
+    : null;
+  let omittedEvidence = journey?.omittedEvidence ?? 0;
+  let contractTruncated = journey?.contractTruncated ?? false;
   // Findings arrive ready-first from the producer, so a head slice keeps
   // every server-ready finding before any investigation is dropped.
   const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
@@ -866,13 +1147,15 @@ function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
     }
     return next;
   });
-  const omittedFindings = envelope.findings.length - kept.length;
+  const omittedFindings =
+    envelope.findings.length - kept.length + (journey?.omittedFindings ?? 0);
   if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
     return envelope;
   }
   return {
     ...envelope,
     findings: kept,
+    ...(journey ? { journeyFindings: journey.value } : {}),
     truncation: {
       truncated: true,
       omittedFindings: envelope.truncation.omittedFindings + omittedFindings,
@@ -948,7 +1231,7 @@ function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>,
+  structuredContent?: Record<string, unknown>
 ) {
   return {
     isError: true,

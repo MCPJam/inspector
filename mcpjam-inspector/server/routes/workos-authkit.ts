@@ -7,10 +7,17 @@ import {
   randomBytes,
 } from "crypto";
 import { getOrCreateLocalSecret } from "../utils/local-secret-store.js";
+import { resolveWorkosApiBaseUrl } from "../services/workos-api-base.js";
+import { resolveWorkosClientId } from "../services/authkit-jwt.js";
+import { revokeAuthKitSession } from "../services/auth-session-revocation.js";
+import { logger } from "../utils/logger.js";
 
-const WORKOS_AUTHENTICATE_URL =
-  "https://api.workos.com/user_management/authenticate";
-const WORKOS_BASE_URL = "https://api.workos.com";
+// Resolved per call, not captured at module load: a test stubs
+// `WORKOS_API_BASE_URL` long after this module is imported. Unset, both are
+// exactly the api.workos.com URLs they were before.
+const workosBaseUrl = () => resolveWorkosApiBaseUrl(process.env).baseUrl;
+const workosAuthenticateUrl = () =>
+  `${workosBaseUrl()}/user_management/authenticate`;
 const WORKOS_SESSION_COOKIE = "__Host-mcpjam_workos_session";
 const LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_sessions";
 const LEGACY_LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_session";
@@ -89,7 +96,7 @@ function unsealValue(value: string | undefined): unknown {
 
   try {
     const [iv, tag, ciphertext] = parts.map((part) =>
-      Buffer.from(part, "base64url")
+      Buffer.from(part, "base64url"),
     );
     const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), iv);
     decipher.setAuthTag(tag);
@@ -153,20 +160,25 @@ function getClientOrigin(c: Context): string {
 }
 
 function getClientOriginKey(c: Context): string {
-  return createHash("sha256").update(getClientOrigin(c)).digest("hex").slice(0, 16);
+  return createHash("sha256")
+    .update(getClientOrigin(c))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function getLocalSessionJar(c: Context): StoredWorkosSessionJar {
-  return parseStoredSessionJar(unsealValue(getCookie(c, LOCAL_WORKOS_SESSION_COOKIE)));
+  return parseStoredSessionJar(
+    unsealValue(getCookie(c, LOCAL_WORKOS_SESSION_COOKIE)),
+  );
 }
 
 function pruneLocalSessions(
-  sessions: Record<string, StoredWorkosSession>
+  sessions: Record<string, StoredWorkosSession>,
 ): Record<string, StoredWorkosSession> {
   return Object.fromEntries(
     Object.entries(sessions)
       .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_LOCAL_SESSIONS)
+      .slice(0, MAX_LOCAL_SESSIONS),
   );
 }
 
@@ -178,12 +190,17 @@ function setSessionCookies(c: Context, session: StoredWorkosSession) {
       ...jar.sessions,
       [key]: session,
     });
-    setCookie(c, LOCAL_WORKOS_SESSION_COOKIE, sealValue({ version: 1, sessions }), {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: COOKIE_MAX_AGE,
-    });
+    setCookie(
+      c,
+      LOCAL_WORKOS_SESSION_COOKIE,
+      sealValue({ version: 1, sessions }),
+      {
+        httpOnly: true,
+        sameSite: "Lax",
+        path: "/",
+        maxAge: COOKIE_MAX_AGE,
+      },
+    );
     setCookie(c, LEGACY_LOCAL_WORKOS_SESSION_COOKIE, "", {
       path: "/",
       maxAge: 0,
@@ -198,7 +215,10 @@ function setSessionCookies(c: Context, session: StoredWorkosSession) {
     });
   }
 
-  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "true", {
+  // authkit-js (>= 0.20) only trusts "1" or a value naming the client id;
+  // any other value makes it skip the on-load refresh, so every reload
+  // lands signed out.
+  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "1", {
     secure: !isLocalHttpUrl(c.req.url),
     sameSite: "Lax",
     path: "/",
@@ -232,7 +252,7 @@ function clearSessionCookies(c: Context) {
           sameSite: "Lax",
           path: "/",
           maxAge: COOKIE_MAX_AGE,
-        }
+        },
       );
     } else {
       setCookie(c, LOCAL_WORKOS_SESSION_COOKIE, "", {
@@ -268,29 +288,108 @@ function getStoredSession(c: Context) {
   return parseStoredSession(unsealValue(getCookie(c, WORKOS_SESSION_COOKIE)));
 }
 
-async function postToWorkos(body: Record<string, unknown>) {
-  return fetch(WORKOS_AUTHENTICATE_URL, {
+async function postToWorkos(
+  body: Record<string, unknown>,
+  init: { signal?: AbortSignal } = {},
+) {
+  return fetch(workosAuthenticateUrl(), {
     method: "POST",
     headers: {
       Accept: "application/json, text/plain, */*",
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: init.signal,
   });
+}
+
+/** Bound on the logout-time refresh below; the redirect waits on it. */
+const LOGOUT_REVOCATION_REFRESH_TIMEOUT_MS = 3_000;
+
+/**
+ * Revoke, in Convex, the session this browser is signing out of (MJ-011).
+ *
+ * A logout also revokes the session in Convex, so the access tokens it issued
+ * stop working there too. The backend revokes a session only for the token
+ * that asks, and this request carries no access token — a logout is a
+ * top-level navigation. What it does carry is the sealed
+ * refresh-token cookie, so the session is proven the only way this route can:
+ * refresh it once, and revoke with the token that comes back. The
+ * `session_id` in the query string is NOT used for this; it is caller-supplied
+ * and would let anyone name a session to sign out.
+ *
+ * The Inspector client already revokes before calling `signOut()`; this covers
+ * a logout that reaches the proxy any other way. Best effort and bounded: the
+ * logout below always proceeds.
+ */
+async function revokeStoredSessionBeforeLogout(c: Context): Promise<void> {
+  const stored = getStoredSession(c);
+  const clientId = resolveWorkosClientId();
+  if (!stored || !clientId) return;
+  try {
+    const response = await postToWorkos(
+      {
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: stored.refreshToken,
+      },
+      { signal: AbortSignal.timeout(LOGOUT_REVOCATION_REFRESH_TIMEOUT_MS) },
+    );
+    if (!response.ok) return;
+    const body = (await response.json()) as { access_token?: unknown };
+    if (typeof body.access_token !== "string") return;
+    const result = await revokeAuthKitSession(body.access_token);
+    if (!result.revoked) {
+      logger.info("Logout did not revoke the session in Convex", {
+        event: "auth.logout_session_revoke_skipped",
+        reason: result.reason,
+      });
+    }
+  } catch (error) {
+    logger.info("Logout could not refresh the session to revoke it", {
+      event: "auth.logout_session_revoke_skipped",
+      reason: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
+/**
+ * Whether a non-OK WorkOS refresh response leaves the stored token dead.
+ *
+ * Clearing is destructive in a way nothing above can undo: this jar holds the
+ * ONLY copy of the refresh token, so wiping it on a 502 converts one bad
+ * second at WorkOS into a forced sign-in. That is the failure class the
+ * client's retry ladder (`fetchTokenWithRetry` in `unified-convex-auth.ts`)
+ * exists to absorb — but no retry can help once the credential itself is gone:
+ * the next attempt finds an empty jar, gets "No local WorkOS session", and
+ * AuthKit treats that as terminal and fires `onRefreshFailure`.
+ *
+ * A rejected grant is the opposite case and must still clear. WorkOS answers
+ * 400 for a refresh token that is expired, revoked, or already rotated, and
+ * keeping one would leave `workos-has-session` set so every subsequent load
+ * re-enters the same refusal.
+ *
+ * A `fetch` rejection (offline, DNS, connection reset) never reaches here: it
+ * throws before any cookie is touched, which lands on the same side of this
+ * line by construction.
+ */
+function isTransientWorkosFailure(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
 }
 
 function redirectToWorkos(c: Context, path: string) {
   const source = new URL(c.req.url);
-  const target = new URL(path, WORKOS_BASE_URL);
+  const target = new URL(path, workosBaseUrl());
   target.search = source.search;
   return c.redirect(target.toString(), 302);
 }
 
 workosAuthkitRoutes.get("/authorize", (c) =>
-  redirectToWorkos(c, "/user_management/authorize")
+  redirectToWorkos(c, "/user_management/authorize"),
 );
 
-workosAuthkitRoutes.get("/sessions/logout", (c) => {
+workosAuthkitRoutes.get("/sessions/logout", async (c) => {
+  await revokeStoredSessionBeforeLogout(c);
   clearSessionCookies(c);
   return redirectToWorkos(c, "/user_management/sessions/logout");
 });
@@ -338,7 +437,11 @@ workosAuthkitRoutes.post("/authenticate", async (c) => {
   const refreshToken = responseJson.refresh_token;
   if (response.ok && typeof refreshToken === "string") {
     setSessionCookies(c, { refreshToken, updatedAt: Date.now() });
-  } else if (!response.ok && body.grant_type === "refresh_token") {
+  } else if (
+    !response.ok &&
+    body.grant_type === "refresh_token" &&
+    !isTransientWorkosFailure(response.status)
+  ) {
     clearSessionCookies(c);
   }
 

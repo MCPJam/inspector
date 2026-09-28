@@ -72,7 +72,7 @@ describe("SuiteDashboard", () => {
         modelStats={[]}
         onTestCaseClick={() => {}}
         onRunClick={() => {}}
-      />,
+      />
     );
 
     // The run rail (master) + compare affordance, not a Runs/Cases tablist.
@@ -98,7 +98,7 @@ describe("SuiteDashboard", () => {
         modelStats={[]}
         onTestCaseClick={() => {}}
         onRunClick={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
@@ -116,10 +116,34 @@ describe("SuiteDashboard", () => {
         modelStats={[]}
         onTestCaseClick={() => {}}
         onRunClick={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
     expect(screen.queryByText("Run insights")).not.toBeInTheDocument();
+  });
+
+  it("does not special-case Monday.com suites with a report surface", () => {
+    renderWithProviders(
+      <SuiteDashboard
+        suite={{ ...suite, name: "Monday.com" }}
+        cases={[]}
+        allIterations={[]}
+        runs={[completedRun]}
+        runsLoading={false}
+        runTrendData={[]}
+        modelStats={[]}
+        onTestCaseClick={() => {}}
+        onRunClick={() => {}}
+      />
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "Monday.com reliability report" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Report" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("latest + trends per client")).toBeInTheDocument();
   });
 });

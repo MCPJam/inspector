@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock } =
+const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock, admissionMock } =
   vi.hoisted(() => ({
     mcpClientManagerMock: vi.fn(),
     disconnectAllServersMock: vi.fn(),
     localRefreshMock: vi.fn(),
+    admissionMock: vi.fn(({ fetch }) => fetch),
   }));
+
+vi.mock("../../../utils/mcp-backpressure.js", () => ({ hostedMcpBackpressureFetch: admissionMock }));
 
 // The authorization-server round trip belongs to local-oauth-refresh's own
 // tests; here it is mocked so these are about the connect path.
@@ -65,6 +68,51 @@ describe("web auth manager batching", () => {
     }
   });
 
+  it("wraps project HTTP connections before construction using backend-authenticated identity", async () => {
+    const result = (accessLevel: string) => ({
+      ok: true,
+      role: "member",
+      accessLevel,
+      permissions: { chatOnly: false },
+      serverConfig: {
+        transportType: "http",
+        url: "https://fixture.example/mcp",
+      },
+      internalLogContext: {
+        userId: "authenticated-user",
+        projectId: "project-1",
+        authMethod: "jwt",
+      },
+    });
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          enrolled: result("project_member"),
+          shared: result("shared_chat"),
+        },
+      }),
+    ) as typeof fetch;
+    await createAuthorizedManager(
+      { authMethod: "jwt" } as Parameters<typeof createAuthorizedManager>[0],
+      "bearer",
+      "project-1",
+      ["enrolled", "shared"],
+      10_000,
+    );
+    expect(admissionMock).toHaveBeenCalledTimes(1);
+    expect(admissionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        serverId: "enrolled",
+        userId: "authenticated-user",
+        fetch: expect.any(Function),
+      }),
+    );
+    expect(mcpClientManagerMock.mock.calls[0][0].enrolled.baseFetch).toBeTypeOf(
+      "function",
+    );
+  });
+
   it("surfaces the first batch failure in input order", async () => {
     global.fetch = vi.fn(async () => {
       return new Response(
@@ -106,6 +154,92 @@ describe("web auth manager batching", () => {
     });
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes an explicitly selected single connection to admission", async () => {
+    global.fetch = vi.fn(async () => Response.json({ results: { "server-1": {
+      ok: true, role: "member", accessLevel: "project_member", permissions: { chatOnly: false },
+      serverConfig: { transportType: "http", url: "https://fixture.example/mcp", useOAuth: true },
+      oauthAccessToken: "selected-token",
+    } } })) as typeof fetch;
+    await createAuthorizedManager(callerContextFromHono(mockContext), "bearer", "project-1", ["server-1"], 10_000, undefined, undefined,
+      { connectionIds: { "server-1": "selected-connection" } });
+    expect(admissionMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ serverId: "server-1", connectionId: "selected-connection" }));
+    expect(mcpClientManagerMock.mock.calls[0][0]["server-1"].requestInit.headers.Authorization).toBe("Bearer selected-token");
+  });
+
+  it("isolates each account's headers and 401 refresh target", async () => {
+    const a = "a".repeat(32),
+      b = "b".repeat(32);
+    const requests: Array<{ url: string; body: any }> = [];
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      requests.push({ url, body: JSON.parse(String(init?.body)) });
+      if (url.endsWith("/force-refresh"))
+        return Response.json({ success: true, accessToken: "fresh-b" });
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://example.com/mcp",
+              headers: {},
+              useOAuth: true,
+            },
+            oauthAccessToken: "token-a",
+            oauthConnections: [
+              {
+                connectionId: a,
+                isDefault: true,
+                label: "A",
+                accessToken: "token-a",
+              },
+              {
+                connectionId: b,
+                isDefault: false,
+                label: "B",
+                accessToken: "token-b",
+              },
+            ],
+          },
+        },
+      });
+    }) as typeof fetch;
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { multiConnection: true },
+    );
+    expect(admissionMock).toHaveBeenCalledTimes(2);
+    expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: a }));
+    expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: b }));
+    const configs = mcpClientManagerMock.mock.calls[0][0];
+    expect(Object.keys(configs)).toEqual(["server-1", `server-1#${b}`]);
+    expect(
+      new Headers(configs["server-1"].requestInit.headers).get("authorization"),
+    ).toBe("Bearer token-a");
+    expect(
+      new Headers(configs[`server-1#${b}`].requestInit.headers).get(
+        "authorization",
+      ),
+    ).toBe("Bearer token-b");
+    await configs[`server-1#${b}`].onUnauthorized({});
+    expect(
+      requests.find((r) => r.url.endsWith("/force-refresh"))?.body.connectionId,
+    ).toBe(b);
+    expect(requests[0].body.includeConnections).toBe(true);
+    expect(
+      result.connectionsByServerId?.["server-1"].map((c) => c.connectionId),
+    ).toEqual([a, b]);
   });
 
   it("uses the request oauth token when the batch response does not include one", async () => {
@@ -645,6 +779,178 @@ describe("web auth manager batching", () => {
     });
   });
 
+  // Every reason the backend names for a withheld token needs its own branch.
+  // Without one it falls through to the refusal above and tells the user to
+  // complete an OAuth flow — wrong for an authorization server that never
+  // answered, wrong for a refresh already in flight, and silent about the
+  // repointed URL that is what actually invalidated the credential.
+  function batchWithOAuthUnavailableReason(
+    reason: string,
+    extra: Record<string, unknown> = {}
+  ): typeof fetch {
+    return vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: {
+              "server-1": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                oauthUnavailableReason: reason,
+                ...extra,
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://server-1.example.com/mcp",
+                  headers: {},
+                  useOAuth: true,
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+    ) as typeof fetch;
+  }
+
+  async function captureConnectError(): Promise<WebRouteError> {
+    try {
+      await createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-1"],
+        10_000,
+        undefined,
+        undefined,
+        { serverNames: ["Asana"] }
+      );
+    } catch (error) {
+      return error as WebRouteError;
+    }
+    throw new Error("expected createAuthorizedManager to reject");
+  }
+
+  it("tells the user the destination changed when the credential origin no longer matches", async () => {
+    global.fetch = batchWithOAuthUnavailableReason(
+      "credential_origin_mismatch"
+    );
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      message:
+        'Server "Asana" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.',
+      details: {
+        oauthRequired: true,
+        serverId: "server-1",
+        serverName: "Asana",
+        serverUrl: "https://server-1.example.com/mcp",
+      },
+    });
+    expect(error.message).not.toContain("complete the OAuth flow first");
+  });
+
+  it("names the organization's export policy instead of asking for a reauthorize", async () => {
+    global.fetch = batchWithOAuthUnavailableReason("credential_export_denied");
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: {
+        exportDenied: true,
+        policy: "credentialExportPolicy",
+        serverId: "server-1",
+        serverName: "Asana",
+      },
+    });
+    expect(error.message).toContain("credential export policy");
+    // Authorizing again would mint a token the same policy withholds.
+    expect(error.details?.oauthRequired).toBeUndefined();
+  });
+
+  it("names the export policy for an auto-discovery server too", async () => {
+    const base = batchWithOAuthUnavailableReason("credential_export_denied");
+    global.fetch = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      const response = await base(...args);
+      const body = await response.json();
+      body.results["server-1"].serverConfig = {
+        transportType: "http",
+        url: "https://server-1.example.com/mcp",
+        headers: {},
+        authMethod: "auto",
+      };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: { exportDenied: true, policy: "credentialExportPolicy" },
+    });
+  });
+
+  it("reports an unreachable authorization server as retryable, not as a missing authorization", async () => {
+    global.fetch = batchWithOAuthUnavailableReason(
+      "authorization_server_unreachable"
+    );
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 503,
+      code: "SERVER_UNREACHABLE",
+      message:
+        'The authorization server for "Asana" did not respond, so its access token could not be refreshed. Authorizing again will not change that. Try again shortly.',
+      details: {
+        serverId: "server-1",
+        serverName: "Asana",
+        serverUrl: "https://server-1.example.com/mcp",
+      },
+    });
+    expect(error.message).not.toContain("complete the OAuth flow first");
+    expect(error.details?.oauthRequired).toBeUndefined();
+  });
+
+  it("turns an in-flight refresh into a retry carrying the backend's oauthRetryAfterMs", async () => {
+    global.fetch = batchWithOAuthUnavailableReason("refresh_in_progress", {
+      oauthRetryAfterMs: 4200,
+    });
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 429,
+      code: "RATE_LIMITED",
+      message:
+        'Credentials for "Asana" are being refreshed by another request. Try again in 5 seconds.',
+    });
+    expect(error.headers).toEqual({ "Retry-After": "5" });
+    expect(error.message).not.toContain("complete the OAuth flow first");
+  });
+
+  it("omits the retry delay when the backend sends no oauthRetryAfterMs", async () => {
+    global.fetch = batchWithOAuthUnavailableReason("refresh_in_progress");
+
+    const error = await captureConnectError();
+
+    expect(error.status).toBe(429);
+    expect(error.message).toBe(
+      'Credentials for "Asana" are being refreshed by another request. Try again shortly.'
+    );
+    expect(error.headers).toBeUndefined();
+  });
+
   it("connects a tokenless auto (discover) server unauthenticated and tags a live 401", async () => {
     global.fetch = vi.fn(async () => {
       return new Response(
@@ -695,6 +1001,7 @@ describe("web auth manager batching", () => {
     ).rejects.toMatchObject<WebRouteError>({
       status: 401,
       code: "UNAUTHORIZED",
+      setupFailureSource: "authorization_required",
       message: 'Server "Asana" requires authorization.',
       details: {
         oauthRequired: true,
@@ -801,6 +1108,12 @@ describe("web auth manager batching", () => {
             title: "ChatGPT",
           },
           supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+          // `mcpProfile.toolListChanged.listens` / `.refetches`. Both were
+          // computed client-side and accepted by every hop below this one, but
+          // never placed on the SDK config — so hosted connections opened the
+          // listen channel and refetched no matter what the host asked for.
+          suppressListenChannel: true,
+          dropToolListChanged: true,
         },
       }
     );
@@ -814,6 +1127,8 @@ describe("web auth manager batching", () => {
         title: "ChatGPT",
       },
       supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+      suppressListenChannel: true,
+      dropToolListChanged: true,
     });
   });
 
@@ -856,6 +1171,11 @@ describe("web auth manager batching", () => {
     const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
     expect(config).not.toHaveProperty("clientInfo");
     expect(config).not.toHaveProperty("supportedProtocolVersions");
+    // Absence is what makes the connection conforming: the SDK opens the
+    // listen channel and honors `notifications/tools/list_changed` unless a
+    // suppression switch is actually present.
+    expect(config).not.toHaveProperty("suppressListenChannel");
+    expect(config).not.toHaveProperty("dropToolListChanged");
   });
 
   // Verify the public `projectServerSchema` declares the two new
@@ -884,6 +1204,82 @@ describe("web auth manager batching", () => {
       "2025-11-25",
       "2025-06-18",
     ]);
+  });
+
+  // The hop that ate the two `toolListChanged` knobs. The client computed
+  // them and the body carried them, but `projectServerSchema` declared
+  // neither, so Zod stripped both before any route could read them — every
+  // hosted connection ran as a fully conforming client regardless of the
+  // switch.
+  it("projectServerSchema keeps the toolListChanged conformance knobs", async () => {
+    const { projectServerSchema } = await import("../auth.js");
+    const parsed = projectServerSchema.parse({
+      projectId: "project-1",
+      serverId: "server-1",
+      suppressListenChannel: true,
+      dropToolListChanged: true,
+    });
+    expect(parsed.suppressListenChannel).toBe(true);
+    expect(parsed.dropToolListChanged).toBe(true);
+  });
+
+  // The same hop had eaten `toolCallCancellation` since that knob shipped:
+  // the extractor read it and every pin site carried it, but this schema
+  // never declared it, so it was stripped before the extractor ran. Chat was
+  // unaffected (it extracts from the pre-parse raw body); every other hosted
+  // surface cancelled normally no matter what the host was configured to do.
+  it("projectServerSchema keeps the per-era cancellation record", async () => {
+    const { projectServerSchema } = await import("../auth.js");
+    const parsed = projectServerSchema.parse({
+      projectId: "project-1",
+      serverId: "server-1",
+      toolCallCancellation: { legacy: false, modern: false },
+    });
+    expect(parsed.toolCallCancellation).toEqual({
+      legacy: false,
+      modern: false,
+    });
+  });
+
+  it("extractMcpInitializeOptions pins the toolListChanged knobs from the body", async () => {
+    const { extractMcpInitializeOptions } = await import("../auth.js");
+    expect(
+      extractMcpInitializeOptions({
+        projectId: "project-1",
+        serverId: "server-1",
+        suppressListenChannel: true,
+        dropToolListChanged: true,
+      }).initializePins
+    ).toEqual({ suppressListenChannel: true, dropToolListChanged: true });
+  });
+
+  it("extractMcpInitializeOptions ignores the conforming value of the toolListChanged knobs", async () => {
+    const { extractMcpInitializeOptions } = await import("../auth.js");
+    // Same one-explicit-value rule as the sibling knobs: only `true` opts into
+    // the non-conforming simulation, so a body that spells out the default
+    // must produce no pins at all rather than a `false` the SDK would read as
+    // "field present".
+    expect(
+      extractMcpInitializeOptions({
+        projectId: "project-1",
+        serverId: "server-1",
+        suppressListenChannel: false,
+        dropToolListChanged: false,
+      }).initializePins
+    ).toBeUndefined();
+  });
+
+  it("extractMcpInitializeOptions carries one toolListChanged knob without the other", async () => {
+    const { extractMcpInitializeOptions } = await import("../auth.js");
+    // The two switches are independent: a host that listens but ignores the
+    // notification is a real configuration, not a half-applied one.
+    expect(
+      extractMcpInitializeOptions({
+        projectId: "project-1",
+        serverId: "server-1",
+        dropToolListChanged: true,
+      }).initializePins
+    ).toEqual({ dropToolListChanged: true });
   });
 
   // CONTRACT: the swarm runner threads each pinned server's

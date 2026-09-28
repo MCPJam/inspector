@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockUserTestingTab, mockRouteContext, flagState } = vi.hoisted(() => ({
+const { mockUserTestingTab, mockRouteContext } = vi.hoisted(() => ({
   mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
   mockRouteContext: {
     billingUiEnabled: true,
@@ -18,8 +18,6 @@ const { mockUserTestingTab, mockRouteContext, flagState } = vi.hoisted(() => ({
     billingOrganizationId: "org-1",
     navigateToTarget: vi.fn(),
   },
-  // Tri-state, like the real PostHog hook: undefined while flags hydrate.
-  flagState: { sandboxesEnabled: true as boolean | undefined },
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -29,6 +27,25 @@ vi.mock("react-router", async (importOriginal) => {
     useOutletContext: () => mockRouteContext,
   };
 });
+
+// The route reads WorkOS identity now (REEV-6's gated preview asks "does this
+// person have an account?"). A resolved, signed-in user keeps every assertion
+// below about the FLAG and BILLING gates — the guest path has its own suite in
+// `GatedFeatureRoutes.preview.test.tsx`.
+// The preview gate reads the identity Convex holds, not WorkOS. Signed-in by
+// default here: this suite is about the billing path, not the sign-in one.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
+}));
+// Flag on: this suite is about billing. The flag gate is covered in
+// `GatedFeatureRoutes.preview.test.tsx` and `SwarmsRoute.guest-gate.test.tsx`.
+vi.mock("@/hooks/useSandboxesEnabled", () => ({
+  useSandboxesEnabled: () => true,
+  useSandboxesEnabledState: () => true,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "member@example.com" }, isLoading: false }),
+}));
 
 vi.mock("../components/ui/json-editor/codemirror-json-editor", () => ({
   CodemirrorJsonEditor: () => null,
@@ -69,11 +86,6 @@ vi.mock("@codemirror/lint", () => ({
   lintGutter: () => ({}),
 }));
 
-vi.mock("@/hooks/useSandboxesEnabled", () => ({
-  useSandboxesEnabled: () => flagState.sandboxesEnabled === true,
-  useSandboxesEnabledState: () => flagState.sandboxesEnabled,
-}));
-
 vi.mock("../components/UserTestingTab", () => ({
   UserTestingTab: (props: unknown) => mockUserTestingTab(props),
 }));
@@ -101,10 +113,22 @@ describe("ScenariosRoute gates", () => {
       canManageBilling: true,
     };
     mockRouteContext.upgradePlanForActiveTab = null;
-    flagState.sandboxesEnabled = true;
   });
 
-  it("shows the billing upsell gate when the active tab is locked", () => {
+  /**
+   * REVERSED by REEV-6, and deliberately.
+   *
+   * User Testing no longer has a billing gate. Both it and Swarms are on every
+   * plan and bounded by CREDITS rather than entitlement, so there is no
+   * plan-locked reader for an upsell to address. The proof that this gate was
+   * already dead: `LEGACY_FREE_FEATURES` in the backend catalog carries
+   * `scenarios: true`, so even free orgs were entitled and this branch could
+   * not fire in production.
+   *
+   * The test is kept, inverted, rather than deleted: a shell that reports the
+   * tab locked must NOT resurrect an upsell here, and that is worth pinning.
+   */
+  it("ignores a locked billing gate and shows the tab anyway", () => {
     mockRouteContext.activeTabBillingLocked = true;
     mockRouteContext.shellBillingStatus = {
       plan: "team",
@@ -115,11 +139,9 @@ describe("ScenariosRoute gates", () => {
 
     render(<ScenariosRoute />);
 
-    expect(screen.getByTestId("billing-upsell-gate")).toHaveTextContent(
-      "scenarios",
-    );
-    expect(screen.queryByText("User Testing Tab")).not.toBeInTheDocument();
-    expect(mockUserTestingTab).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
+    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
+    expect(mockUserTestingTab).toHaveBeenCalled();
   });
 
   it("renders the surface for team organizations", () => {
@@ -159,30 +181,4 @@ describe("ScenariosRoute gates", () => {
     expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
   });
 
-  // The sidebar filters this item on the flag, but a filtered nav item is not
-  // a gate: without the route check a flagged-out user could reach the whole
-  // surface by typing the URL.
-  it("redirects a flagged-out user away from the surface", () => {
-    flagState.sandboxesEnabled = false;
-
-    render(
-      <MemoryRouter initialEntries={["/user-testing"]}>
-        <ScenariosRoute />
-      </MemoryRouter>,
-    );
-
-    expect(mockUserTestingTab).not.toHaveBeenCalled();
-    expect(screen.queryByText("User Testing Tab")).not.toBeInTheDocument();
-  });
-
-  // Bouncing on `undefined` would strand a flagged-IN user who cold-loads the
-  // URL before PostHog resolves, so the route renders nothing and waits.
-  it("waits, rather than redirecting, while the flag is still hydrating", () => {
-    flagState.sandboxesEnabled = undefined;
-
-    const { container } = render(<ScenariosRoute />);
-
-    expect(container).toBeEmptyDOMElement();
-    expect(mockUserTestingTab).not.toHaveBeenCalled();
-  });
 });

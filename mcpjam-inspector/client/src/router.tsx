@@ -1,3 +1,7 @@
+import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
+import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
+import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
+import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
@@ -54,7 +58,6 @@ import { NotFoundRoute } from "./components/routing/not-found-route";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
-  legacyCiEvalsPathToRunsPath,
   routePaths,
 } from "./lib/app-navigation";
 import { APP_ROUTES, type AppRouteEntry } from "./lib/app-routes";
@@ -68,22 +71,6 @@ import {
 export { getAppRouter };
 
 type AppRouter = ReturnType<typeof createBrowserRouter>;
-
-/**
- * Legacy `/ci-evals/*` → `/evals/runs/*`, under a project or not.
- *
- * The project prefix comes off before the rewrite and goes back on after: the
- * rewrite is an anchored `^/ci-evals` replacement, so running it against
- * `/p/<id>/ci-evals/...` would match nothing, return the path unchanged, and
- * redirect the route to itself forever.
- */
-function ciEvalsRedirect({ request }: { request: Request }) {
-  const url = new URL(request.url);
-  const scoped = parseProjectPath(url.pathname);
-  const logical = scoped ? scoped.relativePath : url.pathname;
-  const target = legacyCiEvalsPathToRunsPath(logical, url.search, url.hash);
-  return redirect(scoped ? buildProjectPath(scoped.projectId, target) : target);
-}
 
 /**
  * A neutral landing for the routes that exist only to be redirected away
@@ -129,11 +116,12 @@ const ROUTE_ELEMENTS: Record<
   // state Connect has already built.
   "servers/plugins/:pluginId": { element: <ServersRoute /> },
   "servers/:serverId": { element: <ServersRoute /> },
-  // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
-  // renamed Client → Host). Route through `buildHostsPath` so the
-  // `:hostId` deep-link is re-encoded exactly like canonical links
-  // (router params arrive decoded; ids with reserved chars would
-  // otherwise split into extra path segments and fail to match).
+  // `/clients` URLs redirect to `/hosts`, which is where the tab still lives.
+  // The product noun went the OTHER way — Host → Client — so this points at
+  // the spelling the rename left behind, not at a canonical one. Route
+  // through `buildHostsPath` so the `:hostId` deep-link is re-encoded exactly
+  // like canonical links (router params arrive decoded; ids with reserved
+  // chars would otherwise split into extra path segments and fail to match).
   clients: { loader: () => redirect(buildHostsPath()) },
   "clients/:hostId": {
     loader: ({ params }: any) => redirect(buildHostsPath(params.hostId)),
@@ -221,8 +209,11 @@ const ROUTE_ELEMENTS: Record<
   // so registration here does not expose the dark feature.
   sessions: { element: <SessionsRoute /> },
   playground: { element: <PlaygroundRoute /> },
-  support: { element: <SupportRoute /> },
+  support: { loader: () => redirect("/settings/support") },
+  "settings/support": { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
+  "settings/appearance": { element: <SettingsRoute /> },
+  "settings/about": { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
   "settings/integrations": { element: <IntegrationsSettingsRoute /> },
   "settings/integrations/github": { element: <GithubChecksSettingsRoute /> },
@@ -242,58 +233,85 @@ const ROUTE_ELEMENTS: Record<
     loader: () => redirect("/settings/integrations/github"),
   },
   profile: { element: <ProfileRoute /> },
+  "project-settings/members": { element: <ProjectSettingsRoute /> },
+  "project-settings/secrets": { element: <ProjectSettingsRoute /> },
   "project-settings": { element: <ProjectSettingsRoute /> },
   "client-config": { element: <ServersRedirectRoute /> },
+  "organizations/:orgId/members": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/sharing": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/billing/byok": {
+    element: (
+      <OrganizationsRoute>
+        <ByokCreditsPage />
+      </OrganizationsRoute>
+    ),
+  },
+  "organizations/:orgId/billing/usage": {
+    element: (
+      <OrganizationsRoute>
+        <CreditUsagePage />
+      </OrganizationsRoute>
+    ),
+  },
+  "organizations/:orgId/models/usage": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/api-keys": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/plans": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/data-management": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/audit-log": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/integrations": { element: <OrganizationsRoute /> },
   organizations: { element: <OrganizationsRoute /> },
   "organizations/:orgId": { element: <OrganizationsRoute /> },
   "organizations/:orgId/billing": { element: <OrganizationsRoute /> },
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
   "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/observability": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/budget": {
+    loader: ({ params }) => redirect(`/organizations/${params.orgId}/billing`),
+  },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId/edit": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
+  "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
   // Runs mode. `mode` comes from the route table rather than sniffing the URL
   // inside the component, so the two lenses stay one route element with one
   // billing gate.
   "evals/runs": { element: <EvalsRoute mode="runs" /> },
   "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
-  "evals/runs/commit/:commitSha": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/commit/:commitSha": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
   "evals/runs/suite/:suiteId/runs/:runId": {
     element: <EvalsRoute mode="runs" />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalCaseRedirect />,
   },
   "evals/runs/suite/:suiteId/test/:testId/edit": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalCaseRedirect />,
   },
   "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
-  // Evaluate (New). Its own element, so nothing about the shipped Evaluate
-  // routes above changes while the redesign is behind a flag.
+  // Public Evaluate routes. Legacy access above is separately flagged.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
+  "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
+  // Evaluate prefix only: the compare page mounts behind
+  // `showEvaluateRunPage`, and the `/evals` builders never set
+  // `comparison`, so there is no `/evals/.../compare` URL to register.
+  "evaluate/suite/:suiteId/runs/:runId/compare": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/test/:testId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/test/:testId/edit": {
     element: <EvaluateRoute />,
   },
   "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
-  // Legacy `/ci-evals/*` → `/evals/runs/*`. Rewrite the raw pathname rather
-  // than rebuilding from params: the sub-tree is matched with a splat, and the
-  // string form preserves commit SHAs and suite ids exactly as encoded.
-  // Search and hash come along — commit links carry `?suite=&iteration=`, run
-  // links carry `?iteration=&case=&compareTo=`, and anything can carry
-  // `?project=`.
-  "ci-evals": { loader: ciEvalsRedirect },
-  "ci-evals/*": { loader: ciEvalsRedirect },
+  // Old CI links always land in public Evaluate, with fragments intact.
+  "ci-evals": { element: <LegacyEvalRedirect /> },
+  "ci-evals/*": { element: <LegacyEvalRedirect /> },
   billing: { element: <AppEntryLandingRoute /> },
   // The WorkOS Initiate Login URL. Unlike the entries around it this renders a
   // component of its own rather than Servers: it must call `signIn()` so
@@ -321,10 +339,6 @@ const ROUTE_ELEMENTS: Record<
  *    unavailable. Returning null leaves the URL alone so the boundary renders
  *    the same generic unavailable state for both.
  *
- *    It also breaks a redirect loop: `ciEvalsRedirect` rewrites an anchored
- *    `^/ci-evals`, which matches nothing in `/p/none/ci-evals`, so the loader
- *    handed back the path it was given and redirected the route to itself.
- *
  * 2. A redirect that comes back unscoped is re-scoped to the project in the
  *    URL. A legacy alias under `/p/A` must land WITHIN A: `/p/A/clients` →
  *    `/p/A/hosts`, not `/hosts` (which bounces through the legacy normalizer
@@ -335,7 +349,7 @@ const ROUTE_ELEMENTS: Record<
  * what the router matched, and it keeps the wrapper callable without a Request.
  */
 function withProjectScopedLoader(
-  loader: (args: any) => unknown
+  loader: (args: any) => unknown,
 ): (args: any) => unknown {
   return async (args: any) => {
     const projectId = String(args.params?.projectId ?? "");
@@ -359,7 +373,7 @@ function withProjectScopedLoader(
  */
 function routeChildFor(
   route: AppRouteEntry,
-  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown }
+  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown },
 ) {
   const isIndex = route.path === "/";
   return {
@@ -383,7 +397,7 @@ function buildRouteChildren() {
   for (const path of Object.keys(ROUTE_ELEMENTS)) {
     if (!tablePaths.has(path)) {
       throw new Error(
-        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`
+        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`,
       );
     }
   }
@@ -394,7 +408,7 @@ function buildRouteChildren() {
       // A route table entry with nothing to render is a first-party bug —
       // the coverage test catches it, but fail loudly if one slips through.
       throw new Error(
-        `[router] no element registered for route "${route.path}"`
+        `[router] no element registered for route "${route.path}"`,
       );
     }
     return rendered;
@@ -419,9 +433,9 @@ function buildRouteChildren() {
           redirect(
             buildProjectPath(
               String(params.projectId),
-              PROJECT_HOME_RELATIVE_PATH
-            )
-          )
+              PROJECT_HOME_RELATIVE_PATH,
+            ),
+          ),
         ),
       };
     }
@@ -455,7 +469,7 @@ function buildRouteChildren() {
   });
 
   const unscopedChildren = APP_ROUTES.filter(
-    (route) => route.scope !== "project"
+    (route) => route.scope !== "project",
   ).map((route) => routeChildFor(route, elementFor(route)));
 
   return [
@@ -497,9 +511,8 @@ export function createAppRouter(): AppRouter {
           {
             path: "__e2e/oauth-debugger",
             lazy: async () => {
-              const { OAuthDebuggerE2EHarness } = await import(
-                "./components/e2e/OAuthDebuggerE2EHarness"
-              );
+              const { OAuthDebuggerE2EHarness } =
+                await import("./components/e2e/OAuthDebuggerE2EHarness");
               return { Component: OAuthDebuggerE2EHarness };
             },
           },

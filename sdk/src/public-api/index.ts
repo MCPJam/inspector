@@ -106,6 +106,7 @@ export const V1_ERROR_STATUS: Record<V1ErrorCode, number> = {
  * collapse onto their canonical equivalents.
  */
 export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
+  account_suspended: "FORBIDDEN",
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",

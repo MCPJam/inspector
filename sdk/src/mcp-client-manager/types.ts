@@ -21,7 +21,14 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
-import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
+import type {
+  RefreshTokenOAuthProvider,
+  RefreshTokensRotatedHandler,
+} from "./refresh-token-auth-provider.js";
+
+// Re-exported so a caller configuring `onTokensRotated` can name its type
+// without reaching into the provider module.
+export type { RefreshTokensRotatedHandler } from "./refresh-token-auth-provider.js";
 import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
@@ -349,6 +356,31 @@ export type BaseServerConfig = {
    * separate, already-modeled fact (`clientCapabilities.elicitation`).
    */
   supportsMrtr?: boolean;
+  /**
+   * Whether cancelling an in-flight request reaches the server, per era.
+   *
+   * Absent per leaf (and `true`) both signal normally. `false` simulates a host
+   * that ends the turn locally and tells the server nothing: the caller's
+   * promise still rejects promptly, but the server keeps running the tool to
+   * completion — side effects, cost and all — because it never learns the user
+   * pressed stop.
+   *
+   * Both leaves are carried rather than pre-reduced to one flag, because the
+   * era is only known once the connection has negotiated. On an unpinned
+   * (`"auto"`) host that answer does not exist at config-build time, and
+   * guessing there made one era's toggle unreachable. The manager reads
+   * {@link MCPClientManager.getNegotiatedProtocolVersion} — the same value the
+   * UI shows — and picks the leaf for the era the connection actually landed
+   * on.
+   *
+   * Withholding the caller's signal withholds whichever mechanism that era
+   * would have used, because the signal is the single input to both: closing
+   * the response stream on 2026-07-28 Streamable HTTP, POSTing
+   * `notifications/cancelled` everywhere else.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.toolCallCancellation`.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
@@ -411,6 +443,7 @@ export type StdioServerConfig = BaseServerConfig & {
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
+  onTokensRotated?: never;
   onUnauthorized?: never;
 };
 
@@ -446,6 +479,25 @@ export type HttpServerConfig = BaseServerConfig & {
   clientId?: string;
   /** OAuth client secret. Optional, used with refreshToken. */
   clientSecret?: string;
+  /**
+   * Called when the authorization server rotates the refresh token, so a
+   * long-lived caller can persist the replacement.
+   *
+   * Most authorization servers issue single-use refresh tokens, so the value
+   * passed as `refreshToken` stops working once it has been exchanged. For the
+   * life of the connection the SDK keeps using the newest token and this is
+   * invisible. Beyond it is not: a reconnect, and any later run, starts from
+   * the `refreshToken` this config was built with, so a CI job configured from
+   * a secret authorizes once and fails afterwards with nothing to say why.
+   * Persist what this hook hands you, back to wherever `refreshToken` came
+   * from.
+   *
+   * Only fires when the token actually changed. It is awaited before the
+   * connection completes, so keep the write bounded. It never fails a
+   * connection that has already authorized, and a handler error is swallowed
+   * without being logged — log it yourself if you need to know.
+   */
+  onTokensRotated?: RefreshTokensRotatedHandler;
   /**
    * Optional 401 recovery hook. When provided for access-token based HTTP
    * configs, MCPClientManager calls it once after an operation fails with a

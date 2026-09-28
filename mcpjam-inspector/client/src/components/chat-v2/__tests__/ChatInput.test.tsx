@@ -1601,4 +1601,147 @@ describe("ChatInput", () => {
       expect(onResetEnvironmentServers).toHaveBeenCalled();
     });
   });
+
+  /**
+   * BB-183 — Up/Down through what you already sent. The composer owns the key
+   * handling; `input-history.ts` owns the walk and is unit-tested beside it.
+   * What can only be checked here is that the keys reach it, that a modifier
+   * or a multi-line caret keeps them away from it, and that the recalled text
+   * leaves through `onChange` like any other edit.
+   */
+  describe("input history", () => {
+    const history = ["most recent", "older one"];
+
+    const renderWithHistory = (props: Record<string, unknown> = {}) => {
+      const onChange = vi.fn();
+      const view = render(
+        <ChatInput {...defaultProps} onChange={onChange} inputHistory={history} {...props} />
+      );
+      return { onChange, view };
+    };
+
+    const textarea = () => screen.getByPlaceholderText("Type your message...");
+
+    it("recalls the most recent message on ArrowUp", () => {
+      const { onChange } = renderWithHistory();
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).toHaveBeenCalledWith("most recent");
+    });
+
+    it("walks further back on a second ArrowUp", () => {
+      // The composer is controlled, so the caller echoes the recalled value
+      // back in — exactly as `ChatTabV2` does through `setInput`.
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <ChatInput {...defaultProps} onChange={onChange} inputHistory={history} />
+      );
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          value="most recent"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).toHaveBeenLastCalledWith("older one");
+    });
+
+    it("gives the half-written draft back on the way down", () => {
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <ChatInput
+          {...defaultProps}
+          value="half written"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          value="most recent"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.keyDown(textarea(), { key: "ArrowDown" });
+
+      expect(onChange).toHaveBeenLastCalledWith("half written");
+    });
+
+    it("leaves the arrows alone with no history behind the composer", () => {
+      const onChange = vi.fn();
+      render(<ChatInput {...defaultProps} onChange={onChange} />);
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves the arrows to the caret inside a multi-line draft", () => {
+      // Otherwise a long draft could not be edited at all — you could never
+      // reach its first line to fix a word.
+      const { onChange } = renderWithHistory({ value: "one\ntwo" });
+      const field = textarea() as HTMLTextAreaElement;
+      field.setSelectionRange(7, 7);
+
+      fireEvent.keyDown(field, { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("stays out of the way while the composer is disabled", () => {
+      const { onChange } = renderWithHistory({ disabled: true });
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite the draft hidden behind a recording", async () => {
+      // Mid-recording the box shows "Listening..." while `value` holds the
+      // draft underneath. A recall there would replace something the user
+      // cannot see, and the textarea's own onChange already refuses to write
+      // in this state.
+      installAudioRecordingMocks();
+      const onChange = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="the hidden draft"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+      await waitFor(() => {
+        expect(screen.getByDisplayValue("Listening...")).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(screen.getByDisplayValue("Listening..."), {
+        key: "ArrowUp",
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("does not hijack Shift+ArrowUp, which selects", () => {
+      const { onChange } = renderWithHistory();
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp", shiftKey: true });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -87,7 +87,7 @@ function stripUpgradeReturnParams(): void {
     "",
     window.location.pathname +
       (search ? `?${search}` : "") +
-      window.location.hash
+      window.location.hash,
   );
 }
 
@@ -109,7 +109,7 @@ function UpgradeReturnFlow({
   // Seeded from the ticket: a wait reported before a reload still counts, so
   // the confirmation that lands afterwards is recorded as "late".
   const waitReportedRef = useRef(
-    readUpgradeReturnToken(upgradeReturn.userId)?.waited === true
+    readUpgradeReturnToken(upgradeReturn.userId)?.waited === true,
   );
   const { billingStatus, planCatalog, isLoadingBilling } =
     useOrganizationBilling(upgradeReturn.organizationId);
@@ -159,11 +159,13 @@ function UpgradeReturnFlow({
     }
 
     if (upgraded) {
-      const teamName = planCatalog?.plans.team.displayName ?? "Team";
+      const teamName =
+        planCatalog?.plans[billingStatus.plan]?.displayName ??
+        billingStatus.plan;
       toast.success(
         upgradeReturn.origin === "credits"
           ? `You're on the ${teamName} plan. Your credits are available now.`
-          : `You're on the ${teamName} plan. Run your suite again to pick up where you left off.`
+          : `You're on the ${teamName} plan. Run your suite again to pick up where you left off.`,
       );
     }
 
@@ -204,7 +206,7 @@ function UpgradeReturnFlowBoundary() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const [upgradeReturn, setUpgradeReturn] = useState<UpgradeReturn | null>(
-    null
+    null,
   );
   const armedForRef = useRef<string | null>(null);
   const strippedRef = useRef(false);
@@ -236,7 +238,7 @@ function UpgradeReturnFlowBoundary() {
             origin: ticket.origin,
             userId: ticket.userId,
           }
-        : null
+        : null,
     );
   }, [userId]);
 
@@ -308,7 +310,14 @@ function PlanLimitWall() {
   // free/can't-manage, which would flash the member wall at an owner (whose
   // "email your owner" draft is addressed to themself) and the Free pitch at a
   // paid org.
+  const isPricingV2 = upgrade.pricingVersion === "v2";
   const isBillingReady = !upgrade.isLoadingBilling;
+
+  // All eval launch paths share this wall. Ignore stale legacy limit signals
+  // for V2, and wait for billing before showing any legacy pricing content.
+  useEffect(() => {
+    if (isOpen && isBillingReady && isPricingV2) close();
+  }, [isOpen, isBillingReady, isPricingV2, close]);
   const isFreePlan = upgrade.effectivePlan === "free";
   const isEnterprisePlan = upgrade.effectivePlan === "enterprise";
   const showUpgrade = isBillingReady && isFreePlan && upgrade.canManageBilling;
@@ -325,14 +334,15 @@ function PlanLimitWall() {
       impressionTrackedRef.current = false;
       return;
     }
-    if (upgrade.isLoadingBilling || impressionTrackedRef.current) return;
+    if (upgrade.isLoadingBilling || isPricingV2 || impressionTrackedRef.current)
+      return;
     if (showRequest && isLoadingRequestRecipients) return;
 
     impressionTrackedRef.current = true;
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
-      wall_kind: "eval_iterations",
       organization_id: organizationId,
+      wall_kind: "eval_iterations",
       limit_kind: limit.kind,
       origin: limit.origin,
       used: limit.used,
@@ -345,10 +355,10 @@ function PlanLimitWall() {
       primary_action: showUpgrade
         ? "upgrade"
         : showEnterprise
-        ? "enterprise"
-        : requestRecipients.length > 0
-        ? "request_owner"
-        : "none",
+          ? "enterprise"
+          : requestRecipients.length > 0
+            ? "request_owner"
+            : "none",
       request_recipient_count: requestRecipients.length,
       billing_interval: upgrade.interval,
       annual_supported: upgrade.annualSupported,
@@ -357,6 +367,7 @@ function PlanLimitWall() {
   }, [
     isOpen,
     isLoadingRequestRecipients,
+    isPricingV2,
     limit,
     organizationId,
     requestRecipients.length,
@@ -402,8 +413,8 @@ function PlanLimitWall() {
     if (limit) {
       track("plan_limit_dialog_dismissed", {
         location: "plan_limit_dialog",
-        wall_kind: "eval_iterations",
         organization_id: organizationId,
+        wall_kind: "eval_iterations",
         limit_kind: limit.kind,
         origin: limit.origin,
         current_plan: upgrade.currentPlan,
@@ -425,7 +436,14 @@ function PlanLimitWall() {
     if (result?.shouldDismiss) close();
   }, [close, upgrade]);
 
-  if (!isOpen || !limit || limit.kind !== "evalIterations") return null;
+  if (
+    !isOpen ||
+    !limit ||
+    limit.kind !== "evalIterations" ||
+    !isBillingReady ||
+    isPricingV2
+  )
+    return null;
 
   const windowLabel = limit.windowKind === "day" ? "today" : "this month";
   const perWindow = limit.windowKind === "day" ? "a day" : "a month";
@@ -443,7 +461,7 @@ function PlanLimitWall() {
     : null;
   const resetClause = limit.resetsAt
     ? `${allowanceClause ? "yours reset" : "Yours reset"} at ${formatResetClock(
-        limit.resetsAt
+        limit.resetsAt,
       )}${resetDistance ? `, ${resetDistance} from now` : ""}`
     : "";
   // The conjunction belongs to the pair, not to the allowance. Baking ", and"
@@ -460,14 +478,18 @@ function PlanLimitWall() {
   const upgradeSentence = !isBillingReady
     ? ""
     : isFreePlan
-    ? `The ${upgrade.teamName} plan includes ${
-        upgrade.teamEvalIterations
-          ? `${formatCount(upgrade.teamEvalIterations)} per seat each month`
-          : "a monthly allowance instead of a daily cap"
-      }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
-    : showEnterprise
-    ? "Enterprise adds negotiated usage and a custom LLM budget."
-    : "";
+      ? `The ${upgrade.teamName} plan includes ${
+          upgrade.teamEvalIterations
+            ? `${formatCount(upgrade.teamEvalIterations)} ${
+                upgrade.isFlatPlan ? "each month" : "per seat each month"
+              }`
+            : upgrade.isFlatPlan
+              ? "metered eval usage"
+              : "a monthly allowance instead of a daily cap"
+        }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
+      : showEnterprise
+        ? "Enterprise adds negotiated usage and a custom LLM budget."
+        : "";
 
   return (
     <PlanLimitDialogView
@@ -483,7 +505,7 @@ function PlanLimitWall() {
       showEnterprise={showEnterprise}
       showRequest={showRequest}
       requestRecipients={requestRecipients}
-      organizationId={organizationId}
+      organizationId={limit.organizationId}
       organizationName={upgrade.organizationName}
       origin="evals"
       limitKind={limit.kind}
@@ -494,6 +516,7 @@ function PlanLimitWall() {
       annualDiscountPct={upgrade.annualDiscountPct}
       annualSupported={upgrade.annualSupported}
       monthlySupported={upgrade.monthlySupported}
+      priceUnit={upgrade.priceUnit}
       teamName={upgrade.teamName}
       isStarting={upgrade.isStarting}
       isLoadingPrices={upgrade.isLoadingPrices}

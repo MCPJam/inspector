@@ -10,6 +10,7 @@ export interface GoalCompletionRunOverride {
 }
 
 export interface GoalCompletionRequestArgs {
+  scope?: "all" | "failed";
   /**
    * Explicit per-run exploration override. Omit to clear any previously
    * persisted run override and grade against the suite-level config — the
@@ -51,6 +52,7 @@ export function useGoalCompletion(run: EvalSuiteRun | null) {
   const requestGoalCompletion = useCallback(
     (args: GoalCompletionRequestArgs = {}, force?: boolean) => {
       const extraArgs: Record<string, unknown> = {};
+      if (args.scope) extraArgs.scope = args.scope;
       if (args.runOverride) {
         // Only include keys the user actually set so the backend doesn't see
         // `{ judgeModel: undefined }` (which would round-trip as an object with

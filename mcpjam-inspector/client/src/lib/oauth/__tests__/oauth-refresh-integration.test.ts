@@ -234,6 +234,7 @@ async function runFullFlow(
   serverName: string,
   fixtureOptions: FakeOAuthMcpServerOptions = {},
   connectOverrides: Record<string, unknown> = {},
+  assertProjectAccess?: () => void,
 ): Promise<FlowResult> {
   const server = await startFakeOAuthMcpServer(fixtureOptions);
   // Registered the moment it exists: `runFullFlow` can throw below (no
@@ -273,6 +274,7 @@ async function runFullFlow(
     {
       callbackState: callbackUrl.searchParams.get("state"),
       callbackIss: callbackUrl.searchParams.get("iss"),
+      assertProjectAccess,
     },
   );
 
@@ -299,6 +301,14 @@ afterEach(async () => {
 });
 
 describe("real executor → real state machine (hosted)", () => {
+  it("does not redeem a code after project identity is lost", async () => {
+    const { server, callback } = await runFullFlow("identity-lost", {}, {}, () => {
+      throw new Error("Original identity is required");
+    });
+    expect(callback.success).toBe(false);
+    expect(find(server.requests, "/token")).toHaveLength(0);
+  });
+
   it("produces an Authorization header the MCP resource actually accepts", async () => {
     const { server, callback } = await runFullFlow("integration-happy");
 

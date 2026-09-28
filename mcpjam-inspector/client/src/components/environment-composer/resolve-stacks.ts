@@ -16,14 +16,22 @@ import {
   expandModelChoices,
   isComposeMode,
   modelChoiceCount,
+  modelSelectionForHost,
   sameOptionalModel,
   stackFieldsEqual,
   targetProductCapReason,
   type EnvironmentComposerState,
   type EnvironmentStack,
   type ModelSelection,
+  type SkippedModelCell,
 } from "@/components/environment-composer/environment-stack";
-import { isNamedEnvironment } from "@/lib/environment-label";
+import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import {
+  selectionKey,
+  type ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
+import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
+import { clientDisplayName } from "@/lib/client-display-name";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -37,15 +45,20 @@ export type AdhocStackInput = {
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
+  /** Saved selection behind `modelId` (only with `modelSelectionsEnabled`). */
+  modelSelection?: SavedModelSelection;
 };
 
 export type EnsureAdhocEnvironmentsFn = (args: {
   projectId: string;
   stacks: AdhocStackInput[];
-}) => Promise<Array<{ environment: ProjectEnvironmentView; created?: boolean }>>;
+}) => Promise<
+  Array<{ environment: ProjectEnvironmentView; created?: boolean }>
+>;
 
 export type ComposerResolveErrorCode =
   | "NO_TARGETS"
+  | "NO_SERVER_GROUP"
   | "TOO_MANY_TARGETS"
   | "UNRESOLVED_ENVIRONMENT"
   | "ADHOC_UNAVAILABLE"
@@ -71,7 +84,8 @@ export class ComposerResolveError extends Error {
  * to pick a saved environment instead).
  */
 export function isAdhocUnavailable(err: unknown): boolean {
-  if (err instanceof ComposerResolveError) return err.code === "ADHOC_UNAVAILABLE";
+  if (err instanceof ComposerResolveError)
+    return err.code === "ADHOC_UNAVAILABLE";
   return /could not find public function/i.test(backendMessage(err) ?? "");
 }
 
@@ -96,6 +110,12 @@ export type ResolveComposerResult = {
   createdIds: string[];
   /** Ids that already existed (matched fingerprint, or a named row we reused). */
   reusedIds: string[];
+  /**
+   * Client × model cells left out because the client's harness cannot run the
+   * model (see `expandModelChoices`). Empty when nothing was skipped; surfaces
+   * show these so a dropped pair is never silent.
+   */
+  skipped: SkippedModelCell[];
 };
 
 /**
@@ -109,13 +129,13 @@ export type ResolveComposerResult = {
 function sharedFields(
   stack: EnvironmentStack,
   skillsEnabled: boolean,
-  computersEnabled: boolean
+  computersEnabled: boolean,
 ) {
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
-    skillSelection: skillsEnabled ? (stack.skillSelection ?? null) : null,
+    skillSelection: skillsEnabled ? stack.skillSelection ?? null : null,
     computerEnvironmentId: computersEnabled
-      ? (stack.computerEnvironmentId ?? null)
+      ? stack.computerEnvironmentId ?? null
       : null,
   };
 }
@@ -145,21 +165,32 @@ function matchingNamedEnvironment(
    */
   preferIds: readonly string[] = [],
   /** Inherit cell = undefined. A named row with an override must not match. */
-  modelId?: string
+  modelId?: string,
+  /**
+   * The cell's saved selection. When set, a named row is reused only if it
+   * saved the SAME selection — an org-connection pick must not reuse a row
+   * that runs the same id on the hosted catalog.
+   */
+  modelSelection?: SavedModelSelection,
 ): ProjectEnvironmentView | undefined {
   const matches = (env: ProjectEnvironmentView) =>
     !env.archivedAt &&
     env.hostId === hostId &&
     isNamedEnvironment(env) &&
     (env.pluginVersionIds?.length ?? 0) === 0 &&
+    (env.serverSelection === undefined ||
+      env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
+    (!modelSelection ||
+      (env.modelSelection !== undefined &&
+        selectionKey(env.modelSelection) === selectionKey(modelSelection))) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
         skillSelection: env.skillSelection ?? null,
         computerEnvironmentId: env.computerEnvironmentId ?? null,
       },
-      fields
+      fields,
     );
 
   for (const id of preferIds) {
@@ -184,6 +215,27 @@ export async function resolveComposerEnvironments(args: {
    * must not send `modelId` — an older validator would reject the arg.
    */
   modelMatrixEnabled?: boolean;
+  /**
+   * EVAL surfaces only. An eval run takes its servers from the environment's
+   * server group alone, so a target without one (and without a plugin pin
+   * contributing servers) would run with no tools; refuse it here instead of
+   * minting it. Journeys, scenarios and swarms fall back to the client's own
+   * servers and leave this off.
+   */
+  requireServerAttachment?: boolean;
+  /**
+   * The harness a client runs (`null` = emulated). Injected, like the
+   * mutation, so this module stays pure. Only consulted for clients with
+   * explicit model choices; absent ⇒ no client × model cell is skipped here
+   * (the server's admission still refuses an incompatible pair).
+   */
+  loadHostHarness?: (hostId: string) => Promise<HarnessModelTarget | null>;
+  /**
+   * Backend `modelSelections` capability. Undefined / false means this client
+   * must not send `modelSelection` — an older validator would reject the arg;
+   * the cell then mints with its legacy `modelId` alone.
+   */
+  modelSelectionsEnabled?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -194,6 +246,9 @@ export async function resolveComposerEnvironments(args: {
     computersEnabled,
     max,
     modelMatrixEnabled = false,
+    requireServerAttachment = false,
+    loadHostHarness,
+    modelSelectionsEnabled = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -203,7 +258,7 @@ export async function resolveComposerEnvironments(args: {
     if (state.environmentIds.length === 0) {
       throw new ComposerResolveError(
         "NO_TARGETS",
-        "Pick an environment or a client to choose where this runs."
+        "Pick an environment or a client to choose where this runs.",
       );
     }
     const environments: ProjectEnvironmentView[] = [];
@@ -214,7 +269,15 @@ export async function resolveComposerEnvironments(args: {
         // a target that can never launch, so make the user detach it instead.
         throw new ComposerResolveError(
           "UNRESOLVED_ENVIRONMENT",
-          "One of the selected environments is no longer available. Remove it and pick another."
+          "One of the selected environments is no longer available. Remove it and pick another.",
+        );
+      }
+      if (requireServerAttachment && lacksEvalServerSource(env)) {
+        throw new ComposerResolveError(
+          "NO_SERVER_GROUP",
+          `"${environmentLabel(
+            env,
+          )}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
         );
       }
       environments.push(env);
@@ -224,53 +287,115 @@ export async function resolveComposerEnvironments(args: {
       environments,
       createdIds: [],
       reusedIds: environments.map((e) => e.environmentId),
+      skipped: [],
     };
   }
 
   const hostIds = [...new Set(state.stack.hostIds.filter(Boolean))];
-  const rawSelection: ModelSelection = state.stack.modelSelection ?? {
-    includeClientDefaults: true,
-    explicitModelIds: [],
-  };
-  const modelSelection: ModelSelection = {
-    includeClientDefaults: rawSelection.includeClientDefaults,
-    explicitModelIds: [...new Set(rawSelection.explicitModelIds.filter(Boolean))],
-  };
-  const choices = expandModelChoices(modelSelection);
-  if (hostIds.length === 0 || choices.length === 0) {
+  const selectionsByHost = hostIds.map((hostId) => ({
+    hostId,
+    selection: normalizeModelSelection(
+      modelSelectionForHost(state.stack, hostId),
+    ),
+  }));
+  if (
+    hostIds.length === 0 ||
+    selectionsByHost.some(
+      ({ selection }) => expandModelChoices(selection).cells.length === 0,
+    )
+  ) {
     throw new ComposerResolveError(
       "NO_TARGETS",
-      choices.length === 0
+      selectionsByHost.some(
+        ({ selection }) => expandModelChoices(selection).cells.length === 0,
+      )
         ? "Pick at least one model choice — Client defaults or a catalog model."
-        : "Pick at least one client to choose where this runs."
+        : "Pick at least one client to choose where this runs.",
     );
   }
-  if (modelSelection.explicitModelIds.length > 0 && modelMatrixEnabled !== true) {
+  if (
+    selectionsByHost.some(
+      ({ selection }) => selection.explicitModelIds.length > 0,
+    ) &&
+    modelMatrixEnabled !== true
+  ) {
     throw new ComposerResolveError(
       "BACKEND_REJECTED",
-      "This workspace's backend doesn't support model fan-out yet. Leave Client defaults selected, or upgrade the backend."
+      "This workspace's backend doesn't support model fan-out yet. Leave Client defaults selected, or upgrade the backend.",
     );
   }
-  const product = hostIds.length * modelChoiceCount(modelSelection);
+  const product = selectionsByHost.reduce(
+    (total, { selection }) => total + modelChoiceCount(selection),
+    0,
+  );
   if (product > max) {
     throw new ComposerResolveError(
       "TOO_MANY_TARGETS",
-      targetProductCapReason(hostIds.length, choices.length, max)
+      state.stack.modelSelectionsByHost
+        ? `${product} targets; limit ${max}`
+        : targetProductCapReason(
+            hostIds.length,
+            modelChoiceCount(selectionsByHost[0]!.selection),
+            max,
+          ),
     );
   }
 
   const fields = sharedFields(state.stack, skillsEnabled, computersEnabled);
+  if (requireServerAttachment && !fields.serverAttachmentId) {
+    throw new ComposerResolveError(
+      "NO_SERVER_GROUP",
+      "Pick a server or group. An eval run takes its servers from the group alone, so without one it would connect no servers.",
+    );
+  }
 
-  type Cell = { hostId: string; modelId: string | undefined; key: string };
+  type Cell = {
+    hostId: string;
+    modelId: string | undefined;
+    modelSelection?: SavedModelSelection;
+    key: string;
+  };
   const cells: Cell[] = [];
-  for (const hostId of hostIds) {
-    for (const choice of choices) {
+  const skipped: SkippedModelCell[] = [];
+  for (const { hostId, selection } of selectionsByHost) {
+    // Only a client with explicit picks can have a pair to skip, so only those
+    // pay for the harness read.
+    const harness =
+      loadHostHarness && selection.explicitModelIds.length > 0
+        ? await loadHostHarness(hostId)
+        : null;
+    const expanded = expandModelChoices(selection, {
+      clientId: hostId,
+      harness,
+    });
+    // A client whose every choice is a pair its harness cannot run contributes
+    // no cells; its pairs stay in `skipped`, which the surface reports. The
+    // model picker admits a model any selected client can run, so one such
+    // client must not sink the resolve for the others.
+    skipped.push(...expanded.skipped);
+    for (const choice of expanded.cells) {
+      // A selection the backend cannot store must not steer reuse either.
+      const modelSelection = modelSelectionsEnabled
+        ? choice.modelSelection
+        : undefined;
       cells.push({
         hostId,
         modelId: choice.modelId,
+        ...(modelSelection ? { modelSelection } : {}),
         key: cellKey(hostId, choice.modelId),
       });
     }
+  }
+
+  if (cells.length === 0) {
+    // Nothing runnable anywhere: every chosen pair was one its client's
+    // harness cannot run. Say so rather than persist an empty target list.
+    throw new ComposerResolveError(
+      "NO_TARGETS",
+      `None of the chosen clients can run the chosen models: ${
+        skipped[0]?.reason ?? "no runnable model"
+      }.`,
+    );
   }
 
   // Reuse named rows first; only the rest need minting.
@@ -282,7 +407,8 @@ export async function resolveComposerEnvironments(args: {
       fields,
       live,
       state.environmentIds,
-      cell.modelId
+      cell.modelId,
+      cell.modelSelection,
     );
     if (named) reusedByCell.set(cell.key, named);
     else toMint.push(cell);
@@ -301,33 +427,55 @@ export async function resolveComposerEnvironments(args: {
       ...(fields.serverAttachmentId
         ? { serverAttachmentId: fields.serverAttachmentId }
         : {}),
-      ...(fields.skillSelection ? { skillSelection: fields.skillSelection } : {}),
+      ...(fields.skillSelection
+        ? { skillSelection: fields.skillSelection }
+        : {}),
       ...(fields.computerEnvironmentId
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),
       ...(cell.modelId ? { modelId: cell.modelId } : {}),
+      ...(cell.modelId && cell.modelSelection
+        ? { modelSelection: cell.modelSelection }
+        : {}),
     }));
 
     let results: Awaited<ReturnType<EnsureAdhocEnvironmentsFn>>;
     try {
-      results = await ensureAdhocEnvironments({ projectId, stacks });
+      results = [];
+      // Preparation is bounded independently of the suite's full matrix. The
+      // backend fingerprints each stack, so retrying after a partial batch
+      // reuses earlier rows and never truncates or splits the suite.
+      for (let offset = 0; offset < stacks.length; offset += 10) {
+        const batch = stacks.slice(offset, offset + 10);
+        const prepared = await ensureAdhocEnvironments({
+          projectId,
+          stacks: batch,
+        });
+        if (prepared.length !== batch.length) {
+          throw new Error(
+            "Environment preparation returned an incomplete batch.",
+          );
+        }
+        results.push(...prepared);
+      }
     } catch (err) {
       if (isAdhocUnavailable(err)) {
         throw new ComposerResolveError(
           "ADHOC_UNAVAILABLE",
-          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead."
+          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead.",
         );
       }
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        backendMessage(err) ?? "Could not resolve this setup into environments."
+        backendMessage(err) ??
+          "Could not resolve this setup into environments.",
       );
     }
 
     if (results.length !== toMint.length) {
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        "Could not resolve this setup into environments."
+        "Could not resolve this setup into environments.",
       );
     }
     toMint.forEach((cell, i) => mintedByCell.set(cell.key, results[i]));
@@ -348,18 +496,102 @@ export async function resolveComposerEnvironments(args: {
     if (!minted) {
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        "Could not resolve this setup into environments."
+        "Could not resolve this setup into environments.",
       );
     }
     pushUnique(
       minted.environment,
       environmentIds,
       environments,
-      minted.created === true ? createdIds : reusedIds
+      minted.created === true ? createdIds : reusedIds,
     );
   }
 
-  return { environmentIds, environments, createdIds, reusedIds };
+  return { environmentIds, environments, createdIds, reusedIds, skipped };
+}
+
+/**
+ * The name a person knows a client by, for the skipped-pairs toast: the host
+ * list's display name when the id is in it, else the raw id.
+ */
+export function clientNameResolver(
+  hosts: ReadonlyArray<{ hostId: string; name: string; displayName?: string }>,
+): (clientId: string) => string {
+  return (clientId) => {
+    const host = hosts.find((candidate) => candidate.hostId === clientId);
+    return host ? clientDisplayName(host) : clientId;
+  };
+}
+
+/**
+ * One sentence naming the client × model pairs a resolve left out, for the
+ * surface's warning toast; undefined when nothing was skipped.
+ */
+export function describeSkippedModelCells(
+  skipped: readonly SkippedModelCell[] | undefined,
+  clientName: (clientId: string) => string = (id) => id,
+): string | undefined {
+  if (!skipped || skipped.length === 0) return undefined;
+  const pairs = skipped.map(
+    (cell) => `${clientName(cell.clientId)} × ${cell.modelId} (${cell.reason})`,
+  );
+  return `Skipped ${skipped.length} client × model ${
+    skipped.length === 1 ? "pair" : "pairs"
+  } the client can't run: ${pairs.join("; ")}`;
+}
+
+/**
+ * An environment an EVAL run would launch with no servers: no server group,
+ * and no plugin pin contributing one. The backend refuses to launch these
+ * (`ENV_NO_SERVERS`); eval surfaces refuse to create them first.
+ */
+export function lacksEvalServerSource(
+  env: Pick<
+    ProjectEnvironmentView,
+    "serverAttachmentId" | "pluginVersionIds" | "serverSelection"
+  >,
+): boolean {
+  if (env.serverSelection?.mode === "unresolved") return true;
+  if (
+    env.serverSelection?.mode === "none" ||
+    env.serverSelection?.mode === "local"
+  )
+    return false;
+  return !env.serverAttachmentId && !(env.pluginVersionIds?.length ?? 0);
+}
+
+/**
+ * Whether a composer state names an eval target that would run with no
+ * servers — the check an eval form gates submit on, before resolution.
+ */
+export function composerMissingServerGroup(
+  state: EnvironmentComposerState,
+  liveEnvironments: readonly ProjectEnvironmentView[],
+): boolean {
+  if (isComposeMode(state)) return !state.stack.serverAttachmentId;
+  return state.environmentIds.some((id) => {
+    const env = liveEnvironments.find((e) => e.environmentId === id);
+    return env ? lacksEvalServerSource(env) : false;
+  });
+}
+
+function normalizeModelSelection(selection: ModelSelection): ModelSelection {
+  const explicitModelIds = [
+    ...new Set(selection.explicitModelIds.filter(Boolean)),
+  ];
+  const explicitModelSelections = Object.fromEntries(
+    explicitModelIds.flatMap((id) => {
+      const saved = selection.explicitModelSelections?.[id];
+      return saved?.modelId === id ? [[id, saved] as const] : [];
+    }),
+  );
+  return {
+    includeClientDefaults: selection.includeClientDefaults,
+    explicitModelIds,
+    ...(Object.keys(explicitModelSelections).length > 0
+      ? { explicitModelSelections }
+      : {}),
+  };
 }
 
 function cellKey(hostId: string, modelId: string | undefined): string {
@@ -376,7 +608,7 @@ function pushUnique(
   env: ProjectEnvironmentView,
   environmentIds: string[],
   environments: ProjectEnvironmentView[],
-  bucket: string[]
+  bucket: string[],
 ) {
   if (environmentIds.includes(env.environmentId)) return;
   environmentIds.push(env.environmentId);

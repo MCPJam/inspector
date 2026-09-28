@@ -44,6 +44,8 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   resourcePrefersBorder: true,
   downloadFile: true,
   requestTeardown: true,
+  // The everything-on baseline; MCPJam itself declares them.
+  safeAreaInsets: true,
   widgetDisplayModeRequests: "accept",
 });
 
@@ -62,6 +64,8 @@ export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
     media: true,
   },
   requestTeardown: false,
+  // Measured 2026-09-02: a uniform 12px inset on every edge.
+  safeAreaInsets: true,
 });
 
 /**
@@ -92,6 +96,10 @@ export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   },
   downloadFile: false,
   requestTeardown: false,
+  // Unmeasured — no capture carries ChatGPT's hostContext, so this
+  // preserves the emulator's existing behavior rather than inventing a
+  // measurement. Its catalog row is deliberately absent for the same reason.
+  safeAreaInsets: true,
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
@@ -106,6 +114,8 @@ export const MCP_APPS_MISTRAL: McpAppsCapabilities = frozen({
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // Measured 2026-09-02: the key is absent from hostContext entirely.
+  safeAreaInsets: false,
 });
 
 /** Cursor 3.14.27 probe — full minus updateModelContext + message. */
@@ -126,6 +136,8 @@ export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
   // was flipped 2026-08-26: it is absent from Cursor's hostCapabilities.
   downloadFile: false,
   requestTeardown: false,
+  // Measured 2026-09-02: the key is absent from hostContext entirely.
+  safeAreaInsets: false,
 });
 
 /** Goose Desktop 1.38.0 capture — only openLinks (+ toolInfo) advertised. */
@@ -156,6 +168,8 @@ export const MCP_APPS_GOOSE: McpAppsCapabilities = frozen({
   resourcePrefersBorder: true,
   downloadFile: false,
   requestTeardown: false,
+  // Unmeasured; preserves the emulator's existing behavior.
+  safeAreaInsets: true,
   widgetDisplayModeRequests: "accept",
 });
 
@@ -179,6 +193,8 @@ export const MCP_APPS_COPILOT: McpAppsCapabilities = frozen({
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // Unmeasured; preserves the emulator's existing behavior.
+  safeAreaInsets: true,
   widgetDisplayModeRequests: "accept",
 });
 
@@ -204,6 +220,8 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // Measured 2026-09-03, both themes: the key is absent entirely.
+  safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 });
 
@@ -230,6 +248,8 @@ export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
   resourcePrefersBorder: true,
   downloadFile: true,
   requestTeardown: true,
+  // Measured 2026-09-02: the key is absent from hostContext entirely.
+  safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 });
 
@@ -253,5 +273,7 @@ export const MCP_APPS_NO_CLAIMS: McpAppsCapabilities = frozen({
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // No MCP Apps view at all, so no hostContext to carry them.
+  safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 });

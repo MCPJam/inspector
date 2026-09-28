@@ -22,6 +22,10 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
 // Versioned evaluation contract. Needs its own alias for the same reason every
 // other subpath here does: the generic "@mcpjam/sdk" find is a PREFIX
 // replacement, so without this entry the specifier rewrites to
@@ -98,6 +102,7 @@ export default defineConfig({
           "@mcpjam/sdk/model-factory",
           "@mcpjam/sdk/matchers",
           "@mcpjam/sdk/predicates",
+          "@mcpjam/sdk/assertions",
           "@mcpjam/sdk/contract",
           "@mcpjam/sdk/host-config/internal",
           "@mcpjam/sdk/host-config/templates",
@@ -132,6 +137,7 @@ export default defineConfig({
       { find: "@mcpjam/sdk/model-factory", replacement: sdkModelFactoryEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
       { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       {
         find: "@mcpjam/sdk/host-config/internal",

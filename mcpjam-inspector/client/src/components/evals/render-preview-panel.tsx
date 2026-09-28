@@ -122,7 +122,7 @@ export function RenderPreviewPanel({
               <Circle
                 className={
                   "mr-1 h-2.5 w-2.5" +
-                  (recording ? " fill-red-500 text-red-500" : "")
+                  (recording ? " fill-destructive text-destructive" : "")
                 }
               />
               {recording ? "Recording" : "Record"}
@@ -146,7 +146,7 @@ export function RenderPreviewPanel({
       {/* Side-effect warning stays visible whenever the (Re-)render button is —
           not only in the empty state — since it runs the real tool each time. */}
       {canRender ? (
-        <div className="border-t border-border/60 px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+        <div className="border-t border-border/60 px-3 py-1.5 text-[11px] text-warning">
           Runs the real {pinned.toolName || "tool"} call — may mutate state.
         </div>
       ) : null}
@@ -155,7 +155,7 @@ export function RenderPreviewPanel({
           hasWidget ? (
             <>
               {recording && recorderReady === false ? (
-                <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-400">
+                <div className="mb-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2 text-[11px] text-warning">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                   <span className="min-w-0 break-words">
                     Recorder unavailable — this widget&apos;s CSP blocked the

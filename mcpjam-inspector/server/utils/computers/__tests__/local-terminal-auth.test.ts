@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LOCAL_TERMINAL_NONCE_TTL_MS,
   MAX_OUTSTANDING_NONCES,
+  consumeLocalNonce,
   consumeLocalTerminalNonce,
+  issueLocalNonce,
   issueLocalTerminalNonce,
   outstandingLocalTerminalNonceCount,
   resetLocalTerminalNoncesForTests,
@@ -152,5 +154,65 @@ describe("consumeLocalTerminalNonce", () => {
     // present — still works.
     expect(consumeLocalTerminalNonce(first)).toBeNull();
     expect(consumeLocalTerminalNonce(newest)).toEqual({ projectId: "proj_1", consentFingerprint: FINGERPRINT });
+  });
+});
+
+/**
+ * One pool, two capabilities. A nonce authorizes EITHER a shell on this
+ * machine or a stream of the agent browser's screen; letting one stand in for
+ * the other would make the kind decorative.
+ */
+describe("nonce kinds", () => {
+  const frames = (projectId: string) =>
+    issueLocalNonce({
+      kind: "browser-frames",
+      projectId,
+      consentFingerprint: FINGERPRINT,
+    });
+
+  it("redeems a nonce only under the kind it was minted for", () => {
+    const { nonce } = frames("proj-a");
+    expect(consumeLocalNonce("browser-frames", nonce)).toMatchObject({
+      projectId: "proj-a",
+    });
+  });
+
+  it("refuses a frames nonce at the terminal door, and spends it anyway", () => {
+    // Spent either way on purpose: leaving a mismatched nonce outstanding
+    // would let a caller learn which kind it is by trying both.
+    const { nonce } = frames("proj-a");
+    expect(consumeLocalTerminalNonce(nonce)).toBeNull();
+    expect(consumeLocalNonce("browser-frames", nonce)).toBeNull();
+  });
+
+  it("refuses a terminal nonce at the frames door", () => {
+    const { nonce } = issue("proj-a");
+    expect(consumeLocalNonce("browser-frames", nonce)).toBeNull();
+  });
+
+  it("refuses an expired frames nonce", () => {
+    vi.useFakeTimers();
+    try {
+      const { nonce } = frames("proj-a");
+      vi.advanceTimersByTime(LOCAL_TERMINAL_NONCE_TTL_MS + 1);
+      expect(consumeLocalNonce("browser-frames", nonce)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses an empty or absent nonce without scanning for one", () => {
+    frames("proj-a");
+    expect(consumeLocalNonce("browser-frames", "")).toBeNull();
+    expect(consumeLocalNonce("browser-frames", null)).toBeNull();
+    expect(consumeLocalNonce("browser-frames", undefined)).toBeNull();
+    expect(outstandingLocalTerminalNonceCount()).toBe(1);
+  });
+
+  it("carries the project it was minted for, which is what binds the socket", () => {
+    // The frames socket compares this against the session it was asked to
+    // watch: without that, a nonce for one project opens another's browser.
+    const { nonce } = frames("proj-b");
+    expect(consumeLocalNonce("browser-frames", nonce)?.projectId).toBe("proj-b");
   });
 });
