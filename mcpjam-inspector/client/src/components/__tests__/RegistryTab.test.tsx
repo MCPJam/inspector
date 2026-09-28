@@ -324,6 +324,21 @@ describe("RegistryTab", () => {
       editedFields: [],
     };
 
+    it("renders organization entry text without interpreting HTML", () => {
+      const displayName = '<svg data-marker="payload" onload=alert(1)>Server';
+      const description =
+        '<img/src=x data-marker="payload" onerror=alert(1)>Promise<Object>';
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: true,
+        servers: [{ ...orgEntry, displayName, description }],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByText(displayName)).toBeInTheDocument();
+      expect(screen.getByText(description)).toBeInTheDocument();
+      expect(document.body.querySelector("[data-marker]")).toBeNull();
+    });
+
     it("renders nothing at all for a project with no organization", () => {
       render(<RegistryTab {...defaultProps} />);
 
