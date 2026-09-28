@@ -182,12 +182,44 @@ function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * The sandbox image a suite runs with, as the settings sheet shows it. An
+ * ENVIRONMENT suite runs its environments' images, not the legacy suite pin:
+ * the one they all share, or `mixed` when they differ (a single value would
+ * misreport some of them). A change is carried onto every environment.
+ */
+export function suiteImageSetting(suite: {
+  environment?: { computerEnvironmentId?: string };
+  environmentIds?: string[];
+  environmentTargets?: Array<{
+    computerEnvironmentId?: string;
+    unavailable?: string;
+  }>;
+}): { value: string | undefined; mixed: boolean } {
+  if (!suite.environmentIds?.length) {
+    return { value: suite.environment?.computerEnvironmentId, mixed: false };
+  }
+  const images = new Set(
+    (suite.environmentTargets ?? [])
+      .filter((target) => !target.unavailable)
+      .map((target) => target.computerEnvironmentId ?? ""),
+  );
+  if (images.size > 1) return { value: undefined, mixed: true };
+  const [only] = [...images];
+  return { value: only || undefined, mixed: false };
+}
+
 /** Read a suite document into the draft's value shape. */
 export function readSuiteSettingsValues(suite: {
   name?: string;
   defaultPassCriteria?: { minimumPassRate?: number };
   minIterations?: number;
   environment?: { computerEnvironmentId?: string };
+  environmentIds?: string[];
+  environmentTargets?: Array<{
+    computerEnvironmentId?: string;
+    unavailable?: string;
+  }>;
   defaultMatchOptions?: EvalMatchOptions;
   defaultPredicates?: Predicate[];
   judgeConfig?: EvalJudgeConfig;
@@ -203,7 +235,7 @@ export function readSuiteSettingsValues(suite: {
         ? undefined
         : { minimumPassRate: suite.defaultPassCriteria.minimumPassRate },
     minIterations: suite.minIterations,
-    computerEnvironmentId: suite.environment?.computerEnvironmentId,
+    computerEnvironmentId: suiteImageSetting(suite).value,
     defaultMatchOptions: suite.defaultMatchOptions,
     // Normalized to a list so "no checks" has ONE spelling in the draft.
     // Absent and empty are the same state to a reader, and two spellings is
@@ -425,6 +457,14 @@ export function toUpdateArgs(
     servers?: unknown[];
     serverBindings?: unknown;
   },
+  options: {
+    /**
+     * The suite runs environments and the backend carries settings onto them
+     * (`environmentSuiteSettings`): the image is every environment's, sent
+     * as `environmentSettings` rather than the legacy suite pin no run reads.
+     */
+    environmentSuite?: boolean;
+  } = {},
 ): Record<string, unknown> {
   const args: Record<string, unknown> = { suiteId };
   const normalized = normalizeSuiteSettingsValues(draft.current);
@@ -446,6 +486,12 @@ export function toUpdateArgs(
         args.minIterations = value ?? null;
         break;
       case "computerEnvironmentId":
+        if (options.environmentSuite) {
+          // `null` clears every environment's image; the legacy envelope
+          // could only say what differs from the suite row's own stale pin.
+          args.environmentSettings = { computerEnvironmentId: value ?? null };
+          break;
+        }
         // The whole envelope, because that is the shape the mutation takes:
         // the pin lives inside `environment`, and sending the pin alone would
         // drop the server list beside it.
@@ -680,4 +726,25 @@ export function describeDraft(
   return dirtyKeys(draft).map((key) =>
     describeChange(key, draft.base, draft.current),
   );
+}
+
+/**
+ * Why an image edit on an ENVIRONMENT suite cannot be saved yet, or null.
+ * Unknown capabilities are not "legacy": the legacy suite pin is one no run
+ * of an environment suite reads, so sending it would save an image that
+ * never applies. The save waits until the backend confirms it carries
+ * settings onto the suite's environments.
+ */
+export function environmentImageSaveBlock(args: {
+  runsEnvironments: boolean;
+  dirtyKeys: ReadonlySet<SuiteSettingsKey>;
+  /** `useEnvironmentCapabilities`: undefined while probing, null on failure. */
+  capabilities: { environmentSuiteSettings?: boolean } | null | undefined;
+}): string | null {
+  if (!args.runsEnvironments) return null;
+  if (!args.dirtyKeys.has("computerEnvironmentId")) return null;
+  if (args.capabilities?.environmentSuiteSettings === true) return null;
+  return args.capabilities === undefined
+    ? "Still checking what this deployment supports. Try saving again in a moment."
+    : "This deployment cannot set a sandbox image on this suite's environments yet. Undo the image change to save your other edits.";
 }

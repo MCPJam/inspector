@@ -7,7 +7,7 @@ import {
   type ToolChoice,
   type Tool as AiTool,
 } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import type { createLlmModel } from "./chat-helpers";
 import {
   appendDedupedModelMessages,
@@ -316,6 +316,12 @@ export interface RunDirectChatTurnOptions {
    * every attempt shares the same composed `abortSignal`.
    */
   maxRetries?: number;
+  /**
+   * Provider options for the model call, e.g. the reasoning effort a saved
+   * selection asks for (`reasoningEffortProviderOptions`). Absent ⇒ none, so
+   * callers that do not set it are byte-identical to before.
+   */
+  providerOptions?: ProviderOptions;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
   /**
@@ -578,6 +584,7 @@ export function runDirectChatTurn(
     prepareAdvertisedTools,
     abortSignal,
     maxRetries,
+    providerOptions,
     traceEvents,
     onLiveTextDelta,
     onStepFinish,
@@ -743,6 +750,7 @@ export function runDirectChatTurn(
     ],
     ...(abortSignal ? { abortSignal } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }

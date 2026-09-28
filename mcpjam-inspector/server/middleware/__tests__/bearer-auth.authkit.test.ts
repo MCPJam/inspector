@@ -7,7 +7,7 @@
  * `services/__tests__/authkit-jwt-gateway.test.ts`, and against a real WorkOS
  * JWKS in `bearer-auth.emulator.test.ts`.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const {
@@ -49,17 +49,22 @@ vi.mock("../../services/workos-key-bindings.js", () => ({
 vi.mock("../../utils/logger.js", () => ({ logger: loggerMock }));
 
 import {
+  SESSION_REVOKE_PATH,
   bearerAuthMiddleware,
   resetAuthKitKeysWarningForTests,
   resetWorkOSRateLimitForTests,
 } from "../bearer-auth.js";
+import {
+  RevokedSessionCache,
+  setRevokedSessionCacheForTests,
+} from "../../services/revoked-session-cache.js";
 
 const next = vi.fn();
 
 function createApp(): Hono {
   const app = new Hono();
   app.use("*", bearerAuthMiddleware);
-  app.get("/test", (c) => {
+  const echo = (c: any) => {
     next();
     return c.json({
       authMethod: c.get("authMethod") ?? null,
@@ -67,14 +72,28 @@ function createApp(): Hono {
       workosSessionId: c.get("workosSessionId") ?? null,
       guestId: c.get("guestId") ?? null,
     });
-  });
+  };
+  app.all("/test", echo);
+  app.all("/api/v1/me", echo);
+  app.all(SESSION_REVOKE_PATH, echo);
   return app;
 }
 
-const request = (token: string) =>
-  createApp().request("/test", {
+const request = (token: string, path = "/test") =>
+  createApp().request(path, {
     headers: { Authorization: `Bearer ${token}` },
   });
+
+/** A list that never finishes loading, holding only what a test marks. */
+function unloadedRevocationList(): RevokedSessionCache {
+  return new RevokedSessionCache({
+    fetchPage: () => new Promise(() => {}),
+  });
+}
+
+afterEach(() => {
+  setRevokedSessionCacheForTests(undefined);
+});
 
 beforeEach(() => {
   next.mockReset();
@@ -171,6 +190,80 @@ describe("bearerAuthMiddleware — AuthKit JWTs", () => {
       });
     },
   );
+});
+
+describe("bearerAuthMiddleware — revoked sessions (MJ-011)", () => {
+  beforeEach(() => {
+    classifyAuthKitBearerMock.mockResolvedValue({
+      kind: "verified",
+      sub: "user_1",
+      sid: "session_revoked",
+    });
+  });
+
+  it("refuses a session known to be revoked with SESSION_REVOKED", async () => {
+    const list = unloadedRevocationList();
+    list.markRevokedLocally("session_revoked");
+    setRevokedSessionCacheForTests(list);
+
+    const res = await request("eyJ.valid.token");
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      code: "SESSION_REVOKED",
+      message: expect.any(String),
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("answers in the v1 envelope on /api/v1", async () => {
+    const list = unloadedRevocationList();
+    list.markRevokedLocally("session_revoked");
+    setRevokedSessionCacheForTests(list);
+
+    const res = await request("eyJ.valid.token", "/api/v1/me");
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      code: "UNAUTHORIZED",
+      message: expect.any(String),
+      details: { reason: "SESSION_REVOKED" },
+    });
+  });
+
+  it("admits a session it has not seen revoked, even before the list has loaded", async () => {
+    // Routes behind this middleware forward the bearer to Convex, which checks
+    // the durable record itself; requiring a current list is the job of the
+    // routes that decide on their own.
+    setRevokedSessionCacheForTests(unloadedRevocationList());
+
+    const res = await request("eyJ.valid.token");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).workosSessionId).toBe("session_revoked");
+  });
+
+  it("still lets the sign-out route see the session", async () => {
+    const list = unloadedRevocationList();
+    list.markRevokedLocally("session_revoked");
+    setRevokedSessionCacheForTests(list);
+
+    const res = await request("eyJ.valid.token", SESSION_REVOKE_PATH);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      authMethod: "authkit_jwt",
+      workosSessionId: "session_revoked",
+    });
+  });
+
+  it("changes nothing where no revoked-session list runs", async () => {
+    setRevokedSessionCacheForTests(null);
+
+    const res = await request("eyJ.valid.token");
+
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("bearerAuthMiddleware — other credentials never reach the AuthKit verifier", () => {

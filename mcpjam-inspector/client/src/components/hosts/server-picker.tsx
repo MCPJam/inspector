@@ -440,6 +440,9 @@ export function ServerPicker({
         id: group._id,
         name: group.name,
         serverNames: group.resolvedServerNames ?? [],
+        deleteDisabledReason: group.inUse
+          ? "In use by a test suite."
+          : undefined,
       })),
     [attachments],
   );
@@ -663,8 +666,9 @@ export function ServerPicker({
    * Remove a group. The only caller of this mutation in the app: without it a
    * project accumulates stand-ins nothing can clear.
    *
-   * The backend refuses a group a suite still uses and says which; that
-   * message is worth more than anything phrased here, so it is passed through.
+   * Groups the listing marks `inUse` never reach here — their control is
+   * greyed out. The backend still refuses on a race, and its message is
+   * passed through.
    */
   const handleDeleteGroup = useCallback(
     async (groupId: string) => {

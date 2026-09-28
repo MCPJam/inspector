@@ -112,6 +112,7 @@ import type {
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
+  PlatformEvalCasesImported,
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
@@ -837,6 +838,12 @@ export type CreateEvalCasesResult = Omit<
 /** `generate_eval_cases`, with each generated case's suite stamped on. */
 export type GenerateEvalCasesResult = Omit<
   PlatformEvalCasesGenerated,
+  "created"
+> & { created: PlatformEvalCaseWithSuite[] };
+
+/** `import_eval_cases`, with each imported case's suite stamped on. */
+export type ImportEvalCasesResult = Omit<
+  PlatformEvalCasesImported,
   "created"
 > & { created: PlatformEvalCaseWithSuite[] };
 
@@ -3205,6 +3212,19 @@ async function composeRunEnvironment(
   signal: AbortSignal | undefined,
   options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
+  // `hostServers` used to mean "run against the client's current server
+  // list". Eval runs no longer have such a list: since the backend made eval
+  // launches group-only, an environment without a server group resolves to NO
+  // servers and the launch is refused (`ENV_NO_SERVERS`). Accepting the flag
+  // would only compose that refused environment, so it is rejected up front,
+  // before any group is resolved or created, with the replacement named.
+  // Still declared in the schema so an older caller gets this sentence
+  // instead of an unknown-key error.
+  if (stack.hostServers === true) {
+    throw operationInputError(
+      "`hostServers` is no longer supported for eval runs: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Pass `server`/`servers` (resolved to a server group) or `serverGroup` instead."
+    );
+  }
   // Once, before the fan-out: every model cell shares one server group, and
   // resolving inside the loop would re-list (and race to create) per cell.
   const pinned = await materializeComposeServers(
@@ -3218,25 +3238,11 @@ async function composeRunEnvironment(
   // for presence alone would clear this guard and then compose the exact
   // unpinned environment it exists to refuse.
   const pinnedGroup = pinned.serverGroup?.trim();
-  // Asking to follow the host AND to pin is a contradiction, and resolving it
-  // silently would drop one of the two things the caller said. The CLI rejects
-  // the pair too; repeated here because `execute` is reachable without it.
-  if (
-    stack.hostServers === true &&
-    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
-  ) {
+  // The server is the thing under test, so a composed RUN has to say which
+  // one, as a server group.
+  if (!pinnedGroup) {
     throw operationInputError(
-      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
-    );
-  }
-  // The server is the thing under test, so a composed RUN has to say which one.
-  // Without a pin the run reads the host's list at execution time, and editing
-  // that shared host silently repoints every eval composed against it — the
-  // failure this guard exists to stop. Following the host stays available, but
-  // only as something the caller asked for out loud.
-  if (!pinnedGroup && stack.hostServers !== true) {
-    throw operationInputError(
-      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+      "A composed eval run must say which servers to test: pass `server`/`servers` (resolved to a server group) or `serverGroup`."
     );
   }
   const choices = expandComposeModelChoices(pinned);
@@ -3791,13 +3797,13 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required: an eval run takes its servers from a server group alone."
       ),
     hostServers: z
       .boolean()
       .optional()
       .describe(
-        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
+        "No longer supported — rejected. Eval runs take their servers from a server group alone; pass `server`/`servers` or `serverGroup` instead."
       ),
     server: z
       .string()
@@ -6658,6 +6664,195 @@ export const generateEvalCasesOperation: PlatformOperation<
     return {
       ...generated,
       created: generated.created.map((testCase) =>
+        stampSuiteId(testCase, suite.id)
+      ),
+    };
+  },
+};
+
+const MAX_IMPORT_DOCUMENT_BYTES = 100 * 1024;
+
+const importEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  content: z
+    .string()
+    .min(1)
+    .describe(
+      "The whole document, as text. At most 100 KiB — split a larger one and import the parts separately."
+    ),
+  fileName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      "The document's name, recorded on each case so a reviewer can trace it back. Nothing is gated on it — a pasted document needs no name."
+    ),
+  servers: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Server names/IDs to discover tools from; defaults to the suite's selection."
+    ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  caseModels: z
+    .array(caseModelSchema)
+    .optional()
+    .describe("Execution models to set on the imported cases."),
+  duplicatePolicy: z
+    .enum(["block", "warn", "create_anyway"])
+    .optional()
+    .describe(
+      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`."
+    ),
+  overrideReason: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Why importing a duplicate is intended. Recorded on the case's revision."
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key: pass one, because a retry must not author and bill the same document twice. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
+    ),
+});
+export type ImportEvalCasesInput = z.infer<typeof importEvalCasesInput>;
+
+export const importEvalCasesOperation: PlatformOperation<
+  ImportEvalCasesInput,
+  ImportEvalCasesResult
+> = {
+  name: "import_eval_cases",
+  // Authoring a document runs MCPJam's model on the customer's behalf, and
+  // MCPJam pays for it: the backend bills it as `markdown_case_import`, which
+  // sits in PLATFORM_PAID_INTERNAL_LLM beside `eval_generation`, so nothing is
+  // debited from the customer. It is not a `spend` risk.
+  //
+  // Re-importing the same text still re-runs the model, which is wasteful even
+  // when it is free, so the description keeps the advice to re-send one case
+  // rather than the whole document.
+  //
+  // `none`, the same classification `generate_eval_cases` carries: both author
+  // cases with a model MCPJam pays for. Leaving `risk` off entirely is not the
+  // fix — an unclassified write fails the agent-op registry pin, and rightly:
+  // the classification is what derives the operation's agent tier.
+  risk: "none",
+  title: "Import MCPJam eval cases from a document",
+  description:
+    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. Authoring is on MCPJam, like `generate_eval_cases`. Cases the model could not finish, and cases it was unsure about, are NOT created — they come back in `skipped` with the reason, and `reviewUrl` opens the app page holding exactly those drafts for a person to read and save. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors every case in it. IDEMPOTENT on idempotencyKey.",
+  readOnly: false,
+  permalink: derivePermalinks((result) =>
+    result.created.flatMap((testCase) =>
+      evalCaseRef(testCase, testCase.suiteId)
+    )
+  ),
+  inputSchema: importEvalCasesInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    assertNoServerOverrideWithEnvironment(input);
+    // Both checks are HERE rather than as schema `.refine`s: an operation's
+    // `inputSchema` is handed to the agent tool surface, which needs a plain
+    // object schema — a refinement wraps it in `ZodEffects` and the toolset
+    // stops building. Same reasoning as `create_eval_cases`.
+    if (
+      input.duplicatePolicy !== undefined &&
+      input.duplicatePolicy !== "block" &&
+      !input.overrideReason
+    ) {
+      throw new PlatformApiError(
+        `duplicatePolicy \`${input.duplicatePolicy}\` imports a case that duplicates ` +
+          "an existing one, so it requires an overrideReason — the reason is what " +
+          "gets recorded on the case's revision.",
+        "VALIDATION_ERROR",
+        // Client-synthesized: no request was made, so quoting a server status
+        // would misreport what happened.
+        { status: 0 }
+      );
+    }
+    // Refused before the request: the document is the whole payload, and
+    // sending 100 KiB only to have the route reject it wastes the round trip.
+    const documentBytes = new TextEncoder().encode(input.content).length;
+    if (documentBytes > MAX_IMPORT_DOCUMENT_BYTES) {
+      throw new PlatformApiError(
+        `The document is ${documentBytes} bytes; the limit is ${MAX_IMPORT_DOCUMENT_BYTES}. ` +
+          "Split it and import the parts separately.",
+        "VALIDATION_ERROR",
+        { status: 0 }
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    // Server name/id selectors resolve to project server IDs before sending,
+    // the way generate_eval_cases does — the route hands `servers` straight to
+    // batch authorization, which expects IDs.
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
+    const imported = await client.importEvalCases(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          content: input.content,
+          ...(input.fileName ? { fileName: input.fileName } : {}),
+          ...(overrideServers
+            ? { servers: overrideServers.map((server) => server.id) }
+            : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
+          ...(input.caseModels ? { caseModels: input.caseModels } : {}),
+          ...(input.duplicatePolicy
+            ? { duplicatePolicy: input.duplicatePolicy }
+            : {}),
+          ...(input.overrideReason
+            ? { overrideReason: input.overrideReason }
+            : {}),
+          // In the BODY as well as the header, the way generate_eval_cases
+          // sends it: one key on the wire rather than two channels that could
+          // disagree. The route merges a header key over this one.
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
+        },
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return {
+      ...imported,
+      created: imported.created.map((testCase) =>
         stampSuiteId(testCase, suite.id)
       ),
     };
@@ -9715,7 +9910,7 @@ const createClientInput = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });
@@ -10333,7 +10528,7 @@ const createHostInput = z
         code: "custom",
         path: ["config", "modelId"],
         message:
-          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4.5").',
       });
     }
   });
@@ -10817,7 +11012,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4.5").'
     ),
   skillSelection: skillSelectionInput.optional(),
   secretSelection: secretSelectionInput.optional(),
@@ -18643,6 +18838,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,

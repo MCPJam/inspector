@@ -216,6 +216,31 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(body.futureSection).toEqual({ brandNew: true, value: 42 });
   });
 
+  it("passes the provider-retention fact through unmodified", async () => {
+    // The backend nests it under capture.redaction; the CLI, the JSON output
+    // and the MCP tool all read it from this route, so it must not project it
+    // away.
+    const base = baseDisclosure() as { capture: { redaction: object } };
+    const providerRetention = {
+      openrouter: { data_collection: "deny", zdr: true },
+      gateway: { disallowPromptTraining: true, zeroDataRetention: true },
+      zeroDataRetention: true,
+      appliesTo: ["every analysis call"],
+      notAppliedTo: ["customer Playground chat"],
+      note: "provider, not MCPJam",
+    };
+    queryMock.mockResolvedValue(
+      baseDisclosure({
+        capture: {
+          ...base.capture,
+          redaction: { ...base.capture.redaction, providerRetention },
+        },
+      }),
+    );
+    const body = (await (await get()).json()) as any;
+    expect(body.capture.redaction.providerRetention).toEqual(providerRetention);
+  });
+
   it("passes analysis through unmodified even when execution is absent", async () => {
     // `analysis` is ALWAYS present, even for an ingested run — stored
     // evidence still reaches the judges. This route must never hide it just

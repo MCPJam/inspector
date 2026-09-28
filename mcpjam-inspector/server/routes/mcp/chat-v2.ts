@@ -1,3 +1,4 @@
+import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
@@ -48,6 +49,7 @@ import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
+import { getRequestLogger } from "../../utils/request-logger";
 import {
   HOSTED_MODE,
   LOCAL_HARNESS_ENABLED,
@@ -1358,7 +1360,20 @@ chatV2.post("/", async (c) => {
           readXaaEnterprisePolicy(
             (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
           ).kind !== "off",
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.mcp.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         return c.json(
           {
@@ -2278,6 +2293,13 @@ chatV2.post("/", async (c) => {
                 accessVersion: bodyAccessVersion,
                 serverIds: hostConfigServerIds,
               },
+              {
+                modelWorkload: modelWorkloadFor({
+                  sourceType: chatSessionSourceType,
+                  tools: allTools,
+                  messages: modelMessages,
+                }),
+              },
             )
           : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
@@ -2385,6 +2407,9 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        ...(typeof modelDefinition.nativeModelId === "string"
+          ? { nativeModelId: modelDefinition.nativeModelId }
+          : {}),
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,

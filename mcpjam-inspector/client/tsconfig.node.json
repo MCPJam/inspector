@@ -7,5 +7,9 @@
     "allowSyntheticDefaultImports": true,
     "strict": true
   },
-  "include": ["vite.config.ts", "vite-lexer-safe-minify.ts"]
+  "include": [
+    "vite.config.ts",
+    "vite-lexer-safe-minify.ts",
+    "vite-posthog-warn-only.ts"
+  ]
 }

@@ -15,6 +15,18 @@ import {
 } from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+  readStoredModelSelection,
+  wireModelIdForSelection,
+} from "../../utils/model-resolution-local.js";
+import {
+  resolveEffectiveModelSettings,
+  type EffectiveModelSettings,
+} from "../../utils/model-selection-settings.js";
+import type { ModelSelection } from "@mcpjam/sdk";
+import type { ModelDefinition } from "@/shared/types";
+import {
   captureAndPersistWidgetSnapshotsForSession,
   runSyntheticHostSession,
   type SimulationManagerFactory,
@@ -174,6 +186,97 @@ export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
 /** Session-id identity for a pinned execution target (shared mint — D1).
  * `environmentId` comes from the FIRST-CLASS `environmentRef`; the opaque
  * `targetId` is never parsed. */
+/**
+ * The model a swarm target runs on. With a saved selection in the snapshot,
+ * the selection decides the rail: `hosted` is marked hosted, and an explicit
+ * `org` / `local` selection is marked `hosted: false` so it never matches the
+ * hosted catalog first, executed with its provider-native id. A `local`
+ * selection also names its provider. Without one (legacy snapshot), the
+ * pinned `hosted` flag and id-based lookup apply exactly as before.
+ *
+ * An `org` selection's provider still comes from the id: the snapshot carries
+ * the connection's row id, not its provider key, and mapping one to the other
+ * is the backend resolver's job.
+ */
+export function swarmTargetModelDefinition(
+  target: Pick<
+    PinnedHostExecutionSpec,
+    "modelId" | "hosted" | "resolvedSelection"
+  >,
+): ModelDefinition {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return buildSyntheticModelDefinition(target.modelId, {
+      hosted: target.hosted,
+    });
+  }
+  const wireModelId = wireModelIdForSelection(selection);
+  const definition = buildSyntheticModelDefinition(wireModelId, {
+    hosted: selection.source === "hosted",
+  });
+  const ref = selection.connectionRef;
+  if (selection.source === "local" && ref?.kind === "localProvider") {
+    return {
+      ...definition,
+      id: wireModelId,
+      provider: ref.providerKey,
+      ...(ref.customProviderName
+        ? { customProviderName: ref.customProviderName }
+        : {}),
+    };
+  }
+  return definition;
+}
+
+/**
+ * The target's saved selection as the backend should see it: the same
+ * selection {@link swarmTargetModelDefinition} routes by (valid and naming the
+ * pinned model), put through `backendModelSelection()`, so a `hosted` or `org`
+ * one is forwarded as the request body's `modelSelection` and a `local` one
+ * never is. `undefined` for a legacy snapshot.
+ */
+export function swarmTargetBackendSelection(
+  target: Pick<PinnedHostExecutionSpec, "modelId" | "resolvedSelection">,
+): ModelSelection | undefined {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return undefined;
+  }
+  return backendModelSelection(selection);
+}
+
+/**
+ * The settings a swarm target runs with, resolved once per target:
+ * the saved selection's settings over the host's defaults (a swarm has no
+ * per-run override). Without a saved selection the host's temperature
+ * applies exactly as before. The effort's rail is not known until the turn
+ * resolves its runtime (an org connection is cloud or local at call time),
+ * so it is checked there, by `resolveTurnRuntime`. Throws the refusal when a
+ * saved setting cannot be honoured.
+ */
+export function swarmTargetSettings(
+  target: Pick<
+    PinnedHostExecutionSpec,
+    "modelId" | "resolvedSelection" | "temperature"
+  >,
+  modelDefinition: ModelDefinition,
+): EffectiveModelSettings {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return target.temperature !== undefined
+      ? { temperature: target.temperature }
+      : {};
+  }
+  const result = resolveEffectiveModelSettings({
+    route: selection.source === "hosted" ? "hosted" : "org",
+    modelDefinition,
+    selection,
+    host: { temperature: target.temperature },
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError([result.refusal]);
+  return result.settings;
+}
+
 function targetSessionIdentity(target: PinnedHostExecutionSpec): {
   hostId: string;
   environmentId?: string;
@@ -635,9 +738,9 @@ async function runJourneyFanOut(
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId, {
-        hosted: target.hosted,
-      });
+      const modelDefinition = swarmTargetModelDefinition(target);
+      const modelSelection = swarmTargetBackendSelection(target);
+      const targetSettings = swarmTargetSettings(target, modelDefinition);
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -759,6 +862,9 @@ async function runJourneyFanOut(
                 // absent-host-config path.
                 xaaEnterprisePolicyOn:
                   readXaaEnterprisePolicy(target.mcpProfile).kind !== "off",
+                // A swarm's results are compared, so an unverified harness ×
+                // model pair is refused, not run with a warning.
+                purpose: "swarm",
               });
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
@@ -1185,8 +1291,12 @@ async function runJourneyFanOut(
             maxTurns,
             runtime: {
               modelDefinition,
+              ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,
-              temperature: target.temperature,
+              temperature: targetSettings.temperature,
+              ...(targetSettings.reasoningEffort
+                ? { reasoningEffort: targetSettings.reasoningEffort }
+                : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,

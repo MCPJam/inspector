@@ -15,7 +15,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
-import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { getHarnessAdapter } from "../../registry.js";
+import { startDeliveryMcp } from "./delivery-mcp.js";
+import { createClaudeCodeHarness } from "../../claude-code-bootstrap.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -67,7 +69,7 @@ const PACK_TARGET = (() => {
 const CONFORMANCE_VERSION =
   process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION ?? "local-dev";
 
-const MODE = (process.argv[2] ?? "full") as "full" | "no-launcher";
+const MODE = (process.argv[2] ?? "full") as "full" | "no-launcher" | "delivery";
 const RUNTIME_ROOT = join(ROOT, "runtime");
 const BUNDLE = join(RUNTIME_ROOT, "claude-code");
 const WORKSPACE = join(ROOT, "workspace");
@@ -105,6 +107,8 @@ const note = (s: string) => {
  * failed for a reason that had nothing to do with it.
  */
 const helpers: ChildProcess[] = [];
+let deliveryMcp: Awaited<ReturnType<typeof startDeliveryMcp>> | undefined;
+let workspaceMcp: Awaited<ReturnType<typeof startDeliveryMcp>> | undefined;
 
 /**
  * The supervised tree this run owns, so a FAILURE can stop it.
@@ -435,6 +439,15 @@ async function main() {
 
   await mkdir(WORKSPACE, { recursive: true });
   await writeFile(join(WORKSPACE, "hello.txt"), "hello from the conformance workspace\n");
+  let existingMcpConfig = "";
+  if (MODE === "delivery") {
+    workspaceMcp = await startDeliveryMcp();
+    existingMcpConfig = JSON.stringify({ mcpServers: {
+      workspace_only: { type: "http", url: workspaceMcp.url },
+    } });
+    await writeFile(join(WORKSPACE, ".mcp.json"), existingMcpConfig);
+    deliveryMcp = await startDeliveryMcp();
+  }
   const before = new Set(await readdir(WORKSPACE));
   const ws = await registerWorkspaceGrant(WORKSPACE);
   if (!ws.ok) throw new Error(ws.message);
@@ -504,9 +517,16 @@ async function main() {
     harnessId: "claude-code", manifest: plan.manifest, runtime: plan.runtime, supervisor, launcher,
     workspacePath: plan.workspacePath, workspaceGrantId: target.workspaceGrantId, sessionStateDir,
     targetKind: "local-native", bridgePort, bridgeReadinessTimeoutMs: 30_000,
+    ...(MODE === "delivery" ? { scopedEnv: { DELIVERY_SECRET: "delivery-secret-canary" } } : {}),
     onBridgeStarted: async ({ pid }) => { bridgePid = pid; mark("bridge_listening_verified_loopback"); },
   });
-  const harness = createClaudeCode({
+  const harness = deliveryMcp
+    ? getHarnessAdapter("claude-code").createHarness({
+        modelId: "anthropic/claude-haiku-4.5",
+        auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: gatewayUrl },
+        mcpJson: { mcpServers: { delivery_probe: { type: "http", url: deliveryMcp.url } } },
+      })
+    : createClaudeCodeHarness({
     model: "haiku",
     auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: gatewayUrl },
     thinking: { type: "disabled" },
@@ -521,6 +541,7 @@ async function main() {
     // Work-dir layout: "project" is the symlink to the granted workspace inside
     // session state, so Claude Code's cwd resolves to the user's checkout.
     sandboxConfig: { workDir: "project" },
+    ...(MODE === "delivery" ? { skills: [{ name: "delivery-probe", description: "Delivery smoke skill", content: "# delivery skill" }] } : {}),
   });
 
   mark("create_session_start");
@@ -615,6 +636,31 @@ async function main() {
   mark("turn3_done");
   const m = /USER_TURNS=(\d+)/.exec(turn3.text);
   note(`continuity: model saw ${m?.[1] ?? "?"} user turns after detach+resume (expect >= 3)`);
+
+  if (deliveryMcp) {
+    const mcpTurn = await runTurn("delivery-mcp", agent, ref2, "MCPPROBE");
+    if (!mcpTurn.text.includes("DELIVERY_MCP_OK") || deliveryMcp.calls() < 1) {
+      throw new Error("Session-config MCP tool was not executed");
+    }
+    await runTurn("delivery-write", agent, ref2, `WRITE ${join(plan.workspacePath, "hello.txt")}`);
+    if ((await readFile(join(WORKSPACE, "hello.txt"), "utf8")) !== "written by the conformance mock\n") {
+      throw new Error("Write did not reach the granted workspace");
+    }
+    const secretTurn = await runTurn("delivery-secret", agent, ref2, "BASH printf '%s' \"$DELIVERY_SECRET\"");
+    if (!secretTurn.text.includes("delivery-secret-canary")) throw new Error("Scoped secret did not reach Bash");
+    if ((await readFile(join(WORKSPACE, ".mcp.json"), "utf8")) !== existingMcpConfig) {
+      throw new Error("User .mcp.json was overwritten");
+    }
+    const skill = await readFile(join(sessionStateDir, "home", ".claude", "skills", "delivery-probe", "SKILL.md"), "utf8");
+    if (!skill.includes("delivery skill")) throw new Error("Skill was not written under synthetic HOME");
+    note("delivery: MCP tool, workspace write, scoped secret, synthetic-home skill and preserved .mcp.json verified");
+    if (workspaceMcp!.connections() !== 0) {
+      throw new Error("Claude Code connected to an MCP server not selected in MCPJam");
+    }
+    note("workspace MCP server received zero connections; MCPJam-selected MCP server executed successfully");
+    await workspaceMcp!.close();
+    await deliveryMcp.close();
+  }
 
   const treeBefore = [bridgePid, ...(await descendants(bridgePid))];
   const groupPs = async (pgid: number) => execFileP("ps", ["-o", "pid=,pgid=,stat=,command=", "-ax"]).then((r) => r.stdout.split("\n").filter((l) => l.split(/\s+/).filter(Boolean)[1] === String(pgid)).map((l) => l.trim().slice(0, 100)), () => []);
@@ -725,6 +771,8 @@ main().catch(async (e) => {
   // human reads; this is what the next scenario depends on.
   await stopOwnedTree();
   await stopHelpers();
+  await deliveryMcp?.close();
+  await workspaceMcp?.close();
   await revokeLocalHarnessGrants().catch(() => {});
   console.error("[conformance] FAILED:", e?.stack ?? e);
   console.error("[conformance] marks:", JSON.stringify(marks));

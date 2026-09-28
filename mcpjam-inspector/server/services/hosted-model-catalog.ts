@@ -28,8 +28,12 @@
 
 import {
   getCanonicalModelId,
+  hostedDisplayNameFromCanonicalId,
+  hostedModelDefinitionsFromSnapshot,
+  hostedProviderFromCanonicalId,
   MCPJAM_PROVIDED_MODEL_IDS,
   type Model,
+  type ModelDefinition,
 } from "@/shared/types";
 import { logger } from "../utils/logger.js";
 
@@ -222,6 +226,39 @@ export function isHostedModelDefinition(model: {
   return isHostedCatalogModel(String(model.id), model.provider);
 }
 
+// Rows for `hostedCatalogModelDefinitions`, rebuilt only when `catalogIds` is
+// replaced. Every writer assigns a new Set, so identity is the version.
+let definitionsCache: {
+  ids: Set<string> | null;
+  rows: ModelDefinition[];
+} | null = null;
+
+/**
+ * The hosted catalog as model rows: the checked-in snapshot first, then every
+ * id the live catalog has reported beyond it. Lookups that used to read only
+ * the snapshot (provider derivation, "is this a known model?", hosted-id
+ * suggestions) fall through to the live catalog this way, so a model the
+ * backend added after the snapshot was generated is known without a
+ * regeneration. Cold start with the catalog unreachable is the snapshot alone.
+ */
+export function hostedCatalogModelDefinitions(): ModelDefinition[] {
+  if (definitionsCache && definitionsCache.ids === catalogIds) {
+    return definitionsCache.rows;
+  }
+  const rows = hostedModelDefinitionsFromSnapshot();
+  for (const id of catalogIds ?? []) {
+    if (SEED_IDS.has(id)) continue;
+    rows.push({
+      id,
+      name: hostedDisplayNameFromCanonicalId(id),
+      provider: hostedProviderFromCanonicalId(id),
+      hosted: true,
+    });
+  }
+  definitionsCache = { ids: catalogIds, rows };
+  return rows;
+}
+
 // ── Test hooks ────────────────────────────────────────────────────────────
 
 /** Seed the dynamic catalog directly (bypasses the network). */
@@ -232,6 +269,7 @@ export function __setHostedCatalogForTests(ids: Iterable<string>): void {
 /** Reset all module state to a cold start. */
 export function __resetHostedModelCatalogForTests(): void {
   catalogIds = null;
+  definitionsCache = null;
   refreshInFlight = null;
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;

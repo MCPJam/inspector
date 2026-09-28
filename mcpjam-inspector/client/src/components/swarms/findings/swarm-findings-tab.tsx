@@ -33,7 +33,14 @@ import type {
 } from "@mcpjam/sdk/contract";
 
 import { useMemo, useState } from "react";
-import type { SwarmWaveSignals } from "@/lib/swarm-api";
+import {
+  SWARM_QUERIES,
+  type RunLaunchFailures,
+  type SwarmWaveSignals,
+} from "@/lib/swarm-api";
+import { describeLaunchFailures } from "@/components/swarms/swarm-session-not-run";
+import { isConvexQueryUnavailable } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
@@ -137,6 +144,51 @@ export function SwarmFindingsTab({
       ? null
       : clampNarration(generatedSummary);
 
+  // Why any of the wave's sessions never ran (#5188). The summary can only
+  // count them; the refusal itself is on the attempt rows. Read only when a
+  // session did not start, so an ordinary wave issues no extra query.
+  const someSessionsDidNotStart =
+    model.launch.failed + model.launch.rateLimited > 0;
+  const runIds = useMemo(() => wave.runs.map((run) => run.runId), [wave.runs]);
+  // Keyed to the runs it was read for, so a reason read for one wave is never
+  // shown on the next while that one's read is still in flight.
+  const runKey = runIds.join("\0");
+  const [launchFailures, setLaunchFailures] = useState<{
+    runKey: string;
+    value: RunLaunchFailures[];
+  } | null>(null);
+  const receiveLaunchFailures = useCallback(
+    (value: RunLaunchFailures[]) =>
+      // Bails out on an equal answer. The effect that calls this keys on the
+      // query result, so a source that re-allocates an unchanged answer would
+      // otherwise loop: set state, render, new object, set state.
+      setLaunchFailures((prev) =>
+        prev?.runKey === runKey &&
+        JSON.stringify(prev.value) === JSON.stringify(value)
+          ? prev
+          : { runKey, value },
+      ),
+    [runKey],
+  );
+  const launchReason =
+    someSessionsDidNotStart && launchFailures?.runKey === runKey
+      ? describeLaunchFailures(launchFailures.value)
+      : null;
+  // A backend that predates the query throws on subscribe; the boundary turns
+  // that into no reason line rather than a broken tab, without filing the
+  // expected dark ship as an error. Keyed to the wave, so one failed read does
+  // not leave the line off every later wave this tab shows.
+  const launchFailuresRead = someSessionsDidNotStart ? (
+    <ErrorBoundary
+      key={runKey}
+      fallback={null}
+      isExpectedError={isLaunchFailuresUnavailable}
+      onError={reportAmbiguousLaunchFailuresError}
+    >
+      <LaunchFailuresRead runIds={runIds} onRead={receiveLaunchFailures} />
+    </ErrorBoundary>
+  ) : null;
+
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
   // alphabetically, so a live wave adding a persona would shift indices under
   // the reader and silently select someone else.
@@ -201,12 +253,14 @@ export function SwarmFindingsTab({
     }
     return (
       <div data-testid="swarm-findings-tab">
+        {launchFailuresRead}
         {jobStatus}
         <FindingsSummaryCard
           sessionCount={model.sessionCount}
           summary={summary.lines}
           recommendation={recommendation}
           narration={waveProse}
+          launchReason={launchReason}
         />
       </div>
     );
@@ -224,12 +278,14 @@ export function SwarmFindingsTab({
             />
           ))}
       </ErrorBoundary>
+      {launchFailuresRead}
       {jobStatus}
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}
         recommendation={recommendation}
         narration={waveProse}
+        launchReason={launchReason}
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">
@@ -265,6 +321,63 @@ export function SwarmFindingsTab({
       />
     </div>
   );
+}
+
+/**
+ * The failure the launch-failures read EXPECTS: a deployment that does not
+ * serve the query yet (it ships with the backend half of #5188), or a browser
+ * outliving a rollback.
+ *
+ * `isConvexQueryUnavailable` names only the DEV shapes; production redacts
+ * every non-`ConvexError` to `[CONVEX Q(<name>)] [Request ID: …] Server Error`,
+ * so a redacted failure of THIS query is read as the dark-ship state, as
+ * `ServerUrlChangeHistory` does for its own. A `ConvexError` from it (the
+ * run-count refusal) carries its own message and still reports.
+ */
+export function isLaunchFailuresUnavailable(error: Error): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (!message.includes(`Q(${SWARM_QUERIES.listRunLaunchFailures})`))
+    return false;
+  return isConvexQueryUnavailable(error) || message.includes("Server Error");
+}
+
+/** Set once the redacted form has been reported on this page load. */
+let reportedRedactedLaunchFailures = false;
+
+/**
+ * The redacted production form is ambiguous: a query not deployed yet, or a
+ * real crash inside it, which the redaction makes impossible to tell apart.
+ * It stays off the error path, so a deploy window does not file an issue per
+ * visit, but one info-level report per page load keeps a real crash visible
+ * once the backend has shipped. The DEV "not deployed" shape says exactly
+ * what it is and is never reported.
+ */
+export function reportAmbiguousLaunchFailuresError(error: Error): void {
+  if (reportedRedactedLaunchFailures) return;
+  if (!isLaunchFailuresUnavailable(error) || isConvexQueryUnavailable(error))
+    return;
+  reportedRedactedLaunchFailures = true;
+  reportCaught(error, {
+    source: "swarm_launch_failures_redacted",
+    level: "info",
+  });
+}
+
+function LaunchFailuresRead({
+  runIds,
+  onRead,
+}: {
+  runIds: readonly string[];
+  onRead: (value: RunLaunchFailures[]) => void;
+}) {
+  const value = useQuery(
+    SWARM_QUERIES.listRunLaunchFailures as never,
+    { journeyRunIds: runIds } as never,
+  ) as RunLaunchFailures[] | undefined;
+  useEffect(() => {
+    if (value !== undefined) onRead(value);
+  }, [value, onRead]);
+  return null;
 }
 
 function RunFunnelRead({

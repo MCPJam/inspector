@@ -8,6 +8,7 @@ import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
+import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
@@ -464,7 +465,12 @@ if (isInIframe) {
     // initializes the SDK, or feature start falls back to the remote fetch
     // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
     // No-op (and no chunk download) off the error-capture surfaces.
-    await preloadPosthogBundledExtensions();
+    // Flag values come from our server and are bootstrapped into the SDK at
+    // init (MJ-015); the fetch is bounded and resolves to null on any failure.
+    const [, serverFeatureFlags] = await Promise.all([
+      preloadPosthogBundledExtensions(),
+      loadBootstrapFeatureFlags(),
+    ]);
 
     root.render(
       <StrictMode>
@@ -474,7 +480,7 @@ if (isInIframe) {
         <ErrorBoundary name="root">
           <PostHogProvider
             apiKey={getPostHogKey()}
-            options={getPostHogOptions()}
+            options={getPostHogOptions(serverFeatureFlags)}
           >
             {Providers}
           </PostHogProvider>

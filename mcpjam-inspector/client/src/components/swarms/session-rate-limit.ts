@@ -19,6 +19,10 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import {
+  describeProviderNotAllowlisted,
+  isProviderNotAllowlistedCode,
+} from "@/lib/provider-not-allowlisted";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 
 /** Used whenever the model id does not name a provider outright. */
@@ -93,6 +97,19 @@ export function describeSwarmAttemptFailure(
 ): NormalizedError {
   const info = humanizeSwarmAttemptError(rawMessage, errorCode);
   const code = errorCode ?? info.code;
+  // The hosted gateway refused the host's model provider. Checked before the
+  // status-driven paths below: read as a 401/403 it would card as a provider
+  // credential failure and send the user to fix a key that was never used.
+  if (
+    isProviderNotAllowlistedCode(errorCode) ||
+    isProviderNotAllowlistedCode(info.code)
+  ) {
+    return {
+      ...describeProviderNotAllowlisted(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
   const limitSlug = mcpjamLimitSlugForMessage(info.message);
   if (
     isAccountLimit(info.message, code) &&

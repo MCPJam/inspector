@@ -3,12 +3,18 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useUpdateNotification } from "../useUpdateNotification";
 import type { UpdateStatus, FailedUpdateStatus } from "@/types/electron";
 
-const { errorToast } = vi.hoisted(() => ({ errorToast: vi.fn() }));
-vi.mock("@/lib/toast", () => ({ toast: { error: errorToast } }));
+const { errorToast, dismissToast } = vi.hoisted(() => ({
+  errorToast: vi.fn(),
+  dismissToast: vi.fn(),
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { error: errorToast, dismiss: dismissToast },
+}));
 const failure: FailedUpdateStatus = {
   kind: "failed",
   attemptId: "attempt-1",
   reason: "updater_error",
+  action: "instructions",
 };
 function setup(initial: UpdateStatus = { kind: "idle" }) {
   const update = {
@@ -18,6 +24,8 @@ function setup(initial: UpdateStatus = { kind: "idle" }) {
     removeUpdateErrorListener: vi.fn(),
     getUpdateStatus: vi.fn().mockResolvedValue(initial),
     restartAndInstall: vi.fn(),
+    retryDownload: vi.fn(),
+    relaunchToRetry: vi.fn(),
     simulateUpdate: vi.fn(),
     simulateUpdateDownloaded: vi.fn(),
     simulateUpdateError: vi.fn(),
@@ -55,7 +63,7 @@ describe("desktop update notification", () => {
     renderHook(() => useUpdateNotification());
     await waitFor(() =>
       expect(errorToast).toHaveBeenCalledWith(
-        "Update failed. Please reopen MCPJam and try again.",
+        "Update failed. Quit MCPJam completely, then open it again.",
         {
           id: "desktop-update-attempt-1",
           duration: Infinity,
@@ -156,5 +164,58 @@ describe("desktop update notification", () => {
     expect(api.update.simulateUpdate).toHaveBeenCalledTimes(1);
     expect(api.update.simulateUpdateDownloaded).toHaveBeenCalledTimes(1);
     expect(api.update.simulateUpdateError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("download recovery actions", () => {
+  it.each([
+    ["retry-download", "Retry download", "retryDownload"],
+    ["relaunch-retry", "Relaunch to retry", "relaunchToRetry"],
+  ] as const)(
+    "wires %s to the toast and prevents duplicate clicks",
+    async (action, label, method) => {
+      const api = setup({ ...failure, action });
+      const { result } = renderHook(() => useUpdateNotification());
+      await waitFor(() => expect(result.current.status.kind).toBe("failed"));
+      const options = errorToast.mock.calls[0][1];
+      expect(options.action.label).toBe(label);
+      act(() => {
+        options.action.onClick();
+        result.current.retryUpdate();
+      });
+      expect(api.update[method]).toHaveBeenCalledTimes(1);
+      expect(api.update.restartAndInstall).not.toHaveBeenCalled();
+      api.status({ kind: "pending", installRequested: false });
+      expect(dismissToast).toHaveBeenCalledWith("desktop-update-attempt-1");
+      expect(result.current.restartRequested).toBe(false);
+    },
+  );
+  it("dismisses failure when a late download completes", () => {
+    const api = setup();
+    renderHook(() => useUpdateNotification());
+    api.status({ ...failure, action: "relaunch-retry" });
+    api.status({ kind: "downloaded", version: "3.12.0" });
+    expect(dismissToast).toHaveBeenCalledWith("desktop-update-attempt-1");
+    expect(api.update.restartAndInstall).not.toHaveBeenCalled();
+  });
+  it("does not permit an early install request or show errors during automatic retries", () => {
+    const api = setup();
+    const { result } = renderHook(() => useUpdateNotification());
+    api.status({ kind: "pending", installRequested: false });
+    act(() => result.current.restartAndInstall());
+    api.status({ kind: "retry-waiting", retry: 1 });
+    act(() => result.current.restartAndInstall());
+    expect(api.update.restartAndInstall).not.toHaveBeenCalled();
+    expect(errorToast).not.toHaveBeenCalled();
+  });
+  it("disables duplicate relaunch-to-update clicks", async () => {
+    const api = setup({ kind: "downloaded", version: "3.12.0" });
+    const { result } = renderHook(() => useUpdateNotification());
+    await waitFor(() => expect(result.current.status.kind).toBe("downloaded"));
+    act(() => {
+      result.current.restartAndInstall();
+      result.current.restartAndInstall();
+    });
+    expect(api.update.restartAndInstall).toHaveBeenCalledTimes(1);
   });
 });

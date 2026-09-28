@@ -27,6 +27,7 @@ import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-c
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { applyWidgetStateUpdates } from "@/shared/user-context-message";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
@@ -294,66 +295,6 @@ export function MultiModelChatCard({
     });
   }, [selectedServerInstructions, setMessages]);
 
-  const applyWidgetStateUpdates = useCallback(
-    (
-      previousMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[]
-    ) => {
-      let nextMessages = previousMessages;
-
-      for (const { toolCallId, state } of updates) {
-        const messageId = `widget-state-${toolCallId}`;
-
-        if (state === null) {
-          nextMessages = nextMessages.filter(
-            (message) => message.id !== messageId
-          );
-          continue;
-        }
-
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
-          state
-        )}`;
-        const existingIndex = nextMessages.findIndex(
-          (message) => message.id === messageId
-        );
-
-        if (existingIndex !== -1) {
-          const existingMessage = nextMessages[existingIndex];
-          const existingText =
-            existingMessage.parts?.[0]?.type === "text"
-              ? (existingMessage.parts[0] as { text?: string }).text
-              : null;
-
-          if (existingText === stateText) {
-            continue;
-          }
-
-          const updatedMessages = [...nextMessages];
-          updatedMessages[existingIndex] = {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          };
-          nextMessages = updatedMessages;
-          continue;
-        }
-
-        nextMessages = [
-          ...nextMessages,
-          {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          },
-        ];
-      }
-
-      return nextMessages;
-    },
-    []
-  );
-
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
@@ -364,7 +305,7 @@ export function MultiModelChatCard({
         setWidgetStateQueue((previous) => [...previous, { toolCallId, state }]);
       }
     },
-    [applyWidgetStateUpdates, setMessages, status]
+    [setMessages, status],
   );
 
   useEffect(() => {
@@ -376,7 +317,7 @@ export function MultiModelChatCard({
       applyWidgetStateUpdates(previousMessages, widgetStateQueue)
     );
     setWidgetStateQueue([]);
-  }, [applyWidgetStateUpdates, setMessages, status, widgetStateQueue]);
+  }, [setMessages, status, widgetStateQueue]);
 
   useEffect(() => {
     if (!broadcastRequest) {

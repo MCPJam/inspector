@@ -47,7 +47,7 @@ You can override the request timeout and headers **per server** from the project
 
 These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
 
-- **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Browser and WebMCP page tools follow the chat’s Tool Approval setting. With it off, agents can act in signed-in websites without a per-call prompt. Browser device permission is a separate prerequisite for local browsing and inspection. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits.
+- **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Browser and WebMCP page tools follow the chat’s Tool Approval setting. With it off, agents can act in signed-in websites without a per-call prompt. Browser device permission is a separate prerequisite for local browsing and inspection. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits. For [workspace tools](/inspector/playground#workspace-tools), the saved value is what counts: the reads that open a connection to one of your servers pause unless it is saved off, and the tools that change something in your project always pause.
 - **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
 - **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. Browser is not listed here — it is configured in the **Browser** tab. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
@@ -114,6 +114,11 @@ The Apps Extension tab contains two independent capability matrices that never c
 </Note>
 
 ## Creating a Client
+
+<Note>
+  Only project admins can create clients. Members and guests see the create
+  button disabled with the message "Only project admins can create clients."
+</Note>
 
 1. Open the **Clients** tab in the inspector.
 2. Click **New Client**.
@@ -186,7 +191,7 @@ The **Servers** section on the study Publish tab shows which project servers the
 From the Clients index page:
 
 - **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
-- **Delete** — Removes the Client. The inspector blocks deletion if any scenario or eval still depends on it; resolve those first, or use force delete if you're sure.
+- **Delete** — Removes the Client. The delete button is greyed out when a client is the last one in the project ("You need at least one client.") or when a test suite still references it ("In use by a test suite."). Detach the client from any eval suites that use it before deleting.
 
 <Tip>
   Keep one Client per host you intend to ship to. Duplicate it to make scoped

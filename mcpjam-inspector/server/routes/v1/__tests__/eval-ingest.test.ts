@@ -15,6 +15,7 @@ vi.mock("../../../services/guest-token.js", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { v1BodyLimit } from "../../../middleware/v1-body-limit.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -207,6 +208,195 @@ describe("v1 eval-ingest proxies", () => {
       expect(res.status, suffix).toBe(200);
     }
     expect(fetchMock).toHaveBeenCalledTimes(suffixes.length);
+  });
+});
+
+describe("v1 eval-ingest artifacts proxy", () => {
+  const originalEnv = { CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL };
+  const originalFetch = global.fetch;
+
+  /** The production mount: the v1 body cap in front of the v1 router. */
+  function makeMountedApp(): Hono {
+    const app = new Hono();
+    app.use("/api/v1/*", v1BodyLimit());
+    app.route("/api/v1", v1Routes);
+    return app;
+  }
+
+  function postArtifact(
+    app: Hono,
+    project: string,
+    body: Uint8Array<ArrayBuffer> | string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    return Promise.resolve(
+      app.request(`/api/v1/projects/${project}/eval-ingest/artifacts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          Authorization: "Bearer tok",
+          ...headers,
+        },
+        body,
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalEnv.CONVEX_HTTP_URL) {
+      process.env.CONVEX_HTTP_URL = originalEnv.CONVEX_HTTP_URL;
+    } else {
+      delete process.env.CONVEX_HTTP_URL;
+    }
+  });
+
+  it("forwards the raw bytes and content type and passes the storage id back", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        backendResponse(200, { ok: true, storageId: "kg2_artifact" }),
+      );
+    global.fetch = fetchMock as never;
+
+    const res = await postArtifact(
+      makeMountedApp(),
+      "default",
+      "<html>widget</html>",
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, storageId: "kg2_artifact" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    // `default` omits the project so the backend resolves the key org's own.
+    expect(String(url)).toBe(
+      "https://convex-http.example.com/v1/evals/ingest/artifacts",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({
+      "content-type": "text/plain; charset=utf-8",
+      authorization: "Bearer tok",
+    });
+    expect(new TextDecoder().decode(init.body as Uint8Array)).toBe(
+      "<html>widget</html>",
+    );
+  });
+
+  it("names an explicit project in the query string", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        backendResponse(200, { ok: true, storageId: "kg2_artifact" }),
+      );
+    global.fetch = fetchMock as never;
+
+    await postArtifact(makeMountedApp(), "jd7abc", "x");
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "https://convex-http.example.com/v1/evals/ingest/artifacts?projectId=jd7abc",
+    );
+  });
+
+  it("accepts an artifact above the 1MB JSON cap", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        backendResponse(200, { ok: true, storageId: "kg2_artifact" }),
+      );
+    global.fetch = fetchMock as never;
+    const artifact = new Uint8Array(2 * 1024 * 1024 + 1).fill(120);
+
+    const res = await postArtifact(makeMountedApp(), "default", artifact);
+
+    expect(res.status).toBe(200);
+    const forwarded = (fetchMock.mock.calls[0][1] as RequestInit)
+      .body as Uint8Array;
+    expect(Buffer.compare(Buffer.from(forwarded), Buffer.from(artifact))).toBe(
+      0,
+    );
+  });
+
+  it("keeps the 1MB cap on the JSON ingest routes", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as never;
+
+    const res = await Promise.resolve(
+      makeMountedApp().request("/api/v1/projects/default/eval-ingest/report", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+        },
+        body: JSON.stringify({ pad: "x".repeat(1024 * 1024) }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an artifact past 20 MiB without forwarding it", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as never;
+
+    const declared = await postArtifact(makeMountedApp(), "default", "x", {
+      "Content-Length": String(20 * 1024 * 1024 + 1),
+    });
+    const streamed = await postArtifact(
+      makeMountedApp(),
+      "default",
+      new Uint8Array(20 * 1024 * 1024 + 1),
+    );
+
+    for (const res of [declared, streamed]) {
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR",
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, "VALIDATION_ERROR"],
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+  ])("passes a backend %i through verbatim", async (status, code) => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        backendResponse(status, { code, message: `refused: ${code}` }),
+      ) as never;
+
+    const res = await postArtifact(makeMountedApp(), "default", "x");
+
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ code, message: `refused: ${code}` });
+  });
+
+  it("passes a 429 and its Retry-After through", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ code: "RATE_LIMITED", message: "Slow down" }),
+        {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "7" },
+        },
+      ),
+    ) as never;
+
+    const res = await postArtifact(makeMountedApp(), "default", "x");
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("7");
+    expect(await res.json()).toMatchObject({ code: "RATE_LIMITED" });
   });
 });
 

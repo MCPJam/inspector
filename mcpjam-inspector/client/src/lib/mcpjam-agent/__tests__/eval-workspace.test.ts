@@ -9,9 +9,43 @@ import {
   evalSuiteKey,
   editGeneratedDraft,
   saveGeneratedDraft,
-  stageMarkdownDrafts,
+  followAuthoringJob,
 } from "../eval-workspace";
+import {
+  authoringRequest,
+  readAuthoringJob as readJob,
+} from "@/lib/apis/eval-authoring-api";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
+
+/** A completed job holding one draft, the shape `followAuthoringJob` stages. */
+function authoredJob(overrides: Record<string, unknown> = {}) {
+  return {
+    jobId: "job",
+    status: "completed",
+    phase: "publish",
+    error: null,
+    warnings: [],
+    drafts: [
+      {
+        version: 1,
+        draftId: "draft-1",
+        revision: 0,
+        case: {
+          title: "Generated",
+          steps: [{ id: "p1", kind: "prompt", prompt: "Find a ticket" }],
+          expectedOutput: "A ticket is found",
+          isNegativeTest: false,
+          runs: 1,
+          models: [],
+        },
+        issues: [],
+        additions: [],
+        review: "required",
+      },
+    ],
+    ...overrides,
+  } as never;
+}
 const scope: EvalAgentScope = {
   kind: "evals",
   version: 1,
@@ -33,7 +67,133 @@ const input = {
 };
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
 
-it("clears a failed generation's error when an import stages its drafts", () => {
+it("lets a new job take a suite a FAILED job still points at", async () => {
+  // A failed job keeps its id on the suite so the reader can retry it. The
+  // next job read that id as a newer follower and stood down before polling,
+  // so the suite sat on "running" and Generate refused every retry.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: { status: "error", drafts: [], authoringJobId: "dead" } as never,
+    },
+  });
+  vi.mocked(readJob)
+    .mockReset()
+    .mockResolvedValue(authoredJob({ jobId: "fresh", drafts: [] }));
+  await followAuthoringJob(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    "fresh",
+    { takeOver: true },
+  );
+  expect(readJob).toHaveBeenCalledWith("fresh");
+  expect(useEvalGeneration.getState().suites[key]).toMatchObject({
+    status: "ready",
+  });
+});
+
+it("clears a finished job's drafts when a new import starts", async () => {
+  // A second import appended its cases to the first one's, so a six-case
+  // document read back as twelve drafts — two of every case. A person's own
+  // staged drafts carry no job and stay.
+  //
+  // The job is read from `authoringJobId` on the draft, NOT from its
+  // `draftId`: the status query answers `draftId` as the Convex row id, so it
+  // never carries the job that staged it.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "authoring-k57abc",
+            revision: "r",
+            input,
+            authoring: { draftId: "k57abc" },
+            authoringJobId: "old",
+          },
+          { id: "mine", revision: "r", input },
+        ],
+      } as never,
+    },
+  });
+  vi.mocked(readJob)
+    .mockReset()
+    .mockResolvedValue(authoredJob({ jobId: "new", drafts: [] }));
+  await followAuthoringJob(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    "new",
+  );
+  const ids = useEvalGeneration.getState().suites[key].drafts.map((d) => d.id);
+  expect(ids).toEqual(["mine"]);
+});
+
+it("keeps the drafts of the job it is re-following", async () => {
+  // Re-following one job is ordinary: the review link is revisited, the
+  // component remounts, the tab reloads. Dropping its drafts re-staged them
+  // from the server, which threw away the local half of the review with
+  // nothing on screen to say so.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "authoring-k57abc",
+            revision: "r",
+            input,
+            authoring: { draftId: "k57abc" },
+            authoringJobId: "job_1",
+            issueResolutions: { 0: "checked against the catalog" },
+          },
+        ],
+      } as never,
+    },
+  });
+  vi.mocked(readJob)
+    .mockReset()
+    .mockResolvedValue(authoredJob({ jobId: "job_1", drafts: [] }));
+  await followAuthoringJob(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    "job_1",
+  );
+  const drafts = useEvalGeneration.getState().suites[key].drafts;
+  expect(drafts.map((d) => d.id)).toEqual(["authoring-k57abc"]);
+  expect(drafts[0].issueResolutions).toEqual({
+    0: "checked against the catalog",
+  });
+});
+
+it("lets a newer authoring job take the suite over from an older one", async () => {
+  // Opening a link to an older import while a newer one is being followed
+  // pointed two pollers at one store key. The loser used to keep writing, so
+  // the reader watched the job they had just opened get overwritten.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: { status: "running", drafts: [], authoringJobId: "new" } as never,
+    },
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      data: { jobId: "old", status: "completed", drafts: [], warnings: [] },
+    }),
+  );
+  try {
+    await followAuthoringJob(
+      { projectId: scope.projectId, suiteId: scope.suiteId },
+      "old",
+    );
+    // The old job announced itself once — that write is what a takeover is
+    // measured against — but never overwrote the newer job's outcome.
+    expect(useEvalGeneration.getState().suites[key]?.status).toBe("running");
+  } finally {
+    fetchMock.mockRestore();
+  }
+});
+
+it("clears a failed generation's error when an import stages its drafts", async () => {
   const key = evalSuiteKey(scope);
   // Generation and import share this store. A generation failure used to keep
   // its message on screen above drafts that had just imported fine — and it
@@ -48,18 +208,35 @@ it("clears a failed generation's error when an import stages its drafts", () => 
       } as never,
     },
   });
-  stageMarkdownDrafts(
+  vi.mocked(readJob).mockReset().mockResolvedValue(
+    authoredJob({
+      jobId: "import-1",
+      drafts: [
+        {
+          version: 1,
+          draftId: "imported",
+          revision: 0,
+          case: {
+            title: "Imported case",
+            steps: [
+              { id: "p1", kind: "prompt", prompt: "Browse the Grocery category." },
+            ],
+            expectedOutput: "The list renders.",
+            isNegativeTest: false,
+            runs: 1,
+            models: [],
+          },
+          source: { fileName: "cases.md" },
+          issues: [],
+          additions: [],
+          review: "required",
+        },
+      ],
+    }),
+  );
+  await followAuthoringJob(
     { projectId: scope.projectId, suiteId: scope.suiteId },
-    [
-      {
-        title: "Imported case",
-        prompt: "Browse the Grocery category.",
-        expectedOutput: "The list renders.",
-        issues: [],
-        source: { fileName: "cases.md" },
-      } as never,
-    ],
-    [],
+    "import-1",
   );
   const state = useEvalGeneration.getState().suites[key];
   expect(state.error).toBeUndefined();
@@ -67,24 +244,47 @@ it("clears a failed generation's error when an import stages its drafts", () => 
 });
 describe("reviewable eval generation", () => {
   it("stages without saving, rejects duplicate jobs and out-of-suite edits, then commits once", async () => {
-    let finish!: () => void;
-    const save = vi.fn(async () => "saved-id");
+    // Generation runs the shared authoring job now, so a commit is an
+    // authoring commit — the suite bridge's own save is not involved.
     const cleanup = registerEvalSuite(scope, {
       read: () => ({}),
-      save,
-      generate: async (_instructions, stage) => {
-        await stage(input);
-        await new Promise<void>((r) => {
-          finish = r;
-        });
-      },
+      save: vi.fn(),
     });
+    let releaseJob!: () => void;
+    const pending = new Promise<void>((r) => {
+      releaseJob = r;
+    });
+    vi.mocked(authoringRequest)
+      .mockReset()
+      .mockImplementation(async (body: Record<string, unknown>) => {
+        if (body.operation === "start") return { jobId: "job" };
+        if (body.operation === "commit")
+          return { committed: [{ index: 0 }], failed: [] };
+        return {};
+      });
+    vi.mocked(readJob)
+      .mockReset()
+      .mockImplementation(async () => {
+        await pending;
+        return authoredJob();
+      });
+
     startEvalGeneration(scope, "Failure paths");
     expect(() => startEvalGeneration(scope, "Again")).toThrow(
       "already running",
     );
-    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-    expect(save).not.toHaveBeenCalled();
+    releaseJob();
+    await vi.waitFor(() =>
+      expect(
+        useEvalGeneration.getState().suites[evalSuiteKey(scope)].drafts,
+      ).toHaveLength(1),
+    );
+    expect(
+      vi.mocked(authoringRequest).mock.calls.some(
+        ([body]) => (body as { operation?: string }).operation === "commit",
+      ),
+    ).toBe(false);
+
     const draft =
       useEvalGeneration.getState().suites[evalSuiteKey(scope)].drafts[0];
     expect(() =>
@@ -103,26 +303,31 @@ describe("reviewable eval generation", () => {
       saveGeneratedDraft(scope, draft.id),
       saveGeneratedDraft(scope, draft.id),
     ]);
-    expect(save).toHaveBeenCalledOnce();
-    expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Refined", caseId: "stable-case" }),
-    );
+    const commits = vi
+      .mocked(authoringRequest)
+      .mock.calls.filter(
+        ([body]) => (body as { operation?: string }).operation === "commit",
+      );
+    expect(commits).toHaveLength(1);
+    expect(commits[0][0]).toMatchObject({
+      draftId: "draft-1",
+      caseId: draft.input.caseId,
+    });
     expect(
       useEvalGeneration.getState().suites[evalSuiteKey(scope)].drafts,
     ).toHaveLength(0);
-    finish();
     cleanup();
   });
   it("preserves generated drafts after a failed commit", async () => {
-    const cleanup = registerEvalSuite(scope, {
-      read: () => ({}),
-      generate: async (_i, stage) => {
-        await stage(input);
-      },
-      save: async () => {
-        throw new Error("Offline");
-      },
-    });
+    const cleanup = registerEvalSuite(scope, { read: () => ({}), save: vi.fn() });
+    vi.mocked(authoringRequest)
+      .mockReset()
+      .mockImplementation(async (body: Record<string, unknown>) => {
+        if (body.operation === "start") return { jobId: "job" };
+        if (body.operation === "commit") throw new Error("Offline");
+        return {};
+      });
+    vi.mocked(readJob).mockReset().mockResolvedValue(authoredJob());
     startEvalGeneration(scope, "Main workflow");
     await vi.waitFor(() =>
       expect(
@@ -150,7 +355,6 @@ it("waits for the exact case context and recovers when its bridges register", ()
   const unsubscribe = useEvalContextVersion.subscribe(changed);
   const removeSuite = registerEvalSuite(target, {
     read: () => ({}),
-    generate: vi.fn(),
     save: vi.fn(),
   });
   expect(isEvalContextReady(target)).toBe(false);

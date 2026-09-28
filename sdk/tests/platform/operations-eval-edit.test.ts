@@ -6,6 +6,7 @@ import {
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalCaseOperation,
   getEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -65,8 +66,15 @@ function makeClient(): {
     if (/\/environments$/.test(path))
       return Response.json({ items: ENVIRONMENTS });
     if (/\/eval-suites$/.test(path)) return Response.json({ items: SUITES });
-    // `/cases/generate` must precede the `/cases/:caseId` branch — "generate"
-    // is itself a single path segment that the :caseId regex would match.
+    // `/cases/generate` and `/cases/import` must precede the `/cases/:caseId`
+    // branch — each verb is itself a single path segment that the :caseId
+    // regex would match.
+    if (/\/eval-suites\/[^/]+\/cases\/import$/.test(path))
+      return Response.json({
+        generationModel: "anthropic/claude-haiku-4.5",
+        created: [],
+        counts: {},
+      });
     if (/\/eval-suites\/[^/]+\/cases\/generate$/.test(path))
       return Response.json({
         generationModel: "anthropic/claude-haiku-4.5",
@@ -410,6 +418,108 @@ describe("eval-edit operation execution", () => {
     // The quota is the organization's, not the project's.
     expect(generateEvalCasesOperation.description).not.toMatch(
       /project's daily generation quota/
+    );
+  });
+
+  it("import_eval_cases takes a document with nothing said about its shape", () => {
+    // No `format`: the model reads a CSV as a CSV without being told, and the
+    // flag only asked the caller to restate what the text already showed.
+    expect(
+      importEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        content: "title,prompt\nSearch,Find my projects",
+      }).success
+    ).toBe(true);
+    expect(
+      importEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        content: "",
+      }).success
+    ).toBe(false);
+  });
+
+  it("import_eval_cases refuses an over-size document before spending a request", async () => {
+    // The document IS the payload. Sending 100 KiB only to have the route
+    // reject it wastes the round trip the caller is paying for.
+    const { client, calls } = makeClient();
+    await expect(
+      importEvalCasesOperation.execute(
+        {
+          suite: "s1",
+          content: "x".repeat(100 * 1024 + 1),
+        },
+        { client }
+      )
+    ).rejects.toThrow(/limit is 102400/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("import_eval_cases refuses a duplicate policy with no reason, before any request", async () => {
+    const { client, calls } = makeClient();
+    await expect(
+      importEvalCasesOperation.execute(
+        {
+          suite: "s1",
+          content: "# Case",
+          duplicatePolicy: "create_anyway",
+        },
+        { client }
+      )
+    ).rejects.toThrow(/overrideReason/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("import_eval_cases forwards the document and duplicate handling", async () => {
+    const { client, calls } = makeClient();
+    await importEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        content: "title,prompt\nSearch,Find my projects",
+        fileName: "cases.csv",
+        duplicatePolicy: "warn",
+        overrideReason: "Re-importing a corrected row",
+      },
+      { client }
+    );
+    const call = calls.find((c) => /\/cases\/import$/.test(c.path));
+    expect(call?.body).toEqual({
+      content: "title,prompt\nSearch,Find my projects",
+      fileName: "cases.csv",
+      duplicatePolicy: "warn",
+      overrideReason: "Re-importing a corrected row",
+    });
+  });
+
+  it("import_eval_cases forwards the idempotency key on BOTH channels", async () => {
+    // Import spends per call, so a dropped key means paying to author the same
+    // document twice. Same two channels as generation, carrying one key.
+    const { client, calls } = makeClient();
+    await importEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        format: "markdown",
+        content: "# Case",
+        idempotencyKey: "cli-import-3",
+      },
+      { client }
+    );
+    const call = calls.find((c) => /\/cases\/import$/.test(c.path));
+    expect(call?.body).toMatchObject({ idempotencyKey: "cli-import-3" });
+    expect(call?.headers["idempotency-key"]).toBe("cli-import-3");
+  });
+
+  it("import_eval_cases is NOT labelled as spending, same as generation", () => {
+    // `operationDescription` appends the "COSTS MONEY" warning off this facet.
+    // Import is platform-paid: the backend bills it as `markdown_case_import`,
+    // which sits in PLATFORM_PAID_INTERNAL_LLM beside `eval_generation`, so
+    // nothing is debited from the customer and the warning would be a lie.
+    expect(importEvalCasesOperation.risk).toBe("none");
+    expect(importEvalCasesOperation.risk).toBe(generateEvalCasesOperation.risk);
+    expect(importEvalCasesOperation.description).not.toContain("COSTS MONEY");
+    // The way out of a partial import, stated where a model will read it.
+    expect(importEvalCasesOperation.description).toContain("reviewUrl");
+    expect(importEvalCasesOperation.description).toMatch(
+      /re-import(ing)? ONLY that case|re-import ONLY/i
     );
   });
 

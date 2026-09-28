@@ -16,6 +16,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/use-host-snapshot", () => ({
   useHostSnapshotForHost: () => ({ status: "unavailable" }),
   useHostSnapshotForSession: () => ({ status: "unavailable" }),
@@ -52,6 +58,12 @@ vi.mock("@/hooks/useClients", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/useClients")>()),
   useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
+  // `SwarmLiveStreamPane` resolves the live target's host snapshot through
+  // `useHostSnapshotForHost`, which reads this hook. A partial mock makes the
+  // whole pane throw on access, and the launch step this file asserts never
+  // renders — so the mock has to cover it even though nothing here reads a
+  // host detail.
+  useHost: () => ({ host: null, isLoading: false }),
 }));
 
 vi.mock("@/components/hosts/server-picker", () => ({

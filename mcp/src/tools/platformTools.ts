@@ -39,6 +39,7 @@ import {
   createProjectOperation,
   updateProjectOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
@@ -279,6 +280,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
   // The DENOMINATOR half of the chain story, beside the run read that is
   // the numerator half. `get_eval_run` says what one trial did and where it
@@ -739,6 +741,19 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [getStudyOperation.name]: "scenario",
 };
 
+/**
+ * Advice that belongs to the CALLER's situation, not the operation's contract.
+ *
+ * Kept off the SDK schema on purpose: a CLI user passes exact flags and reads
+ * the result themselves, so a hint would be noise in `--help`. A model calling
+ * the same operation has to be told what to do with a partial outcome, or it
+ * reaches for the only move it knows — send everything again.
+ */
+const OPERATION_HINTS: Readonly<Record<string, string>> = {
+  [importEvalCasesOperation.name]:
+    "Send the whole document as `content` ONCE. If the reply lists `skipped` cases, do not re-send the document: import only that case's corrected text, or give the person `reviewUrl` to finish it in the app. Re-importing the document re-authors and re-bills every case in it, and a reworded case is not recognised as a duplicate.",
+};
+
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
   context: PlatformToolContext
@@ -753,7 +768,11 @@ export function registerPlatformCatalogTools(
       operation.name,
       {
         title: operation.title,
-        description: operationDescription(operation),
+        description: OPERATION_HINTS[operation.name]
+          ? `${operationDescription(operation)} HINT: ${
+              OPERATION_HINTS[operation.name]
+            }`
+          : operationDescription(operation),
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },

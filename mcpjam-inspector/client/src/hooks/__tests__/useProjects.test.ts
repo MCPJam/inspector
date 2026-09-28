@@ -5,6 +5,7 @@ import {
   normalizeProjectMembersResult,
   type RemoteProject,
   shouldQueryProjectId,
+  useCanManageProjectClients,
   useProjectQueries,
   useProjectServers,
   type ProjectMember,
@@ -64,6 +65,45 @@ describe("filterProjectsForOrganization", () => {
       projects[0],
       projects[2],
     ]);
+  });
+});
+
+describe("useCanManageProjectClients", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseDbUserReady.mockReturnValue(true);
+  });
+
+  const renderFor = (projectId: string | null) =>
+    renderHook(() =>
+      useCanManageProjectClients({ isAuthenticated: true, projectId }),
+    ).result.current;
+
+  it("allows a project admin", () => {
+    mockUseQuery.mockReturnValue([
+      createProject("p1", { canDeleteProject: true }),
+    ]);
+    expect(renderFor("p1")).toEqual({ canManage: true, isLoading: false });
+  });
+
+  it("refuses a member or guest", () => {
+    mockUseQuery.mockReturnValue([
+      createProject("p1", { canDeleteProject: false }),
+    ]);
+    expect(renderFor("p1")).toEqual({ canManage: false, isLoading: false });
+  });
+
+  it("is undecided while projects load", () => {
+    mockUseQuery.mockReturnValue(undefined);
+    expect(renderFor("p1")).toEqual({ canManage: false, isLoading: true });
+  });
+
+  it("refuses a project the viewer can't see", () => {
+    mockUseQuery.mockReturnValue([
+      createProject("p1", { canDeleteProject: true }),
+    ]);
+    expect(renderFor("p2")).toEqual({ canManage: false, isLoading: false });
+    expect(renderFor(null)).toEqual({ canManage: false, isLoading: false });
   });
 });
 

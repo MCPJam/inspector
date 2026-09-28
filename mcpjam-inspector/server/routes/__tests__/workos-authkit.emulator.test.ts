@@ -161,7 +161,7 @@ describe("code exchange", () => {
     // the entire reason this proxy holds it instead of the browser.
     expect(setCookieFor(res, SESSION_COOKIE)).toContain("HttpOnly");
     expect(setCookieFor(res, HAS_SESSION_COOKIE)).toContain(
-      `${HAS_SESSION_COOKIE}=true`,
+      `${HAS_SESSION_COOKIE}=1`,
     );
   }, 30_000);
 });

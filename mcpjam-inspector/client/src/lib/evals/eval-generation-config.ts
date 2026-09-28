@@ -18,6 +18,12 @@ export type GenerateCasesConfig = {
   varyUserStyles: boolean;
   testSet?: "quick" | "comprehensive";
   toolCoverage?: "read-only" | "read-write";
+  /**
+   * Environment suites whose environments expose different servers: the one
+   * generation authors against. Routing, not a generation knob, so
+   * {@link toGenerationOptions} never sends it.
+   */
+  environmentId?: string;
 };
 
 export const GENERATE_BUCKET_KEYS = [
@@ -92,6 +98,9 @@ export function loadGenerateConfig(suiteId: string): GenerateCasesConfig {
       parsed?.toolCoverage === "read-write"
     ) {
       next.toolCoverage = parsed.toolCoverage;
+    }
+    if (typeof parsed?.environmentId === "string" && parsed.environmentId) {
+      next.environmentId = parsed.environmentId;
     }
     // Per-bucket clamping above doesn't bound the aggregate; a stale/tampered
     // entry could exceed MAX_TOTAL. Fall back to defaults rather than forward an

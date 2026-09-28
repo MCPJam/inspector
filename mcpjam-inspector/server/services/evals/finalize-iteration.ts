@@ -12,6 +12,7 @@ import type {
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
+import { evalSnapshotUploadTarget } from "../../utils/snapshot-upload-target.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
@@ -1011,6 +1012,12 @@ export function buildIterationFinishParams(args: {
 
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
+  /**
+   * The Convex bearer `convexClient` writes with. Screenshots and the replay
+   * video are uploaded as this identity (MJ-006); without it they are left out
+   * and the rows still persist.
+   */
+  convexAuthToken?: string;
   iterationId?: string;
   passed: boolean;
   toolsCalled: ToolCallRecord[];
@@ -1115,6 +1122,7 @@ export async function finalizeEvalIteration(
 ): Promise<void> {
   const {
     convexClient,
+    convexAuthToken,
     iterationId,
     passed,
     toolsCalled,
@@ -1219,24 +1227,25 @@ export async function finalizeEvalIteration(
   // through the convex sanitizer) so the W2 fanout and the W1 fallback share a
   // single upload pass. Owning this in the shared finalize step is what keeps
   // recorder + direct quick-run callers from double-uploading.
+  const uploadTarget = evalSnapshotUploadTarget(convexAuthToken, iterationId);
   const serializedWidgetRenderObservations =
     await serializeRenderObservationsForBackend(
       widgetRenderObservations,
-      convexClient,
+      uploadTarget,
     );
   const serializedBrowserInteractionSteps =
     await serializeBrowserStepsForBackend(
       browserInteractionSteps,
-      convexClient,
+      uploadTarget,
     );
 
   // Upload the iteration replay video alongside the screenshots, in the same
   // single-pass choke point. Best-effort: a failed upload is logged + dropped
   // (videoBlobId stays undefined → no player) and NEVER fails the iteration.
   let videoBlobId: string | undefined;
-  if (videoBytes && videoBytes.length > 0) {
+  if (videoBytes && videoBytes.length > 0 && uploadTarget) {
     try {
-      videoBlobId = await uploadVideoBlob(convexClient, videoBytes, {
+      videoBlobId = await uploadVideoBlob(uploadTarget, videoBytes, {
         ...(videoMime ? { contentType: videoMime } : {}),
       });
     } catch (err) {

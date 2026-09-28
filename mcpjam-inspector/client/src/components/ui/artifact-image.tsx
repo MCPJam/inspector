@@ -1,6 +1,7 @@
 import type { ImgHTMLAttributes, SyntheticEvent } from "react";
 import {
   handleArtifactMediaError,
+  handleArtifactMediaLoad,
   useFreshArtifactUrl,
 } from "@/lib/artifact-urls";
 
@@ -19,6 +20,7 @@ export function ArtifactImage({
   src,
   alt,
   onError,
+  onLoad,
   ...rest
 }: ArtifactImageProps) {
   const freshSrc = useFreshArtifactUrl(src);
@@ -30,6 +32,10 @@ export function ArtifactImage({
       onError={(event: SyntheticEvent<HTMLImageElement>) => {
         handleArtifactMediaError(freshSrc);
         onError?.(event);
+      }}
+      onLoad={(event: SyntheticEvent<HTMLImageElement>) => {
+        handleArtifactMediaLoad(freshSrc);
+        onLoad?.(event);
       }}
     />
   );

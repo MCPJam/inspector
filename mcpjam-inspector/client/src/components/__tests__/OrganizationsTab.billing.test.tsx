@@ -609,6 +609,57 @@ describe("OrganizationsTab billing", () => {
     expect(navigateToSupportMock).toHaveBeenCalledTimes(2);
   });
 
+  it("still offers self-serve upgrades to a free org whose price model is free", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          catalogPlanId: "free",
+          priceModel: "free",
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    // "free" differs from every paid billing model, but a free -> paid move is
+    // a fresh checkout, not a Stripe price swap, so the support detour must
+    // not swallow the upgrade buttons.
+    for (const column of ["Pro", "Team"]) {
+      const scope = within(getPlanColumn(column));
+      expect(scope.getByRole("button", { name: "Upgrade" })).toBeEnabled();
+      expect(
+        scope.queryByRole("button", { name: "Contact us" }),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  it("still offers the Free downgrade to a paid org instead of routing the cancellation to support", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "pro",
+          effectivePlan: "pro",
+          catalogPlanId: "pro",
+          priceModel: "flat",
+          billingInterval: "monthly",
+          hasCustomer: true,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    // Downgrading to Free is the cancellation path, not a price-model change;
+    // it must stay self-serve for flat and per-seat orgs alike.
+    const freeColumn = within(getPlanColumn("Free"));
+    expect(freeColumn.getByRole("button", { name: "Downgrade" })).toBeEnabled();
+    expect(
+      freeColumn.queryByRole("button", { name: "Contact us" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers the cadence change rather than calling the other cadence current", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({

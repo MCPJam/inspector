@@ -120,12 +120,32 @@ describe("prepareChatV2", () => {
         provider: "openai",
         hosted: true,
         supportedParameters: ["tools", "max_tokens"],
+        supportedParametersComplete: true,
       } as any,
       systemPrompt: "Base prompt.",
       temperature: 0.5,
     });
 
     expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature when the catalog's parameter list is partial", async () => {
+    // Only a complete list may withdraw it: the legacy DTO reported just
+    // `structured_outputs` for every hosted row.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/gpt-4o",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["structured_outputs"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
   });
 
   it("keeps temperature when the catalog lists it", async () => {

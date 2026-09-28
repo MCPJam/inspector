@@ -14,9 +14,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
-const { useUsageInsightsMock, threadListMock } = vi.hoisted(() => ({
-  useUsageInsightsMock: vi.fn(),
-  threadListMock: vi.fn(),
+const { useUsageInsightsMock, threadListMock, threadDetailMock, navigateAppMock } =
+  vi.hoisted(() => ({
+    useUsageInsightsMock: vi.fn(),
+    threadListMock: vi.fn(),
+    threadDetailMock: vi.fn(),
+    navigateAppMock: vi.fn(),
+  }));
+
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  navigateApp: (...args: unknown[]) => navigateAppMock(...args),
 }));
 
 vi.mock("@/hooks/useUsageInsights", async () => {
@@ -46,7 +54,10 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadList", () => ({
 }));
 
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
-  ShareUsageThreadDetail: () => <div data-testid="thread-detail" />,
+  ShareUsageThreadDetail: (props: Record<string, unknown>) => {
+    threadDetailMock(props);
+    return <div data-testid="thread-detail" />;
+  },
 }));
 
 vi.mock("@/components/scenarios/scenario-sessions-metric-strip", () => ({
@@ -171,6 +182,205 @@ describe("ScenarioUsagePanel rating filter", () => {
     ).toBe(false);
   });
 
+  it("keeps 3-star history filterable after a study switches to thumbs", () => {
+    // Sessions rated before the switch keep their neutral 3; the thumbs menu
+    // alone would leave no way to find them.
+    useUsageInsightsMock.mockReturnValue({
+      threads: [
+        thread({
+          _id: "old-3-star",
+          feedback: {
+            count: 1,
+            avg: 3,
+            min: 3,
+            hasComment: false,
+            latestRating: 3,
+            latestAt: 0,
+          },
+        }),
+      ],
+    });
+    render(
+      <ScenarioUsagePanel
+        scenario={
+          {
+            ...SCENARIO,
+            chatUi: {
+              surfaces: { perTurnFeedback: { enabled: true, style: "thumbs" } },
+            },
+          } as unknown as ScenarioSettings
+        }
+      />
+    );
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All ratings",
+      "Thumbs up",
+      "Thumbs down",
+      "Neutral (3 stars)",
+      "No feedback",
+    ]);
+    fireEvent.click(screen.getByText("Neutral (3 stars)"));
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "feedbackBucket", value: "neutral" },
+      ])
+    );
+  });
+
+  it("offers thumbs, not star counts, on a study rated by thumbs", () => {
+    render(
+      <ScenarioUsagePanel
+        scenario={
+          {
+            ...SCENARIO,
+            chatUi: {
+              surfaces: { perTurnFeedback: { enabled: true, style: "thumbs" } },
+            },
+          } as unknown as ScenarioSettings
+        }
+      />
+    );
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All ratings",
+      "Thumbs up",
+      "Thumbs down",
+      "No feedback",
+    ]);
+    // A thumbs study never produces a neutral turn.
+    expect(screen.queryByText("Neutral (3)")).toBeNull();
+
+    // Same buckets the backend scores thumbs into: down is 1, up is 5.
+    fireEvent.click(screen.getByText("Thumbs down"));
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "feedbackBucket", value: "negative" },
+      ])
+    );
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Thumbs up"));
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "feedbackBucket", value: "positive" },
+      ])
+    );
+  });
+
+  it("keeps the star buckets on a study rated by stars", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All ratings",
+      "Low (≤2)",
+      "Neutral (3)",
+      "High (≥4)",
+      "No feedback",
+    ]);
+  });
+
+  it("drops a choice the new rating style cannot offer", () => {
+    const { rerender } = render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Neutral (3)"));
+    expect(
+      lastFilters().chips.some((chip) => chip.key === "feedbackBucket")
+    ).toBe(true);
+
+    rerender(
+      <ScenarioUsagePanel
+        scenario={
+          {
+            ...SCENARIO,
+            chatUi: { surfaces: { perTurnFeedback: { style: "thumbs" } } },
+          } as unknown as ScenarioSettings
+        }
+      />
+    );
+
+    expect(
+      lastFilters().chips.some((chip) => chip.key === "feedbackBucket")
+    ).toBe(false);
+  });
+
+  it("names each filter while nothing is picked, as the frame does", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+
+    expect(
+      screen.getByTestId("scenario-sessions-persona-filter")
+    ).toHaveTextContent("Personas");
+    expect(
+      screen.getByTestId("scenario-sessions-rating-filter")
+    ).toHaveTextContent("Ratings");
+  });
+
+  it("filters by persona — the session's sentiment, as Findings groups it", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-persona-filter"));
+
+    // Findings' persona titles, worst first.
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All personas",
+      "Gave up",
+      "Frustrated users",
+      "Neutral users",
+      "Satisfied users",
+      "Uncategorized users",
+    ]);
+
+    fireEvent.click(screen.getByText("Frustrated users"));
+
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "sentiment", value: "frustrated" },
+        expect.objectContaining({ key: "synthetic" }),
+      ])
+    );
+    expect(
+      screen.getByTestId("scenario-sessions-persona-filter")
+    ).toHaveTextContent("Frustrated users");
+  });
+
+  it("composes the persona and rating filters", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-persona-filter"));
+    fireEvent.click(screen.getByText("Satisfied users"));
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Low (≤2)"));
+
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "sentiment", value: "satisfied" },
+        { kind: "dimension", key: "feedbackBucket", value: "negative" },
+      ])
+    );
+    // The list's empty-state copy sees both picks, and still not the policy.
+    const listProps = threadListMock.mock.calls.at(-1)?.[0] as {
+      filterState?: { chips: Array<{ key?: string }> };
+    };
+    expect(listProps.filterState?.chips.map((c) => c.key)).toEqual([
+      "feedbackBucket",
+      "sentiment",
+    ]);
+  });
+
+  it("keeps the filter pills at the frame's 28px, not the trigger's 36px default", () => {
+    // The design-system trigger sizes itself through `data-[size=default]:h-9`,
+    // which out-ranks a bare `h-7`.
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    for (const id of [
+      "scenario-sessions-persona-filter",
+      "scenario-sessions-rating-filter",
+    ]) {
+      const classes = screen.getByTestId(id).className.split(/\s+/);
+      expect(classes).toContain("data-[size=default]:h-7");
+      expect(classes).not.toContain("data-[size=default]:h-9");
+    }
+  });
+
   it("re-checks the returned page so a live update cannot leak through", () => {
     useUsageInsightsMock.mockReturnValue({
       threads: [
@@ -209,5 +419,29 @@ describe("ScenarioUsagePanel rating filter", () => {
       threads?: SharedChatThread[];
     };
     expect(rendered.threads?.map((t) => t._id)).toEqual(["bad"]);
+  });
+});
+
+describe("ScenarioUsagePanel promote destination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useUsageInsightsMock.mockReturnValue({
+      threads: [thread({ _id: "t-1" })],
+    });
+  });
+
+  it("lands a promoted session on its suite, not the case editor", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+
+    const detailProps = threadDetailMock.mock.calls.at(-1)?.[0] as {
+      promote?: {
+        onImported?: (result: { suiteId: string; testCaseId: string }) => void;
+      };
+    };
+    expect(detailProps.promote?.onImported).toBeTypeOf("function");
+
+    detailProps.promote!.onImported!({ suiteId: "suite-9", testCaseId: "case-3" });
+
+    expect(navigateAppMock).toHaveBeenCalledWith("/evaluate/suite/suite-9");
   });
 });

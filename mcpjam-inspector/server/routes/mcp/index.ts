@@ -15,6 +15,7 @@ import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
 import mrtr from "./mrtr";
 import models from "./models";
+import byokModels from "./byok-models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
@@ -113,6 +114,9 @@ mcp.route("/manager-http", managerHttp);
 
 // Models endpoints - fetch model metadata from Convex backend
 mcp.route("/models", models);
+
+// BYOK model discovery through the provider adapters (local mode only)
+mcp.route("/byok-models", byokModels);
 
 // Tokenizer endpoints - count tokens for MCP tools
 mcp.route("/tokenizer", tokenizer);

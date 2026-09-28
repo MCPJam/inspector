@@ -50,6 +50,17 @@ beforeEach(() => {
 });
 
 describe("ScenarioShareEmptyPanel", () => {
+  it("names the Findings tab when it stands in for Findings", () => {
+    render(<ScenarioShareEmptyPanel scenario={scenario} surface="findings" />);
+
+    expect(
+      screen.getByText(/Findings start with the first session/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Insights start/i)).not.toBeInTheDocument();
+    // Same ways to a first session as on Insights.
+    expect(screen.getByText("mcpjam.link/t/tok")).toBeInTheDocument();
+  });
+
   it("offers both a self-serve run and the share actions", () => {
     render(<ScenarioShareEmptyPanel scenario={scenario} />);
 

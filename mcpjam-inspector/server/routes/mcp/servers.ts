@@ -1,3 +1,4 @@
+import { promoteLocalServerCheck } from "../../utils/local-server-check-queue.js";
 import {
   listBaseServers,
   removeServerConnections,
@@ -239,6 +240,8 @@ servers.delete("/:serverId", async (c) => {
     );
   }
 });
+
+servers.post("/checks/promote", promoteLocalServerCheck);
 
 // Reconnect to a server. Body shape: {projectId, serverId, serverName}; the
 // local Hono server resolves the config (and any OAuth tokens) from Convex

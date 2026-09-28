@@ -3,6 +3,8 @@
  */
 
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
+import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 
 export type ShareRedeemSuccess = {
   ok: true;
@@ -32,6 +34,13 @@ function convexHttpUrl(): string {
 }
 
 export async function redeemShareToken(args: {
+  /**
+   * The caller's hashed IP. The backend keys its per-IP redeem limit on this
+   * when the service token proves it came from this server; without it, every
+   * redemption proxied through here is keyed on this server's own address and
+   * shares one limit.
+   */
+  guestIpHash?: string | null;
   resourceType: string;
   token: string;
   bearer: string;
@@ -48,6 +57,7 @@ export async function redeemShareToken(args: {
       headers: {
         "content-type": "application/json",
         authorization,
+        ...guestIpForwardHeaders(args.guestIpHash),
       },
       body: JSON.stringify({
         resourceType: args.resourceType,
@@ -80,10 +90,12 @@ export async function redeemShareToken(args: {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : "This share link is invalid or has been revoked.",
+      error: backendFailureText({
+        source: "share-redeem",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: "This share link is invalid or has been revoked.",
+      }),
     };
   }
 

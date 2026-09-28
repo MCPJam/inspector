@@ -260,6 +260,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "createEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/generate":
     "generateEvalCases",
+  "post /projects/{projectId}/eval-suites/{suiteId}/cases/import":
+    "importEvalCases",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}":
     "getEvalCase",
   "patch /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}":
@@ -556,6 +558,8 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Incremental-ingestion transport; the reporter closes the run it opened.",
   "post /projects/{projectId}/eval-ingest/artifacts/upload-url":
     "Mints a short-lived artifact upload URL as part of the ingestion handshake. Useless outside it, and a standalone method would hand out signed URLs on request.",
+  "post /projects/{projectId}/eval-ingest/artifacts":
+    "Stores one artifact's raw bytes (widget evidence too large to report inline) for the SDK reporter, which owns when an artifact is needed; the storage id it returns only means something inside that report.",
   "post /projects/{projectId}/conformance-ingest/report":
     "SDK conformance-run INGESTION. Already covered by `reportConformanceRun`; a second, lower-level client method would let the two drift.",
   "post /projects/{projectId}/conformance-ingest/runs/start":

@@ -16,7 +16,11 @@ import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
 import { v1Resource } from "./envelope.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-import { translateConvexWriteError } from "./convex-errors.js";
+import {
+  translateAddressedConvexWriteError,
+  translateConvexWriteError,
+  type TranslateConvexWriteErrorOptions,
+} from "./convex-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const servers = new Hono();
@@ -112,13 +116,34 @@ function convexClient(token: string): ConvexHttpClient {
   return client;
 }
 
+const SERVER_WRITE_ERROR_OPTIONS: TranslateConvexWriteErrorOptions = {
+  resource: "Server",
+  conflictMessage: "A server with that name already exists in this workspace.",
+  fallbackMessage: "Server write rejected",
+};
+
 function translateServerWriteError(error: unknown): WebRouteError {
-  return translateConvexWriteError(error, {
-    resource: "Server",
-    conflictMessage:
-      "A server with that name already exists in this workspace.",
-    fallbackMessage: "Server write rejected",
-  });
+  return translateConvexWriteError(error, SERVER_WRITE_ERROR_OPTIONS);
+}
+
+/** A failed write to one server; one this caller cannot see answers 404. */
+function translateAddressedServerWriteError(
+  error: unknown,
+  token: string,
+  projectId: string,
+  serverId: string
+): Promise<WebRouteError> {
+  return translateAddressedConvexWriteError(
+    error,
+    SERVER_WRITE_ERROR_OPTIONS,
+    async () =>
+      (
+        (await convexClient(token).query(
+          "servers:getProjectServers" as any,
+          { projectId } as any
+        )) as Array<Record<string, unknown>>
+      ).some((row) => String(row._id ?? row.id) === serverId)
+  );
 }
 
 async function findProjectServer(
@@ -229,7 +254,12 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
     );
     return v1Resource(c, await findProjectServer(token, projectId, serverId));
   } catch (error) {
-    throw translateServerWriteError(error);
+    throw await translateAddressedServerWriteError(
+      error,
+      token,
+      projectId,
+      serverId
+    );
   }
 });
 
@@ -251,21 +281,27 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
       { projectId, serverId } as any
     );
   } catch (error) {
-    throw translateServerWriteError(error);
+    throw await translateAddressedServerWriteError(
+      error,
+      token,
+      projectId,
+      serverId
+    );
   }
   return v1Resource(c, { id: serverId, deleted: true });
 });
 
 // POST /v1/projects/:projectId/servers/:serverId/validate
 // Connect to the server and capture an inspection snapshot. Wraps the same
-// validateServerCore the web /servers/validate route uses.
+// validateServerCore the web /servers/validate route uses. Hosted, a failure is
+// answered by `runV1ServerOp` as on the web twin (MJ-001).
 servers.post("/projects/:projectId/servers/:serverId/validate", async (c) =>
   runV1ServerOp(
     c,
     projectServerSchema,
     (manager, body) => validateServerCore(c, manager, body),
     (ctx, result) => v1Resource(ctx, result),
-    { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
+    { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
   )
 );
 
