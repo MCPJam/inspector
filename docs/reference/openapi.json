@@ -26863,7 +26863,7 @@
       },
       "SwarmQuotePlannedRun": {
         "type": "object",
-        "description": "One run the launch would start. A goal brings its stored environments and settings, and anything named here overrides them, exactly as the launch does. Without a goal, `environmentIds` and `maxTurns` are required.",
+        "description": "One run the launch would start. A goal brings its stored environments and settings, and anything named here overrides them for this price. `environmentIds` can be overridden the same way at launch (`POST /projects/{projectId}/goals/{goalId}/runs`); `iterations`, `maxTurns` and `setupWrites` cannot, so to launch what was priced, save them on the goal first. Without a goal, `environmentIds` and `maxTurns` are required.",
         "additionalProperties": false,
         "anyOf": [
           { "required": ["goalId"] },
