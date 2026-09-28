@@ -775,6 +775,57 @@ describe.each([
     );
   });
 
+  // An advisory check can only warn, so it never contradicts a negative case,
+  // whichever of the three routes it arrives by.
+  const ADVISORY = { ...MATCH, role: "advisory", severity: "warn" };
+
+  it("loads an advisory check as a step assertion", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: ADVISORY },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it("loads an advisory check arriving as a case-level check", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        checks: { mode: "replace", list: [ADVISORY] },
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it("loads an advisory check inherited from the suite", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+      }),
+      { suiteChecks: [ADVISORY] }
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it('still refuses role: "required", the other spelling of gating', () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...MATCH, role: "required" }] }
+      )
+    ).toThrow(new RegExp(`negative case.*${type} check with min ≥ 1`, "s"));
+  });
+
   it('allows min: 0, max: 0 — "none matches" is compatible', () => {
     const none = { ...MATCH, min: 0, max: 0 };
     const config = evalTestFromPlatformCase(

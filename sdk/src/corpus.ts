@@ -174,12 +174,17 @@ function isWidgetAssertion(assertion: unknown): boolean {
  * passes only when no tool is called — so there is neither a call nor a
  * result to match; `min: 0` ("none matches", with its required `max`) does
  * not.
+ *
+ * An advisory check never contradicts: it can only warn, never fail the
+ * iteration, so a negative case that passes with no calls stays a pass with a
+ * warning beside it. Refusing to load it would turn a warning into an error.
  */
 function demandsMatchingUnit(predicate: Predicate): boolean {
   return (
     (predicate.type === "toolInputMatches" ||
       predicate.type === "toolResultMatches") &&
-    (predicate.min ?? 1) >= 1
+    (predicate.min ?? 1) >= 1 &&
+    checkRole(predicate) !== "advisory"
   );
 }
 
