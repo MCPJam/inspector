@@ -1,5 +1,12 @@
 import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -213,7 +220,11 @@ export function useAppState({
       recordDesktopActivity({
         kind: "auth",
         phase: "state",
-        auth: isWorkOsLoading ? "loading" : currentUserId ? "signed_in" : "guest",
+        auth: isWorkOsLoading
+          ? "loading"
+          : currentUserId
+            ? "signed_in"
+            : "guest",
         version: __APP_VERSION__,
       });
     report();
@@ -226,6 +237,10 @@ export function useAppState({
   const [isLoading, setIsLoading] = useState(true);
   const [pendingDashboardOAuth, setPendingDashboardOAuth] =
     useState<PendingDashboardOAuthState | null>(null);
+  const clearPendingDashboardOAuth = useCallback(() => {
+    clearHostedOAuthPendingState();
+    setPendingDashboardOAuth(null);
+  }, []);
   const hasHydratedAppStateRef = useRef(false);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
@@ -431,6 +446,18 @@ export function useAppState({
       return;
     }
 
+    // The project callback owner clears the persistent marker before it
+    // restores the app route. If no terminal runtime row was published, drop
+    // the UI-only copy now so first-run onboarding can perform its single
+    // recovery reconnect instead of spinning until the 30-second safety cap.
+    if (
+      !hasHostedOAuthCallbackParams() &&
+      !readPendingDashboardOAuthFromStorage()
+    ) {
+      setPendingDashboardOAuth(null);
+      return;
+    }
+
     if (
       pendingServer?.connectionStatus !== "failed" ||
       hasHostedOAuthCallbackParams()
@@ -560,9 +587,7 @@ export function useAppState({
   // in the product points every MCP `initialize` and widget `ui/initialize`
   // at the same `HostConfigDtoV2`.
   const [activeHostId, setActiveHostId, isActiveHostSelectionHydrated] =
-    usePreviewedHostId(
-      activeSharedProjectId ?? null,
-    );
+    usePreviewedHostId(activeSharedProjectId ?? null);
   const { host: selectedHost } = useHost({
     isAuthenticated,
     hostId: activeHostId,
@@ -901,6 +926,7 @@ export function useAppState({
     clearConvexActiveProjectSelection,
     clearLocalFallbackProjectSelection,
     pendingDashboardOAuth,
+    clearPendingDashboardOAuth,
 
     projectServers: serverState.projectServers,
     displayServerConfigs: serverState.displayServerConfigs,
