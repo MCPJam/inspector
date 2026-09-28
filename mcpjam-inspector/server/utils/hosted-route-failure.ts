@@ -18,6 +18,12 @@
  *   status line of the server's answer, a fixed sentence, or the egress
  *   guard's refusal, which is answered as a 400.
  *
+ * A failure of this server's own work around the operation — a headless
+ * render, say — is not the MCP server's, so it is not worded as one. The code
+ * that does that work marks it with `markLocalRouteFailure`; the helpers then
+ * leave it to the route's ordinary error handling. Only the log envelope is
+ * still reduced. Anything unmarked is treated as the MCP server's failure.
+ *
  * Pure and mode-agnostic like its siblings. Callers decide when it applies.
  */
 
@@ -35,6 +41,28 @@ import {
   parseHttpUrl,
   projectScopeChallenge,
 } from "./hosted-upstream-projection.js";
+
+const localRouteFailures = new WeakSet<object>();
+
+/**
+ * Marks `error` as a failure of this server's own work rather than of the MCP
+ * server it was talking to, and returns it. Non-objects are returned as is.
+ */
+export function markLocalRouteFailure<E>(error: E): E {
+  if (typeof error === "object" && error !== null) {
+    localRouteFailures.add(error);
+  }
+  return error;
+}
+
+/** Whether `error` was marked by {@link markLocalRouteFailure}. */
+export function isLocalRouteFailure(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    localRouteFailures.has(error)
+  );
+}
 
 /**
  * The wording of a failure this server wrote. A Cross-App Access rejection
@@ -107,6 +135,9 @@ export function projectHostedRouteFailure(
   error: unknown,
   logs: Record<string, unknown> | undefined,
 ): { routeError: WebRouteError; logs: Record<string, unknown> | undefined } {
+  if (isLocalRouteFailure(error)) {
+    return { routeError, logs: projectHostedConnectFailureLogs(logs) };
+  }
   if (error instanceof WebRouteError) {
     routeError.message = projectHostedAuthoredFailureMessage(error);
     routeError.details = projectHostedAuthoredFailureDetails(

@@ -23,6 +23,7 @@ import {
   isPlainRecord,
   jsonRpcErrorMessage,
   parseHttpStatus,
+  parseJsonRpcCode,
   parseProtocolVersion,
   projectHostedLogEnvelope,
   projectScopeChallenge,
@@ -243,19 +244,57 @@ function isRequestTimeout(error: unknown): boolean {
 
 /**
  * A JSON-RPC error the server answered an operation with, when it is the
- * failure itself (not a cause under a connection error) and its code is in the
- * range JSON-RPC reserves. Reported by code, with fixed wording.
+ * failure itself (not a cause under a connection error). Any 32-bit integer
+ * code counts, including the ones a server defines for itself. Reported by
+ * code, with fixed wording.
  */
 function operationJsonRpcError(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   if (!JSONRPC_ERROR_NAMES.has(String(read(error, "name")))) return undefined;
-  const code = read(error, "code");
-  return typeof code === "number" &&
-    Number.isInteger(code) &&
-    code >= -32768 &&
-    code <= -32000
-    ? code
-    : undefined;
+  return parseJsonRpcCode(read(error, "code"));
+}
+
+/** Errors raised by the MCP client, its transports, or its auth flow. */
+const MCP_CLIENT_ERROR_NAMES: ReadonlySet<string> = new Set([
+  ...JSONRPC_ERROR_NAMES,
+  ...SDK_ERROR_NAMES,
+  "UnauthorizedError",
+  "MCPAuthError",
+  "ProtocolVersionPinUnsupported",
+  "BlockedEgressTargetError",
+]);
+
+/** Socket and fetch failure codes: Node's `E…` system codes and undici's. */
+const NETWORK_ERROR_CODE = /^(?:E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)$/;
+
+/**
+ * Whether anything in the error or its causes shows it came from talking to
+ * an MCP server: an HTTP status, an error the MCP client, its transports or
+ * `fetch` raise, a network failure code, an aborted or timed-out request, or
+ * the egress guard's refusal. A failure without any of this is this server's
+ * own work failing, like a headless render.
+ */
+export function hasUpstreamFailureEvidence(error: unknown): boolean {
+  for (const node of errorChain(error)) {
+    if (node instanceof BlockedEgressTargetError) return true;
+    const name = String(read(node, "name"));
+    if (MCP_CLIENT_ERROR_NAMES.has(name)) return true;
+    if (HTTP_CODE_ERROR_CLASSES.has(className(node) ?? "")) return true;
+    if (httpStatusOf(node) !== undefined) return true;
+    const code = read(node, "code");
+    if (typeof code === "string" && NETWORK_ERROR_CODE.test(code)) return true;
+    if (name === "TypeError" && read(node, "message") === "fetch failed") {
+      return true;
+    }
+    if (
+      typeof DOMException !== "undefined" &&
+      node instanceof DOMException &&
+      (name === "AbortError" || name === "TimeoutError")
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 const MAX_OFFERED_VERSIONS = 8;

@@ -184,6 +184,15 @@ const JsonRpcCodeSchema = z
   .max(2_147_483_647);
 
 /**
+ * A JSON-RPC error code: any 32-bit integer, since servers define their own
+ * codes outside the reserved range. `undefined` for anything else.
+ */
+export function parseJsonRpcCode(value: unknown): number | undefined {
+  const parsed = JsonRpcCodeSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
  * Fixed wording per JSON-RPC error code. The server's own `message` and
  * `data` are never reported.
  */
@@ -212,9 +221,9 @@ function projectJsonRpcError(
   value: unknown,
 ): JsonRpcErrorProjection | undefined {
   if (!isPlainRecord(value)) return undefined;
-  const code = JsonRpcCodeSchema.safeParse(value.code);
-  if (!code.success || typeof value.message !== "string") return undefined;
-  return { code: code.data, message: jsonRpcErrorMessage(code.data) };
+  const code = parseJsonRpcCode(value.code);
+  if (code === undefined || typeof value.message !== "string") return undefined;
+  return { code, message: jsonRpcErrorMessage(code) };
 }
 
 const JsonRpcIdSchema = z.union([
