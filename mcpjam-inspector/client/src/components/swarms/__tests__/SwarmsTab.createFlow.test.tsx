@@ -2292,6 +2292,29 @@ describe("SwarmsTab create flow — survives a remount", () => {
     );
     // The dead read no longer holds Continue.
     expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+
+    // The file is still missing, so the notice survives a second remount...
+    remount();
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent("Reading research.md was interrupted");
+
+    // ...and goes away once a file is attached.
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [textFile("Persona: Maya.", "research.md")] },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("new-swarm-describe-attach-error"),
+      ).toBeNull(),
+    );
+    remount();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+        "Support agents answering refunds\n\nPersona: Maya.",
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
   });
 
   it("leaving the flow ends it — a later visit starts clean", async () => {

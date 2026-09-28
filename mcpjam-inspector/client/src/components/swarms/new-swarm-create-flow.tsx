@@ -499,9 +499,16 @@ export function NewSwarmCreateFlow({
   );
   const [draft, setDraft] = useState(restoredDraft?.description ?? "");
   const attachInputRef = useRef<HTMLInputElement>(null);
+  // A file whose read a remount cut short. Kept, and re-persisted, until a
+  // file is attached successfully: its text is still missing from the draft
+  // however many remounts later. It does not hold Continue — only a live read
+  // can finish, and this one never will.
+  const [interruptedFile, setInterruptedFile] = useState<string | null>(
+    restoredDraft?.attachingFile ?? null,
+  );
   const [attachError, setAttachError] = useState<string | null>(
-    restoredDraft?.attachingFile
-      ? `Reading ${restoredDraft.attachingFile} was interrupted when this view reloaded. Attach it again.`
+    interruptedFile
+      ? `Reading ${interruptedFile} was interrupted when this view reloaded. Attach it again.`
       : null,
   );
   const [draggingFile, setDraggingFile] = useState(false);
@@ -520,6 +527,7 @@ export function NewSwarmCreateFlow({
         return;
       }
       setAttachError(null);
+      setInterruptedFile(null);
       setDraft((current) => appendToDraft(current, result.text));
     } finally {
       setAttachingFile(null);
@@ -1799,6 +1807,7 @@ export function NewSwarmCreateFlow({
     launchedRuns.length > 0 ||
     generatingSince !== null ||
     attachingFile !== null ||
+    interruptedFile !== null ||
     targetState.environmentIds.length > 0 ||
     targetState.stack.hostIds.length > 0;
 
@@ -1848,7 +1857,7 @@ export function NewSwarmCreateFlow({
       launchedRuns,
       runLabels: [...launchedRunLabelsRef.current.entries()],
       generatingSince,
-      attachingFile,
+      attachingFile: attachingFile ?? interruptedFile,
       launch: {
         flowId: flowIdRef.current,
         swarmId: persistedSwarmIdRef.current,
@@ -1859,6 +1868,7 @@ export function NewSwarmCreateFlow({
     });
   }, [
     attachingFile,
+    interruptedFile,
     createdEnvOverlay,
     draft,
     generatingSince,
