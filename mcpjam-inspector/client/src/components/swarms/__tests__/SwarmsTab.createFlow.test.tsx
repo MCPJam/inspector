@@ -3399,9 +3399,12 @@ describe("SwarmsTab create flow — the launch quote", () => {
     expect(submitLaunchEnabled()).toBe(false);
     // Nothing smaller fits either, so nothing smaller is offered.
     expect(screen.queryByTestId("new-swarm-fit-plan")).not.toBeInTheDocument();
-    expect(track).toHaveBeenCalledWith(
-      "swarm_create_credit_blocked",
-      expect.objectContaining({ sessions: 2, max_affordable_sessions: 0 }),
+    // Tracked from an effect after the blocked render, so wait for it.
+    await waitFor(() =>
+      expect(track).toHaveBeenCalledWith(
+        "swarm_create_credit_blocked",
+        expect.objectContaining({ sessions: 2, max_affordable_sessions: 0 }),
+      ),
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
