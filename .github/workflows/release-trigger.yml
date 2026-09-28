@@ -12,6 +12,10 @@ name: Release trigger
 # tip, green on all three, and carrying unpublished versions. A version commit
 # that gets cancelled only moves the release to the next green commit.
 #
+# A version PR that ticked skip_verify is released without waiting for any of
+# that: the merge's own push runs this too, and releases the version commit
+# straight away.
+#
 # Nearly every run here ends in a skip. That is expected: the run that sees
 # everything line up is the one that does something. The reasoning lives in
 # .github/scripts/release-trigger.mjs.
@@ -21,6 +25,12 @@ on:
     workflows: [Tests, Build and Test, Deploy Staging]
     types: [completed]
     branches: [main]
+  # For skip_verify. A version PR always changes some workspace's
+  # package.json, so this fires on its merge and on little else.
+  push:
+    branches: [main]
+    paths:
+      - "*/package.json"
 
 permissions:
   # Dispatching release.yml. A workflow_dispatch made with GITHUB_TOKEN does
@@ -40,18 +50,21 @@ jobs:
   decide:
     # This job holds a write token and runs scripts from the commit it checks
     # out, and workflow_run also fires for runs on fork PRs. Only a push to
-    # this repo's `main` is trusted code, so both conditions are load-bearing.
+    # this repo's `main` is trusted code, so both workflow_run conditions are
+    # load-bearing. The push trigger is `main`-only by its branch filter.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.event_name == 'push' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout the green commit
+      - name: Checkout the commit to decide on
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Decide, and dispatch Release
         uses: actions/github-script@v7
@@ -59,7 +72,7 @@ jobs:
           script: |
             const { readFileSync } = require("node:fs");
             const workspace = process.env.GITHUB_WORKSPACE;
-            const { decideRelease, REQUIRED_CHECKS, releaseRunName } =
+            const { decideRelease, REQUIRED_CHECKS, releaseLabel, releaseRunName } =
               await import(`${workspace}/.github/scripts/release-trigger.mjs`);
             const { parseReleaseOptions, VERSION_PR_BRANCH } =
               await import(`${workspace}/.github/scripts/release-pr.mjs`);
@@ -67,21 +80,61 @@ jobs:
               await import(`${workspace}/.github/scripts/unpublished-versions.mjs`);
 
             const { owner, repo } = context.repo;
-            const headSha = context.payload.workflow_run.head_sha;
+            const headSha = context.payload.workflow_run?.head_sha ?? context.sha;
 
             const { data: main } = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+            const isTip = headSha === main.commit.sha;
+
+            // Only the tip can be released, so everything below is gathered for
+            // it alone; decideRelease turns the empty defaults into the reason.
+            const unpublished = isTip
+              ? unpublishedVersions((path) => JSON.parse(readFileSync(`${workspace}/${path}`, "utf8")))
+              : [];
+            const label = unpublished.length > 0 ? releaseLabel(unpublished) : "";
+
+            // The release's choices ride in the merged version PR's checkboxes.
+            // Only a PR that is in this commit AND names these versions counts:
+            // every older version PR is in it too, and a hand-made bump must not
+            // inherit the last release's deploys or skip_verify. Without one,
+            // nothing deploys and the checks are waited for: an unasked
+            // production deploy is the worse mistake.
+            let options = { deploy_backend_prod: false, deploy_webapp: false, skip_verify: false };
+            let optionsNote = `No merged version PR names ${label}; releasing without deploys.`;
+            if (label) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner, repo, state: "closed", base: "main",
+                head: `${owner}:${VERSION_PR_BRANCH}`,
+                sort: "updated", direction: "desc", per_page: 10,
+              });
+              const versionPr = prs
+                .filter((pr) => pr.merged_at && pr.title.includes(`(${label})`))
+                .sort((a, b) => b.merged_at.localeCompare(a.merged_at))[0];
+              if (versionPr) {
+                const { data: cmp } = await github.rest.repos.compareCommits({
+                  owner, repo, base: versionPr.merge_commit_sha, head: headSha,
+                });
+                if (cmp.status === "ahead" || cmp.status === "identical") {
+                  options = parseReleaseOptions(versionPr.body);
+                  optionsNote = `Options from #${versionPr.number}: ${JSON.stringify(options)}`;
+                } else {
+                  optionsNote = `Version PR #${versionPr.number} is not in ${headSha}; releasing without deploys.`;
+                }
+              }
+            }
 
             // Unfiltered, then matched here: GitHub's run search index can lag
             // minutes behind, and a filtered query that misses the run that
             // just finished would skip the one decision that should dispatch.
             // Same reasoning as release.yml's CI gate.
             const greenChecks = [];
-            for (const workflow_id of REQUIRED_CHECKS) {
-              const { data } = await github.rest.actions.listWorkflowRuns({
-                owner, repo, workflow_id, per_page: 50,
-              });
-              if (data.workflow_runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
-                greenChecks.push(workflow_id);
+            if (label && !options.skip_verify) {
+              for (const workflow_id of REQUIRED_CHECKS) {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id, per_page: 50,
+                });
+                if (data.workflow_runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
+                  greenChecks.push(workflow_id);
+                }
               }
             }
 
@@ -94,58 +147,25 @@ jobs:
               displayTitle: r.display_title,
             }));
 
-            // The registry is asked only once the commit is otherwise
-            // releasable, which is a handful of runs a day rather than three
-            // per push. decideRelease checks the tip and the checks first, so
-            // the empty list never decides anything on its own.
-            const releasable =
-              headSha === main.commit.sha && greenChecks.length === REQUIRED_CHECKS.length;
-            const unpublished = releasable
-              ? unpublishedVersions((path) => JSON.parse(readFileSync(`${workspace}/${path}`, "utf8")))
-              : [];
-
             const decision = decideRelease({
               headSha,
               mainSha: main.commit.sha,
               greenChecks,
               unpublished,
               releaseRuns,
+              skipVerify: options.skip_verify,
             });
             core.info(decision.reason);
             if (!decision.dispatch) return;
-
-            // The deploy choices ride in the merged version PR's checkboxes.
-            // With no version PR behind these versions (a hand-made bump), or
-            // one this commit does not contain, nothing deploys: an unasked
-            // production deploy is the worse mistake.
-            let options = { deploy_backend_prod: false, deploy_webapp: false };
-            const { data: prs } = await github.rest.pulls.list({
-              owner, repo, state: "closed", base: "main",
-              head: `${owner}:${VERSION_PR_BRANCH}`,
-              sort: "updated", direction: "desc", per_page: 10,
-            });
-            const versionPr = prs
-              .filter((pr) => pr.merged_at)
-              .sort((a, b) => b.merged_at.localeCompare(a.merged_at))[0];
-            if (versionPr) {
-              const { data: cmp } = await github.rest.repos.compareCommits({
-                owner, repo, base: versionPr.merge_commit_sha, head: headSha,
-              });
-              if (cmp.status === "ahead" || cmp.status === "identical") {
-                options = parseReleaseOptions(versionPr.body);
-                core.info(`Deploy options from #${versionPr.number}: ${JSON.stringify(options)}`);
-              } else {
-                core.warning(`Version PR #${versionPr.number} is not in ${headSha}; releasing without deploys.`);
-              }
-            } else {
-              core.warning("No merged version PR found; releasing without deploys.");
-            }
+            if (optionsNote.startsWith("Options from")) core.info(optionsNote);
+            else core.warning(optionsNote);
 
             await github.rest.actions.createWorkflowDispatch({
               owner, repo, workflow_id: "release.yml", ref: "main",
               inputs: {
                 deploy_backend_prod: String(options.deploy_backend_prod),
                 deploy_webapp: String(options.deploy_webapp),
+                skip_verify: String(options.skip_verify),
                 versions: decision.label,
                 trigger_sha: headSha,
               },

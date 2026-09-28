@@ -74,7 +74,7 @@ export function RunRelease() {
   const impactsProd =
     deployMcp || (action === "publish" && (deployBackend || deployWebapp));
   const hasAnyTarget = runsRelease || deployMcp;
-  const effectiveSkipVerify = action === "publish" && skipVerify;
+  const effectiveSkipVerify = runsRelease && skipVerify;
 
   // Reset gated flags when the action changes so a stale `true` can't slip
   // into the confirmation modal or the dispatch payload. The checkbox
@@ -85,7 +85,7 @@ export function RunRelease() {
       setDeployBackend(false);
       setDeployWebapp(false);
     }
-    if (next !== "publish") setSkipVerify(false);
+    if (next === "none") setSkipVerify(false);
     setFeedback({ kind: "idle" });
   }
 
@@ -223,8 +223,8 @@ export function RunRelease() {
             name="skip_verify"
             checked={skipVerify}
             onChange={changeSkipVerify}
-            disabled={action !== "publish"}
-            description="Recovery-only, publish only: skips the green-CI and green-staging gates on main's SHA."
+            disabled={!runsRelease}
+            description="Skips the green-CI and green-staging gates. For start, ticked in the version PR: the release runs as soon as it merges."
           />
         </fieldset>
 
@@ -267,17 +267,17 @@ export function RunRelease() {
           </div>
         ) : null}
 
-        {action === "start" && (deployBackend || deployWebapp) ? (
+        {action === "start" && (deployBackend || deployWebapp || skipVerify) ? (
           <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-            These deploys are ticked in the version PR and happen when it
-            merges. Untick them there to change your mind.
+            These are ticked in the version PR and take effect when it merges.
+            Untick them there to change your mind.
           </div>
         ) : null}
 
         {effectiveSkipVerify ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
-            <span className="font-medium">Recovery mode:</span>{" "}
-            <span className="font-mono">npm run verify</span> will be skipped.
+            <span className="font-medium">skip_verify:</span> Release will not
+            wait for green CI and staging on main.
           </div>
         ) : null}
 
@@ -453,7 +453,7 @@ function ConfirmModal({
                 (skipVerify ? "text-warning" : "text-muted-foreground")
               }
             >
-              {String(action === "publish" && skipVerify)}
+              {String(action !== "none" && skipVerify)}
             </dd>
           </div>
           <div className="flex gap-3">
