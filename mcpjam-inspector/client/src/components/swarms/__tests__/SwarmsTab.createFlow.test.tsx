@@ -16,6 +16,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 import { WebApiError } from "@/lib/apis/web/base";
 
@@ -355,6 +356,13 @@ function pickExistingPersona(name: RegExp) {
   fireEvent.click(screen.getByRole("checkbox", { name }));
 }
 
+// jsdom's File has no `text()`; browsers do. Give the fixtures one.
+function textFile(content: string, name: string): File {
+  return Object.assign(new File([content], name), {
+    text: async () => content,
+  });
+}
+
 function openDescribe() {
   // `/swarms/new` is what opens the flow — mount it the way the router does.
   render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
@@ -540,6 +548,81 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(submit).not.toBeDisabled();
     expect(submit).toHaveTextContent("Continue");
     expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
+  });
+
+  it("counts the description against its cap and blocks Continue past it", () => {
+    openDescribe();
+    const submit = screen.getByTestId("new-swarm-continue");
+    const input = screen.getByTestId("new-swarm-describe-input");
+    const count = screen.getByTestId("new-swarm-describe-count");
+    const cap = SWARM_DESCRIPTION_MAX_CHARS.toLocaleString();
+    expect(count).toHaveTextContent(`0 / ${cap}`);
+
+    // Well past the old 2,000 — the multi-persona research this is sized for.
+    fireEvent.change(input, {
+      target: { value: "x".repeat(SWARM_DESCRIPTION_MAX_CHARS) },
+    });
+    expect(count).toHaveTextContent(`${cap} / ${cap}`);
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(submit).not.toBeDisabled();
+
+    // One over, surrounding whitespace aside: trimmed like the route trims it.
+    fireEvent.change(input, {
+      target: { value: `  ${"x".repeat(SWARM_DESCRIPTION_MAX_CHARS + 1)}  ` },
+    });
+    expect(count).toHaveTextContent(
+      `${(SWARM_DESCRIPTION_MAX_CHARS + 1).toLocaleString()} / ${cap}`,
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(submit).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      `Shorten the description to ${cap} characters to continue.`,
+    );
+  });
+
+  it("attaches a .txt or .md file into the description, by picker or by drop", async () => {
+    openDescribe();
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Typed first." } });
+
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [textFile("Persona: Maya.", "research.md")] },
+    });
+    await waitFor(() =>
+      expect(input.value).toBe("Typed first.\n\nPersona: Maya."),
+    );
+
+    fireEvent.drop(input, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [textFile("Persona: Dev.", "more.txt")],
+      },
+    });
+    await waitFor(() =>
+      expect(input.value).toBe(
+        "Typed first.\n\nPersona: Maya.\n\nPersona: Dev.",
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
+  });
+
+  it("refuses an unsupported file with an inline error and keeps the draft", async () => {
+    openDescribe();
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.drop(input, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [textFile("binary", "research.docx")],
+      },
+    });
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent("Only .txt and .md files are supported.");
+    expect(input.value).toBe("");
   });
 
   it("auto-seeds the first named environment on open", () => {

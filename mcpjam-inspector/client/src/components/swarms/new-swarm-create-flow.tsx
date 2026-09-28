@@ -14,11 +14,17 @@ import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import { ChevronLeft, Loader2, X } from "lucide-react";
+import { ChevronLeft, Loader2, Paperclip, X } from "lucide-react";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
+import {
+  DESCRIBE_ATTACHMENT_ACCEPT,
+  appendToDraft,
+  readDescribeAttachment,
+} from "@/components/swarms/describe-attachment";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
   resolveSwarmJourneyPayload,
@@ -492,6 +498,20 @@ export function NewSwarmCreateFlow({
     restoredDraft?.step ?? "describe",
   );
   const [draft, setDraft] = useState(restoredDraft?.description ?? "");
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [draggingFile, setDraggingFile] = useState(false);
+  const attachFile = useCallback(async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    const result = await readDescribeAttachment(file);
+    if (!result.ok) {
+      setAttachError(result.error);
+      return;
+    }
+    setAttachError(null);
+    setDraft((current) => appendToDraft(current, result.text));
+  }, []);
   /**
    * Required, and prefilled — see {@link suggestSwarmName}. Computed once via
    * the lazy initializer so it does not change under the user on re-render.
@@ -845,8 +865,13 @@ export function NewSwarmCreateFlow({
   // its own — those journeys carry their own environments, so requiring one
   // here would block a returning user over a field their run never reads.
   const wantsGenerate = draft.trim().length > 0;
+  // Counted after trim, the same way the routes count it, so the counter and
+  // the 400 it exists to prevent agree on where the line is.
+  const draftLength = draft.trim().length;
+  const draftTooLong = draftLength > SWARM_DESCRIPTION_MAX_CHARS;
   const canGenerate =
     wantsGenerate &&
+    !draftTooLong &&
     hasGenerateTargets &&
     authReadyForGeneration &&
     !generating &&
@@ -872,6 +897,9 @@ export function NewSwarmCreateFlow({
       if (serverBlock) return "Pick a server to continue.";
       if (modelBlock) return modelBlock;
       if (!hasSwarmName) return "This swarm needs a name to continue.";
+      if (draftTooLong) {
+        return `Shorten the description to ${SWARM_DESCRIPTION_MAX_CHARS.toLocaleString()} characters to continue.`;
+      }
       if (wantsGenerate) {
         if (!workOsUser) {
           return "Sign in to generate personas with MCPJam models.";
@@ -2179,7 +2207,77 @@ export function NewSwarmCreateFlow({
                 onChange={(event) => setDraft(event.target.value)}
                 placeholder={DESCRIBE_PLACEHOLDER}
                 data-testid="new-swarm-describe-input"
+                aria-invalid={draftTooLong || undefined}
+                aria-describedby="new-swarm-describe-count"
+                // Only file drags are taken over; dragging selected text in
+                // keeps the textarea's native drop.
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes("Files")) return;
+                  event.preventDefault();
+                  setDraggingFile(true);
+                }}
+                onDragLeave={() => setDraggingFile(false)}
+                onDrop={(event) => {
+                  if (!event.dataTransfer.types.includes("Files")) return;
+                  event.preventDefault();
+                  setDraggingFile(false);
+                  void attachFile(event.dataTransfer.files);
+                }}
+                className={cn(
+                  draggingFile && "border-dashed border-primary bg-primary/5",
+                )}
               />
+              {/* No `maxLength`: it silently truncates a paste, and pasted
+                  research is exactly the input this box is sized for. Over the
+                  cap, the count turns red and Continue explains why it won't
+                  move. An attached file lands under the same count. */}
+              <div className="flex items-center justify-between gap-2">
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  accept={DESCRIBE_ATTACHMENT_ACCEPT}
+                  tabIndex={-1}
+                  aria-hidden
+                  className="sr-only"
+                  data-testid="new-swarm-describe-file-input"
+                  onChange={(event) => {
+                    void attachFile(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  title="Or drop a .txt or .md file on the box"
+                  onClick={() => attachInputRef.current?.click()}
+                  data-testid="new-swarm-describe-attach"
+                >
+                  <Paperclip />
+                  Attach .txt or .md
+                </Button>
+                <p
+                  id="new-swarm-describe-count"
+                  data-testid="new-swarm-describe-count"
+                  className={cn(
+                    "text-xs tabular-nums",
+                    draftTooLong ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {draftLength.toLocaleString()} /{" "}
+                  {SWARM_DESCRIPTION_MAX_CHARS.toLocaleString()}
+                </p>
+              </div>
+              {attachError ? (
+                <p
+                  role="alert"
+                  className="text-xs text-destructive"
+                  data-testid="new-swarm-describe-attach-error"
+                >
+                  {attachError}
+                </p>
+              ) : null}
 
               {/* Attached personas, as removable rows. They keep their own
                   goals and environments, so they read as what they are —
