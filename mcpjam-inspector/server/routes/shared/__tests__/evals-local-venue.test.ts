@@ -47,7 +47,7 @@ beforeEach(() => {
       environmentRef: { environmentId: "env-1", revision: 1, name: "Test" },
       selectedServerIds: ["s1"], effectiveServerIds: ["s1"], servers: [{ serverId: "s1", name: "s1" }],
     };
-    if (name === "testSuites:getRunReplayMetadata") return { suiteId: "suite-1", projectId: "project-1", hasServerReplayConfig: true };
+    if (name === "testSuites:getRunReplayMetadata") return { suiteId: "suite-1", projectId: "project-1", hasServerReplayConfig: true, executionEngine: "harness:claude-code" };
     if (name === "hostConfigsV2:getSuiteConfig") return { harness: "claude-code", serverIds: ["s1"] };
     if (name === "testSuites:listTestCases") return [];
     if (name === "testSuites:getTestSuite") return { projectId: "project-1", environment: { servers: ["s1"] } };
@@ -98,4 +98,43 @@ it.each([true, false])("replays use the backend venue when availability=%s", asy
   expect(mocks.available).toHaveBeenCalledTimes(1);
   expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({ harnessRuntimeVenue: available ? "local" : "hosted" }));
   expect(mocks.admission).toHaveBeenCalledWith(expect.objectContaining({ localExecution: available }));
+});
+
+it.each(["harness:codex", "emulated"])("replays select venue from frozen %s engine", async (executionEngine) => {
+  const original = mocks.query.getMockImplementation()!;
+  mocks.query.mockImplementation(async (name: string, ...args: any[]) => name === "testSuites:getRunReplayMetadata"
+    ? { suiteId: "suite-1", projectId: "project-1", hasServerReplayConfig: true, executionEngine }
+    : original(name, ...args));
+  mocks.available.mockImplementation(async harness => harness === "claude-code");
+  const prepared = await prepareSuiteReplayFromRun({
+    convexClient: { query: mocks.query, mutation: mocks.mutation, action: mocks.action } as any,
+    convexAuthToken: "token", sourceRunId: "source-1", orgModelConfig: { providers: [] },
+  });
+  expect(mocks.available).toHaveBeenCalledWith(executionEngine === "emulated" ? undefined : "codex", "token", "project-1");
+  expect(mocks.mutation).toHaveBeenCalledWith("testSuites:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
+  await prepared.cleanup();
+});
+
+it("current-config replays select the current suite harness instead of the source engine", async () => {
+  const original = mocks.query.getMockImplementation()!;
+  mocks.query.mockImplementation(async (name: string, ...args: any[]) => name === "hostConfigsV2:getSuiteConfig"
+    ? { harness: "codex" } : original(name, ...args));
+  mocks.available.mockImplementation(async harness => harness === "claude-code");
+  const prepared = await prepareSuiteReplayFromRun({
+    convexClient: { query: mocks.query, mutation: mocks.mutation, action: mocks.action } as any,
+    convexAuthToken: "token", sourceRunId: "source-1", useCurrentSuiteConfig: true, orgModelConfig: { providers: [] },
+  });
+  expect(mocks.available).toHaveBeenCalledWith("codex", "token", "project-1");
+  expect(mocks.mutation).toHaveBeenCalledWith("testSuites:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
+  await prepared.cleanup();
+});
+
+it("refuses a suite launch when its authorization project cannot be resolved", async () => {
+  mocks.query.mockRejectedValue(new Error("project lookup unavailable"));
+  await expect(prepareEvalRun({} as any, {
+    suiteId: "suite-1", suiteRerun: true, serverIds: ["s1"], tests: [],
+    convexAuthToken: "token", orgModelConfig: { providers: [] },
+  } as any)).rejects.toThrow("project lookup unavailable");
+  expect(mocks.mutation).not.toHaveBeenCalled();
+  expect(mocks.run).not.toHaveBeenCalled();
 });

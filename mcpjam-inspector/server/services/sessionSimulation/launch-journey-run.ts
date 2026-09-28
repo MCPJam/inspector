@@ -276,7 +276,27 @@ export async function launchJourneyRun(
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
-  const localEnabled = Boolean(input.waveId) && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
+  let hasClaudeTarget = false;
+  if (input.waveId) {
+    const client = createConvexClient(deps.bearerToken);
+    const journey = await client.query("journeys:getJourney" as never, {
+      projectId: input.projectId, journeyRefId: input.journeyRefId,
+    } as never) as any;
+    const environmentIds = input.environmentIds?.length ? input.environmentIds : journey?.environmentIds ?? [];
+    const hostIds = environmentIds.length
+      ? await Promise.all(environmentIds.map(async (environmentId: string) => {
+          const environment = await client.query("projectEnvironments:getEnvironment" as never, {
+            projectId: input.projectId, environmentId,
+          } as never) as any;
+          return environment?.hostId;
+        }))
+      : journey?.hostIds ?? [];
+    const hosts = await Promise.all(hostIds.map(async (hostId: string) =>
+      client.query("hosts:getHost" as never, { hostId } as never) as any,
+    ));
+    hasClaudeTarget = hosts.some(host => host?.config?.harness === "claude-code");
+  }
+  const localEnabled = hasClaudeTarget && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
   if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false });
   const localActorResult = localEnabled
     ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })

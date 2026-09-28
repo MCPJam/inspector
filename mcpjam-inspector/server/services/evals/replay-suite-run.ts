@@ -1,5 +1,6 @@
 import { checkEvalExecutionAdmission, checkEvalHarnessAdmission, casesAssertingWidgetRender, failRunBeforeExecution } from "./harness-admission.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
+import { harnessOfHostConfig } from "./harness-admission.js";
 import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
@@ -108,6 +109,14 @@ export async function prepareSuiteReplayFromRun(
         logPrefix: "evals.replay",
       });
 
+    const launchHostConfig = useCurrentSuiteConfig === true
+      ? await loadSuiteHostConfig(convexClient, replayMetadata.suiteId)
+      : { harness: typeof replayMetadata.executionEngine === "string" && replayMetadata.executionEngine.startsWith("harness:")
+          ? replayMetadata.executionEngine.slice("harness:".length) : undefined };
+    const runtimeVenue = await shouldUseLocalHarness(
+      harnessOfHostConfig(launchHostConfig), convexAuthToken, replayMetadata.projectId,
+    ) ? "local" : "hosted";
+
     const {
       runId,
       harnessRuntimeVenue,
@@ -123,7 +132,7 @@ export async function prepareSuiteReplayFromRun(
       passCriteria,
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
-      runtimeVenue: await shouldUseLocalHarness("claude-code", convexAuthToken, replayMetadata.projectId) ? "local" : "hosted",
+      runtimeVenue,
       useCurrentSuiteConfig,
       environmentOverride:
         useCurrentSuiteConfig === true
