@@ -14,6 +14,29 @@ export function isCreditExhaustion(value: unknown): boolean {
   const strings = new Set<string>();
   let exhausted = false;
   let excluded = false;
+  // The refusal's own sentence counts only where the refusal itself states
+  // it: the top-level message fields, and the top-level `details` when it is
+  // a string or an object of strings. A sentence quoted deeper (a nested
+  // object's own `message`, a history entry) is someone else's words, and
+  // letting it veto would hide a real exhaustion.
+  if (value && typeof value === "object") {
+    const top = value as Record<string, unknown>;
+    const details = top.details;
+    const ownStrings = [
+      ...OWN_MESSAGE_KEYS.map((key) => top[key]),
+      details,
+      ...(details && typeof details === "object" && !Array.isArray(details)
+        ? Object.values(details as Record<string, unknown>)
+        : []),
+    ];
+    if (
+      ownStrings.some(
+        (own) =>
+          typeof own === "string" && isTransientSpendRefusal(null, null, own),
+      )
+    )
+      return false;
+  }
   const visit = (item: unknown): void => {
     if (typeof item === "string") {
       if (strings.has(item)) return;
@@ -72,20 +95,9 @@ export function isCreditExhaustion(value: unknown): boolean {
       excluded = true;
     // Other in-flight requests hold the last credits; the backend says retry
     // in seconds. Treating it as exhaustion stopped runs and locked models.
-    // The reason alone decides: a nested refusal can carry it without a code.
-    // A stored attempt row keeps only the backend's sentence, so this object's
-    // OWN message counts too — but not a string quoted anywhere else inside
-    // it, which would let unrelated `details` text veto a real exhaustion.
-    const record = item as Record<string, unknown>;
-    if (
-      record.refusalReason === "holds_committed" ||
-      OWN_MESSAGE_KEYS.some((key) => {
-        const own = record[key];
-        return (
-          typeof own === "string" && isTransientSpendRefusal(null, null, own)
-        );
-      })
-    )
+    // The structured reason decides at any depth: a nested refusal can carry
+    // it without a code. Its SENTENCE is read only at the top (above).
+    if ((item as Record<string, unknown>).refusalReason === "holds_committed")
       excluded = true;
     if (item instanceof Error) visit(item.message);
     for (const nested of Object.values(item)) visit(nested);
