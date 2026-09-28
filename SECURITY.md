@@ -3,7 +3,8 @@
 ## Reporting a vulnerability
 
 Report security issues privately. Do not open a public GitHub issue, and do not
-post details in Discord or a pull request before the issue is fixed.
+post details in Discord or a pull request until a fix is released or 90 days
+have passed since your report, whichever comes first.
 
 Two ways to reach us:
 
@@ -20,12 +21,12 @@ and what an attacker gains. A proof of concept helps us reproduce quickly.
 
 These are targets we aim to meet, not guarantees:
 
-| Stage | Target |
-| --- | --- |
-| We acknowledge the report | Within 3 business days |
-| We confirm or decline the finding, with a severity | Within 10 business days |
-| Fix for a critical finding | Within 7 days of confirmation |
-| Fix for a high finding | Within 30 days of confirmation |
+| Stage                                              | Target                                  |
+| -------------------------------------------------- | --------------------------------------- |
+| We acknowledge the report                          | Within 3 business days                  |
+| We confirm or decline the finding, with a severity | Within 10 business days                 |
+| Fix for a critical finding                         | Within 7 calendar days of confirmation  |
+| Fix for a high finding                             | Within 30 calendar days of confirmation |
 
 Medium and low findings are scheduled into normal release work. We will tell you
 which bucket a report landed in rather than leaving it silent.
@@ -64,9 +65,10 @@ Out of scope:
 
 We patch the most recent released minor of each npm package
 (`@mcpjam/inspector`, `@mcpjam/sdk`, `@mcpjam/cli`) and the current hosted
-deployment. Releases are frequent, so upgrading to the latest version is
-usually the fastest route to a fix. We do not backport security fixes to older
-minors.
+deployment. The desktop app is built from `@mcpjam/inspector` and shares its
+version number, so the same rule applies to it. Releases are frequent, so
+upgrading to the latest version is usually the fastest route to a fix. We do
+not backport security fixes to older minors.
 
 ## Testing safely
 
