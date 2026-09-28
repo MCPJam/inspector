@@ -4252,6 +4252,30 @@ export function TestTemplateEditor({
                 />
               </div>
               {!readOnly && <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                {/* First, as far as it can get from the primary run button:
+                    a destructive action must not sit between two others. */}
+                {onDeleteCase && !isDraft && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        // Same outlined square as the settings gear beside it,
+                        // so the header reads as one set; red only on hover.
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-8 shrink-0 p-0 hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Delete test case"
+                        data-testid="case-header-delete"
+                        onClick={() => setDeleteCaseOpen(true)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Delete test case
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {onExportDraft && !useWorkspace ? (
                   <Button
                     type="button"
@@ -4486,26 +4510,6 @@ export function TestTemplateEditor({
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
                       Iterations for the next run
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {onDeleteCase && !isDraft && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        aria-label="Delete test case"
-                        data-testid="case-header-delete"
-                        onClick={() => setDeleteCaseOpen(true)}
-                      >
-                        <Trash2 className="size-3.5" aria-hidden />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      Delete test case
                     </TooltipContent>
                   </Tooltip>
                 )}
