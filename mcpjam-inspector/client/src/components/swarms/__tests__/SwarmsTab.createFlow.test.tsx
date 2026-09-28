@@ -175,6 +175,9 @@ let environments = environmentsRef.current;
 
 let existingPersonas: Array<Record<string, unknown>> = [];
 let personaJourneys: Array<Record<string, unknown>> = [];
+// Journeys for one persona by its id, for cases where reused personas differ.
+// A persona not named here gets `personaJourneys`.
+let journeysByPersona: Record<string, Array<Record<string, unknown>>> = {};
 
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
   useJourneyRunStream: () => ({
@@ -196,7 +199,10 @@ vi.mock("convex/react", () => ({
       case "personas:listPersonas":
         return existingPersonas;
       case "journeys:listJourneysByPersona":
-        return personaJourneys;
+        return (
+          journeysByPersona[(args as { personaRefId: string }).personaRefId] ??
+          personaJourneys
+        );
       case "journeyRuns:getJourneyRun":
         // Running step resolves the launched run by id; undefined = loading.
         // Tests that need live cells can stub a concrete run here.
@@ -395,6 +401,7 @@ beforeEach(() => {
   projectServersRef.current = [];
   existingPersonas = [];
   personaJourneys = [];
+  journeysByPersona = {};
   // Ad-hoc rows carry NO name — the shape the flag-on path has to cope with.
   ensureAdhocEnvironmentsMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -3447,6 +3454,54 @@ describe("SwarmsTab create flow — the launch quote", () => {
     expect(
       screen.queryByTestId("new-swarm-credit-blocked"),
     ).not.toBeInTheDocument();
+  });
+
+  it("leaves a reused persona with no goals on the board when it fits the plan", async () => {
+    // Ben has no goals, so Ben launches nothing and the fit has nothing to
+    // take away. Only Ana's iterations come down.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+      { _id: "p-2", personaId: "p2", name: "Ben", role: "Finance", notes: "" },
+    ];
+    journeysByPersona = {
+      "p-1": [
+        {
+          _id: "j-1",
+          name: "Reconcile payouts",
+          goal: "Reconcile",
+          config: { sessionsPerTarget: 3 },
+        },
+      ],
+      "p-2": [],
+    };
+    quoteMock
+      .mockResolvedValueOnce(
+        quote({ sessions: 3, fits: false, maxAffordableSessions: 2 }),
+      )
+      .mockResolvedValue(quote({ sessions: 2 }));
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    pickExistingPersona(/include ben/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    const reused = await screen.findByTestId("new-swarm-reused-personas");
+    expect(within(reused).getAllByRole("listitem")).toHaveLength(2);
+
+    fireEvent.click(await screen.findByTestId("new-swarm-fit-plan"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-launch-session-estimate"),
+      ).toHaveTextContent("2 conversations"),
+    );
+    expect(track).toHaveBeenCalledWith(
+      "swarm_create_fit_applied",
+      expect.objectContaining({ from_sessions: 3, to_sessions: 2 }),
+    );
+    expect(
+      within(screen.getByTestId("new-swarm-reused-personas")).getAllByRole(
+        "listitem",
+      ),
+    ).toHaveLength(2);
   });
 
   it("keeps the plan when the smaller one's quote does not fit either", async () => {

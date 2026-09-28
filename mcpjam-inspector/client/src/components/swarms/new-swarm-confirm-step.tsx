@@ -1259,11 +1259,13 @@ export function NewSwarmConfirmStep({
     const keptReused = new Map(
       fittedPlan.reused.map((persona) => [persona.personaId, persona]),
     );
-    for (const persona of reusedPersonas) {
-      const kept = keptReused.get(persona._id);
-      if (!kept) removeReused(persona._id);
-      else if (kept.iterations !== reusedIterationsFor(persona._id)) {
-        onIterationsChange(persona._id, kept.iterations);
+    for (const persona of launchPlan.reused) {
+      // A persona with no goals launches nothing, so the fit leaves it be.
+      if (persona.journeyIds.length === 0) continue;
+      const kept = keptReused.get(persona.personaId);
+      if (!kept) removeReused(persona.personaId);
+      else if (kept.iterations !== persona.iterations) {
+        onIterationsChange(persona.personaId, kept.iterations);
       }
     }
     track("swarm_create_fit_applied", {

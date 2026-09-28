@@ -26863,6 +26863,10 @@
         "type": "object",
         "description": "One run the launch would start. A goal brings its stored environments and settings, and anything named here overrides them, exactly as the launch does. Without a goal, `environmentIds` and `maxTurns` are required.",
         "additionalProperties": false,
+        "anyOf": [
+          { "required": ["goalId"] },
+          { "required": ["environmentIds", "maxTurns"] }
+        ],
         "properties": {
           "key": {
             "type": "string",
