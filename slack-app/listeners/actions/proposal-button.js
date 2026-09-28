@@ -81,7 +81,9 @@ export function isCancellation(outcome) {
  *
  * A URL wins over the copy when there is one, because "follow it here" is the
  * most useful thing we can say — but only when the SERVER built it. A link
- * assembled here would need to know each operation's result shape.
+ * assembled here would need to know each operation's result shape. The one
+ * exception is a cancellation: the link line says "Approved", so a
+ * cancellation keeps its own copy even when it carries a URL.
  *
  * @param {{ operation: string, kind?: string | null, resource?: { url?: string } | null, runUrl?: string | null }} outcome
  * @param {string} userId

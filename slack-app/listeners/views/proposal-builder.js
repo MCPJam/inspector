@@ -214,7 +214,7 @@ export function buildProposalBlocks(proposals) {
     // `capChars`, not `slice`: the cap counts UTF-16 units, so a server-sent
     // label with an emoji straddling the limit would be cut mid surrogate pair
     // and the lone half can make Slack reject the whole message. The confirm
-    // label two lines down already caps this way.
+    // dialog's button below already caps this way.
     const label = capChars(
       String(
         proposal.buttonLabel ||

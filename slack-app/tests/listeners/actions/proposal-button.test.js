@@ -567,23 +567,30 @@ describe('handleProposalButton', () => {
     assert.ok(!/watch it here/.test(posted[0].text));
   });
 
-  it('announces a CANCELLATION rather than routing it into the journey watcher', async () => {
-    stub({
-      executeBody: {
-        status: 'succeeded',
-        operation: 'cancel_journey_run',
-        kind: 'cancel',
-        resource: { type: 'journey_run', id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
-        result: {},
-      },
-    });
-    const { args, posted } = clickArgs();
-    await handleProposalButton(/** @type {any} */ (args));
+  // Both permalink spellings, for the same reason the start path reads both:
+  // a guard that only recognised one would leave the other routed as a start.
+  for (const [label, type] of [
+    ['a goal run', 'goal_run'],
+    ['a pre-rename journey run', 'journey_run'],
+  ]) {
+    it(`announces a CANCELLATION of ${label} rather than routing it into the goal watcher`, async () => {
+      stub({
+        executeBody: {
+          status: 'succeeded',
+          operation: 'cancel_goal_run',
+          kind: 'cancel',
+          resource: { type, id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
+          result: {},
+        },
+      });
+      const { args, posted } = clickArgs();
+      await handleProposalButton(/** @type {any} */ (args));
 
-    assert.strictEqual(posted.length, 1);
-    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
-    assert.ok(!/swarm running…/.test(posted[0].text));
-  });
+      assert.strictEqual(posted.length, 1);
+      assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+      assert.ok(!/swarm running…/.test(posted[0].text));
+    });
+  }
 
   it('announces a CANCELLATION from a server that predates `kind`', async () => {
     // The routing has to recognise the same two spellings the copy does, or
