@@ -14,7 +14,9 @@ const {
   projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
-  oauthMembershipState: { allProjects: undefined as { _id: string }[] | undefined },
+  oauthMembershipState: {
+    allProjects: undefined as { _id: string }[] | undefined,
+  },
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
   useProjectStateMock: vi.fn(),
@@ -80,7 +82,7 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("../useProjects", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../useProjects")>(),
+  ...(await importOriginal<typeof import("../useProjects")>()),
   useProjectQueries: () => oauthMembershipState,
 }));
 
@@ -233,22 +235,33 @@ describe("useAppState active organization recovery", () => {
   it("keeps OAuth membership IDs stable until the membership query changes", () => {
     oauthMembershipState.allProjects = [{ _id: "project-1" }];
     const props = {
-      currentUserId: "user-1", currentActorKey: "user-1",
-      hasOrganizations: false, isLoadingOrganizations: false, validOrganizations: [],
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+      validOrganizations: [],
       isWorkOsLoading: false,
     };
-    const { rerender } = renderHook((options) => useAppState(options), { initialProps: props });
+    const { rerender } = renderHook((options) => useAppState(options), {
+      initialProps: props,
+    });
     const first = useServerStateMock.mock.lastCall?.[0].oauthProjectIds;
     expect(first).toEqual(new Set(["project-1"]));
     rerender({ ...props, isWorkOsLoading: true });
     expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBe(first);
     oauthMembershipState.allProjects = [{ _id: "project-2" }];
     rerender(props);
-    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toEqual(new Set(["project-2"]));
-    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).not.toBe(first);
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toEqual(
+      new Set(["project-2"]),
+    );
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).not.toBe(
+      first,
+    );
     oauthMembershipState.allProjects = undefined;
     rerender(props);
-    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBeUndefined();
+    expect(
+      useServerStateMock.mock.lastCall?.[0].oauthProjectIds,
+    ).toBeUndefined();
   });
 
   it("recovers a stale stored org to the first owned organization", async () => {
@@ -725,5 +738,38 @@ describe("useAppState active organization recovery", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("releases OAuth UI state when the callback owner clears its persistent marker", async () => {
+    localStorage.setItem("mcp-oauth-pending", "oauth-server");
+    localStorage.setItem(
+      "mcp-serverUrl-oauth-server",
+      "https://oauth.example/mcp",
+    );
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const { result, rerender } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        currentActorKey: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+
+    expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+      "oauth-server",
+    );
+
+    localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem("mcp-hosted-oauth-pending");
+    window.history.replaceState({}, "", "/home");
+    rerender();
+
+    await waitFor(() => {
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    });
   });
 });

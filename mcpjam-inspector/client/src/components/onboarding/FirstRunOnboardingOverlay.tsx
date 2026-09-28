@@ -1,9 +1,11 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { useReducedMotion } from "framer-motion";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -19,6 +21,12 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import { AuthenticationSection } from "@/components/connection/shared/AuthenticationSection";
+import type {
+  ServerFormAuthType,
+  ServerFormOAuthProtocolMode,
+} from "@/shared/types.js";
+import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
 import {
   AlertCircle,
   Check,
@@ -27,9 +35,11 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import { FIRST_RUN_OAUTH_OVERLAY_READY_EVENT } from "@/lib/first-run-oauth-return";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 5_500;
+export const FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS = 800;
 
 type FirstRunOverlayStep =
   | "welcome"
@@ -72,8 +82,19 @@ export interface FirstRunServerDraft {
   name: string;
   transport: "http" | "stdio";
   urlOrCommand: string;
-  authentication: "auto" | "oauth" | "bearer" | "none";
+  authentication: ServerFormAuthType;
   bearerToken?: string;
+  oauthProtocolMode?: ServerFormOAuthProtocolMode;
+  registrationMode?: RegistrationMode;
+  oauthScopes?: string[];
+  clientId?: string;
+  clientSecret?: string;
+  oauthAllowPathScopedIssuer?: boolean;
+  xaaClientAuth?: XaaClientAuthMethod;
+  xaaAuthzIssuer?: string;
+  xaaAllowPathScopedIssuer?: boolean;
+  xaaSubject?: string;
+  xaaEmail?: string;
 }
 
 interface FirstRunOnboardingOverlayProps {
@@ -83,12 +104,15 @@ interface FirstRunOnboardingOverlayProps {
   recoveryServerDraft?: FirstRunServerDraft;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
-  onAuthorizeConnection: () => void;
+  onAuthorizeConnection: (draft: FirstRunServerDraft) => void;
   onCancelConnection: () => void;
   onReturnToChoice: () => void;
   onOpenPlayground: () => void;
+  isOpeningPlayground?: boolean;
   onWelcomeShown: () => void;
   onSkip: () => void;
+  guestSessionRefused?: boolean;
+  onSignIn?: () => void;
 }
 
 /**
@@ -109,8 +133,11 @@ export function FirstRunOnboardingOverlay({
   onCancelConnection,
   onReturnToChoice,
   onOpenPlayground,
+  isOpeningPlayground = false,
   onWelcomeShown,
   onSkip,
+  guestSessionRefused = false,
+  onSignIn,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -119,6 +146,20 @@ export function FirstRunOnboardingOverlay({
   );
   const [isWelcomeCountdownRunning, setIsWelcomeCountdownRunning] =
     useState(false);
+  const [visibleCompletedConnectionSteps, setVisibleCompletedConnectionSteps] =
+    useState(connectionState.status === "connected" ? 3 : 0);
+  const [isConnectedPresentationReady, setIsConnectedPresentationReady] =
+    useState(connectionState.status === "connected");
+  const presentedServerNameRef = useRef<string | null>(
+    connectionState.status === "idle" ? null : connectionState.serverName,
+  );
+  const hasObservedConnectionProgressRef = useRef(
+    connectionState.status !== "idle" && connectionState.status !== "connected",
+  );
+  const pacedConnectedServerRef = useRef<string | null>(null);
+  const hydratedRecoveryDraftKeyRef = useRef<string | null>(null);
+  const previousConnectionStatusRef = useRef(connectionState.status);
+  const idleDestinationRef = useRef<"choose" | "server-details" | null>(null);
   const [serverUrlOrCommand, setServerUrlOrCommand] = useState("");
   const [serverUrlError, setServerUrlError] = useState<string | null>(null);
   const [serverName, setServerName] = useState("");
@@ -127,25 +168,70 @@ export function FirstRunOnboardingOverlay({
   );
   const [serverAuthentication, setServerAuthentication] =
     useState<FirstRunServerDraft["authentication"]>("auto");
-  const [isTokenEntryOpen, setIsTokenEntryOpen] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   const [bearerTokenError, setBearerTokenError] = useState<string | null>(null);
+  const bearerTokenInputRef = useRef<HTMLInputElement>(null);
+  const [oauthScopesInput, setOauthScopesInput] = useState("");
+  const [oauthProtocolMode, setOauthProtocolMode] =
+    useState<ServerFormOAuthProtocolMode>("auto");
+  const [registrationMode, setRegistrationMode] =
+    useState<RegistrationMode>("auto");
+  const [oauthAllowPathScopedIssuer, setOauthAllowPathScopedIssuer] =
+    useState(false);
+  const [useCustomClientId, setUseCustomClientId] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [clientIdError, setClientIdError] = useState<string | null>(null);
+  const [clientSecretError, setClientSecretError] = useState<string | null>(
+    null,
+  );
+  const [xaaConfigurationError, setXaaConfigurationError] = useState<
+    string | null
+  >(null);
+  const [xaaClientAuth, setXaaClientAuth] =
+    useState<XaaClientAuthMethod>("none");
+  const [xaaAuthzIssuer, setXaaAuthzIssuer] = useState("");
+  const [xaaAllowPathScopedIssuer, setXaaAllowPathScopedIssuer] =
+    useState(false);
+  const [xaaSubject, setXaaSubject] = useState("");
+  const [xaaEmail, setXaaEmail] = useState("");
 
   useEffect(() => {
+    const recoveryDraftKey = recoveryServerDraft
+      ? `${recoveryServerDraft.name}\u0000${recoveryServerDraft.urlOrCommand}`
+      : null;
     if (
       connectionState.status !== "authorization-required" ||
       !recoveryServerDraft ||
-      serverUrlOrCommand.trim()
+      serverUrlOrCommand.trim() ||
+      hydratedRecoveryDraftKeyRef.current === recoveryDraftKey
     ) {
       return;
     }
 
+    hydratedRecoveryDraftKeyRef.current = recoveryDraftKey;
     setServerName((current) => current || recoveryServerDraft.name);
     setServerUrlOrCommand(
       (current) => current || recoveryServerDraft.urlOrCommand,
     );
     setServerTransport(recoveryServerDraft.transport);
     setServerAuthentication(recoveryServerDraft.authentication);
+    setOauthProtocolMode(recoveryServerDraft.oauthProtocolMode ?? "auto");
+    setRegistrationMode(recoveryServerDraft.registrationMode ?? "auto");
+    setOauthScopesInput((recoveryServerDraft.oauthScopes ?? []).join(" "));
+    setClientId(recoveryServerDraft.clientId ?? "");
+    setUseCustomClientId(Boolean(recoveryServerDraft.clientId));
+    setClientSecret(recoveryServerDraft.clientSecret ?? "");
+    setOauthAllowPathScopedIssuer(
+      recoveryServerDraft.oauthAllowPathScopedIssuer ?? false,
+    );
+    setXaaClientAuth(recoveryServerDraft.xaaClientAuth ?? "none");
+    setXaaAuthzIssuer(recoveryServerDraft.xaaAuthzIssuer ?? "");
+    setXaaAllowPathScopedIssuer(
+      recoveryServerDraft.xaaAllowPathScopedIssuer ?? false,
+    );
+    setXaaSubject(recoveryServerDraft.xaaSubject ?? "");
+    setXaaEmail(recoveryServerDraft.xaaEmail ?? "");
   }, [connectionState.status, recoveryServerDraft, serverUrlOrCommand]);
 
   useEffect(() => {
@@ -156,10 +242,36 @@ export function FirstRunOnboardingOverlay({
     setStep("choose");
   }, []);
 
+  const resetServerDraft = useCallback(() => {
+    setServerUrlOrCommand("");
+    setServerUrlError(null);
+    setServerName("");
+    setServerTransport("http");
+    setServerAuthentication("auto");
+    setBearerToken("");
+    setBearerTokenError(null);
+    setOauthScopesInput("");
+    setOauthProtocolMode("auto");
+    setRegistrationMode("auto");
+    setOauthAllowPathScopedIssuer(false);
+    setUseCustomClientId(false);
+    setClientId("");
+    setClientSecret("");
+    setClientIdError(null);
+    setClientSecretError(null);
+    setXaaConfigurationError(null);
+    setXaaClientAuth("none");
+    setXaaAuthzIssuer("");
+    setXaaAllowPathScopedIssuer(false);
+    setXaaSubject("");
+    setXaaEmail("");
+  }, []);
+
   const returnToChoice = useCallback(() => {
     onReturnToChoice();
+    resetServerDraft();
     setStep("choose");
-  }, [onReturnToChoice]);
+  }, [onReturnToChoice, resetServerDraft]);
 
   const connectWithInitialDefaults = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -172,7 +284,10 @@ export function FirstRunOnboardingOverlay({
 
       setServerUrlError(null);
       setServerUrlOrCommand(trimmedUrlOrCommand);
-      const inferredName = serverName || deriveServerName(trimmedUrlOrCommand);
+      // The choice screen starts a new server connection. Always derive its
+      // identity from the URL entered here instead of reusing a name hydrated
+      // from an earlier OAuth recovery attempt.
+      const inferredName = deriveServerName(trimmedUrlOrCommand);
       const inferredTransport = /^https?:\/\//i.test(trimmedUrlOrCommand)
         ? "http"
         : "stdio";
@@ -185,8 +300,72 @@ export function FirstRunOnboardingOverlay({
         authentication: "auto",
       });
     },
-    [onConnectOwnServer, serverName, serverUrlOrCommand],
+    [onConnectOwnServer, serverUrlOrCommand],
   );
+
+  const validateSelectedAuthentication = useCallback(() => {
+    setBearerTokenError(null);
+    setClientIdError(null);
+    setClientSecretError(null);
+    setXaaConfigurationError(null);
+
+    if (serverAuthentication === "bearer" && !bearerToken.trim()) {
+      setBearerTokenError("Enter a bearer token to continue.");
+      bearerTokenInputRef.current?.focus();
+      return false;
+    }
+
+    if (serverAuthentication !== "xaa") return true;
+
+    const usesPreregisteredCredentials =
+      registrationMode === "auto" || registrationMode === "preregistered";
+    if (usesPreregisteredCredentials && clientId.trim().length < 3) {
+      setClientIdError(
+        clientId.trim()
+          ? "Client ID must be at least 3 characters"
+          : "Client ID is required when using custom credentials",
+      );
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLInputElement>('input[aria-required="true"]')
+          ?.focus();
+      }, 0);
+      return false;
+    }
+    if (usesPreregisteredCredentials && clientSecret && !clientSecret.trim()) {
+      setClientSecretError("Client Secret cannot be only whitespace");
+      return false;
+    }
+    if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
+      setXaaConfigurationError(
+        "Enter both a subject and email for an identity override, or leave both blank.",
+      );
+      return false;
+    }
+    return true;
+  }, [
+    bearerToken,
+    clientId,
+    clientSecret,
+    registrationMode,
+    serverAuthentication,
+    xaaEmail,
+    xaaSubject,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    if (
+      connectionState.status !== "preparing" &&
+      connectionState.status !== "connecting" &&
+      connectionState.status !== "loading-tools" &&
+      connectionState.status !== "authorization-required" &&
+      connectionState.status !== "connected"
+    ) {
+      return;
+    }
+    window.dispatchEvent(new Event(FIRST_RUN_OAUTH_OVERLAY_READY_EVENT));
+  }, [connectionState.status, open]);
 
   const submitServerDetails = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -199,53 +378,99 @@ export function FirstRunOnboardingOverlay({
 
       setServerUrlError(null);
       setServerUrlOrCommand(trimmedUrlOrCommand);
+      if (!validateSelectedAuthentication()) return;
       onConnectOwnServer({
         name: serverName.trim() || deriveServerName(trimmedUrlOrCommand),
         transport: serverTransport,
         urlOrCommand: trimmedUrlOrCommand,
         authentication: serverAuthentication,
-      });
-    },
-    [
-      onConnectOwnServer,
-      serverAuthentication,
-      serverName,
-      serverTransport,
-      serverUrlOrCommand,
-    ],
-  );
-
-  const connectWithBearerToken = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const trimmedToken = bearerToken.trim();
-      if (!trimmedToken) {
-        setBearerTokenError("Enter a bearer token.");
-        return;
-      }
-
-      setBearerTokenError(null);
-      onConnectOwnServer({
-        name:
-          serverName.trim() ||
-          (connectionState.status === "authorization-required"
-            ? connectionState.serverName
-            : deriveServerName(serverUrlOrCommand)),
-        transport: serverTransport,
-        urlOrCommand: serverUrlOrCommand,
-        authentication: "bearer",
-        bearerToken: trimmedToken,
+        bearerToken: bearerToken.trim() || undefined,
+        oauthProtocolMode,
+        registrationMode,
+        oauthScopes: oauthScopesInput
+          .split(/\s+/)
+          .map((scope) => scope.trim())
+          .filter(Boolean),
+        clientId: clientId.trim() || undefined,
+        clientSecret: clientSecret.trim() || undefined,
+        oauthAllowPathScopedIssuer,
+        xaaClientAuth,
+        xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
+        xaaAllowPathScopedIssuer,
+        xaaSubject: xaaSubject.trim() || undefined,
+        xaaEmail: xaaEmail.trim() || undefined,
       });
     },
     [
       bearerToken,
-      connectionState,
+      clientId,
+      clientSecret,
+      oauthAllowPathScopedIssuer,
+      oauthProtocolMode,
+      oauthScopesInput,
       onConnectOwnServer,
+      registrationMode,
+      serverAuthentication,
       serverName,
       serverTransport,
       serverUrlOrCommand,
+      validateSelectedAuthentication,
+      xaaAllowPathScopedIssuer,
+      xaaAuthzIssuer,
+      xaaClientAuth,
+      xaaEmail,
+      xaaSubject,
     ],
   );
+
+  const authorizeWithSelectedSettings = useCallback(() => {
+    if (!validateSelectedAuthentication()) return;
+    onAuthorizeConnection({
+      name:
+        serverName.trim() ||
+        (connectionState.status === "authorization-required"
+          ? connectionState.serverName
+          : deriveServerName(serverUrlOrCommand)),
+      transport: serverTransport,
+      urlOrCommand: serverUrlOrCommand,
+      authentication: serverAuthentication,
+      bearerToken: bearerToken.trim() || undefined,
+      oauthProtocolMode,
+      registrationMode,
+      oauthScopes: oauthScopesInput
+        .split(/\s+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+      clientId: clientId.trim() || undefined,
+      clientSecret: clientSecret.trim() || undefined,
+      oauthAllowPathScopedIssuer,
+      xaaClientAuth,
+      xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
+      xaaAllowPathScopedIssuer,
+      xaaSubject: xaaSubject.trim() || undefined,
+      xaaEmail: xaaEmail.trim() || undefined,
+    });
+  }, [
+    bearerToken,
+    clientId,
+    clientSecret,
+    connectionState,
+    oauthAllowPathScopedIssuer,
+    oauthProtocolMode,
+    oauthScopesInput,
+    onAuthorizeConnection,
+    registrationMode,
+    serverAuthentication,
+    serverName,
+    serverTransport,
+    serverUrlOrCommand,
+    xaaAllowPathScopedIssuer,
+    xaaAuthzIssuer,
+    xaaClientAuth,
+    xaaEmail,
+    xaaSubject,
+    validateSelectedAuthentication,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -258,15 +483,108 @@ export function FirstRunOnboardingOverlay({
     } else if (connectionState.status === "authorization-required") {
       setStep("authorizing");
     } else if (connectionState.status === "connected") {
-      setStep("connected");
+      setStep(isConnectedPresentationReady ? "connected" : "connecting");
     } else if (connectionState.status === "failed") {
+      if (connectionState.serverKind === "personal") {
+        // The recovery form has no Bearer or XAA fields. Keep the submitted
+        // value in sync with its visible Auto fallback on a direct failure.
+        setServerAuthentication((current) =>
+          current === "auto" || current === "oauth" || current === "none"
+            ? current
+            : "auto",
+        );
+        setBearerTokenError(null);
+        setXaaConfigurationError(null);
+      }
       setStep(
         connectionState.serverKind === "demo"
           ? "demo-failed"
           : "server-details",
       );
     }
-  }, [connectionState, open]);
+  }, [connectionState, isConnectedPresentationReady, open]);
+
+  useEffect(() => {
+    const previousStatus = previousConnectionStatusRef.current;
+    previousConnectionStatusRef.current = connectionState.status;
+    if (
+      open &&
+      connectionState.status === "idle" &&
+      previousStatus !== "idle"
+    ) {
+      const destination = idleDestinationRef.current ?? "choose";
+      idleDestinationRef.current = null;
+      if (destination === "choose") {
+        resetServerDraft();
+      }
+      setStep(destination);
+    }
+  }, [connectionState.status, open, resetServerDraft]);
+
+  // A fast local or cached connection can otherwise jump from one spinner
+  // straight to the success card. Pace only the presentation: the real
+  // handshake and tool discovery continue at full speed underneath. This also
+  // keeps the same modal mounted across an OAuth return.
+  useEffect(() => {
+    if (!open || connectionState.status === "idle") return;
+    const serverName = connectionState.serverName;
+    const isProgressState =
+      connectionState.status === "preparing" ||
+      connectionState.status === "connecting" ||
+      connectionState.status === "loading-tools";
+
+    if (isProgressState) {
+      hasObservedConnectionProgressRef.current = true;
+      if (presentedServerNameRef.current !== serverName) {
+        presentedServerNameRef.current = serverName;
+        pacedConnectedServerRef.current = null;
+        setVisibleCompletedConnectionSteps(0);
+        setIsConnectedPresentationReady(false);
+      }
+      if (connectionState.status !== "loading-tools") return;
+      setVisibleCompletedConnectionSteps((count) => Math.max(count, 2));
+      return;
+    }
+
+    if (connectionState.status !== "connected") return;
+    presentedServerNameRef.current = serverName;
+    if (pacedConnectedServerRef.current === serverName) return;
+    pacedConnectedServerRef.current = serverName;
+    if (!hasObservedConnectionProgressRef.current) {
+      setVisibleCompletedConnectionSteps(3);
+      setIsConnectedPresentationReady(true);
+      return;
+    }
+    if (prefersReducedMotion) {
+      setVisibleCompletedConnectionSteps(3);
+      setIsConnectedPresentationReady(true);
+      return;
+    }
+
+    setIsConnectedPresentationReady(false);
+    const firstId = window.setTimeout(
+      () => setVisibleCompletedConnectionSteps((count) => Math.max(count, 1)),
+      100,
+    );
+    const secondId = window.setTimeout(
+      () => setVisibleCompletedConnectionSteps((count) => Math.max(count, 2)),
+      250,
+    );
+    const thirdId = window.setTimeout(
+      () => setVisibleCompletedConnectionSteps(3),
+      400,
+    );
+    const revealId = window.setTimeout(
+      () => setIsConnectedPresentationReady(true),
+      FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS,
+    );
+    return () => {
+      window.clearTimeout(firstId);
+      window.clearTimeout(secondId);
+      window.clearTimeout(thirdId);
+      window.clearTimeout(revealId);
+    };
+  }, [connectionState, open, prefersReducedMotion]);
 
   useEffect(() => {
     if (!open || step !== "welcome" || prefersReducedMotion) return;
@@ -398,6 +716,10 @@ export function FirstRunOnboardingOverlay({
                 </DialogDescription>
               </DialogHeader>
 
+              {guestSessionRefused ? (
+                <GuestSessionRefusalNotice onSignIn={onSignIn} />
+              ) : null}
+
               <form className="mt-[18px]" onSubmit={connectWithInitialDefaults}>
                 <Label
                   htmlFor="first-run-server-url"
@@ -432,6 +754,7 @@ export function FirstRunOnboardingOverlay({
                 )}
                 <Button
                   type="submit"
+                  disabled={guestSessionRefused}
                   className="mt-3 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
                 >
                   Connect
@@ -450,6 +773,7 @@ export function FirstRunOnboardingOverlay({
                   variant="outline"
                   className="h-auto w-full bg-card px-4 py-2.5 text-[12.5px] font-semibold shadow-none hover:border-primary hover:bg-card hover:text-foreground"
                   onClick={() => onConnectDemo()}
+                  disabled={guestSessionRefused}
                 >
                   Try the Excalidraw demo server
                 </Button>
@@ -468,104 +792,115 @@ export function FirstRunOnboardingOverlay({
             <div className="py-1">
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  {connectionState.serverName} needs authorization
+                  Connecting to {connectionState.serverName}
                 </DialogTitle>
-                {serverUrlOrCommand ? (
-                  <DialogDescription className="mt-1 break-all font-mono text-[11.5px] leading-[1.55] text-muted-foreground">
-                    {serverUrlOrCommand}
-                  </DialogDescription>
-                ) : null}
+                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
+                  Checking the connection before MCPJam opens the playground.
+                </DialogDescription>
               </DialogHeader>
-
-              <div className="mt-4 rounded-lg border border-warning/35 bg-warning/10 p-3">
-                <p className="text-[12px] leading-4 font-semibold text-card-foreground">
-                  The server returned 401 Unauthorized
-                </p>
-                <p className="mt-1 text-[11.5px] leading-[1.5] text-muted-foreground">
-                  MCPJam can run the OAuth flow for you. If you already have a
-                  token, use that instead.
-                </p>
-                <p className="mt-2 break-words rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-[1.45] text-muted-foreground">
-                  {connectionState.error?.trim() || "HTTP 401 Unauthorized"}
-                </p>
-              </div>
-
-              <Button
-                type="button"
-                className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                onClick={onAuthorizeConnection}
+              <ConnectionProgress
+                status="authorization-required"
+                prefersReducedMotion={prefersReducedMotion}
               >
-                Authorize
-              </Button>
-
-              <div className="mt-3 border-t border-border pt-3">
+                <p className="text-[11.5px] leading-[1.5] text-muted-foreground">
+                  Your server needs authorization to connect.
+                </p>
+                {connectionState.error ? (
+                  <div className="mt-3">
+                    <ConnectionFailureNotice error={connectionState.error} />
+                  </div>
+                ) : null}
                 <Button
                   type="button"
-                  variant="ghost"
-                  className="h-auto justify-start gap-1.5 px-1 py-1 text-[11.5px] font-normal text-foreground"
-                  aria-expanded={isTokenEntryOpen}
-                  onClick={() => {
-                    setBearerTokenError(null);
-                    setIsTokenEntryOpen((current) => !current);
-                  }}
+                  className="mt-3 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                  onClick={authorizeWithSelectedSettings}
                 >
-                  <ChevronDown
-                    className={cn(
-                      "size-3 transition-transform",
-                      isTokenEntryOpen && "rotate-180",
-                    )}
-                    aria-hidden
-                  />
-                  Use a token instead
+                  Authorize
                 </Button>
-                {isTokenEntryOpen ? (
-                  <form
-                    className="mt-2 grid gap-2"
-                    onSubmit={connectWithBearerToken}
-                  >
-                    <Label
-                      htmlFor="first-run-bearer-token"
-                      className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
-                    >
-                      Bearer token
-                    </Label>
-                    <Input
-                      id="first-run-bearer-token"
-                      type="password"
-                      autoComplete="off"
-                      className="h-10 border-border bg-card text-[12px] shadow-none"
-                      placeholder="Enter your bearer token"
-                      value={bearerToken}
-                      aria-invalid={bearerTokenError ? true : undefined}
-                      onChange={(event) => {
-                        setBearerToken(event.target.value);
-                        if (bearerTokenError) setBearerTokenError(null);
-                      }}
-                    />
-                    {bearerTokenError ? (
-                      <p
-                        className="text-[10.5px] text-destructive"
-                        role="alert"
-                      >
-                        {bearerTokenError}
-                      </p>
-                    ) : null}
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      className="h-auto w-full px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                    >
-                      Connect with token
-                    </Button>
-                  </form>
-                ) : null}
-              </div>
+                <div className="mt-3 border-t border-border pt-3">
+                  <AuthenticationSection
+                    serverUrl={serverUrlOrCommand}
+                    authType={serverAuthentication as ServerFormAuthType}
+                    onAuthTypeChange={(value) => {
+                      setServerAuthentication(value);
+                      setBearerTokenError(null);
+                      setClientIdError(null);
+                      setClientSecretError(null);
+                      setXaaConfigurationError(null);
+                    }}
+                    showAuthSettings
+                    bearerToken={bearerToken}
+                    onBearerTokenChange={(value) => {
+                      setBearerToken(value);
+                      setBearerTokenError(null);
+                    }}
+                    bearerTokenError={bearerTokenError}
+                    bearerTokenInputRef={bearerTokenInputRef}
+                    oauthScopesInput={oauthScopesInput}
+                    onOauthScopesChange={setOauthScopesInput}
+                    oauthProtocolMode={oauthProtocolMode}
+                    onOauthProtocolModeChange={setOauthProtocolMode}
+                    registrationMode={registrationMode}
+                    onOauthRegistrationModeChange={setRegistrationMode}
+                    oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
+                    onOauthAllowPathScopedIssuerChange={
+                      setOauthAllowPathScopedIssuer
+                    }
+                    useCustomClientId={useCustomClientId}
+                    onUseCustomClientIdChange={setUseCustomClientId}
+                    clientId={clientId}
+                    onClientIdChange={(value) => {
+                      setClientId(value);
+                      setClientIdError(null);
+                    }}
+                    clientSecret={clientSecret}
+                    onClientSecretChange={(value) => {
+                      setClientSecret(value);
+                      setClientSecretError(null);
+                    }}
+                    clientIdError={clientIdError}
+                    clientSecretError={clientSecretError}
+                    xaaClientAuth={xaaClientAuth}
+                    onXaaClientAuthChange={setXaaClientAuth}
+                    xaaAuthzIssuer={xaaAuthzIssuer}
+                    onXaaAuthzIssuerChange={setXaaAuthzIssuer}
+                    xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
+                    onXaaAllowPathScopedIssuerChange={
+                      setXaaAllowPathScopedIssuer
+                    }
+                    xaaSubject={xaaSubject}
+                    onXaaSubjectChange={setXaaSubject}
+                    xaaEmail={xaaEmail}
+                    onXaaEmailChange={setXaaEmail}
+                  />
+                  {xaaConfigurationError ? (
+                    <p className="mt-2 text-xs text-destructive" role="alert">
+                      {xaaConfigurationError}
+                    </p>
+                  ) : null}
+                </div>
+              </ConnectionProgress>
 
               <Button
                 type="button"
                 variant="ghost"
                 className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
                 onClick={() => {
+                  idleDestinationRef.current = "server-details";
+                  // The details form only exposes Auto, OAuth, and None. If
+                  // the inline authorization editor selected Bearer or XAA,
+                  // its controlled select would visually fall back to Auto
+                  // while retaining the unsupported value in React state.
+                  // That makes Connect silently fail hidden-field validation.
+                  if (
+                    serverAuthentication !== "auto" &&
+                    serverAuthentication !== "oauth" &&
+                    serverAuthentication !== "none"
+                  ) {
+                    setServerAuthentication("auto");
+                  }
+                  setBearerTokenError(null);
+                  setXaaConfigurationError(null);
                   onCancelConnection();
                   setStep("server-details");
                 }}
@@ -576,38 +911,58 @@ export function FirstRunOnboardingOverlay({
           ) : step === "connecting" &&
             (connectionState.status === "preparing" ||
               connectionState.status === "connecting" ||
-              connectionState.status === "loading-tools") ? (
+              connectionState.status === "loading-tools" ||
+              (connectionState.status === "connected" &&
+                !isConnectedPresentationReady)) ? (
             <div className="py-1">
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  {connectionState.status === "preparing"
+                  {guestSessionRefused
+                    ? "Sign in to continue"
+                    : connectionState.status === "preparing"
                     ? "Preparing your MCPJam workspace"
                     : "Connecting to "}
-                  {connectionState.status !== "preparing"
+                  {!guestSessionRefused && connectionState.status !== "preparing"
                     ? connectionState.serverName
                     : null}
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  {connectionState.status === "preparing"
+                  {guestSessionRefused
+                    ? "MCPJam couldn't create another guest session from this network today."
+                    : connectionState.status === "preparing"
                     ? "Getting your project ready to connect to an MCP server."
                     : "Checking the connection before MCPJam opens the playground."}
                 </DialogDescription>
               </DialogHeader>
-              <ConnectionProgress
-                status={connectionState.status}
-                prefersReducedMotion={prefersReducedMotion}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                className="mx-auto mt-4 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                onClick={() => {
-                  onCancelConnection();
-                  setStep("choose");
-                }}
-              >
-                Cancel
-              </Button>
+              {guestSessionRefused ? (
+                <Button
+                  type="button"
+                  className="mt-5 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                  onClick={onSignIn}
+                >
+                  Sign in
+                </Button>
+              ) : (
+                <ConnectionProgress
+                  status={connectionState.status}
+                  prefersReducedMotion={prefersReducedMotion}
+                  completedSteps={visibleCompletedConnectionSteps}
+                />
+              )}
+              {!guestSessionRefused && connectionState.status !== "connected" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="mx-auto mt-4 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
+                  onClick={() => {
+                    idleDestinationRef.current = "choose";
+                    onCancelConnection();
+                    setStep("choose");
+                  }}
+                >
+                  Cancel
+                </Button>
+              ) : null}
             </div>
           ) : step === "connected" && connectionState.status === "connected" ? (
             <div className="py-2 text-center">
@@ -649,8 +1004,11 @@ export function FirstRunOnboardingOverlay({
                 type="button"
                 className="mt-5 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
                 onClick={onOpenPlayground}
+                disabled={isOpeningPlayground}
               >
-                Open Playground
+                {isOpeningPlayground
+                  ? "Opening Playground…"
+                  : "Open Playground"}
               </Button>
             </div>
           ) : step === "demo-failed" && connectionState.status === "failed" ? (
@@ -763,25 +1121,23 @@ export function FirstRunOnboardingOverlay({
                   ) : null}
                 </div>
 
-                <div className="grid gap-1.5">
-                  <label className="grid gap-1.5 font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase">
-                    Authentication
-                    <select
-                      className="h-10 rounded-md border border-border bg-card px-3 font-sans text-[12px] tracking-normal text-foreground normal-case shadow-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                      value={serverAuthentication}
-                      onChange={(event) =>
-                        setServerAuthentication(
-                          event.target
-                            .value as FirstRunServerDraft["authentication"],
-                        )
-                      }
-                    >
-                      <option value="auto">Auto</option>
-                      <option value="oauth">OAuth</option>
-                      <option value="none">None</option>
-                    </select>
-                  </label>
-                </div>
+                <label className="grid gap-1.5 font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase">
+                  Authentication
+                  <select
+                    className="h-10 rounded-md border border-border bg-card px-3 font-sans text-[12px] tracking-normal text-foreground normal-case shadow-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                    value={serverAuthentication}
+                    onChange={(event) =>
+                      setServerAuthentication(
+                        event.target
+                          .value as FirstRunServerDraft["authentication"],
+                      )
+                    }
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="oauth">OAuth</option>
+                    <option value="none">None</option>
+                  </select>
+                </label>
               </div>
 
               <Button
@@ -803,6 +1159,36 @@ export function FirstRunOnboardingOverlay({
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
+  );
+}
+
+function GuestSessionRefusalNotice({ onSignIn }: { onSignIn?: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="mt-4 rounded-md border border-warning/30 bg-warning/10 p-3"
+    >
+      <div className="flex items-start gap-2.5">
+        <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold text-card-foreground">
+            Guest session limit reached
+          </p>
+          <p className="mt-1 text-[11.5px] leading-[1.5] text-muted-foreground">
+            Too many guest sessions were created from this network today. Sign
+            in to continue setting up your server.
+          </p>
+        </div>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        className="mt-3 w-full"
+        onClick={onSignIn}
+      >
+        Sign in
+      </Button>
+    </div>
   );
 }
 
@@ -868,7 +1254,7 @@ function deriveServerName(urlOrCommand: string): string {
 }
 
 const CONNECTION_PROGRESS_STEPS = [
-  "Reach server",
+  "Connect server",
   "Negotiate MCP compatibility",
   "Load tools",
 ] as const;
@@ -876,48 +1262,97 @@ const CONNECTION_PROGRESS_STEPS = [
 function ConnectionProgress({
   status,
   prefersReducedMotion,
+  completedSteps,
+  children,
 }: {
-  status: "preparing" | "connecting" | "loading-tools";
+  status:
+    | "preparing"
+    | "connecting"
+    | "loading-tools"
+    | "authorization-required"
+    | "connected";
   prefersReducedMotion: boolean | null;
+  completedSteps?: number;
+  children?: ReactNode;
 }) {
-  const activeIndex = status === "loading-tools" ? 2 : 0;
-  const completedThrough = status === "loading-tools" ? 1 : -1;
+  const [isAuthorizationExpanded, setIsAuthorizationExpanded] = useState(true);
+  const completedThrough =
+    completedSteps === undefined
+      ? status === "loading-tools"
+        ? 1
+        : -1
+      : completedSteps - 1;
+  const activeIndex = completedThrough >= 2 ? -1 : completedThrough + 1;
 
   return (
     <ol className="mt-5 grid gap-2.5" aria-label="Connection progress">
       {CONNECTION_PROGRESS_STEPS.map((label, index) => {
         const isComplete = index <= completedThrough;
         const isActive = index === activeIndex;
+        const isAuthorizationFailure =
+          status === "authorization-required" && index === 0;
         return (
           <li
             key={label}
-            className="flex items-center gap-3 rounded-md border border-border bg-muted/25 px-3 py-2.5 text-left"
+            className="rounded-md border border-border bg-muted/25 px-3 py-2.5 text-left"
           >
-            <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
-              {isComplete ? (
-                <Check className="size-4 text-success" aria-hidden />
-              ) : isActive ? (
-                <Loader2
+            {isAuthorizationFailure ? (
+              <button
+                type="button"
+                className="flex w-full items-center gap-3 text-left"
+                aria-expanded={isAuthorizationExpanded}
+                onClick={() =>
+                  setIsAuthorizationExpanded((isExpanded) => !isExpanded)
+                }
+              >
+                <span className="flex size-5 shrink-0 items-center justify-center">
+                  <X className="size-4 text-destructive" aria-hidden />
+                </span>
+                <span className="text-[12px] leading-5 font-medium text-destructive">
+                  {label}
+                </span>
+                <ChevronDown
                   className={cn(
-                    "size-4 text-primary",
-                    !prefersReducedMotion && "animate-spin",
+                    "ml-auto size-3 text-muted-foreground transition-transform",
+                    !isAuthorizationExpanded && "-rotate-90",
                   )}
                   aria-hidden
                 />
-              ) : (
-                <Circle className="size-3" aria-hidden />
-              )}
-            </span>
-            <span
-              className={cn(
-                "text-[12px] leading-5",
-                isComplete || isActive
-                  ? "font-medium text-card-foreground"
-                  : "text-muted-foreground",
-              )}
-            >
-              {label}
-            </span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+                  {isComplete ? (
+                    <Check className="size-4 text-success" aria-hidden />
+                  ) : isActive ? (
+                    <Loader2
+                      className={cn(
+                        "size-4 text-primary",
+                        !prefersReducedMotion && "animate-spin",
+                      )}
+                      aria-hidden
+                    />
+                  ) : (
+                    <Circle className="size-3" aria-hidden />
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "text-[12px] leading-5",
+                    isComplete || isActive
+                      ? "font-medium text-card-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </span>
+              </div>
+            )}
+            {isAuthorizationFailure && isAuthorizationExpanded && children ? (
+              <div className="mt-3 border-t border-border pt-3 pl-8">
+                {children}
+              </div>
+            ) : null}
           </li>
         );
       })}

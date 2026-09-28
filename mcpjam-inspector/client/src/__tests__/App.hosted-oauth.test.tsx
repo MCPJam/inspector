@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
@@ -151,6 +152,7 @@ const {
     clearConvexActiveProjectSelection: vi.fn(),
     clearLocalFallbackProjectSelection: vi.fn(),
     pendingDashboardOAuth: null,
+    clearPendingDashboardOAuth: vi.fn(),
     isCloudSyncActive: false,
   });
 
@@ -450,6 +452,7 @@ vi.mock("../components/playground/PlaygroundTab", () => ({
     hasSeenFirstRunOnboarding?: boolean;
     firstRunPrompt?: string | null;
     onFirstRunPromptConsumed?: () => void;
+    onReady?: () => void;
   }) => {
     mockPlaygroundTabProps(props);
     const { onOnboardingChange } = props;
@@ -999,6 +1002,46 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
     });
+  });
+
+  it("keeps the onboarding connection modal visible while a first-run OAuth return hydrates", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    const startedAt = Date.now() - 1_000;
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt,
+        shownAt: startedAt,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      projectId: "ws_1",
+      serverId: "srv_oauth",
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      accessScope: "project_member",
+      returnPath: "/home",
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+    localStorage.setItem("mcp-oauth-pending", "OAuth server");
+    window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
+    mockConvexAuthState.isLoading = true;
+    const appState = createAppStateMock();
+    appState.isLoading = true;
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Connecting to OAuth server" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-shell-gate-overlay")).not.toBeInTheDocument();
   });
 
   it("escapes a stale queryless callback page back to the root shell", async () => {
@@ -4145,7 +4188,7 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     await screen.findByRole("heading", {
-      name: "Multiaccount needs authorization",
+      name: "Connecting to Multiaccount",
     });
     expect(
       screen.getByRole("button", { name: "Authorize" }),
@@ -4153,10 +4196,58 @@ describe("App hosted OAuth callback handling", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
-    await expect(authorizationResult).resolves.toBe(true);
+    await expect(authorizationResult).resolves.toEqual(
+      expect.objectContaining({ authMethod: "auto" }),
+    );
     expect(
       screen.getByRole("heading", { name: "Connecting to Multiaccount" }),
     ).toBeInTheDocument();
+  });
+
+  it("retries Auto after editing server details from an authorization challenge", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    let authorizationResult: Promise<boolean> | undefined;
+    appState.handleConnect.mockImplementationOnce(
+      (_formData: unknown, options: Record<string, unknown>) => {
+        const requestOAuthAuthorization = options.requestOAuthAuthorization as (
+          serverName: string,
+        ) => Promise<boolean>;
+        authorizationResult = requestOAuthAuthorization("Multiaccount");
+      },
+    );
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://multiaccount.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await screen.findByRole("button", { name: "Edit server details" });
+    fireEvent.click(screen.getByRole("button", { name: "Edit server details" }));
+    await expect(authorizationResult).resolves.toBe(false);
+    await screen.findByRole("heading", { name: "Set up your server" });
+    expect(screen.getByLabelText("Authentication")).toHaveValue("auto");
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledTimes(2));
+    expect(appState.handleConnect.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        name: "Multiaccount",
+        url: "https://multiaccount.example/mcp",
+        authMethod: "auto",
+        useOAuth: true,
+      }),
+    );
   });
 
   it("replaces a pending OAuth challenge with a persisted bearer-token retry", async () => {
@@ -4188,17 +4279,18 @@ describe("App hosted OAuth callback handling", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
-    await screen.findByRole("heading", { name: "Secure needs authorization" });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use a token instead" }),
-    );
-    fireEvent.change(screen.getByLabelText("Bearer token"), {
+    await screen.findByRole("heading", { name: "Connecting to Secure" });
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect with token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
     await expect(authorizationResult).resolves.toBe(false);
-    await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(appState.handleConnect).toHaveBeenCalledTimes(2),
+    );
     expect(appState.handleConnect.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         name: "Secure",
@@ -4352,6 +4444,27 @@ describe("App hosted OAuth callback handling", () => {
       }),
     );
     expect(
+      screen.getByRole("heading", {
+        name: "Connected to Excalidraw (App)",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Opening Playground…" }),
+    ).toBeDisabled();
+
+    const playgroundProps = mockPlaygroundTabProps.mock.calls.at(-1)?.[0] as
+      | { onReady?: () => void }
+      | undefined;
+    playgroundProps?.onReady?.();
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: "Connected to Excalidraw (App)",
+        }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
@@ -4487,11 +4600,14 @@ describe("App hosted OAuth callback handling", () => {
       name: "Connecting to Excalidraw (App)",
     });
 
+    window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
+    expect(window.location.pathname).toBe("/home");
     expect(appState.handleRuntimeDisconnect).toHaveBeenCalledWith(
       "Excalidraw (App)",
     );
+    expect(appState.clearPendingDashboardOAuth).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
@@ -4513,8 +4629,7 @@ describe("App hosted OAuth callback handling", () => {
     mockFreshGuestUser();
     const appState = createAppStateMock();
     let requestAuthorization:
-      | ((serverName: string) => Promise<boolean>)
-      | undefined;
+      ((serverName: string) => Promise<boolean>) | undefined;
     appState.handleConnect.mockImplementation(
       (_formData: unknown, options: Record<string, unknown>) => {
         requestAuthorization = options.requestOAuthAuthorization as (
@@ -4543,7 +4658,7 @@ describe("App hosted OAuth callback handling", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", {
-        name: "Excalidraw (App) needs authorization",
+        name: "Connecting to Excalidraw (App)",
       }),
     ).not.toBeInTheDocument();
   });
@@ -4560,6 +4675,7 @@ describe("App hosted OAuth callback handling", () => {
     mockFreshGuestUser();
     const appState = createAppStateMock();
     appState.projects.ws_local = { id: "ws_local" };
+    appState.isConnectionPreflightPending = true;
     mockUseAppState.mockReturnValue(appState);
 
     const view = render(<App />);
@@ -4588,6 +4704,7 @@ describe("App hosted OAuth callback handling", () => {
       id: "ws_local",
       sharedProjectId: "project-1",
     };
+    appState.isConnectionPreflightPending = false;
     view.rerender(<App />);
 
     await waitFor(() => {
@@ -4923,17 +5040,15 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "OAuth server needs authorization",
+        name: "Connecting to OAuth server",
       }),
     ).toBeInTheDocument();
     expect(sonnerToast.error).not.toHaveBeenCalled();
     expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(
-      screen.getByText("The server returned 401 Unauthorized"),
+      screen.getByText("Your server needs authorization to connect."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Use a token instead" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Authentication")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Edit server details" }),
     ).toBeInTheDocument();
@@ -4942,13 +5057,12 @@ describe("App hosted OAuth callback handling", () => {
     // This screen is remounted after the OAuth round trip, so its local URL
     // fields are empty. A bearer retry must recover the saved endpoint and
     // must not inherit OAuth-return classification after the new attempt.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use a token instead" }),
-    );
-    fireEvent.change(screen.getByLabelText("Bearer token"), {
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "replacement-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect with token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
     expect(appState.handleConnect).toHaveBeenCalledWith(
@@ -4962,8 +5076,79 @@ describe("App hosted OAuth callback handling", () => {
       expect.any(Object),
     );
     expect(
-      await screen.findByRole("heading", { name: "Set up your server" }),
+      await screen.findByRole("heading", {
+        name: "Connecting to OAuth server",
+      }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText("Your server needs authorization to connect."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Set up your server" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("returns an abandoned first-run OAuth attempt to server choice", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    const startedAt = Date.now() - 1_000;
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt,
+        shownAt: startedAt,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    const connectingServer = {
+      name: "OAuth server",
+      connectionStatus: "connecting" as const,
+      enabled: true,
+      retryCount: 0,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      config: {
+        transportType: "http" as const,
+        url: "https://oauth.example/mcp",
+      },
+    };
+    appState.appState.servers = { "OAuth server": connectingServer };
+    appState.projectServers = { "OAuth server": connectingServer };
+    appState.pendingDashboardOAuth = {
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      startedAt,
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    const { rerender } = render(<App />);
+    await screen.findByRole("heading", { name: "Connecting to OAuth server" });
+
+    const cancelledServer = {
+      ...connectingServer,
+      connectionStatus: "failed" as const,
+      lastError: "Authorization was cancelled. Try again.",
+    };
+    appState.appState.servers = { "OAuth server": cancelledServer };
+    appState.projectServers = { "OAuth server": cancelledServer };
+    appState.pendingDashboardOAuth = null;
+    rerender(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Connect to your MCP server",
+      }),
+    ).toBeInTheDocument();
+    expect(appState.clearPendingDashboardOAuth).toHaveBeenCalled();
+    expect(
+      screen.queryByRole("heading", { name: "Connecting to OAuth server" }),
+    ).not.toBeInTheDocument();
   });
 
   it("lets the callback owner publish OAuth success without starting a duplicate reconnect", async () => {
@@ -5031,6 +5216,69 @@ describe("App hosted OAuth callback handling", () => {
     expect(appState.connectServerWithResult).not.toHaveBeenCalled();
     expect(appState.handleReconnect).not.toHaveBeenCalled();
     expect(sonnerToast.success).not.toHaveBeenCalled();
+  });
+
+  it("reconnects once when OAuth callback recovery releases without a terminal runtime row", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    const startedAt = Date.now() - 1_000;
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt,
+        shownAt: startedAt,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const server = {
+      name: "OAuth server",
+      connectionStatus: "disconnected" as const,
+      enabled: true,
+      retryCount: 0,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      config: {
+        transportType: "http" as const,
+        url: "https://oauth.example/mcp",
+      },
+    };
+    const appState = createAppStateMock();
+    appState.appState.servers = { "OAuth server": server };
+    appState.projectServers = { "OAuth server": server };
+    appState.pendingDashboardOAuth = {
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      startedAt,
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    const { rerender } = render(<App />);
+    await screen.findByRole("heading", {
+      name: "Connecting to OAuth server",
+    });
+    expect(appState.handleReconnect).not.toHaveBeenCalled();
+
+    appState.pendingDashboardOAuth = null;
+    rerender(<App />);
+
+    await waitFor(() =>
+      expect(appState.handleReconnect).toHaveBeenCalledOnce(),
+    );
+    expect(appState.handleReconnect).toHaveBeenCalledWith("OAuth server", {
+      forceOAuthFlow: false,
+      replaceExistingOAuthConnection: false,
+      allowInteractiveOAuthFlow: false,
+      suppressErrors: true,
+      suppressSuccessToast: true,
+    });
+
+    rerender(<App />);
+    expect(appState.handleReconnect).toHaveBeenCalledOnce();
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
@@ -5170,7 +5418,9 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/");
-    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("hosted-oauth-loading"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
@@ -5197,7 +5447,9 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(screen.getByTestId("home-tab")).toBeInTheDocument();
-    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("hosted-oauth-loading"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps holding Home for a signed-in user whose Convex auth has not landed", async () => {
@@ -5329,7 +5581,8 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
+      (flag: string) =>
+        flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
@@ -5348,7 +5601,8 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
+      (flag: string) =>
+        flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
