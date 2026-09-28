@@ -6,6 +6,11 @@ import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import {
+  buildSkillContextMessages,
+  buildToolRunContextMessage,
+  widgetStateContextText,
+} from "@/shared/user-context-message";
 
 // Mock PartSwitch
 vi.mock("../thread/part-switch", () => ({
@@ -733,6 +738,65 @@ describe("MessageView", () => {
     });
   });
 
+  describe("context the user added", () => {
+    it("shows a picked skill as a skill card, not as a typed message", () => {
+      const [message] = buildSkillContextMessages([
+        {
+          name: "brand-guidelines",
+          content: "Use the brand colors.",
+          selectedFiles: [{ path: "palette.md", content: "#000" }],
+        },
+      ]);
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message!}
+          onEditUserMessage={vi.fn()}
+        />,
+      );
+
+      const card = screen.getByTestId("user-context-card");
+      expect(card).toHaveAttribute("data-context-kind", "skill");
+      expect(card).toHaveTextContent("brand-guidelines");
+      expect(card).toHaveTextContent("+1 files");
+      expect(card).toHaveTextContent("Use the brand colors.");
+      expect(screen.queryByTestId("user-message-bubble")).toBeNull();
+      expect(screen.queryByRole("button", { name: /edit/i })).toBeNull();
+    });
+
+    it("shows a tool the user ran as a tool-run card", () => {
+      const message = buildToolRunContextMessage({
+        toolCallId: "call_1",
+        toolName: "search_docs",
+        params: { query: "install" },
+        result: "Run npm install.",
+      });
+
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+
+      const card = screen.getByTestId("user-context-card");
+      expect(card).toHaveAttribute("data-context-kind", "tool-run");
+      expect(card).toHaveTextContent("search_docs");
+    });
+
+    it("hides widget state, also without its widget-state id", () => {
+      const message = createMessage({
+        id: "transcript-4-user-abc",
+        role: "user",
+        parts: [
+          { type: "text", text: widgetStateContextText("call_1", { zoom: 2 }) },
+        ],
+      });
+
+      const { container } = renderMessageView(
+        <MessageView {...defaultProps} message={message} />,
+      );
+
+      expect(container.firstChild).toBeNull();
+    });
+  });
+
   describe("message parts", () => {
     it("passes parts to PartSwitch", () => {
       const message = createMessage({
@@ -822,6 +886,84 @@ describe("MessageView", () => {
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
+    });
+  });
+
+  describe("execution provenance", () => {
+    const execution = {
+      requested: {
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "openrouter", model: "none" },
+      },
+      resolved: {
+        rail: "openrouter",
+        wireModelId: "openai/gpt-5",
+        offering: { rail: "openrouter", providerKey: "openrouter" },
+      },
+      effectiveSettings: { reasoningEffort: "low", maxOutputTokens: 0 },
+      attempts: [],
+      deviation: {
+        kind: "provider_fallback",
+        reason: "The openrouter fallback served the request.",
+      },
+    };
+
+    it("shows what the turn ran on from the finish message's record", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "Hi" }],
+        metadata: { inputTokens: 1, outputTokens: 2, execution },
+      });
+
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+
+      expect(
+        screen.getByTestId("chat-turn-execution-provenance-line"),
+      ).toHaveTextContent(
+        "Ran on openai/gpt-5 via OpenRouter (MCPJam key), effort low, max output provider default",
+      );
+      expect(
+        screen.getByTestId("chat-turn-execution-deviation-banner"),
+      ).toHaveTextContent("Deviation: Provider fallback");
+    });
+
+    it("shows nothing for a turn without a record", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "Hi" }],
+        metadata: { inputTokens: 1, outputTokens: 2 },
+      });
+
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+
+      expect(
+        screen.queryByTestId("chat-turn-execution-provenance"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("re-renders when the finish chunk adds the record to an unchanged message", () => {
+      const parts = [{ type: "text" as const, text: "Hi" }];
+      const message = createMessage({ role: "assistant", parts });
+      const { rerender } = renderMessageView(
+        <MessageView {...defaultProps} message={message} />,
+      );
+      expect(
+        screen.queryByTestId("chat-turn-execution-provenance"),
+      ).not.toBeInTheDocument();
+
+      rerender(
+        <PreferencesStoreProvider themeMode="light" themePreset="default">
+          <MessageView
+            {...defaultProps}
+            message={{ ...message, parts, metadata: { execution } }}
+          />
+        </PreferencesStoreProvider>,
+      );
+
+      expect(
+        screen.getByTestId("chat-turn-execution-provenance"),
+      ).toBeInTheDocument();
     });
   });
 });

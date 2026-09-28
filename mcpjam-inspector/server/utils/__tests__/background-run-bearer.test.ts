@@ -20,6 +20,10 @@ vi.mock("convex/browser", () => ({
 
 import { AuthKitVerificationError } from "../../services/authkit-jwt.js";
 import { getBackgroundRunBearerForRequest } from "../v1-convex-token.js";
+import {
+  RevokedSessionCache,
+  setRevokedSessionCacheForTests,
+} from "../../services/revoked-session-cache.js";
 
 const mint = vi.fn();
 let userNumber = 0;
@@ -67,6 +71,7 @@ beforeEach(() => {
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
 });
 afterEach(() => {
+  setRevokedSessionCacheForTests(undefined);
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
@@ -104,6 +109,39 @@ describe("browser authorization for detached runs", () => {
     expect(getBearer).toBeUndefined();
     expect(mocks.query).not.toHaveBeenCalled();
     expect(mint).not.toHaveBeenCalled();
+  });
+
+  it("refuses a revoked session before project lookup or delegation", async () => {
+    const list = new RevokedSessionCache({
+      fetchPage: () => new Promise(() => {}),
+    });
+    list.markRevokedLocally("session-revoked");
+    setRevokedSessionCacheForTests(list);
+    mocks.verify.mockResolvedValueOnce({
+      sub: subject,
+      sid: "session-revoked",
+    });
+
+    const { error, getBearer } = await authorize();
+
+    expect(error).toMatchObject({ status: 401, code: "SESSION_REVOKED" });
+    expect(getBearer).toBeUndefined();
+    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it("leaves the session check to Convex while the revoked-session list is loading", async () => {
+    // The project lookup runs under the caller's own bearer, and Convex checks
+    // the session itself, so an incomplete list is no reason to refuse here.
+    setRevokedSessionCacheForTests(
+      new RevokedSessionCache({ fetchPage: () => new Promise(() => {}) }),
+    );
+    mocks.verify.mockResolvedValueOnce({ sub: subject, sid: "session-live" });
+
+    const { error } = await authorize();
+
+    expect(error).toBeUndefined();
+    expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
   it("does not mint for a project the original bearer cannot access", async () => {

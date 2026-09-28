@@ -369,13 +369,10 @@ describe("runAssistantTurn", () => {
    * THE DISPATCH GATE, and the one place where "model ineligible" must not mean
    * "run the emulated engine instead".
    *
-   * `useHarness = harnessRequested && modelEligible` is a silent degrade by
-   * design: a brokered harness handed a model MCPJam does not host falls back
-   * to the emulated engine, which runs exactly that model on org BYOK. Sound
-   * there, and the opposite of sound for an external-account harness — the
-   * emulated engine cannot run a sentinel at all, so what the fallback produces
-   * is a swarm or eval turn that completes, reports success, and is recorded
-   * under `executionEngineLabel` = `harness:cursor` having never run Cursor.
+   * A fallback would produce a swarm or eval turn that completes, reports
+   * success, and is recorded under `executionEngineLabel` = `harness:<id>`
+   * having never run that harness. So an ineligible model THROWS, on both the
+   * external-account and the brokered arm.
    *
    * This is the path with no pre-flight: the interactive rails fail closed at
    * `checkHarnessRuntimeAvailable`, but `sessionSimulation/runner.ts` drives
@@ -447,32 +444,127 @@ describe("runAssistantTurn", () => {
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
-    it("leaves the BROKERED fallback alone — ineligible there still degrades", async () => {
-      // The exemption is keyed on `modelAccess`, and the warn-and-emulate path
-      // it does not touch is the one that keeps an eval batch running when a
-      // case names a BYOK model.
-      global.fetch = vi.fn().mockResolvedValue(
-        createSseResponse([
+    it("REFUSES a BROKERED harness's BYOK model too — no emulated fallback", async () => {
+      // The warn-and-emulate path this used to take is gone: a completed eval
+      // turn recorded under `harness:claude-code` that ran the emulated engine
+      // on the org's key is the same mis-attribution, from the other arm.
+      global.fetch = vi.fn();
+
+      await expect(
+        turn(
           {
-            type: "finish",
-            finishReason: "stop",
-            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          },
-        ])
+            id: "llama3",
+            provider: "ollama",
+            name: "Llama 3",
+          } as ModelDefinition,
+          "claude-code"
+        )
+      ).rejects.toThrow(
+        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/
       );
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+  });
 
-      const resolved = await turn(
+  describe("brokered harness dispatch reads the evidence table", () => {
+    const turn = (
+      modelDefinition: ModelDefinition,
+      harness: string,
+      sourceType: "direct" | "eval" | "swarm" = "eval"
+    ) =>
+      runAssistantTurn({
+        messages: [{ role: "user", content: "Hi." }] as any,
+        modelDefinition,
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        authContext: { kind: "user_bearer", token: "Bearer test-token" },
+        sourceType,
+        origin: "scenario",
+        approvalMode: "auto-deny",
+        streamSink: "none",
+        persistMode: "caller",
+        harness: harness as any,
+      });
+
+    it("throws the pre-flight's reason for a model the runtime can't run", async () => {
+      global.fetch = vi.fn();
+      await expect(
+        turn(
+          {
+            id: "openai/gpt-5.6-luna",
+            provider: "openai",
+            name: "GPT-5.6 Luna",
+          } as ModelDefinition,
+          "codex"
+        )
+      ).rejects.toThrow(
+        "This host runs the codex harness, which isn't available: the Codex " +
+          "harness can't run this host's model — pick a Codex-compatible " +
+          "model to run the real runtime."
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["eval", "swarm"] as const)(
+      "refuses an unverified pair for %s",
+      async (sourceType) => {
+        global.fetch = vi.fn();
+        await expect(
+          turn(
+            {
+              id: "anthropic/claude-fable-5",
+              provider: "anthropic",
+              name: "Fable 5",
+            } as ModelDefinition,
+            "claude-code",
+            sourceType
+          )
+        ).rejects.toThrow(/not verified for claude-code \d+\.\d+\.\d+/);
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it("runs an unverified pair in Playground chat, on the harness", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      await turn(
         {
-          id: "llama3",
-          provider: "ollama",
-          name: "Llama 3",
+          id: "anthropic/claude-fable-5",
+          provider: "anthropic",
+          name: "Fable 5",
         } as ModelDefinition,
-        "claude-code"
+        "claude-code",
+        "direct"
       );
-      await lastExecution;
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
 
-      expect(resolved.messages).toBeDefined();
-      expect(global.fetch).toHaveBeenCalled();
+    it("runs a supported pair on the harness", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      await turn(
+        {
+          id: "openai/gpt-5.5",
+          provider: "openai",
+          name: "GPT-5.5",
+        } as ModelDefinition,
+        "codex"
+      );
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 });

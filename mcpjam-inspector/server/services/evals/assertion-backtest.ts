@@ -377,8 +377,7 @@ function hostedToolCallDifferences(
   if (unavailable) {
     const ids = [
       HOSTED_TOOL_MATCH_SCORER_ID,
-      ...(matchOptions.argumentMatching !== "ignore" &&
-      row.isNegativeTest !== true
+      ...(matchOptions.argumentMatching !== "ignore"
         ? [HOSTED_TOOL_ARGUMENTS_SCORER_ID]
         : []),
     ];

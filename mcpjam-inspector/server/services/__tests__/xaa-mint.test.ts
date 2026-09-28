@@ -4,13 +4,14 @@
  * via `buildJwtBearerBody`, so this asserts the wire shape stays stable and
  * stays identical regardless of which surface calls it.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Context } from "hono";
 import {
   buildJwtBearerBody,
   buildJwtBearerRequest,
   buildXaaMintArgs,
   resolveXaaConnectIssuer,
+  resolveServerTarget,
   resolveXaaIssuer,
   scopeXaaIssuerForAuthorizedProject,
 } from "../xaa-mint.js";
@@ -159,18 +160,6 @@ describe("buildXaaMintArgs", () => {
     expect(args.httpsOnly).toBe(true);
     expect(args.issuer).toBe(base.issuer);
     expect(args.resource).toBe("https://mcp.example.com/mcp");
-  });
-
-  it("threads the stored credential binding to the mint", () => {
-    const args = buildXaaMintArgs({
-      ...base,
-      hostedMode: true,
-      serverConfig: {
-        url: "https://mcp.example.com/mcp",
-        secretsBoundOrigin: "https://mcp.example.com",
-      },
-    });
-    expect(args.secretsBoundOrigin).toBe("https://mcp.example.com");
   });
 
   it("joins scopes and defaults the mock-login identity", () => {
@@ -332,5 +321,30 @@ describe("buildJwtBearerRequest", () => {
     expect(request.headers).toEqual({});
     expect(request.body.client_id).toBe(args.clientId);
     expect(JSON.stringify(request.body)).not.toContain(args.clientSecret);
+  });
+});
+
+describe("resolveServerTarget", () => {
+  it("does not spend an unacknowledged secret even with no declared target", async () => {
+    // No stored resource means no target to declare. The secret is still
+    // spent only when the backend confirms it checked the destination, and
+    // the refusal comes before any discovery request.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(
+      resolveServerTarget({
+        resolveServerSecret: async () => ({
+          clientSecret: "secret-1",
+          clientId: "client-1",
+          serverUrl: "https://mcp.example.com/mcp",
+          xaaAuthzIssuer: "https://as.example.com",
+        }),
+        httpsOnly: true,
+        serverId: "srv-1",
+        projectId: "proj-1",
+        bearerToken: "bearer-1",
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

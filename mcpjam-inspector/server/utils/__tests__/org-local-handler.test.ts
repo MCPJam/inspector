@@ -366,13 +366,14 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       const response = handleLocalOrgChatModel({
         provider: buildResolvedProvider(),
         projectId: "proj",
+        chatSessionId: "chat_1",
         modelId: "gpt-4-turbo",
         messages: [{ role: "user", content: "hi" } as any],
         systemPrompt: "s",
         tools: tools as any,
         historyPresentation: {
           fenceKey: resolveToolOutputFenceKey(),
-          labelUnverified: true,
+          excludeUnverified: true,
         },
       });
       const body = await readSseBody(response);
@@ -380,7 +381,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       const end = body.find((chunk) => chunk?.type === "text-end");
       expect(
         verifyAssistantText(
-          historyProvenanceContextFor("proj")!,
+          historyProvenanceContextFor("proj", "chat_1")!,
           "Done.",
           end.providerMetadata.mcpjam.textSig,
         ),

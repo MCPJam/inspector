@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import fixtures from "./fixtures/swarm-session-verdict-parity-fixtures.json";
 import {
   deriveSwarmSessionVerdict,
+  swarmAttemptLifecycle,
+  swarmSessionNeverRan,
   swarmSessionVerdictInputSchema,
   swarmSessionVerdictSchema,
   swarmSessionTrialSchema,
@@ -163,4 +165,36 @@ it("an omitted advisory criterion is outside the completed claim scope", () => {
     results: [{ criterionId: "observed", passed: true }],
   };
   expect(deriveSwarmSessionVerdict(input).graders.criteria).toBe("scored");
+});
+
+describe("swarmSessionNeverRan", () => {
+  it("is true for an attempt that ended without a single message", () => {
+    for (const lifecycle of ["broke", "limited", "withdrawn"] as const)
+      expect(swarmSessionNeverRan(lifecycle, 0)).toBe(true);
+  });
+
+  it("is false once the session recorded anything", () => {
+    // It ran, then failed: that is a finding about the server, not a refusal.
+    expect(swarmSessionNeverRan("broke", 3)).toBe(false);
+    expect(swarmSessionNeverRan("limited", 1)).toBe(false);
+  });
+
+  it("is false for a session that ran or has not ended", () => {
+    for (const lifecycle of ["ran", "pending", "running"] as const)
+      expect(swarmSessionNeverRan(lifecycle, 0)).toBe(false);
+  });
+
+  it("reads a refused attempt through the lifecycle it maps to", () => {
+    const refused = swarmAttemptLifecycle(
+      { status: "failed", errorCode: "session_failed" },
+      false
+    );
+    expect(swarmSessionNeverRan(refused, 0)).toBe(true);
+    const canceled = swarmAttemptLifecycle(
+      { status: "failed", errorCode: "canceled" },
+      false
+    );
+    expect(canceled).toBe("withdrawn");
+    expect(swarmSessionNeverRan(canceled, 0)).toBe(true);
+  });
 });

@@ -1221,7 +1221,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
 | `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
-| `--compose-host-servers` | No | Run against whatever servers the client points at **right now** instead of pinning a set — editing that client later changes what a rerun tests |
+| `--compose-host-servers` | No | **No longer supported** — rejected. An eval run takes its servers from a server group alone; use `--compose-server` or `--compose-server-group` |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
 | `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Without it the stack is ephemeral |
@@ -2409,6 +2409,26 @@ AI-generate test cases from the suite's tools. Included with MCPJam; no customer
 | `--negative <n>` | No | How many negative (no-tool) cases |
 | `--vary-user-styles` | No | Vary query phrasing across a realistic range of user styles |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
+
+#### `cloud eval cases import`
+
+Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
+
+Cases the model could not finish are not created. They come back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts so a person can complete them. To fix one, import only that case's corrected text — re-sending the whole document authors and bills every case in it again.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | One of | Document to import (`-` reads stdin) |
+| `--content <text>` | One of | Document text, instead of `--file` |
+| `--file-name <name>` | No | Name recorded on each case's source (default: `--file`'s basename) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
+| `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
+| `--case-model <id...>` | No | Execution model(s) for the imported cases |
+| `--duplicate-policy <block\|warn\|create_anyway>` | No | What to do with a case that already exists (default `block`) |
+| `--override-reason <text>` | No | Why importing a duplicate is intended (required by `warn` / `create_anyway`) |
+| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
 
 ---
 

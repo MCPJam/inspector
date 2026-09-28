@@ -1,6 +1,11 @@
 import { useSettingsDraft } from "../SettingsDraftProvider";
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -24,6 +29,7 @@ import {
   DEFAULT_API_KEY_EXPIRY_DAYS,
   formatExpiryOption,
 } from "@/lib/api-key-expiry";
+import { useApiKeyMintEligibility } from "@/hooks/useApiKeyMintEligibility";
 
 export interface CreateApiKeyOrganization {
   _id: string;
@@ -80,10 +86,19 @@ export function CreateApiKeyDialog({
     },
     open && isCreating,
   );
+  // Who may create keys is the organization's setting (owners and admins
+  // unless it allows members; MJ-010). Said next to the organization choice,
+  // before the form is filled in; no answer yet leaves creating open, since
+  // the server makes the same check when the key is created.
+  const eligibility = useApiKeyMintEligibility(organizationId || null, open);
+  const mintRefused = eligibility?.mintAllowed === false;
   const trimmed = name.trim();
   const hasOrgs = organizations.length > 0;
   const canCreate =
-    trimmed.length > 0 && organizationId.length > 0 && !isCreating;
+    trimmed.length > 0 &&
+    organizationId.length > 0 &&
+    !isCreating &&
+    !mintRefused;
 
   const handleSubmit = async () => {
     if (!canCreate) return;
@@ -168,6 +183,19 @@ export function CreateApiKeyDialog({
             The key acts inside this organization. Requests are scoped to its
             projects and servers.
           </p>
+          {mintRefused ? (
+            <Alert role="status" data-testid="api-key-create-not-allowed">
+              <Info aria-hidden />
+              <AlertTitle>
+                You can't create keys in this organization
+              </AlertTitle>
+              <AlertDescription>
+                {eligibility?.mintMinimumRole === "admin"
+                  ? "Only its owners and admins can create API keys. Ask one of them to create a key for you, or to allow members to create keys."
+                  : "Your role in this organization can't create API keys."}
+              </AlertDescription>
+            </Alert>
+          ) : null}
         </div>
 
         <div className="space-y-2">

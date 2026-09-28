@@ -267,8 +267,28 @@ export class CheckStoppedByPlan extends Error {
  * a Convex deployment — which is the only way the 409, degraded and
  * unknown-action paths are testable at all.
  */
+/**
+ * One run of a multi-environment check: the environment it executes and the
+ * run key the backend authored for it (`<triggerId>:<environmentId>`).
+ */
+export type CheckRunTarget = {
+  environmentId: string;
+  environmentRevision: number;
+  runKey: string;
+};
+
 export interface CheckPlanSession {
   readonly planId: string;
+  /**
+   * The check's RUN SET when its suite runs several environments; empty (or
+   * absent) for a single-run check.
+   */
+  readonly targets?: readonly CheckRunTarget[];
+  /**
+   * Bind one target's run at its launch, before it executes. Throws when the
+   * backend refuses: a run the check will not count must not be executed.
+   */
+  bindTargetRun?(input: { runKey: string; runId: string }): Promise<void>;
   candidates(input: {
     evidenceDigest: string;
     resolverVersion: string;
@@ -321,8 +341,23 @@ export class HttpCheckPlanSession implements CheckPlanSession {
   constructor(
     private readonly triggerId: string,
     readonly planId: string,
-    private readonly post: PostServiceRoute
+    private readonly post: PostServiceRoute,
+    readonly targets: readonly CheckRunTarget[] = []
   ) {}
+
+  async bindTargetRun(input: { runKey: string; runId: string }): Promise<void> {
+    await callPlanRoute(
+      this.post,
+      "plan/target-run",
+      `${GITHUB_CHECKS_SERVICE_BASE}/plan/target-run`,
+      {
+        triggerId: this.triggerId,
+        planId: this.planId,
+        runKey: input.runKey,
+        runId: input.runId,
+      }
+    );
+  }
 
   async candidates(input: {
     evidenceDigest: string;
@@ -595,5 +630,30 @@ export async function beginCheckPlan(
   if (!planId) {
     throw new PlanUnreachableError("plan/begin", "no planId in the response");
   }
-  return new HttpCheckPlanSession(args.triggerId, planId, post);
+  return new HttpCheckPlanSession(
+    args.triggerId,
+    planId,
+    post,
+    parseCheckRunTargets(body?.targets)
+  );
+}
+
+/** The run set `/plan/begin` returned, keeping only well-formed targets. */
+function parseCheckRunTargets(raw: unknown): CheckRunTarget[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const target = entry as Partial<CheckRunTarget> | null;
+    return target &&
+      typeof target.environmentId === "string" &&
+      typeof target.runKey === "string" &&
+      typeof target.environmentRevision === "number"
+      ? [
+          {
+            environmentId: target.environmentId,
+            environmentRevision: target.environmentRevision,
+            runKey: target.runKey,
+          },
+        ]
+      : [];
+  });
 }

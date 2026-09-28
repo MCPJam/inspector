@@ -10,10 +10,10 @@ import { useOrgApiKeyPolicy } from "@/hooks/useOrgApiKeyPolicy";
 /**
  * Who may create API keys bound to this organization.
  *
- * Off (the default) is what every organization had before the setting
- * existed: any member can create a key, and each key only ever acts with its
- * creator's own permissions. On restricts creating keys to owners and admins;
- * keys that already exist keep working until they expire or are revoked.
+ * On (the default, MJ-010) keeps creating keys to owners and admins. Off lets
+ * any member create a key too, and each key only ever acts with its creator's
+ * own permissions. Either way, keys that already exist keep working until they
+ * expire or are revoked.
  */
 export function OrganizationApiKeyPolicyCard({
   organizationId,
@@ -51,7 +51,8 @@ export function OrganizationApiKeyPolicyCard({
               Only owners and admins can create keys
             </p>
             <p className="text-xs text-muted-foreground">
-              Members can still use the keys they already have until those
+              On by default. Turn it off to let any member create keys that act
+              with their own permissions. Existing keys keep working until they
               expire or are revoked.
             </p>
           </div>

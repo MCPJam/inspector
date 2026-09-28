@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { ConvexError } from "convex/values";
 
+import { BlobUploadError } from "@/shared/blob-upload";
 import { isStaleHostedAccessError } from "../hosted-access-errors";
 
 describe("isStaleHostedAccessError", () => {
@@ -28,6 +29,27 @@ describe("isStaleHostedAccessError", () => {
     expect(
       isStaleHostedAccessError({ data: { code: "scenario_access_stale" } })
     ).toBe(true);
+  });
+
+  it("recognizes the upload route's refusal of a stale scenario grant", () => {
+    expect(
+      isStaleHostedAccessError(
+        new BlobUploadError("Stale", 403, "FORBIDDEN", {
+          reason: "scenario_access_stale",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an upload refusal for any other reason", () => {
+    expect(
+      isStaleHostedAccessError(new BlobUploadError("No", 403, "FORBIDDEN")),
+    ).toBe(false);
+    expect(
+      isStaleHostedAccessError({
+        data: { code: "FORBIDDEN", reason: "not_a_member" },
+      }),
+    ).toBe(false);
   });
 
   it("rejects a different ConvexError code", () => {

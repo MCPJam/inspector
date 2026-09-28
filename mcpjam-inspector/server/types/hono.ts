@@ -50,9 +50,11 @@ declare module "hono" {
      * - `"authkit_jwt"` — a WorkOS AuthKit access token VERIFIED at the
      *   gateway (signature, issuer, audience = our client id, expiry).
      *   `workosUserId` (the `sub`) and `workosSessionId` (the `sid`) are set
-     *   alongside. Session REVOCATION is enforced by Convex, not here: a
-     *   route that does not forward the bearer to Convex serves a signed-out
-     *   token until it expires.
+     *   alongside. A session known to be revoked never gets this label — it
+     *   is refused with 401 `SESSION_REVOKED` (MJ-011). Convex checks
+     *   revocation for every bearer forwarded to it; a route that does not
+     *   forward the bearer relies on `requireVerifiedAuth`, which also
+     *   requires the revoked-session list to be current.
      * - `"unverified_passthrough"` — a bearer the gateway could not or did not
      *   verify (not an AuthKit token, an AuthKit token for another audience,
      *   or AuthKit's keys were unreachable), let through on the expectation
@@ -106,7 +108,8 @@ declare module "hono" {
     workosUserId?: string;
     /**
      * The AuthKit session (`sid` claim) of a gateway-verified `authkit_jwt`
-     * bearer, when the token carries one.
+     * bearer, when the token carries one. What revocation is keyed on
+     * (`services/revoked-session-cache.ts`).
      */
     workosSessionId?: string;
     /** Resolved MCPJam user `_id` (Convex). Set with `authMethod`. */

@@ -549,4 +549,14 @@ it("declares no hosted tool scorer when half the evidence already rules them out
     "toolCalls:match",
   ]);
   expect(unknown.every((item) => item.comparable === false)).toBe(true);
+  // So is a case missing both halves.
+  expect(
+    backtestIteration(base, draftWithMatch)
+      .filter((item) => item.evaluatorId.startsWith("toolCalls:"))
+      .map((item) => [item.evaluatorId, item.comparable])
+      .sort(),
+  ).toEqual([
+    ["toolCalls:arguments", false],
+    ["toolCalls:match", false],
+  ]);
 });

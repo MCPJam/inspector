@@ -1956,6 +1956,15 @@ describe("tier derives from operation.risk", () => {
         "suite — the one generation op that writes — and because it draws on " +
         "the organization's shared daily generation quota.",
     },
+    import_eval_cases: {
+      tier: "gated",
+      reason:
+        "Same shape as generate_eval_cases: the authoring model is " +
+        "platform-paid (`markdown_case_import` sits in the backend's " +
+        "PLATFORM_PAID_INTERNAL_LLM set), so risk is none and would derive " +
+        "direct. Gated because it PERSISTS authored cases into the suite, " +
+        "off a document the approver should see named before it is read.",
+    },
     propose_eval_description_rewrite: {
       tier: "gated",
       reason:

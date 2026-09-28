@@ -62,6 +62,7 @@ import {
   type AttemptAction,
   type AttemptInput,
   type CheckPlanSession,
+  type CheckRunTarget,
 } from "./github-checks/check-plan.js";
 import {
   GITHUB_CHECKS_SERVICE_BASE as SERVICE_BASE,
@@ -707,6 +708,10 @@ export type CheckExecutionDeps = {
     serverId: string;
     serverName: string;
     oauthAccessToken?: string;
+    /** The check's run set on a multi-environment suite (`/plan/begin`). */
+    targets?: readonly CheckRunTarget[];
+    /** Bind one target's run at its launch (`/plan/target-run`). */
+    bindTargetRun?: (runKey: string, runId: string) => Promise<void>;
     /**
      * Called with the run's id THE MOMENT IT EXISTS, before the suite is
      * executed. That call is what posts the `eval` attempt, and that attempt is
@@ -1206,12 +1211,12 @@ async function abandonPreparedRun(
   }
 }
 
-/**
- * Run the selected suite against the just-built server. The backend replaces
- * only the suite's MCP server binding, preserving its environment model,
- * skills, plugins, host settings, and computer image.
- */
-async function defaultRunEvalSuite(args: {
+type PreparedCheckRun = {
+  prepared: Awaited<ReturnType<typeof prepareEvalRun>>;
+  client: ReturnType<typeof createConvexClient>;
+};
+
+type RunEvalSuiteArgs = {
   claimed: ClaimedGithubCheck;
   bearer: string;
   serverId: string;
@@ -1219,7 +1224,205 @@ async function defaultRunEvalSuite(args: {
   oauthAccessToken?: string;
   onRunStarted?: (runId: string) => Promise<void>;
   isLeaseHeld?: () => boolean;
-}): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
+  /** The check's run set on a multi-environment suite (see `/plan/begin`). */
+  targets?: readonly CheckRunTarget[];
+  /** Bind one target's run at its launch (`/plan/target-run`). */
+  bindTargetRun?: (runKey: string, runId: string) => Promise<void>;
+};
+
+/**
+ * Prepare ONE run of the check against the just-built server and prove it is
+ * ours. A target of a multi-environment check names its environment and the
+ * backend-authored run key; a single-run check keys its run by the trigger.
+ */
+async function launchCheckRun(
+  manager: Parameters<typeof prepareEvalRun>[0],
+  args: RunEvalSuiteArgs,
+  launch: { environmentId?: string; idempotencyKey: string },
+): Promise<PreparedCheckRun> {
+  const prepared = await prepareEvalRun(manager, {
+    suiteId: args.claimed.suiteId,
+    projectId: args.claimed.projectId,
+    tests: [],
+    serverIds: [args.serverId],
+    serverNames: [args.serverName],
+    suiteRerun: true,
+    // Distinguishes check-triggered runs from real /api/v1 calls in run
+    // history and heartbeat accounting (backend union accepts this value).
+    source: "github_check",
+    convexAuthToken: args.bearer,
+    ...(launch.environmentId ? { environmentId: launch.environmentId } : {}),
+    // A claim retry can never double-create a run.
+    idempotencyKey: launch.idempotencyKey,
+  });
+
+  const client = createConvexClient(args.bearer);
+
+  // Verify the frozen run points at this check's temporary server before any
+  // case executes. A verdict from another PR's server is worse than no
+  // verdict. See `verifyRunSnapshot` for what is provable.
+  const ownership = await verifyRunSnapshot(
+    client,
+    prepared.runId,
+    args.claimed.triggerId,
+  );
+  if (ownership !== "ours") {
+    const reason =
+      ownership === "stolen"
+        ? "another check's server was snapshotted onto this run"
+        : "could not verify which server this run was bound to";
+    // Each raced check would otherwise strand another set of pending rows.
+    await abandonPreparedRun(client, prepared, {
+      triggerId: args.claimed.triggerId,
+      reason,
+      what: "an unowned eval run",
+    });
+    throw new CheckStepError("infra_error", reason);
+  }
+  return { prepared, client };
+}
+
+/**
+ * Execute a launched (and bound) run and wait for its verdict. Returns the
+ * run row once it has one; throws when it did not reach a verdict, which the
+ * check reports as `infra_error` (neutral), never as a PR failure.
+ */
+async function executeCheckRun(
+  { prepared, client }: PreparedCheckRun,
+  args: RunEvalSuiteArgs,
+): Promise<Awaited<ReturnType<typeof awaitJudgeVerdict>>> {
+  try {
+    // A redelivered claim replays the run its key already started. If that
+    // run FINISHED, re-executing would run the suite a second time and bill
+    // for it — and the verdict this check needs is already recorded on it.
+    // Only the execution is skipped; everything below still reads the run's
+    // terminality and reports it, which is exactly what a redelivery should
+    // do.
+    if (shouldSkipExecution(prepared)) {
+      logger.info("[github-checks] trigger already ran — not re-executing", {
+        triggerId: args.claimed.triggerId,
+        runId: prepared.runId,
+        status: prepared.status,
+      });
+    } else {
+      await prepared.execute();
+    }
+  } catch (error) {
+    // A throw from `execute()` is NOT an eval verdict, and must not be read as
+    // one. `runEvalSuiteWithAiSdk` finalizes a normal run — pass or fail —
+    // with `status: 'completed'` and a summary; its outer catch writes
+    // `status: 'failed'` for any UNEXPECTED exception (Convex unreachable, tool
+    // discovery blew up, the transport died) before rethrowing. So a `failed`
+    // status here says "the machinery broke", not "the PR's assertions
+    // failed" — deriving `evals_failed` from it is a red X on a PR that was
+    // never actually judged.
+    //
+    // Two jobs then: make sure the run does not sit non-terminal forever, and
+    // let the original error propagate so it classifies as `infra_error`
+    // (neutral). The one exception is a run the runner DID finish
+    // (`completed`), where a late throw cannot invalidate a delivered verdict.
+    logger.warn("[github-checks] eval run threw; checking its run state", {
+      triggerId: args.claimed.triggerId,
+      runId: prepared.runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    const terminality = await runTerminality(client, prepared.runId);
+    if (terminality === "non_terminal" && prepared.recorder) {
+      await prepared.recorder
+        .finalize({
+          status: "failed",
+          notes:
+            error instanceof Error
+              ? error.message.slice(0, 500)
+              : String(error).slice(0, 500),
+        })
+        .catch((finalizeError: unknown) => {
+          logger.error(
+            "[github-checks] failed to finalize a non-terminal eval run",
+            finalizeError,
+            { triggerId: args.claimed.triggerId, runId: prepared.runId },
+          );
+        });
+    }
+
+    // `unknown` (we could not read the run) also lands here: not being able to
+    // see the run is not evidence the PR failed.
+    //
+    // `grading` falls THROUGH to the verdict read below, exactly as a
+    // completed run does. The run's trials all finished and the backend is
+    // holding it for its judge — the throw was about something after the
+    // run, and rethrowing here would land the check neutral on a run that is
+    // about to produce a real verdict.
+    if (terminality !== "terminal" && terminality !== "grading") {
+      throw error;
+    }
+    if (
+      terminality === "terminal" &&
+      !(await runCompleted(client, prepared.runId))
+    ) {
+      throw error;
+    }
+  }
+
+  // Waits out a gating judge's hold, and decides nothing: `runReachedAVerdict`
+  // below is unchanged and still refuses `grading`, so a wait that runs out
+  // lands the check `infra_error` (neutral) rather than red on no verdict.
+  const run = await awaitJudgeVerdict(client, prepared.runId, {
+    waitMs: JUDGE_GRADING_WAIT_MS,
+    pollMs: JUDGE_GRADING_POLL_MS,
+    ...(args.isLeaseHeld ? { isLeaseHeld: args.isLeaseHeld } : {}),
+  });
+
+  // Only `completed` carries a verdict — the same rule `runCompleted` states for
+  // the throwing path, applied here too. The runner reaches THIS path without
+  // throwing for a lifecycle stop as well: an iteration or whole-run timeout is
+  // finalized `timed_out` and returned normally, and `cancelled` arrives the same
+  // way. `effectiveRunResult` would hand those straight to `outcomeForRunResult`,
+  // which calls everything that is not `passed` a PR failure — so a provider
+  // timeout or a cancelled run would put a red X on a PR whose assertions were
+  // never judged. Raising instead lands them as `infra_error` (neutral).
+  if (!runReachedAVerdict(run?.status)) {
+    throw new Error(
+      `eval run ${prepared.runId} did not complete (status: ${
+        run?.status ?? "unknown"
+      })`,
+    );
+  }
+  return run;
+}
+
+/** Settle launched runs that will not execute, so none sits `running`. */
+async function abandonCheckRuns(
+  runs: readonly PreparedCheckRun[],
+  args: RunEvalSuiteArgs,
+  reason: string,
+): Promise<void> {
+  for (const run of runs) {
+    // A replayed run that already FINISHED keeps its verdict.
+    if (shouldSkipExecution(run.prepared)) continue;
+    await abandonPreparedRun(run.client, run.prepared, {
+      triggerId: args.claimed.triggerId,
+      reason,
+      what: "a check run that will not execute",
+    });
+  }
+}
+
+/**
+ * Run the selected suite against the just-built server. The backend replaces
+ * only the suite's MCP server binding, preserving its environment model,
+ * skills, plugins, host settings, and computer image.
+ *
+ * A suite with several environments runs as the check's RUN SET: one run per
+ * target, each launched with its environment and run key and bound at launch
+ * before anything executes; the check's `eval` attempt then names the first.
+ * A launch or binding failure settles every run already launched; so does a
+ * run that fails to execute, for the ones after it.
+ */
+async function defaultRunEvalSuite(
+  args: RunEvalSuiteArgs,
+): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
   // Empty caller context = plain-JWT caller; the delegated JWT is the principal
   // (same contract as the scheduled worker).
   const authorized = await createAuthorizedManager(
@@ -1236,171 +1439,83 @@ async function defaultRunEvalSuite(args: {
   );
 
   try {
-    const prepared = await prepareEvalRun(authorized.manager, {
-      suiteId: args.claimed.suiteId,
-      projectId: args.claimed.projectId,
-      tests: [],
-      serverIds: [args.serverId],
-      serverNames: [args.serverName],
-      suiteRerun: true,
-      // Distinguishes check-triggered runs from real /api/v1 calls in run
-      // history and heartbeat accounting (backend union accepts this value).
-      source: "github_check",
-      convexAuthToken: args.bearer,
-      // A claim retry can never double-create a run.
-      idempotencyKey: args.claimed.triggerId,
-    });
-
-    const client = createConvexClient(args.bearer);
-
-    // Verify the frozen run points at this check's temporary server before any
-    // case executes. A verdict from another PR's server is worse than no
-    // verdict. See `verifyRunSnapshot` for what is provable.
-    const ownership = await verifyRunSnapshot(
-      client,
-      prepared.runId,
-      args.claimed.triggerId,
-    );
-    if (ownership !== "ours") {
-      const reason =
-        ownership === "stolen"
-          ? "another check's server was snapshotted onto this run"
-          : "could not verify which server this run was bound to";
-      // Each raced check would otherwise strand another set of pending rows.
-      await abandonPreparedRun(client, prepared, {
-        triggerId: args.claimed.triggerId,
-        reason,
-        what: "an unowned eval run",
-      });
-      throw new CheckStepError("infra_error", reason);
-    }
-
-    // BIND THE RUN, NOW. The run row exists, it has been proven to be ours, and
-    // nothing has been evaluated yet — so this is the launch moment the `eval`
-    // attempt names. Posting it here rather than after `execute()` is what makes
-    // the binding hold for the whole run: `run.createdAt >= plan.createdAt` plus
-    // "no other plan holds it" is what turns "belongs to the shared suite" into
-    // "belongs to THIS check". A throw from here (a 409, an unreachable backend)
-    // aborts before a single test runs, which is right — a run nothing may read
-    // is a run not worth paying for — but it must not be a run left `running`
-    // with pending iterations either, so the abort tidies up the same way the
-    // unowned-run branch above does before the error propagates.
+    const targets = args.targets ?? [];
+    const launched: PreparedCheckRun[] = [];
+    // BIND EVERY RUN, NOW. Each run row exists, has been proven to be ours,
+    // and nothing has been evaluated yet — so this is the launch moment the
+    // bindings name. Posting them here rather than after `execute()` is what
+    // makes the binding hold for the whole run: `run.createdAt >=
+    // plan.createdAt` plus "no other plan holds it" is what turns "belongs to
+    // the shared suite" into "belongs to THIS check". A throw from here (a
+    // 409, an unreachable backend) aborts before a single test runs, which is
+    // right — a run nothing may read is a run not worth paying for — but it
+    // must not leave runs `running` with pending iterations either.
     try {
-      await args.onRunStarted?.(prepared.runId);
+      if (targets.length === 0) {
+        launched.push(
+          await launchCheckRun(authorized.manager, args, {
+            idempotencyKey: args.claimed.triggerId,
+          }),
+        );
+      } else {
+        for (const target of targets) {
+          const run = await launchCheckRun(authorized.manager, args, {
+            environmentId: target.environmentId,
+            idempotencyKey: target.runKey,
+          });
+          launched.push(run);
+          if (!args.bindTargetRun) {
+            throw new Error("this check has targets but no way to bind them");
+          }
+          await args.bindTargetRun(target.runKey, run.prepared.runId);
+        }
+      }
+      await args.onRunStarted?.(launched[0]!.prepared.runId);
     } catch (bindError) {
-      await abandonPreparedRun(client, prepared, {
-        triggerId: args.claimed.triggerId,
-        reason:
-          bindError instanceof Error ? bindError.message : String(bindError),
-        what: "an unbindable eval run",
-      });
+      await abandonCheckRuns(
+        launched,
+        args,
+        bindError instanceof Error ? bindError.message : String(bindError),
+      );
       throw bindError;
     }
 
-    try {
-      // A redelivered claim replays the run its trigger id already started. If
-      // that run FINISHED, re-executing would run the suite a second time and
-      // bill for it — and the verdict this check needs is already recorded on
-      // it. Only the execution is skipped; everything below still reads the
-      // run's terminality and reports it, which is exactly what a redelivery
-      // should do.
-      if (shouldSkipExecution(prepared)) {
-        logger.info("[github-checks] trigger already ran — not re-executing", {
-          triggerId: args.claimed.triggerId,
-          runId: prepared.runId,
-          status: prepared.status,
-        });
-      } else {
-        await prepared.execute();
-      }
-    } catch (error) {
-      // A throw from `execute()` is NOT an eval verdict, and must not be read as
-      // one. `runEvalSuiteWithAiSdk` finalizes a normal run — pass or fail —
-      // with `status: 'completed'` and a summary; its outer catch writes
-      // `status: 'failed'` for any UNEXPECTED exception (Convex unreachable, tool
-      // discovery blew up, the transport died) before rethrowing. So a `failed`
-      // status here says "the machinery broke", not "the PR's assertions
-      // failed" — deriving `evals_failed` from it is a red X on a PR that was
-      // never actually judged.
-      //
-      // Two jobs then: make sure the run does not sit non-terminal forever, and
-      // let the original error propagate so it classifies as `infra_error`
-      // (neutral). The one exception is a run the runner DID finish
-      // (`completed`), where a late throw cannot invalidate a delivered verdict.
-      logger.warn("[github-checks] eval run threw; checking its run state", {
-        triggerId: args.claimed.triggerId,
-        runId: prepared.runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      const terminality = await runTerminality(client, prepared.runId);
-      if (terminality === "non_terminal" && prepared.recorder) {
-        await prepared.recorder
-          .finalize({
-            status: "failed",
-            notes:
-              error instanceof Error
-                ? error.message.slice(0, 500)
-                : String(error).slice(0, 500),
-          })
-          .catch((finalizeError: unknown) => {
-            logger.error(
-              "[github-checks] failed to finalize a non-terminal eval run",
-              finalizeError,
-              { triggerId: args.claimed.triggerId, runId: prepared.runId },
-            );
-          });
-      }
-
-      // `unknown` (we could not read the run) also lands here: not being able to
-      // see the run is not evidence the PR failed.
-      //
-      // `grading` falls THROUGH to the verdict read below, exactly as a
-      // completed run does. The run's trials all finished and the backend is
-      // holding it for its judge — the throw was about something after the
-      // run, and rethrowing here would land the check neutral on a run that is
-      // about to produce a real verdict.
-      if (terminality !== "terminal" && terminality !== "grading") {
-        throw error;
-      }
-      if (
-        terminality === "terminal" &&
-        !(await runCompleted(client, prepared.runId))
-      ) {
+    const runs: Array<Awaited<ReturnType<typeof executeCheckRun>>> = [];
+    for (let index = 0; index < launched.length; index += 1) {
+      try {
+        runs.push(await executeCheckRun(launched[index]!, args));
+      } catch (error) {
+        await abandonCheckRuns(
+          launched.slice(index + 1),
+          args,
+          "an earlier run of this check did not reach a verdict",
+        );
         throw error;
       }
     }
 
-    // Waits out a gating judge's hold, and decides nothing: `runReachedAVerdict`
-    // below is unchanged and still refuses `grading`, so a wait that runs out
-    // lands the check `infra_error` (neutral) rather than red on no verdict.
-    const run = await awaitJudgeVerdict(client, prepared.runId, {
-      waitMs: JUDGE_GRADING_WAIT_MS,
-      pollMs: JUDGE_GRADING_POLL_MS,
-      ...(args.isLeaseHeld ? { isLeaseHeld: args.isLeaseHeld } : {}),
-    });
-
-    // Only `completed` carries a verdict — the same rule `runCompleted` states for
-    // the throwing path, applied here too. The runner reaches THIS path without
-    // throwing for a lifecycle stop as well: an iteration or whole-run timeout is
-    // finalized `timed_out` and returned normally, and `cancelled` arrives the same
-    // way. `effectiveRunResult` would hand those straight to `outcomeForRunResult`,
-    // which calls everything that is not `passed` a PR failure — so a provider
-    // timeout or a cancelled run would put a red X on a PR whose assertions were
-    // never judged. Raising instead lands them as `infra_error` (neutral).
-    if (!runReachedAVerdict(run?.status)) {
-      throw new Error(
-        `eval run ${prepared.runId} did not complete (status: ${
-          run?.status ?? "unknown"
-        })`,
-      );
+    // Display only: the backend derives the check's verdict from the bound
+    // runs themselves.
+    const results = runs.map((run) => effectiveRunResult(run));
+    const result = results.includes("failed")
+      ? "failed"
+      : results.find((entry) => entry !== undefined);
+    let summary: CheckSummary | undefined;
+    for (const run of runs) {
+      if (!run?.summary) continue;
+      const total = (summary?.total ?? 0) + run.summary.total;
+      const passed = (summary?.passed ?? 0) + run.summary.passed;
+      summary = {
+        total,
+        passed,
+        failed: (summary?.failed ?? 0) + run.summary.failed,
+        passRate: total > 0 ? passed / total : 0,
+      };
     }
-
-    const result = effectiveRunResult(run);
     return {
-      runId: prepared.runId,
+      runId: launched[0]!.prepared.runId,
       ...(result ? { result } : {}),
-      ...(run?.summary ? { summary: run.summary } : {}),
+      ...(summary ? { summary } : {}),
     };
   } finally {
     await authorized.manager.disconnectAllServers().catch(() => {});
@@ -1841,6 +1956,13 @@ export async function executeClaimedCheck(
           serverId: executionServerId,
           serverName,
           ...(oauthAccessToken ? { oauthAccessToken } : {}),
+          ...(session.targets?.length && session.bindTargetRun
+            ? {
+                targets: session.targets,
+                bindTargetRun: (runKey: string, runId: string) =>
+                  session.bindTargetRun!({ runKey, runId }),
+              }
+            : {}),
           // STEP 9 — the attempt that BINDS the run, posted AT LAUNCH.
           onRunStarted: async (runId) => {
             const decision = await session.attempt({

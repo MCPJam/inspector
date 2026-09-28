@@ -4,6 +4,8 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
+import { getSpendClientIp } from "../../utils/client-ip.js";
+import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -51,7 +53,9 @@ shared.post("/redeem", async (c) =>
     const timeout = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
     let result;
     try {
+      const ip = getSpendClientIp(c);
       result = await redeemShareToken({
+        guestIpHash: ip ? await hashGuestSpendIp(ip) : null,
         resourceType: body.resourceType,
         token: body.token,
         bearer: bearerToken,

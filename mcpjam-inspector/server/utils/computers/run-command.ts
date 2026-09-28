@@ -14,6 +14,7 @@
  */
 import { Sandbox, CommandExitError, TimeoutError } from "e2b";
 import {
+  computerUnavailableError,
   ensureComputerReady,
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
@@ -188,7 +189,7 @@ export async function runComputerCommand(
     signal: args.signal,
   });
   if (!ready.ok) {
-    return { error: `Computer unavailable: ${ready.error}` };
+    return { error: computerUnavailableError(ready, "reserve") };
   }
   const computerId = ready.value.computerId;
 
@@ -197,7 +198,7 @@ export async function runComputerCommand(
     signal: args.signal,
   });
   if (!info.ok) {
-    return { error: `Computer unavailable: ${info.error}` };
+    return { error: computerUnavailableError(info, "sandbox-info") };
   }
   if (!info.value.providerComputerId) {
     return {

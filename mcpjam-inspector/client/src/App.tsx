@@ -42,7 +42,9 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
   shouldQueryProjectId,
+  useCanManageProjectClients,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -1062,6 +1064,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const { canManage: canCreateHost, isLoading: roleLoading } =
+    useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
   const cursorCliEnabled = useCursorHostEnabledState();
@@ -1148,6 +1152,16 @@ function useTemplateVerifyDeepLink({
       toast.error(`${template.label} is not available yet.`);
       return;
     }
+    // Creating a client is project-admin only. A member or guest following a
+    // caniuse link to a client the project doesn't have yet is told so,
+    // instead of firing a create the backend refuses.
+    if (roleLoading) return;
+    if (!canCreateHost) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE);
+      return;
+    }
 
     handledRef.current = true;
 
@@ -1187,6 +1201,8 @@ function useTemplateVerifyDeepLink({
     codexEnabled,
     cursorCliEnabled,
     flagWaitExpired,
+    roleLoading,
+    canCreateHost,
     themeMode,
     createHost,
     navigate,

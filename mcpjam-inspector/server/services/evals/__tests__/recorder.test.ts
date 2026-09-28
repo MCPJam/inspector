@@ -473,15 +473,21 @@ describe("startSuiteRunWithRecorder", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await expect(
-      startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock, action: actionMock } as any,
-        suiteId: "suite-1",
-        serverIds: ["alpha"],
-      }),
-    ).rejects.toThrow(
+    const failure = await startSuiteRunWithRecorder({
+      convexClient: { mutation: mutationMock, action: actionMock } as any,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
       "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
     );
+    // The failure text is recorded on the run and logged; the response
+    // carries only the run id (MJ-020, MJ-021).
+    expect((failure as { details?: unknown }).details).toEqual({
+      runId: "run-1",
+    });
 
     expect(actionMock).toHaveBeenCalledWith(
       "testSuites:startSuiteRunIterations",

@@ -1,20 +1,16 @@
 import type { GoalJudgePolicy } from "@/shared/judge-defaults";
-import { useMemo } from "react";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { ModelDefinition } from "@/shared/types";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL,
   RESERVED_JUDGE_SLOTS,
+  type GoalCompletionJudgeSlot,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
+import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { JudgeModelPicker } from "./judge-model-picker";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -34,6 +30,13 @@ interface JudgesSectionProps {
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
+  /**
+   * Save the picked row's model selection beside `judgeModel`. Defaults to
+   * whether the active project's deployment stores selections
+   * (`useModelSelectionsSupported`); when false only the legacy id is
+   * written, which every deployment accepts.
+   */
+  saveModelSelections?: boolean;
   title?: string;
   description?: string;
   /**
@@ -97,6 +100,32 @@ export function pruneEmpty(
   };
 }
 
+/**
+ * The goal-completion patch for a judge-model pick: the id plus, when the
+ * picked row can be saved as one beside that id, its model selection. Both
+ * are always written together (a stale selection naming the previous judge
+ * would be refused), and both clear for the managed default.
+ */
+export function judgeModelPatch(
+  next: string,
+  availableModels: readonly ModelDefinition[],
+  /** The deployment stores selections (`modelSelectionsSupported`). */
+  saveModelSelection = true,
+): Pick<GoalCompletionJudgeSlot, "judgeModel" | "judgeSelection"> {
+  if (next === MANAGED_DEFAULT_JUDGE_MODEL) {
+    return { judgeModel: undefined, judgeSelection: undefined };
+  }
+  // The first row with this id is the one saved: the picker passes the
+  // picked row itself first.
+  const row = saveModelSelection
+    ? availableModels.find((model) => String(model.id) === next)
+    : undefined;
+  return {
+    judgeModel: next,
+    judgeSelection: row ? selectionBesideLegacyId(row, "judge") : undefined,
+  };
+}
+
 export function JudgesSection({
   policy,
   value,
@@ -107,7 +136,11 @@ export function JudgesSection({
   chrome = "panel",
   bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
   bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
+  saveModelSelections,
 }: JudgesSectionProps) {
+  // Explicit prop wins; otherwise ask the active project's deployment.
+  const deploymentStoresSelections = useModelSelectionsSupported();
+  const saveSelections = saveModelSelections ?? deploymentStoresSelections;
   const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
   // Default-on: GOAL_COMPLETION_DEFAULTS.enabled = true. Only an explicit
@@ -122,25 +155,6 @@ export function JudgesSection({
   const handleMainToggle = (checked: boolean) => {
     update({ enabled: checked, autoRun: checked });
   };
-
-  const modelOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const model of availableModels) {
-      const id = String(model.id);
-      if (id && !map.has(id)) {
-        map.set(id, model.name ?? id);
-      }
-    }
-    // Always keep the managed default + the current selection selectable,
-    // even before the async model catalog loads.
-    if (!map.has(MANAGED_DEFAULT_JUDGE_MODEL)) {
-      map.set(MANAGED_DEFAULT_JUDGE_MODEL, MANAGED_DEFAULT_JUDGE_MODEL);
-    }
-    if (judgeModel && !map.has(judgeModel)) {
-      map.set(judgeModel, judgeModel);
-    }
-    return Array.from(map, ([id, label]) => ({ id, label }));
-  }, [availableModels, judgeModel]);
 
   const update = (
     patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
@@ -199,29 +213,22 @@ export function JudgesSection({
           >
             Judge model
           </Label>
-          <Select
+          <JudgeModelPicker
+            id="suite-goal-judge-model"
+            className="w-[14rem]"
             value={judgeModel}
-            onValueChange={(next) =>
-              update({
-                judgeModel:
-                  next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
-              })
+            availableModels={availableModels}
+            managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
+            onChange={(row) =>
+              update(
+                judgeModelPatch(
+                  String(row.id),
+                  [row, ...availableModels],
+                  saveSelections,
+                ),
+              )
             }
-          >
-            <SelectTrigger
-              id="suite-goal-judge-model"
-              className="h-8 w-[14rem] text-sm"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {modelOptions.map((opt) => (
-                <SelectItem key={opt.id} value={opt.id}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
         </div>
       ) : null}
     </>

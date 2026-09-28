@@ -953,3 +953,15 @@ describe("appReducer", () => {
     });
   });
 });
+
+
+describe("hosted queued reconnect state", () => {
+  it("keeps an existing connection while the check is queued and restores it on cancel", () => {
+    const server = createServer("test", { connectionStatus: "connected", enabled: true });
+    const state = createInitialState({ servers: { test: server } });
+    const queued = appReducer(state, { type: "RECONNECT_REQUEST", name: "test", config: server.config, preserveConnected: true });
+    expect(queued.servers.test.connectionStatus).toBe("connected");
+    const cancelled = appReducer(queued, { type: "CONNECT_CANCELLED", name: "test", wasConnected: true });
+    expect(cancelled.servers.test.connectionStatus).toBe("connected");
+  });
+});

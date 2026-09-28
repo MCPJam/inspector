@@ -3,6 +3,7 @@ import type { TestStep } from "@/shared/steps";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 import {
   afterTheRunRows,
+  canRemoveAction,
   deleteActionPlan,
   isQuietCase,
   moveActionBlock,
@@ -128,6 +129,21 @@ describe("spineStatus", () => {
     expect(
       spineStatus({ stepId: "zz", kind: "prompt", turnIndex: 3, byId, byTurn }),
     ).toEqual({ status: undefined, perStep: false });
+  });
+});
+
+describe("canRemoveAction", () => {
+  it("keeps the only prompt and lets every extra prompt go", () => {
+    const steps = [prompt("s1"), prompt("s2")];
+    expect(canRemoveAction(steps, "s1")).toBe(true);
+    expect(canRemoveAction(steps, "s2")).toBe(true);
+    expect(canRemoveAction([prompt("s1")], "s1")).toBe(false);
+  });
+
+  it("lets a click go while the only prompt stays", () => {
+    const steps = [prompt("s1"), click("i1")];
+    expect(canRemoveAction(steps, "s1")).toBe(false);
+    expect(canRemoveAction(steps, "i1")).toBe(true);
   });
 });
 

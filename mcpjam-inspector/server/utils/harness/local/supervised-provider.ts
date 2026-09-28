@@ -1170,7 +1170,7 @@ export function createSupervisedLocalHarnessProvider(
  * Resolved on both sides before comparison: a prefix test on the raw string
  * would accept `<root>/../../etc`, and this ends in a recursive delete.
  */
-async function removeSessionStateDir(dir: string): Promise<void> {
+export async function removeSessionStateDir(dir: string): Promise<void> {
   const root = resolve(localHarnessStateRoot());
   const target = resolve(dir);
   if (target === root || !target.startsWith(root + sep)) {

@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   listApiKeys: vi.fn(),
   createApiKey: vi.fn(),
   revokeApiKey: vi.fn(),
+  getApiKeyMintEligibility: vi.fn(),
   writeApiKeysSignInReturnPath: vi.fn(),
 }));
 
@@ -69,6 +70,8 @@ vi.mock("@/lib/apis/web/api-keys", () => ({
   listApiKeys: (...args: unknown[]) => mocks.listApiKeys(...args),
   createApiKey: (...args: unknown[]) => mocks.createApiKey(...args),
   revokeApiKey: (...args: unknown[]) => mocks.revokeApiKey(...args),
+  getApiKeyMintEligibility: (...args: unknown[]) =>
+    mocks.getApiKeyMintEligibility(...args),
 }));
 
 vi.mock("@/lib/api-keys-signin-return-path", () => ({
@@ -83,6 +86,9 @@ beforeEach(() => {
   mocks.organizations.current = [{ _id: "org-1", name: "Acme" }];
   mocks.listApiKeys.mockReset().mockResolvedValue([]);
   mocks.createApiKey.mockReset();
+  mocks.getApiKeyMintEligibility
+    .mockReset()
+    .mockResolvedValue({ mintAllowed: true, mintMinimumRole: "admin" });
   mocks.signIn.mockReset();
   mocks.writeApiKeysSignInReturnPath.mockReset();
 });

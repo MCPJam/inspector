@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  Ban,
+  CircleSlash,
   Clock,
   LogIn,
   RefreshCw,
@@ -16,6 +18,8 @@ import type {
 
 const ICONS: Record<AnalysisStatusKind, LucideIcon> = {
   empty: Target,
+  notRun: Ban,
+  noTranscripts: CircleSlash,
   guest: LogIn,
   deferred: Clock,
   analyzing: RefreshCw,

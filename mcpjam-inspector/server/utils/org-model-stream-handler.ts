@@ -29,7 +29,7 @@ import {
   type UIMessageChunk,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, ModelSelection } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
   buildOrgModelFromResolvedConfig,
@@ -44,6 +44,7 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
+import type { LocalExecutionRecord } from "./local-execution-record.js";
 import { UNVERIFIED_APPROVAL_RESULT } from "./tool-approval-token.js";
 import {
   createUiChunkProvenanceSigner,
@@ -95,6 +96,12 @@ export interface OrgModelHandlerOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   modelId: string;
+  /**
+   * The provider-native id chosen explicitly for this model (the row's
+   * `nativeModelId`): an org Azure deployment name. Sent to `/stream/org` as
+   * `nativeModelId`; never derived from `modelId`.
+   */
+  nativeModelId?: string;
   chatSessionId?: string;
   sourceType?: string;
   messages: ModelMessage[];
@@ -516,7 +523,10 @@ export function handleLocalOrgChatModel(
 
   // Sign what this turn streams as the server's own (MJ-009); a no-op where
   // provenance is off.
-  const provenanceContext = historyProvenanceContextFor(options.projectId);
+  const provenanceContext = historyProvenanceContextFor(
+    options.projectId,
+    options.chatSessionId,
+  );
   const signChunk = provenanceContext
     ? createUiChunkProvenanceSigner(
         provenanceContext,
@@ -771,7 +781,9 @@ export function handleLocalOrgChatModel(
             continue;
           }
           const outgoing = withMcpToolOriginChunkMetadata(chunk, options.tools);
-          writer.write(signChunk ? signChunk(outgoing) : outgoing);
+          for (const out of signChunk ? signChunk(outgoing) : [outgoing]) {
+            writer.write(out);
+          }
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
@@ -920,6 +932,24 @@ export async function postLocalUsage(params: {
    * up in one query. Omitted for real chat.
    */
   journeyRunId?: string;
+  /**
+   * The eval iteration (and suite run) a local-runtime eval turn belongs to.
+   * With `execution`, the backend merges the record onto that iteration row;
+   * a swarm turn is attributed by `journeyRunId` + `chatSessionId` instead.
+   */
+  evalIterationId?: string;
+  evalRunId?: string;
+  /**
+   * The saved `org` selection the turn ran under. The backend re-resolves it
+   * (the connection must still be this org's) before checking `execution`.
+   */
+  modelSelection?: ModelSelection;
+  /**
+   * What the turn actually ran ({@link buildLocalExecutionRecord}). Sent only
+   * with `modelSelection`: the backend checks it against its own resolution
+   * of that selection and rebuilds the stored record from its plan.
+   */
+  execution?: LocalExecutionRecord;
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) return;
@@ -956,6 +986,16 @@ export async function postLocalUsage(params: {
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
         ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
+        ...(params.evalIterationId
+          ? { evalIterationId: params.evalIterationId }
+          : {}),
+        ...(params.evalRunId ? { evalRunId: params.evalRunId } : {}),
+        ...(params.modelSelection
+          ? { modelSelection: params.modelSelection }
+          : {}),
+        ...(params.modelSelection && params.execution
+          ? { execution: params.execution }
+          : {}),
       }),
       signal: controller.signal,
     });
@@ -1024,6 +1064,9 @@ export async function handleHostedOrgChatModel(
       // contract can't be silently broken by a downstream caller.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
+      ...(options.nativeModelId?.trim()
+        ? { nativeModelId: options.nativeModelId.trim() }
+        : {}),
       // scenarioId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length

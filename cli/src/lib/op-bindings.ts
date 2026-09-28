@@ -252,6 +252,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_eval_case: { command: "cloud eval cases update" },
   delete_eval_case: { command: "cloud eval cases delete" },
   generate_eval_cases: { command: "cloud eval cases generate" },
+  import_eval_cases: { command: "cloud eval cases import" },
   run_eval_case: { command: "cloud eval cases run" },
 
   // ── Hosts, environments, images ─────────────────────────────────────────

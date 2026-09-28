@@ -1,0 +1,47 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4o",
+      "object": "model",
+      "created": 1715367049,
+      "owned_by": "system"
+    },
+    {
+      "id": "gpt-4o-mini",
+      "object": "model",
+      "created": 1721172741,
+      "owned_by": "system"
+    },
+    {
+      "id": "gpt-4.1",
+      "object": "model",
+      "created": 1744316542,
+      "owned_by": "system"
+    },
+    {
+      "id": "gpt-5",
+      "object": "model",
+      "created": 1754425777,
+      "owned_by": "system"
+    },
+    {
+      "id": "gpt-5-mini",
+      "object": "model",
+      "created": 1754425928,
+      "owned_by": "system"
+    },
+    {
+      "id": "gpt-5-2025-08-07",
+      "object": "model",
+      "created": 1754425777,
+      "owned_by": "system"
+    },
+    {
+      "id": "text-embedding-3-small",
+      "object": "model",
+      "created": 1705948997,
+      "owned_by": "system"
+    }
+  ]
+}

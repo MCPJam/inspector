@@ -124,17 +124,34 @@ export function StepStatusBadge({ status }: { status: EvalStepStatus }) {
   );
 }
 
-export function summarizeStep(step: TestStep): string {
+/**
+ * One line for a collapsed step.
+ *
+ * `serverNamesById` exists because an authored tool call carries the server's
+ * ID, not its name: a snapshot whose server answered `initialize` without
+ * `serverInfo` has no name to carry. Showing the raw ID told the reader
+ * nothing about which server the step runs on, so resolve it against the
+ * project's own servers and fall back to the ID only when nothing matches.
+ */
+export function summarizeStep(
+  step: TestStep,
+  serverNamesById?: Map<string, string>,
+): string {
   switch (step.kind) {
     case "prompt": {
       const t = step.prompt.trim();
       if (!t) return "Empty prompt";
       return t.length > 72 ? `${t.slice(0, 72)}…` : t;
     }
-    case "toolCall":
+    case "toolCall": {
+      const server =
+        (step.serverId && serverNamesById?.get(step.serverId)) ||
+        (step.serverName && serverNamesById?.get(step.serverName)) ||
+        step.serverName;
       return `${step.toolName || "pick a tool"}${
-        step.serverName ? ` on ${step.serverName}` : ""
+        server ? ` on ${server}` : ""
       }`;
+    }
     case "interact":
       return `${step.action.kind} · ${step.toolName || "view"}`;
     case "assert": {

@@ -44,6 +44,7 @@ import {
   sanitizeTerminalCwd,
 } from "../../utils/computers/create-pty.js";
 import {
+  computerUnavailableError,
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   recordTerminalSession,
@@ -131,7 +132,7 @@ export function createComputerTerminalWsHandler(
         });
         if (!info.ok) {
           rejectCode = CLOSE_UNAVAILABLE;
-          rejectMessage = `Computer unavailable: ${info.error}`;
+          rejectMessage = computerUnavailableError(info, "sandbox-info");
         } else if (
           info.value.ownerUserId !== claims.userId ||
           info.value.projectId !== claims.projectId

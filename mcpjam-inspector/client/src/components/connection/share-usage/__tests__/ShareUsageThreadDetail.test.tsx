@@ -30,6 +30,9 @@ const {
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
     runAttemptStatus: undefined as unknown,
+    runAttemptErrorCode: undefined as unknown,
+    runAttemptErrorMessage: undefined as unknown,
+    messageCount: 2,
     messagesBlobUrl: "https://storage.example.com/thread.json",
     analysisPhase: undefined as string | undefined,
   },
@@ -86,6 +89,8 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
       runAttemptStatus: mockThreadState.runAttemptStatus,
+      runAttemptErrorCode: mockThreadState.runAttemptErrorCode,
+      runAttemptErrorMessage: mockThreadState.runAttemptErrorMessage,
       analysisPhase: mockThreadState.analysisPhase,
       messagesBlobUrl: mockThreadState.messagesBlobUrl,
       modelId: "openai/gpt-oss-120b",
@@ -102,7 +107,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
         ],
       },
       visitorDisplayName: "Marcelo Jimenez",
-      messageCount: 2,
+      messageCount: mockThreadState.messageCount,
       startedAt: Date.now() - 1000,
       lastActivityAt: Date.now(),
     },
@@ -1130,5 +1135,95 @@ describe("ShareUsageThreadDetail — session identity header", () => {
         "https://app.test/swarms/session-doc-1",
       ),
     );
+  });
+});
+
+/**
+ * #5188: a swarm session refused before it recorded a message. The pane used
+ * to hedge "May not have run" under a judge that tried to grade it, with the
+ * only explanation worded around promoting it to a test case.
+ */
+describe("ShareUsageThreadDetail — a swarm session that never ran", () => {
+  const PROMOTE = { projectId: "proj-1", canPromote: true };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockThreadState.sourceType = "swarm";
+    mockThreadState.synthetic = true;
+    mockThreadState.goalScore = undefined;
+    mockThreadState.messageCount = 0;
+    mockThreadState.runAttemptStatus = "failed";
+    mockThreadState.runAttemptErrorCode = "session_failed";
+    mockThreadState.runAttemptErrorMessage =
+      "Persona turn failed: 400 invalid identity";
+    mockTurnTracesState.traces = [];
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    } as Response);
+    mockAdaptTraceToUiMessages.mockReturnValue({
+      messages: [],
+      toolRenderOverrides: {},
+    });
+  });
+
+  afterEach(() => {
+    mockThreadState.sourceType = "scenario";
+    mockThreadState.synthetic = false;
+    mockThreadState.messageCount = 2;
+    mockThreadState.runAttemptStatus = undefined;
+    mockThreadState.runAttemptErrorCode = undefined;
+    mockThreadState.runAttemptErrorMessage = undefined;
+  });
+
+  it("says it never ran, and why, instead of guessing", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+    expect(
+      await screen.findByTestId("swarm-session-not-run"),
+    ).toHaveTextContent("This session didn't run");
+    expect(
+      screen.getByTestId("swarm-session-not-run-reason"),
+    ).toHaveTextContent(/invalid identity/i);
+    expect(screen.queryByText("May not have run.")).not.toBeInTheDocument();
+    // There is no conversation to promote, so the promote refusal has
+    // nothing to explain.
+    expect(
+      screen.queryByTestId("share-usage-empty-promote-blocked"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not ask the judge to grade a session that never ran", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await screen.findByTestId("swarm-session-not-run");
+    expect(mockRequestJudge).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Not ready to judge/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the attempt status when no reason was recorded", async () => {
+    // An older backend sends no error fields at all.
+    mockThreadState.runAttemptStatus = "rate_limited";
+    mockThreadState.runAttemptErrorCode = undefined;
+    mockThreadState.runAttemptErrorMessage = undefined;
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    expect(
+      await screen.findByTestId("swarm-session-not-run-reason"),
+    ).toHaveTextContent(/A rate limit stopped its attempt/);
+  });
+
+  it("keeps the empty-transcript state for a session that did record messages", async () => {
+    // Its attempt failed, but not before the conversation started: the
+    // transcript is missing, not the session.
+    mockThreadState.messageCount = 2;
+    render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+    expect(
+      await screen.findByTestId("share-usage-empty-promote-blocked"),
+    ).toHaveTextContent(/did not finish/i);
+    expect(
+      screen.queryByTestId("swarm-session-not-run"),
+    ).not.toBeInTheDocument();
   });
 });

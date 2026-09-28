@@ -27,6 +27,7 @@ import {
 import { useSankeyStageOrder } from "@/components/shared/usage-insights/sankey-stage-order";
 import {
   analysisStatus,
+  notRunNote,
   themesNote,
   type AnalysisStatus,
 } from "@/components/shared/usage-insights/analysis-status";
@@ -431,6 +432,7 @@ export function SessionFlowSankey({
       ? liveStatus
       : null;
   const note = themesNote(breakdown.analysis);
+  const notRunLine = notRunNote(breakdown.analysis);
 
   const selectedKeys = new Set([
     ...(selection?.themes ?? []).map(
@@ -542,6 +544,14 @@ export function SessionFlowSankey({
                   data-testid="session-flow-themes-note"
                 >
                   {note}
+                </span>
+              ) : null}
+              {notRunLine ? (
+                <span
+                  className="text-[11px] text-muted-foreground"
+                  data-testid="session-flow-not-run-note"
+                >
+                  {notRunLine}
                 </span>
               ) : null}
             </div>

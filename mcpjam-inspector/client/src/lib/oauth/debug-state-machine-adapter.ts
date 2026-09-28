@@ -7,6 +7,7 @@ import {
   getBrowserDebugDynamicRegistrationMetadata,
   isAuthenticatedRequestFailure,
   isResourceMetadataNotImplemented,
+  isUnexpectedProbeStatus,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
   type OAuthProtocolVersion,
@@ -315,7 +316,12 @@ function createHostedClientSecretResolver({
  * ours (the hosted fetch path breaking would surface here too), so
  * `isResourceMetadataNotImplemented` matches the one case that cannot be.
  *
- * The SDK owns all three messages and exports them, so matching here cannot
+ * The unauthenticated probe answered with a status OAuth cannot start from (a
+ * 500, a 404, a bare 403) is the same again: the proxy returned the target's
+ * real response, and the target said no. A proxy failure throws its own
+ * "Backend debug proxy error" instead, so that one still reports.
+ *
+ * The SDK owns all of these messages and exports them, so matching here cannot
  * drift out of sync with what the machines actually throw.
  */
 const UNREPORTED_STEP_FAILURES = new Set([
@@ -328,7 +334,8 @@ function isUnreportedStepFailure(error: string): boolean {
   return (
     UNREPORTED_STEP_FAILURES.has(error) ||
     isAuthenticatedRequestFailure(error) ||
-    isResourceMetadataNotImplemented(error)
+    isResourceMetadataNotImplemented(error) ||
+    isUnexpectedProbeStatus(error)
   );
 }
 

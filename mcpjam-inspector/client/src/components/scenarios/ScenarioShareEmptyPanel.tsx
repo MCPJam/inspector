@@ -1,6 +1,7 @@
 /**
- * {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers a
- * self-serve run plus the same invite / copy-link actions.
+ * {@link ScenarioShareEmptyPanel} — the empty state for Insights and Findings
+ * on a study with no sessions: a self-serve run plus the same invite /
+ * copy-link actions, under a heading titled for the tab (`surface`).
  *
  * Copy says STUDY, never "scenario". The product renamed the thing this panel
  * describes; the component, its props and the Convex tables under it did not
@@ -228,7 +229,23 @@ function ShareActions({
 }
 
 /**
- * Insights empty state — the two ways to get a first session, in the order
+ * What the panel's heading and lede say on each tab it stands in for. The
+ * actions below them are the same everywhere — only the promise of what the
+ * page will show differs, and naming the wrong tab reads as a routing bug.
+ */
+const EMPTY_COPY = {
+  insights: {
+    title: "Insights start with the first session.",
+    body: "Once someone runs this study, this page maps where they reached their goal, where they stalled, and the themes that repeat across sessions.",
+  },
+  findings: {
+    title: "Findings start with the first session.",
+    body: "Once someone runs this study, this page summarizes how testers did on their goals, and where each kind of tester got stuck.",
+  },
+} as const;
+
+/**
+ * The Insights / Findings empty state — the two ways to get a first session, in the order
  * they cost the reader: run it yourself, or send it to a tester.
  *
  * The header's `Share` button is always there too; this panel repeats copy —
@@ -243,9 +260,13 @@ function ShareActions({
  */
 export function ScenarioShareEmptyPanel({
   scenario,
+  surface = "insights",
 }: {
   scenario: ScenarioSettings;
+  /** Which tab this stands in for — Findings reuses it for an unrun study. */
+  surface?: keyof typeof EMPTY_COPY;
 }) {
+  const copy = EMPTY_COPY[surface];
   const { isAuthenticated } = useConvexAuth();
   const share = useScenarioShareInvite(scenario);
   // Same gate as the header Open preview: a broken environment won't open
@@ -261,12 +282,10 @@ export function ScenarioShareEmptyPanel({
           scroll container has its overflow clipped off the TOP, unreachable. */}
       <div className="mx-auto my-auto w-full max-w-lg animate-in fade-in duration-500">
         <h2 className="text-lg font-semibold tracking-tight text-foreground">
-          Insights start with the first session.
+          {copy.title}
         </h2>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          Once someone runs this study, this page maps where they reached
-          their goal, where they stalled, and the themes that repeat across
-          sessions.
+          {copy.body}
         </p>
 
         {canOpenPreview ? (
