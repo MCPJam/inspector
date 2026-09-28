@@ -4263,7 +4263,7 @@ export function TestTemplateEditor({
                         // so the header reads as one set; red only on hover.
                         variant="outline"
                         size="sm"
-                        className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        className="h-8 w-8 shrink-0 p-0 hover:bg-destructive/10 hover:text-destructive"
                         aria-label="Delete test case"
                         data-testid="case-header-delete"
                         onClick={() => setDeleteCaseOpen(true)}
