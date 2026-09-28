@@ -302,6 +302,13 @@ jobs:
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
     container: mcr.microsoft.com/playwright:v1.62.1-noble
 
+    env:
+      VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
+      CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
+      CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
+      VITE_DISABLE_SENTRY: "true"
+      DO_NOT_TRACK: "1"
+
     steps:
       # Git in the Playwright container can fail to discover its CA bundle.
       # Rebuild the system trust store before checkout and select it explicitly.
