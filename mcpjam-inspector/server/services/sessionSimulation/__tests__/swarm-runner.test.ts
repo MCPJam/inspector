@@ -1850,18 +1850,120 @@ describe("swarm fan-out runner — starter funding (swarm-admission-v1)", () => 
         .filter((t) => t.targetId === "t-starter")
         .map((t) => t.status),
     ).toEqual(["succeeded", "succeeded"]);
-    // The second credit session never ran; the run-level finalize records
-    // the cap on it.
+    // The second credit session never ran; it records the cap on its own
+    // attempt.
     expect(
       runSyntheticHostSessionMock.mock.calls.filter(
         (c) => (c[0] as any).persist.targetId === "t-credit",
       ),
     ).toHaveLength(1);
+    expect(
+      terminals()
+        .filter((t) => t.targetId === "t-credit")
+        .map((t) => [t.sessionIdx, t.status, t.errorCode]),
+    ).toEqual([
+      [0, "rate_limited", "rate_limited"],
+      [1, "rate_limited", "spend_cap_exceeded"],
+    ]);
+    // The run's status: no whole-run spend-cap finalize, so the backend rolls
+    // the run up from these four sessions (two succeeded, two capped) as it
+    // does for any run, instead of reporting the whole run spend-capped.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the whole-run spend-cap finalize when the run has no starter session", async () => {
+    const plan = planFor(CREDIT_TARGET, ["credits", "credits"]);
+    claimsAnswer(plan);
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage: "Org daily spend cap exceeded",
+    });
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [CREDIT_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: plan,
+      }),
+    );
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
     expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
     expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
       terminalStatus: "rate_limited",
       errorCode: "spend_cap_exceeded",
     });
+  });
+
+  it("reads a session's funding off its claim after a credit-only stop, so a planned starter session on credits never runs", async () => {
+    // The create response planned the starter target's second session as
+    // starter; its claim says credits.
+    const planned = [
+      ...planFor(CREDIT_TARGET, ["credits"]),
+      ...planFor(STARTER_TARGET, ["starter", "starter"]),
+    ];
+    const claimed = [
+      ...planFor(CREDIT_TARGET, ["credits"]),
+      ...planFor(STARTER_TARGET, ["starter", "credits"]),
+    ];
+    let releaseStarter!: () => void;
+    const creditCapReported = new Promise<void>((resolve) => {
+      releaseStarter = resolve;
+    });
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => {
+      if (args.targetId === "t-credit" && args.status === "rate_limited")
+        setTimeout(releaseStarter, 0);
+      return {
+        ok: true,
+        applied: true,
+        ...(args.status === "running"
+          ? {
+              funding: claimed.find(
+                (s) =>
+                  s.targetId === args.targetId &&
+                  s.sessionIdx === args.sessionIdx,
+              )?.funding,
+            }
+          : {}),
+      };
+    });
+    const ranOnAbortedSignal: boolean[] = [];
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      ranOnAbortedSignal.push(adapter.abortSignal?.aborted === true);
+      if (adapter.persist.targetId === "t-credit")
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      // The starter target's first session finishes after the cap tripped,
+      // so its second session is claimed under the credit-only stop.
+      await creditCapReported;
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [CREDIT_TARGET, STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: planned,
+      }),
+    );
+
+    const starterRuns = runSyntheticHostSessionMock.mock.calls
+      .map((c) => c[0] as any)
+      .filter((a) => a.persist.targetId === "t-starter");
+    expect(starterRuns.map((a) => a.runtime.swarmStarterStep)).toEqual([
+      { targetId: "t-starter", sessionIdx: 0 },
+    ]);
+    expect(ranOnAbortedSignal).not.toContain(true);
+    expect(
+      terminals()
+        .filter((t) => t.targetId === "t-starter")
+        .map((t) => [t.sessionIdx, t.status, t.errorCode]),
+    ).toEqual([
+      [0, "succeeded", undefined],
+      [1, "rate_limited", "spend_cap_exceeded"],
+    ]);
   });
 
   it("keeps the whole-run stop when a starter session is the one stopped by an account limit", async () => {
@@ -1907,10 +2009,10 @@ describe("swarm fan-out runner — starter funding (swarm-admission-v1)", () => 
       chatSessionId: "setup",
     };
 
-    it("sets up a target with any starter session on MCPJam's money, and a credits-only target as before", async () => {
+    it("sets up a target on MCPJam's money when its claim confirms starter, and a credits-only target as before", async () => {
       setupTurnMock.mockResolvedValue(record);
       const plan = [
-        ...planFor(STARTER_TARGET, ["credits", "starter"]),
+        ...planFor(STARTER_TARGET, ["starter", "credits"]),
         ...planFor(CREDIT_TARGET, ["credits", "credits"]),
       ];
       claimsAnswer(plan);
@@ -1936,6 +2038,118 @@ describe("swarm fan-out runner — starter funding (swarm-admission-v1)", () => 
           ["t-credit", false],
         ]),
       );
+      // The setup claim is the first session's claim: claimed once, before
+      // the setup, and never again.
+      const claims = reportAttemptMock.mock.calls
+        .map((c) => c[2] as any)
+        .filter((a) => a.targetId === "t-starter" && a.status === "running");
+      expect(claims.map((a) => a.sessionIdx)).toEqual([0, 1]);
+      const claimAt = reportAttemptMock.mock.invocationCallOrder.find(
+        (_, i) => {
+          const a = reportAttemptMock.mock.calls[i]![2] as any;
+          return a.targetId === "t-starter" && a.status === "running";
+        },
+      );
+      const setupAt = setupTurnMock.mock.invocationCallOrder.find(
+        (_, i) =>
+          (setupTurnMock.mock.calls[i]![0] as any).target.targetId ===
+          "t-starter",
+      );
+      expect(claimAt).toBeLessThan(setupAt!);
     });
+
+    it("sets up on the credit rail when the create response says starter but the claim says credits", async () => {
+      setupTurnMock.mockResolvedValue(record);
+      claimsAnswer(planFor(STARTER_TARGET, ["credits", "credits"]));
+
+      await startJourneyRun(
+        baseOpts({
+          hosts: [STARTER_TARGET],
+          setupWrites: true,
+          sessionsPerTarget: 2,
+          sessionFunding: planFor(STARTER_TARGET, ["starter", "starter"]),
+        }),
+      );
+
+      expect(setupTurnMock).toHaveBeenCalledTimes(1);
+      expect((setupTurnMock.mock.calls[0]![0] as any).starterFunded).toBe(
+        false,
+      );
+      // And the sessions follow their claims too.
+      expect(starterSteps()).toEqual([undefined, undefined]);
+    });
+
+    it("does not retry a setup whose starter step the backend rejected", async () => {
+      const { SwarmSetupError } = await import("../swarm-setup-turn");
+      setupTurnMock.mockRejectedValue(
+        new SwarmSetupError({
+          ...record,
+          status: "failed",
+          readiness: "unavailable",
+          reason: "starter_step_rejected",
+        } as any),
+      );
+      claimsAnswer(planFor(STARTER_TARGET, ["starter", "starter"]));
+
+      await startJourneyRun(
+        baseOpts({
+          hosts: [STARTER_TARGET],
+          setupWrites: true,
+          sessionsPerTarget: 2,
+          sessionFunding: planFor(STARTER_TARGET, ["starter", "starter"]),
+        }),
+      );
+
+      expect(setupTurnMock).toHaveBeenCalledTimes(1);
+      expect(reportTargetGroundingMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          setup: expect.objectContaining({ reason: "starter_step_rejected" }),
+        }),
+        expect.anything(),
+      );
+      // No setup, no sessions: the target's attempts end as the setup
+      // policy says, never in a spend-cap or credits stop.
+      expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ends a starter session whose step the backend rejected as starter_step_rejected, graded, and keeps the run going", async () => {
+    const plan = planFor(STARTER_TARGET, ["starter", "starter"]);
+    claimsAnswer(plan);
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.runtime.swarmStarterStep?.sessionIdx === 0
+        ? {
+            outcome: "failed",
+            errorMessage:
+              "This starter conversation step could not be authorized within its budget. (swarm_starter_rejected, HTTP 403)",
+            errorReason: "starter_step_rejected",
+          }
+        : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: plan,
+      }),
+    );
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+    expect(terminals()).toEqual([
+      expect.objectContaining({
+        sessionIdx: 0,
+        status: "failed",
+        errorCode: "starter_step_rejected",
+        errorMessage: expect.stringContaining("still graded"),
+        chatSessionId: expect.stringMatching(/_0$/),
+      }),
+      expect.objectContaining({ sessionIdx: 1, status: "succeeded" }),
+    ]);
+    // Its wording ("budget") never reaches the spend-cap stop.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 });

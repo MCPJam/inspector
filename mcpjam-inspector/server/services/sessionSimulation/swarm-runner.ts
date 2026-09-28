@@ -674,6 +674,11 @@ async function runJourneyFanOut(
   // across the credit-funded sessions only when a credit session tripped it
   // in a run that also has starter sessions.
   let spendCapTripped = false;
+  // Set only when the cap stopped the WHOLE run. A credit-only stop leaves
+  // the run's status to its sessions: each capped credit session records the
+  // cap on its own attempt, so the backend rolls the run up from what really
+  // happened (starter sessions that finished count as finished).
+  let runSpendCapStop = false;
   let spendCapMessage: string | undefined;
   let stoppedByBackend = false;
 
@@ -978,16 +983,129 @@ async function runJourneyFanOut(
         signal: sessionSignal,
       });
 
-      // A target with a starter session sets up on MCPJam's money, so a credit
-      // session's spend cap neither skips nor cancels that setup.
-      const targetHasStarter = Array.from(
+      /** Who pays for one session: its claim's answer, else the create response's. */
+      const fundingOf = (
+        claimed: { funding?: SwarmFunding } | undefined,
+        idx: number,
+      ): SwarmFunding =>
+        claimed?.funding ?? plannedFunding(target, idx) ?? "credits";
+
+      // CLAIM before executing: the `running` transition requires the
+      // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
+      // and requires the chatSessionId to match this claim, so it MUST come
+      // after. A claim failure answers `undefined` and the session is skipped
+      // (we can't run without it).
+      const claimSession = async (
+        idx: number,
+        withBearer: string,
+      ): Promise<
+        { ok: true; applied: boolean; funding?: SwarmFunding } | undefined
+      > => {
+        try {
+          return await reportAttempt(convexHttpUrl, withBearer, {
+            projectId,
+            runId,
+            hostId,
+            ...(targetId ? { targetId } : {}),
+            sessionIdx: idx,
+            status: "running",
+            chatSessionId: swarmAttemptChatSessionId(
+              runId,
+              targetSessionIdentity(target),
+              idx,
+            ),
+          });
+        } catch (err) {
+          logger.error(
+            "[swarm.runner] attempt claim failed; skipping session",
+            {
+              runId,
+              hostId,
+              targetId,
+              sessionIdx: idx,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+          return undefined;
+        }
+      };
+
+      // A credit session claimed after a credit-only spend-cap stop: recorded
+      // capped on its own attempt, never run. Per attempt rather than by the
+      // whole-run finalize, which would stamp the cap on the run as a whole
+      // while its starter sessions keep going.
+      const recordCreditCapped = async (
+        idx: number,
+        chatSessionId: string,
+        withBearer: string,
+      ): Promise<void> => {
+        const errorMessage = spendCapMessage?.slice(0, MAX_ATTEMPT_ERROR_CHARS);
+        bindSessionEmit(hub, {
+          runId,
+          hostId,
+          ...(targetId ? { targetId } : {}),
+          chatSessionId,
+          sessionIndex: idx,
+        })({
+          type: "attempt_status",
+          status: "rate_limited",
+          ...(errorMessage ? { errorMessage } : {}),
+        });
+        await reportAttempt(convexHttpUrl, withBearer, {
+          projectId,
+          runId,
+          hostId,
+          ...(targetId ? { targetId } : {}),
+          sessionIdx: idx,
+          status: "rate_limited",
+          chatSessionId,
+          errorCode: "spend_cap_exceeded",
+          ...(errorMessage ? { errorMessage } : {}),
+        }).catch((err) => {
+          logger.error(
+            "[swarm.runner] failed to record a capped credit session",
+            {
+              runId,
+              hostId,
+              targetId,
+              sessionIdx: idx,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        });
+        logEvent("attempt.credit_capped", {
+          runId,
+          hostId,
+          targetId,
+          sessionIdx: idx,
+        });
+      };
+
+      const plannedStarter = Array.from(
         { length: sessionsPerTarget },
         (_, idx) => plannedFunding(target, idx),
       ).includes("starter");
+      const groundingAllowed = !harnessTargetBlockedReason && !stopScheduling();
+      // The setup claim. A setup that writes runs on MCPJam's money only when
+      // the create response planned a starter session for this target AND the
+      // backend confirms it: the target's first session is claimed before its
+      // setup, and only a claim that answers `starter` funds the setup. Any
+      // other answer (credits, or no claim at all) sets up on the credit rail.
+      // The first session keeps this claim; it is not claimed twice.
+      let setupClaim: Awaited<ReturnType<typeof claimSession>> = undefined;
+      if (groundingAllowed && opts.setupWrites && plannedStarter && targetId) {
+        bearer = await getBearer();
+        setupClaim = await claimSession(0, bearer);
+        if (stoppedByBackend) return;
+      }
+      const setupStarterFunded = opts.setupWrites
+        ? !!setupClaim && fundingOf(setupClaim, 0) === "starter"
+        : plannedStarter;
+      // A setup MCPJam funds is neither skipped nor cancelled by a credit
+      // session's spend cap.
       if (
-        !harnessTargetBlockedReason &&
-        !stopScheduling() &&
-        (targetHasStarter || !creditStop.signal.aborted)
+        groundingAllowed &&
+        (setupStarterFunded || !creditStop.signal.aborted)
       ) {
         await prepareTargetGrounding({
           runId,
@@ -1000,21 +1118,14 @@ async function runJourneyFanOut(
           managerFactory,
           convexHttpUrl,
           bearer,
-          signal: targetHasStarter ? sessionSignal : creditSessionSignal,
-          starterFunded: targetHasStarter,
+          signal: setupStarterFunded ? sessionSignal : creditSessionSignal,
+          starterFunded: setupStarterFunded,
         });
       }
 
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
-        // A credit-only spend-cap stop halts this session unless MCPJam funds
-        // it. Left `pending`: the run-level finalize records the cap on it.
-        if (
-          creditStop.signal.aborted &&
-          plannedFunding(target, sessionIdx) !== "starter"
-        )
-          continue;
 
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
@@ -1063,34 +1174,12 @@ async function runJourneyFanOut(
           logScope: "swarm.runner",
         });
 
-        // CLAIM before executing: the `running` transition requires the
-        // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
-        // and requires the chatSessionId to match this claim, so it MUST come
-        // after. A claim failure skips the session (we can't run without it).
-        let claim: { ok: true; applied: boolean; funding?: SwarmFunding };
-        try {
-          claim = await reportAttempt(convexHttpUrl, bearer, {
-            projectId,
-            runId,
-            hostId,
-            ...(targetId ? { targetId } : {}),
-            sessionIdx,
-            status: "running",
-            chatSessionId,
-          });
-        } catch (err) {
-          logger.error(
-            "[swarm.runner] attempt claim failed; skipping session",
-            {
-              runId,
-              hostId,
-              targetId,
-              sessionIdx,
-              error: err instanceof Error ? err.message : String(err),
-            },
-          );
-          continue;
-        }
+        // CLAIM before executing (see `claimSession`). The first session may
+        // already hold the claim its target's setup was funded by.
+        const preClaimed = sessionIdx === 0 ? setupClaim : undefined;
+        setupClaim = undefined;
+        const claim = preClaimed ?? (await claimSession(sessionIdx, bearer));
+        if (!claim) continue;
 
         // A heartbeat may have ended the run while the claim was in flight.
         if (stoppedByBackend) return;
@@ -1115,13 +1204,20 @@ async function runJourneyFanOut(
         // Who pays for THIS session: the claim's answer, which is the
         // backend's record, else the create response's. A starter session's
         // steps claim the platform rail; everything else bills as before.
-        const attemptFunding: SwarmFunding =
-          claim.funding ?? plannedFunding(target, sessionIdx) ?? "credits";
+        const attemptFunding: SwarmFunding = fundingOf(claim, sessionIdx);
         const starterFunded = attemptFunding === "starter" && !!targetId;
         // A starter session is not stopped by a credit session's spend cap.
         const attemptSignal = starterFunded
           ? sessionSignal
           : creditSessionSignal;
+        // A credit-only spend-cap stop halts this session unless MCPJam funds
+        // it, read off the CLAIM: a session the create response planned as
+        // starter but the backend recorded on credits must not run on an
+        // already-aborted signal.
+        if (creditStop.signal.aborted && !starterFunded) {
+          await recordCreditCapped(sessionIdx, chatSessionId, bearer);
+          continue;
+        }
 
         const attemptStartedAt = Date.now();
         logEvent("attempt.start", {
@@ -1275,6 +1371,13 @@ async function runJourneyFanOut(
                   targetId,
                   sessionIdx,
                 });
+                // A credit-only stop has no whole-run finalize behind it, so
+                // this credit session records its own cap and the target's
+                // remaining (possibly starter) sessions carry on.
+                if (!stopScheduling() && creditStop.signal.aborted) {
+                  await recordCreditCapped(sessionIdx, chatSessionId, bearer);
+                  continue;
+                }
                 return;
               }
               // Otherwise the target asked for a REPRODUCIBLE shell and we
@@ -1529,8 +1632,12 @@ async function runJourneyFanOut(
           // run-stop signal was NOT yet aborted), keeps its real outcome — we only
           // reclassify a `failed` outcome whose turns were actually cancelled by the
           // run-stop (`sessionSignal.aborted`).
+          // A starter session is cancelled by the cap only on a WHOLE-run
+          // stop; a credit-only stop never reaches its signal.
           const abortedBySpendCap =
-            spendCapTripped && outcome === "failed" && attemptSignal.aborted;
+            (starterFunded ? runSpendCapStop : spendCapTripped) &&
+            outcome === "failed" &&
+            attemptSignal.aborted;
           // The run clock is the same kind of abort artifact as the spend cap,
           // and needs the same reclassification here rather than only at the
           // run-level finalize.
@@ -1711,7 +1818,10 @@ async function runJourneyFanOut(
               // in-flight turns. The finalize sweep runs once the pool drains.
               const creditOnly = !starterFunded && runHasStarterSessions;
               if (creditOnly) creditStop.abort();
-              else runStop.abort();
+              else {
+                runSpendCapStop = true;
+                runStop.abort();
+              }
               logEvent("run.spend_cap_short_circuit", {
                 stopReason: isCreditExhaustion({ message: errorMessage, code: errorReason }) ? "credits_exhausted" : "organization_usage_limit",
                 scope: creditOnly ? "credit_sessions" : "run",
@@ -1720,6 +1830,9 @@ async function runJourneyFanOut(
                 targetId,
                 sessionIdx,
               });
+              // A credit-only stop keeps walking this target: its remaining
+              // credit sessions record the cap, its starter sessions run.
+              if (creditOnly) continue;
               return;
             }
             // PROVIDER rate-limit: stop THIS target's remaining sessions and mark
@@ -1909,7 +2022,11 @@ async function runJourneyFanOut(
     // true but useless, since the actual event is that a spend-cap or shutdown
     // finalize never ran and the attempts are still `pending`. Naming it makes
     // the operational signal match what happened.
-    const finalizeTerminal = spendCapTripped
+    // Only a WHOLE-run cap stop finalizes the run as spend-capped. After a
+    // credit-only stop every capped credit session already carries the cap
+    // on its own attempt, so the run's status is derived from its sessions,
+    // exactly as for a run the cap never touched.
+    const finalizeTerminal = runSpendCapStop
       ? {
           terminalStatus: "rate_limited" as const,
           errorCode: "spend_cap_exceeded",
