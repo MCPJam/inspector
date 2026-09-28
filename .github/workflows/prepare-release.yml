@@ -12,7 +12,7 @@ name: Prepare release
 #
 # Soundcheck's "Start release" dispatches this. Dispatching again while the PR
 # is open regenerates it from the latest `main`, which also versions any
-# changesets merged since, and resets its deploy checkboxes to these inputs.
+# changesets merged since, and resets its checkboxes to these inputs.
 
 on:
   workflow_dispatch:
@@ -24,6 +24,11 @@ on:
         type: boolean
       deploy_webapp:
         description: "Tick 'Deploy the webapp to production' in the version PR"
+        required: false
+        default: false
+        type: boolean
+      skip_verify:
+        description: "Tick skip_verify in the version PR: release on merge without waiting for green checks"
         required: false
         default: false
         type: boolean
@@ -112,6 +117,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
           DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
           DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
+          SKIP_VERIFY: ${{ inputs.skip_verify }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SOURCE_SHA: ${{ github.sha }}
         run: |

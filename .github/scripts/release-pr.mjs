@@ -7,9 +7,9 @@ import { pathToFileURL } from "node:url";
  *
  * `main` takes changes only through a reviewed pull request, so a release no
  * longer writes its own version commit. It arrives as this PR instead, and the
- * release's deploy choices ride in its body as checkboxes. Whoever merges can
- * still change them by ticking a box, and the trigger reads whatever the body
- * says at that point.
+ * release's choices ride in its body as checkboxes. Whoever merges can still
+ * change them by ticking a box, and the trigger reads whatever the body says
+ * at that point.
  */
 
 export const VERSION_PR_BRANCH = "release/version-packages";
@@ -18,6 +18,10 @@ export const VERSION_PR_TITLE_PREFIX = "chore(release): version packages";
 const OPTIONS = [
   ["deploy_backend_prod", "Deploy the backend to production"],
   ["deploy_webapp", "Deploy the webapp to production"],
+  [
+    "skip_verify",
+    "Release as soon as this merges, without waiting for green checks (skip_verify)",
+  ],
 ];
 
 /** `releases` is `changeset status` output: `{ name, type, newVersion }`. */
@@ -69,7 +73,7 @@ export function versionPrBody({ releases, options, runUrl, sourceSha }) {
 
 ${versions}
 
-Merging this **is** the release. Once \`main\` is green (Tests, Build and Test and Deploy Staging on the same commit), Release runs by itself: it publishes these versions to npm, deploys what is ticked below, tags the commit and publishes the GitHub release. Nothing is pushed back to \`main\`.
+Merging this **is** the release. Once \`main\` is green (Tests, Build and Test and Deploy Staging on the same commit), or right away if skip_verify is ticked below, Release runs by itself: it publishes these versions to npm, deploys what is ticked below, tags the commit and publishes the GitHub release. Nothing is pushed back to \`main\`.
 
 ${renderReleaseOptions(offered)}
 
@@ -93,6 +97,7 @@ if (
         options: {
           deploy_backend_prod: env.DEPLOY_BACKEND_PROD === "true",
           deploy_webapp: env.DEPLOY_WEBAPP === "true",
+          skip_verify: env.SKIP_VERIFY === "true",
         },
         runUrl: env.RUN_URL,
         sourceSha: env.SOURCE_SHA,

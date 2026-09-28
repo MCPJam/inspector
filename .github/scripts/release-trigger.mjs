@@ -5,6 +5,9 @@
  * have all passed on it. Every later commit on `main` carries the versions the
  * version PR committed, so when one commit cannot be released (its runs were
  * cancelled by the next push, or a check failed) the next green one is.
+ *
+ * Unless the version PR ticked skip_verify: then the checks are not waited
+ * for, and the version commit itself is released as soon as it lands.
  */
 
 /** Workflow files that must each have a successful run on the commit. */
@@ -31,6 +34,7 @@ export function releaseRunName(label) {
  * @param {{name: string, newVersion: string}[]} state.unpublished
  * @param {{status: string, conclusion: string | null, displayTitle: string}[]} state.releaseRuns
  *   recent release.yml runs, newest first
+ * @param {boolean} [state.skipVerify] the merged version PR ticked skip_verify
  */
 export function decideRelease({
   headSha,
@@ -38,6 +42,7 @@ export function decideRelease({
   greenChecks,
   unpublished,
   releaseRuns,
+  skipVerify = false,
 }) {
   const skip = (reason) => ({ dispatch: false, reason });
 
@@ -46,12 +51,12 @@ export function decideRelease({
   if (headSha !== mainSha)
     return skip(`main has moved on to ${mainSha}; its own checks decide.`);
 
-  const waiting = REQUIRED_CHECKS.filter((w) => !greenChecks.includes(w));
-  if (waiting.length > 0)
-    return skip(`Waiting on ${waiting.join(", ")} for ${headSha}.`);
-
   if (unpublished.length === 0)
     return skip("Every public package version on main is already on npm.");
+
+  const waiting = REQUIRED_CHECKS.filter((w) => !greenChecks.includes(w));
+  if (!skipVerify && waiting.length > 0)
+    return skip(`Waiting on ${waiting.join(", ")} for ${headSha}.`);
 
   if (releaseRuns.some((r) => r.status !== "completed"))
     return skip("A Release run is already queued or running.");
@@ -71,6 +76,6 @@ export function decideRelease({
   return {
     dispatch: true,
     label,
-    reason: `Releasing ${label} at ${headSha}.`,
+    reason: `Releasing ${label} at ${headSha}${skipVerify ? " without waiting for checks (skip_verify)" : ""}.`,
   };
 }
