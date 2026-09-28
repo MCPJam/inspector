@@ -26,7 +26,7 @@ export function isCreditExhaustion(value: unknown): boolean {
         // product calls free, so selling credits against one would be wrong
         // twice over. The `starter`/`budget_truncated` codes are the same
         // thing for a free starter swarm conversation.
-        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked|platform_capacity|agent_turn_limit|agent_billing_rejected|starter_session_budget_reached|swarm_starter_rejected|budget_truncated)\b/i.test(
+        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked|platform_capacity|agent_turn_limit|agent_billing_rejected|starter_session_budget_reached|swarm_starter_rejected|starter_step_rejected|budget_truncated)\b/i.test(
           item,
         )
       ) {

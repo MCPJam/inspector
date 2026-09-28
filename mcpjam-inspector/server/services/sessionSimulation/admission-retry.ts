@@ -1,5 +1,6 @@
 import {
   humanizeSwarmAttemptError,
+  isStarterStepRejected,
   isTransientSpendRefusal,
 } from "../../../shared/swarm-attempt-error.js";
 import {
@@ -60,6 +61,15 @@ export async function withAdmissionRetry<T>(
       return await op();
     } catch (error) {
       const refusal = spendRefusalOf(error);
+      // A rejected starter step is final, whatever else its body says: the
+      // backend has already decided this step, so asking again cannot help.
+      if (
+        isStarterStepRejected(
+          refusal?.code,
+          error instanceof Error ? error.message : undefined,
+        )
+      )
+        throw error;
       if (
         !refusal ||
         !isTransientSpendRefusal(refusal.code, refusal.refusalReason) ||

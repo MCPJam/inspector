@@ -14,6 +14,7 @@ import { withDeadline } from "../../utils/run-supervisor/deadline";
 import type { JourneyManagerFactory } from "./swarm-runner";
 import { abortable, probeReadOnlyTools } from "./target-discovery";
 import { runSwarmSetupTurn, SwarmSetupError } from "./swarm-setup-turn";
+import { STARTER_STEP_REJECTED_ERROR_CODE } from "../../../shared/swarm-attempt-error";
 export async function prepareTargetGrounding(args: {
   runId: string;
   projectId: string;
@@ -60,7 +61,13 @@ export async function prepareTargetGrounding(args: {
     } catch (error) {
       if (!(error instanceof SwarmSetupError)) throw error;
       setup = error.partial;
-      if (!args.signal.aborted && setup.writeCallsDispatched === 0) {
+      // A rejected starter step is the backend's answer for this setup, not
+      // a transport blip: running it again cannot be authorized either.
+      if (
+        !args.signal.aborted &&
+        setup.writeCallsDispatched === 0 &&
+        setup.reason !== STARTER_STEP_REJECTED_ERROR_CODE
+      ) {
         try {
           setup = await runSwarmSetupTurn({ ...setupArgs, retried: true });
         } catch (retryError) {

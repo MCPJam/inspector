@@ -6,7 +6,9 @@ import {
 } from "./admission-retry.js";
 import {
   BUDGET_TRUNCATED_ERROR_CODE,
+  STARTER_STEP_REJECTED_ERROR_CODE,
   isStarterBudgetReached,
+  isStarterStepRejected,
 } from "../../../shared/swarm-attempt-error.js";
 import {
   peekPageToolsForChatTurn,
@@ -1539,6 +1541,22 @@ export async function runSyntheticHostSession(
         outcome: "failed",
         errorMessage: message,
         errorReason: BUDGET_TRUNCATED_ERROR_CODE,
+      };
+    }
+    // A starter step the backend would not authorize (`swarm_starter_rejected`,
+    // its `duplicate` reason included) ends the step the same way: nothing to
+    // retry into success, no credit to buy, and its wording must not reach
+    // the spend-cap fold below either.
+    if (isStarterStepRejected(errorRefusal?.code, message)) {
+      emit?.({
+        type: "session_complete",
+        status: "failed",
+        errorMessage: message,
+      });
+      return {
+        outcome: "failed",
+        errorMessage: message,
+        errorReason: STARTER_STEP_REJECTED_ERROR_CODE,
       };
     }
     // Single source of truth for the spend-cap / rate-limit fold — shared with

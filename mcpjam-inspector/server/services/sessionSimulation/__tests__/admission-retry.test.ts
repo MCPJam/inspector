@@ -94,3 +94,31 @@ it.each([
   ).rejects.toBe(error);
   expect(op).toHaveBeenCalledTimes(1);
 });
+it.each([
+  // The persona call's envelope, with a reason that would otherwise wait.
+  () =>
+    new Error(
+      'swarm-agent https://example.test/turn failed (403): {"code":"swarm_starter_rejected","refusalReason":"duplicate","error":"This starter conversation step was already admitted."}',
+    ),
+  // A host step's structured refusal.
+  () =>
+    Object.assign(
+      new Error("Step rejected (swarm_starter_rejected, HTTP 403)"),
+      {
+        refusal: {
+          code: "swarm_starter_rejected",
+          refusalReason: "holds_committed",
+          httpStatus: 403,
+        },
+      },
+    ),
+])("never waits on or retries a rejected starter step (%#)", async (make) => {
+  const error = make();
+  const op = vi.fn().mockRejectedValue(error);
+  const onWait = vi.fn();
+  await expect(
+    withAdmissionRetry(op, { budget: new AdmissionWaitBudget(), onWait }),
+  ).rejects.toBe(error);
+  expect(op).toHaveBeenCalledTimes(1);
+  expect(onWait).not.toHaveBeenCalled();
+});

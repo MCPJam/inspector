@@ -124,6 +124,34 @@ export function isStarterBudgetReached(
   return !!message && /\bstarter_session_budget_reached\b/.test(message);
 }
 
+/**
+ * The backend's code for a starter step it would not authorize on the
+ * platform rail (403), including its `duplicate` reason: a step already
+ * admitted under this identity. Nothing the runner can retry into success,
+ * and nothing a top-up lifts.
+ */
+export const STARTER_STEP_REJECTED_CODE = "swarm_starter_rejected";
+
+/**
+ * The attempt `errorCode` a starter session ends with when one of its steps
+ * is refused as `swarm_starter_rejected`. Like {@link BUDGET_TRUNCATED_ERROR_CODE}
+ * it ends the step, not the run: the attempt is `failed`, its transcript is
+ * still graded, and it never opens a credits dialog.
+ */
+export const STARTER_STEP_REJECTED_ERROR_CODE = "starter_step_rejected";
+
+const STARTER_STEP_REJECTED_MESSAGE =
+  "MCPJam did not authorize a step of this free starter conversation, so it ended early. Its transcript is still graded and counted in findings.";
+
+/** A starter step refused as `swarm_starter_rejected`, by code or message. */
+export function isStarterStepRejected(
+  code?: string | null,
+  message?: string | null,
+): boolean {
+  if (code === STARTER_STEP_REJECTED_CODE) return true;
+  return !!message && /\bswarm_starter_rejected\b/.test(message);
+}
+
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
 
 export type SwarmAttemptErrorInfo = {
@@ -255,6 +283,9 @@ export function humanizeSwarmAttemptError(
   }
   if (errorCode === BUDGET_TRUNCATED_ERROR_CODE) {
     return { code: errorCode, message: BUDGET_TRUNCATED_MESSAGE };
+  }
+  if (errorCode === STARTER_STEP_REJECTED_ERROR_CODE) {
+    return { code: errorCode, message: STARTER_STEP_REJECTED_MESSAGE };
   }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]

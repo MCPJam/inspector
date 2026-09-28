@@ -11,6 +11,11 @@ import { withDeadline } from "../../utils/run-supervisor/deadline";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 import { drainAssistantTurn } from "./runner";
 import { SWARM_HOST_MAX_OUTPUT_TOKENS } from "./swarm-host-limits";
+import {
+  isStarterStepRejected,
+  STARTER_STEP_REJECTED_ERROR_CODE,
+} from "../../../shared/swarm-attempt-error";
+import { spendRefusalOf } from "./admission-retry";
 import { abortable, type DiscoveryTool } from "./target-discovery";
 import { computeSetupExcludedToolNames } from "./swarm-setup-policy";
 import {
@@ -247,7 +252,7 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
     setup.status = "completed";
     Object.assign(setup, judgeReadiness(setup, report));
     return setup;
-  } catch {
+  } catch (error) {
     Object.assign(
       setup,
       deriveCreatedEntities({
@@ -258,7 +263,16 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
     );
     setup.status = "failed";
     setup.readiness = "unavailable";
-    setup.reason = deadline.signal.aborted ? "timeout" : "transport_failed";
+    // A starter setup step the backend would not authorize ends the setup
+    // with its own reason, which the caller never retries.
+    setup.reason = deadline.signal.aborted
+      ? "timeout"
+      : isStarterStepRejected(
+          spendRefusalOf(error)?.code,
+          error instanceof Error ? error.message : undefined,
+        )
+      ? STARTER_STEP_REJECTED_ERROR_CODE
+      : "transport_failed";
     throw new SwarmSetupError(setup);
   } finally {
     setup.durationMs = Date.now() - setup.startedAt;

@@ -123,6 +123,7 @@ import {
   captureAndPersistWidgetSnapshotsForSession,
   runSyntheticHostSession,
 } from "../runner.js";
+import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -968,4 +969,127 @@ describe("captureAndPersistWidgetSnapshotsForSession — upload scope", () => {
       accessVersion: 3,
     });
   });
+});
+
+describe("runSyntheticHostSession — a starter session's own endings", () => {
+  const refusedTurn =
+    (refusal: { message: string; code: string; refusalReason?: string }) =>
+    async (opts: any) => {
+      callOrder.push("runAssistantTurn");
+      opts.onEngineError?.({
+        ...refusal,
+        rawText: "{}",
+        httpStatus: 403,
+        isRetryable: false,
+      });
+      // A refused step: no reply, and a trace whose model step failed.
+      return {
+        messages: opts.messages,
+        turnTrace: {
+          ...TURN_TRACE,
+          spans: [
+            {
+              id: "error",
+              category: "llm",
+              name: "Step refused",
+              status: "error",
+              startMs: 0,
+              endMs: 1,
+            },
+          ],
+        },
+      };
+    };
+
+  const runStarterSession = async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+    const emit = vi.fn();
+    const args = baseAdapter({
+      runtime: { swarmStarterStep: { targetId: "t-1", sessionIdx: 0 } },
+      emit,
+    });
+    const result = await runSyntheticHostSession(args as never);
+    return { result, emit, args };
+  };
+
+  it("ends the step as budget_truncated when the stream says starter_session_budget_reached", async () => {
+    runAssistantTurnMock.mockImplementation(
+      refusedTurn({
+        message: "This free starter conversation reached its included limit.",
+        code: "starter_session_budget_reached",
+      }),
+    );
+
+    const { result, emit, args } = await runStarterSession();
+
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorReason: "budget_truncated",
+    });
+    // The step claimed the platform rail, and ran once: never retried.
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    expect(
+      runAssistantTurnMock.mock.calls[0]![0].extraBodyFields,
+    ).toMatchObject({ billingFeature: "swarm_starter", targetId: "t-1" });
+    expect(args.nextPersonaTurn).toHaveBeenCalledTimes(1);
+    // Grading still runs: the failed turn's transcript is persisted, which is
+    // what the rubric claim reads, and a failed outcome is graded.
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatSessionId: "synth_run-1_p1_0",
+        sessionMessages: [{ role: "user", content: "draw me a box" }],
+      }),
+    );
+    // No credit-dialog trigger: not rate-limited, no refusal handed on, and
+    // not credit exhaustion by the shared rule the dialog reads.
+    expect(emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "rate_limited" }),
+    );
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "session_complete", status: "failed" }),
+    );
+    expect(result.errorRefusal).toBeUndefined();
+    expect(
+      isCreditExhaustion({
+        message: result.errorMessage,
+        code: result.errorReason,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([undefined, "duplicate"])(
+    "ends the step as starter_step_rejected on a 403 swarm_starter_rejected (reason %s), without retrying",
+    async (refusalReason) => {
+      runAssistantTurnMock.mockImplementation(
+        refusedTurn({
+          // Worded to trip the spend-cap fold if it were ever reached.
+          message:
+            "This starter conversation step could not be authorized within its budget.",
+          code: "swarm_starter_rejected",
+          ...(refusalReason ? { refusalReason } : {}),
+        }),
+      );
+
+      const { result, emit, args } = await runStarterSession();
+
+      expect(result).toMatchObject({
+        outcome: "failed",
+        errorReason: "starter_step_rejected",
+      });
+      expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+      expect(args.nextPersonaTurn).toHaveBeenCalledTimes(1);
+      expect(persistChatSessionToConvexMock).toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: "rate_limited" }),
+      );
+      expect(
+        isCreditExhaustion({
+          message: result.errorMessage,
+          code: result.errorReason,
+        }),
+      ).toBe(false);
+    },
+  );
 });

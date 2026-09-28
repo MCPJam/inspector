@@ -22,6 +22,12 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
+const runSwarmChecksMock = vi.fn();
+const finalizePendingAttemptsMock = vi.fn();
+
+vi.mock("../../checks/run-swarm-checks.js", () => ({
+  runSwarmChecks: (...args: unknown[]) => runSwarmChecksMock(...args),
+}));
 
 const callOrder: string[] = [];
 
@@ -111,6 +117,8 @@ vi.mock("../../swarm-agent.js", async () => {
       swarmPersonaNextTurnMock(...args),
     heartbeatJourneyRun: (...args: unknown[]) =>
       heartbeatJourneyRunMock(...args),
+    finalizePendingAttempts: (...args: unknown[]) =>
+      finalizePendingAttemptsMock(...args),
   };
 });
 
@@ -194,6 +202,10 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
+  runSwarmChecksMock
+    .mockReset()
+    .mockResolvedValue({ status: "completed", results: [] });
+  finalizePendingAttemptsMock.mockReset().mockResolvedValue(undefined);
   let sandboxSeq = 0;
   provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
     sandboxSeq += 1;
@@ -375,4 +387,70 @@ it("waits for a transient persona refusal and completes the same session", async
   ).toBe(true);
   expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(3);
   expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+});
+
+it("ends a starter session at its included limit through the real core: budget_truncated, graded, and no credits stop", async () => {
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+  reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => ({
+    ok: true,
+    applied: true,
+    ...(args.status === "running" ? { funding: "starter" } : {}),
+  }));
+  runAssistantTurnMock.mockReset().mockImplementation(async (opts: any) => {
+    opts.onEngineError?.({
+      message: "This free starter conversation reached its included limit.",
+      code: "starter_session_budget_reached",
+      httpStatus: 403,
+      isRetryable: false,
+      rawText: "{}",
+    });
+    return {
+      messages: opts.messages,
+      turnTrace: {
+        ...TURN_TRACE,
+        spans: [
+          {
+            id: "error",
+            category: "llm",
+            name: "Step refused",
+            status: "error",
+            startMs: 0,
+            endMs: 1,
+          },
+        ],
+      },
+    };
+  });
+  const opts = baseOpts();
+  const target = { ...opts.hosts[0]!, targetId: "t-1" };
+
+  await startJourneyRun({
+    ...opts,
+    hosts: [target],
+    hasRubric: true,
+    sessionFunding: [
+      { hostId: "host-1", targetId: "t-1", sessionIdx: 0, funding: "starter" },
+    ],
+  } as any);
+
+  // The step claimed the platform rail once and was never retried.
+  expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+  expect(
+    (runAssistantTurnMock.mock.calls[0]![0] as any).extraBodyFields,
+  ).toMatchObject({ billingFeature: "swarm_starter", targetId: "t-1" });
+  const terminal = reportAttemptMock.mock.calls
+    .map((c) => c[2] as any)
+    .find((a) => a.status !== "running")!;
+  expect(terminal).toMatchObject({
+    status: "failed",
+    errorCode: "budget_truncated",
+    chatSessionId: expect.stringMatching(/_0$/),
+  });
+  // Graded like any failed session with a transcript.
+  expect(runSwarmChecksMock).toHaveBeenCalledTimes(1);
+  expect(runSwarmChecksMock.mock.calls[0]![0]).toMatchObject({
+    chatSessionId: terminal.chatSessionId,
+  });
+  // Nothing a top-up lifts: no spend-cap stop of the run.
+  expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
 });

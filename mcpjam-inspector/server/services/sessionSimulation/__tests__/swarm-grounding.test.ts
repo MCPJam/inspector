@@ -322,6 +322,50 @@ describe("setup turn integration", () => {
       }),
     );
   });
+  it("ends a setup whose starter step the backend rejected as starter_step_rejected", async () => {
+    const manager = {
+      listTools: vi.fn(async () => ({
+        tools: [tool("create_project", write)],
+      })),
+    };
+    vi.mocked(prepareChatV2).mockResolvedValue({
+      allTools: {
+        create_project: { inputSchema: {}, execute: vi.fn() },
+      },
+      enhancedSystemPrompt: "setup",
+      resolvedTemperature: 0,
+    } as never);
+    vi.mocked(drainAssistantTurn)
+      .mockReset()
+      .mockImplementation(async (args) => {
+        expect(args.swarmStarterStep).toEqual({ targetId: "t" });
+        throw new Error(
+          "This starter setup step could not be authorized. (swarm_starter_rejected, HTTP 403)",
+        );
+      });
+    const error = await runSwarmSetupTurn({
+      runId: "r",
+      projectId: "p",
+      target: { hostId: "h", targetId: "t" } as never,
+      persona: { name: "Tester" } as never,
+      modelDefinition: { id: "model" } as never,
+      authHeader: "Bearer test",
+      starterFunded: true,
+      managerFactory: async () => ({
+        manager: manager as never,
+        connectedServerIds: ["s"],
+        dispose: async () => {},
+      }),
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(SwarmSetupError);
+    expect(error.partial).toMatchObject({
+      status: "failed",
+      readiness: "unavailable",
+      reason: "starter_step_rejected",
+      writeCallsDispatched: 0,
+    });
+    expect(drainAssistantTurn).toHaveBeenCalledTimes(1);
+  });
   it("does not label a sibling parent reference as a newly created entity", () => {
     const s = setup();
     s.toolCalls = [

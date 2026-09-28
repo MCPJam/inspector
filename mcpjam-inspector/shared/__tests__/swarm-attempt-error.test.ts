@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   accountLimitCode,
   BUDGET_TRUNCATED_ERROR_CODE,
+  STARTER_STEP_REJECTED_ERROR_CODE,
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
   isStarterBudgetReached,
+  isStarterStepRejected,
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
@@ -547,6 +549,39 @@ describe("a starter session that reached its included limit", () => {
       expect(isAccountLimit(message, code)).toBe(false);
       expect(isCreditExhaustion({ message, code })).toBe(false);
     }
+  });
+
+  it("reads a rejected starter step as its own graded outcome", () => {
+    const REJECTED =
+      'swarm-agent https://backend.test/journey-execution/persona-next-turn failed (403): {"ok":false,"code":"swarm_starter_rejected","refusalReason":"duplicate","error":"This starter conversation step was already admitted."}';
+    expect(isStarterStepRejected("swarm_starter_rejected")).toBe(true);
+    expect(isStarterStepRejected(undefined, REJECTED)).toBe(true);
+    expect(
+      isStarterStepRejected(
+        undefined,
+        "Step refused. (swarm_starter_rejected, HTTP 403)",
+      ),
+    ).toBe(true);
+    expect(isStarterStepRejected("user_rate_limit", "Daily limit.")).toBe(
+      false,
+    );
+    const info = humanizeSwarmAttemptError(
+      REJECTED,
+      STARTER_STEP_REJECTED_ERROR_CODE,
+    );
+    expect(info.code).toBe("starter_step_rejected");
+    expect(info.message).toContain("still graded");
+    expect(info.canTopUp).toBeUndefined();
+    for (const code of [undefined, "starter_step_rejected"]) {
+      expect(isAccountLimit(REJECTED, code)).toBe(false);
+      expect(isCreditExhaustion({ message: REJECTED, code })).toBe(false);
+    }
+    expect(
+      isCreditExhaustion({
+        code: "starter_step_rejected",
+        message: "Daily credit limit reached.",
+      }),
+    ).toBe(false);
   });
 
   it("never sells credits against it, even beside credit wording", () => {

@@ -1,5 +1,6 @@
 import {
   BUDGET_TRUNCATED_ERROR_CODE,
+  STARTER_STEP_REJECTED_ERROR_CODE,
   isTransientSpendRefusal,
   humanizeSwarmAttemptError,
 } from "../../../shared/swarm-attempt-error.js";
@@ -460,9 +461,13 @@ function terminalForOutcome(
   if (outcome === "succeeded") {
     return { status: "succeeded" };
   }
-  // A starter session that reached its included limit reads as that, not as
-  // whatever the refusal envelope said.
-  if (errorReason === BUDGET_TRUNCATED_ERROR_CODE) {
+  // A starter session that reached its included limit, or whose step the
+  // backend would not authorize, reads as that, not as whatever the refusal
+  // envelope said.
+  if (
+    errorReason === BUDGET_TRUNCATED_ERROR_CODE ||
+    errorReason === STARTER_STEP_REJECTED_ERROR_CODE
+  ) {
     return {
       status: "failed",
       errorCode: errorReason,
@@ -1677,9 +1682,15 @@ async function runJourneyFanOut(
           // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
           // `rate_limited`, so `wallet_locked` and the billing codes land in
           // `failed` and would never reach the whole-run stop below.
+          // A starter session's own ending (its included limit, or a step the
+          // backend would not authorize) is never an account limit.
+          const starterEnded =
+            errorReason === BUDGET_TRUNCATED_ERROR_CODE ||
+            errorReason === STARTER_STEP_REJECTED_ERROR_CODE;
           const accountLimitFailure =
             outcome === "failed" &&
             !abortedBySpendCap &&
+            !starterEnded &&
             (isAccountLimit(errorMessage, errorReason) ||
               isCreditExhaustion({ message: errorMessage, code: errorReason }));
           if (outcome === "rate_limited" || accountLimitFailure) {
