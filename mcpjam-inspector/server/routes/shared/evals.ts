@@ -2446,6 +2446,25 @@ export async function prepareEvalRun(
   }
 
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+  // Resolve project authorization once before any environment or run is stamped.
+  const venueProjectId = projectId ?? (suiteId
+    ? (await convexClient.query("testSuites:getTestSuite" as any, { suiteId }))?.projectId
+    : undefined);
+  // Environment secret delivery needs the venue before resolution. Load only
+  // its client first, then use the same availability decision throughout.
+  const venueHostId = environmentId && venueProjectId
+    ? resolvedEnvironment?.hostId ?? (await convexClient.query(
+        "projectEnvironments:getEnvironment" as any,
+        { projectId: venueProjectId, environmentId },
+      ))?.hostId
+    : undefined;
+  const environmentHostConfig = environmentId && venueHostId
+    ? await loadSuiteHostConfig(convexClient, suiteId, venueHostId)
+    : undefined;
+  let localAvailable = environmentHostConfig && venueProjectId
+    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), convexAuthToken, venueProjectId)
+    : false;
+  const requestedVenue = localAvailable ? "local" as const : "hosted" as const;
 
   // Environment launch (P0.1): resolve the environment's closed execution
   // set BEFORE server resolution and tool capture, and use it INSTEAD of
@@ -2469,13 +2488,12 @@ export async function prepareEvalRun(
     // snapshot. Fall back to resolving here for callers that didn't preflight.
     environmentLaunch =
       resolvedEnvironment &&
-      resolvedEnvironment.environmentRef.environmentId === environmentId
+      resolvedEnvironment.environmentRef.environmentId === environmentId &&
+      resolvedEnvironment.runtimeVenue === requestedVenue
         ? resolvedEnvironment
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-            ...(request.runtimeVenue
-              ? { runtimeVenue: request.runtimeVenue }
-              : {}),
+            runtimeVenue: requestedVenue,
             projectId,
             environmentId,
           }).catch((error) => {
@@ -2559,6 +2577,14 @@ export async function prepareEvalRun(
     serverNames,
   });
 
+  const launchHostConfig = environmentHostConfig ?? await loadSuiteHostConfig(
+    convexClient, resolvedSuiteId, environmentLaunch?.hostId ?? namedHostId,
+  );
+  if (!environmentId && venueProjectId) {
+    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), convexAuthToken, venueProjectId);
+  }
+  const launchVenue = localAvailable ? "local" as const : "hosted" as const;
+
   const {
     runId,
     harnessRuntimeVenue,
@@ -2594,9 +2620,7 @@ export async function prepareEvalRun(
     // environment resolves to at an unchanged revision. Echoing all three lets
     // the mutation reject that drift instead of starting a run whose tool
     // snapshot describes a different configuration than it executes.
-    ...(request.runtimeVenue === "local" || environmentLaunch?.runtimeVenue === "local"
-      ? { runtimeVenue: "local" as const }
-      : {}),
+    runtimeVenue: launchVenue,
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,
     expectedEnvironmentHostConfigId: environmentLaunch?.hostConfigId,
     expectedEnvironmentServerIds: environmentLaunch
@@ -2666,11 +2690,11 @@ export async function prepareEvalRun(
   }
   const suiteHostConfig =
     runHostConfigSnapshot ??
-    (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
+    launchHostConfig;
 
   // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
-  let projectIdForOrgConfig: string | undefined = projectId;
+  let projectIdForOrgConfig: string | undefined = venueProjectId;
   // "We asked and the suite has none" and "we could not ask" are different
   // facts, and the harness gate below reads an absent project as the FORMER.
   // Kept apart so a transient Convex failure is never reported as "this suite
@@ -3397,7 +3421,7 @@ export async function prepareSingleCaseExecution(
     ? undefined
     : (hostConfigOverride as Record<string, unknown> | undefined);
   const effectiveHostConfig = legacyHostConfigOverride ?? liveHostConfig;
-  const harnessRuntimeVenue = await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, projectId ?? undefined) ? "local" : "hosted";
+  const harnessRuntimeVenue = await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, testCase.projectId ?? projectId ?? undefined) ? "local" : "hosted";
   // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
   // path); refused only where this deployment cannot seal the policy into the
   // proxy token. Host-executed delivery enforces in-process and mints no token.

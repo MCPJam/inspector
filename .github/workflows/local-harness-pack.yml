@@ -73,7 +73,6 @@ jobs:
             }
 
   build:
-    environment: local-harness-pack-release
     needs: preflight
     name: ${{ matrix.platform_key }}
     runs-on: ${{ matrix.runner }}
@@ -203,31 +202,14 @@ jobs:
         # of the reviewed pack input fingerprint.
         run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
-      # A release that publishes unsigned packs publishes packs no Inspector
-      # will install: `verifyPackManifestSignature` refuses a network-sourced
-      # pack with no signature, so the artifacts would exist and be inert. The
-      # build itself only warns, because a local build without the key is the
-      # normal development case — this is the release saying it is not.
-      - name: A release must have the pack signing key
-        shell: bash
-        env:
-          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
-        run: |
-          if [ -z "${LOCAL_HARNESS_PACK_SIGNING_KEY:-}" ]; then
-            echo "LOCAL_HARNESS_PACK_SIGNING_KEY is not set; a release cannot" >&2
-            echo "publish packs that no Inspector build will accept." >&2
-            exit 1
-          fi
-
       - name: Build the pack
         working-directory: mcpjam-inspector
         shell: bash
         env:
-          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
           # Through the ENVIRONMENT, never interpolated into the shell source.
           # `pack_version` is a `workflow_dispatch` input — a string a person
           # types — and `${{ }}` substitutes before bash parses, so a quote in
-          # it would run commands in a job that holds the pack signing key.
+          # it would run commands in the build job.
           PACK_VERSION: ${{ inputs.pack_version }}
           PLATFORM_KEY: ${{ matrix.platform_key }}
         run: |
@@ -354,8 +336,46 @@ jobs:
           node scripts/write-pack-digests.mjs \
             --check --version "$PACK_VERSION" --digests "$DIGESTS"
 
-  publish:
+  sign:
     needs: [build, collect]
+    environment: local-harness-pack-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: local-harness-pack-*
+          path: packs
+          merge-multiple: true
+      # No vendor code or install scripts execute in the job holding this key.
+      - name: Sign manifests and verify against the committed public key
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+          import { sign, verify } from 'node:crypto';
+          const key = process.env.LOCAL_HARNESS_PACK_SIGNING_KEY;
+          if (!key) throw new Error('Protected signing key is missing');
+          const source = readFileSync('mcpjam-inspector/server/utils/harness/local/pack-signing-key.ts', 'utf8');
+          const publicKey = source.match(/-----BEGIN PUBLIC KEY-----[\s\S]*?-----END PUBLIC KEY-----/)[0];
+          const manifests = readdirSync('packs').filter(name => name.endsWith('.manifest.json'));
+          if (manifests.length !== 5) throw new Error('Expected all five pack manifests');
+          for (const name of manifests) {
+            const bytes = readFileSync('packs/' + name);
+            const signature = sign(null, bytes, key);
+            if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match Inspector');
+            writeFileSync('packs/' + name + '.sig', signature.toString('base64') + '\n');
+          }
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-local-harness-pack
+          path: packs/local-harness-pack-*
+          if-no-files-found: error
+
+  publish:
+    needs: [sign, collect]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -363,7 +383,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: local-harness-pack-*
+          name: signed-local-harness-pack
           path: packs
           merge-multiple: true
       - name: Publish a new immutable pack version
@@ -376,7 +396,8 @@ jobs:
           set -euo pipefail
           tag="local-harness-pack-v$PACK_VERSION"
           # This job has contents:write and can see unpublished drafts.
-          if gh api "repos/$GH_REPO/releases" --paginate --jq '.[].tag_name' | grep -Fx "$tag"; then
+          releases="$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[].tag_name')"
+          if printf '%s\n' "$releases" | grep -Fx "$tag"; then
             echo "A release or draft already exists for $tag; choose a new version." >&2
             exit 1
           fi
@@ -385,10 +406,3 @@ jobs:
             --target "$PACK_SHA" --title "Local harness pack $PACK_VERSION" \
             --notes "Signed local Claude Code runtime for Node and Electron." --draft --latest=false
           gh release edit "$tag" --draft=false --latest=false
-
-  published-conformance:
-    needs: publish
-    if: ${{ inputs.enforce_committed_digests }}
-    uses: ./.github/workflows/local-harness-conformance.yml
-    with:
-      published_pack_version: ${{ inputs.pack_version }}

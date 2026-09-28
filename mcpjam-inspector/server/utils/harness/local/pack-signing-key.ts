@@ -45,12 +45,12 @@ export interface PackSigningKey {
  */
 export const PACK_SIGNING_KEYS: readonly PackSigningKey[] = [
   {
-    // Generated 2026-09-02. The private half went straight into the CI secret
-    // `PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY` in the protected release environment and exists nowhere else — there is no
-    // copy to lose, and recovery is rotation, not restore.
-    keyId: "pack-2026-09",
+    // Rotated before the first pack publication on 2026-09-28. The private
+    // key was uploaded directly to the protected release environment; no
+    // file or repository-level secret retains it. Recovery is rotation.
+    keyId: "pack-2026-09-28",
     publicKeyPem: `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAjaZXzr+4k5pJEuzIy5JUU858ksLJgjZv9b9jxmNhV6A=
+MCowBQYDK2VwAyEA/8fkvTTgyzjmmlLmN4veODTVpexBi4Ib6SGVq8xmyTs=
 -----END PUBLIC KEY-----
 `,
   },
