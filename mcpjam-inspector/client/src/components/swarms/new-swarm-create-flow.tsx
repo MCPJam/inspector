@@ -793,8 +793,8 @@ export function NewSwarmCreateFlow({
     (composeMode && targetState.stack.hostIds.length > 0);
 
   /**
-   * Swarm sessions run in MCPJam's cloud, so a target whose servers are absent
-   * or unreachable from there cannot produce a run — the resolver rejects it
+   * Cloud targets need cloud-reachable servers; local Claude Code targets
+   * can use this machine's servers. An empty selection still fails resolution
    * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
    * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
    * failure in front of the pickers that fix it. `null` = nothing measurable is
