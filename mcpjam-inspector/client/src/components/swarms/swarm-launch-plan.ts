@@ -66,6 +66,9 @@ export function quotePlannedRuns(
         environmentIds: [...environmentIds],
         sessionsPerTarget: persona.iterations,
         maxTurns,
+        // What the created goal stores: the create flow writes every new
+        // goal with `config.setupWrites: true` (`onCreateJourney` in
+        // new-swarm-create-flow.tsx), so the quote prices the same setup.
         setupWrites: true,
       });
     }
