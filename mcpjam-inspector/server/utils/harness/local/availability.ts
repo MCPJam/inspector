@@ -142,6 +142,24 @@ function unavailable(
   return { available: false, status, message };
 }
 
+/** Development-only evidence for exercising an unpublished runtime pack. */
+export function localHarnessManifestsForDevelopment(
+  manifests: Readonly<Record<string, LocalHarnessCompatibility>> = LOCAL_HARNESS_MANIFEST,
+): Readonly<Record<string, LocalHarnessCompatibility>> {
+  const version = process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION?.trim();
+  if (HOSTED_MODE || process.env.NODE_ENV !== "development" || !version) {
+    return manifests;
+  }
+  return Object.fromEntries(
+    Object.entries(manifests).map(([id, manifest]) => [
+      id,
+      manifest.lifecycleConformanceVersion || id !== "claude-code"
+        ? manifest
+        : { ...manifest, lifecycleConformanceVersion: version },
+    ]),
+  );
+}
+
 export async function resolveLocalHarnessAvailability(
   query: LocalHarnessAvailabilityQuery,
 ): Promise<LocalHarnessAvailability> {
@@ -216,7 +234,7 @@ export async function resolveLocalHarnessAvailability(
       ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
       installedAdapterVersion: query.installedAdapterVersion,
     },
-    query.manifests ?? LOCAL_HARNESS_MANIFEST,
+    query.manifests ?? localHarnessManifestsForDevelopment(),
   );
   if (!compatibility.ok) {
     return unavailable(compatibility.status, compatibility.message);

@@ -50,7 +50,11 @@ import {
 } from "./runtime-lifecycle.js";
 import { runtimeInstallRoot } from "./runtime-install.js";
 import { localPackTarget } from "./targets.js";
-import { createSupervisedLocalHarnessProvider } from "./supervised-provider.js";
+import {
+  createSupervisedLocalHarnessProvider,
+  removeSessionStateDir,
+  sessionStateDirFor,
+} from "./supervised-provider.js";
 import { LocalHarnessSupervisor } from "./supervisor.js";
 import { localHarnessStateRoot } from "./grants.js";
 import {
@@ -61,8 +65,8 @@ import {
   forgetLocalHarnessSession,
   forgetLocalHarnessSessionRecord,
   registerLocalHarnessSession,
+  getLocalHarnessSession,
 } from "./session-registry.js";
-import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { reserveLoopbackPort } from "./bridge-endpoint.js";
 import { createRequire } from "node:module";
@@ -109,6 +113,8 @@ export interface PreparedLocalHarnessTurn {
   };
   /** Idempotent. Revokes the gateway, revokes the lease, stops the tree. */
   teardown: () => Promise<void>;
+  /** End the lane: remove private state only after a proven process stop. */
+  discardState: () => Promise<void>;
 }
 
 export type LocalHarnessTurnPreparation =
@@ -278,6 +284,19 @@ async function prepareWithReservedRuntime(outer: {
   const args = outer.args;
   const runtimeStatus = outer.runtimeStatus;
   const verifyStartedAt = outer.verifyStartedAt;
+  // Validate before minting a lease, including ids recovered from a sidecar.
+  const sessionStateDir = sessionStateDirFor(
+    localHarnessStateRoot(),
+    args.sessionId,
+  );
+  if (getLocalHarnessSession(args.sessionId)) {
+    return {
+      ok: false,
+      status: "session-still-running",
+      message:
+        "The previous local turn is still stopping. Try again once it has stopped.",
+    };
+  }
 
   const availability = await resolveLocalHarnessAvailability({
     target: {
@@ -351,11 +370,6 @@ async function prepareWithReservedRuntime(outer: {
   }
 
   const supervisor = localHarnessSupervisor();
-  const sessionStateDir = join(
-    localHarnessStateRoot(),
-    "sessions",
-    args.sessionId,
-  );
 
   // From here the lease exists, and shortly a loopback listener that can spend
   // it. Every step below can fail — a state directory that will not create, a
@@ -432,6 +446,7 @@ async function prepareWithReservedRuntime(outer: {
       startedAt: Date.now(),
     };
 
+    let treeStopped = false;
     const teardownOnce = onceAsync(async () => {
       try {
         started.revoke();
@@ -471,6 +486,7 @@ async function prepareWithReservedRuntime(outer: {
         // id alone a late teardown would remove whatever is registered under
         // that id at the time — a live session from a later turn included.
         if (stop.stopped) {
+          treeStopped = true;
           forgetLocalHarnessSessionRecord(sessionRecord);
           await outer.releaseRuntimeUse();
         }
@@ -506,6 +522,10 @@ async function prepareWithReservedRuntime(outer: {
         brokerRunId: broker.runId,
         timings: { localRuntimeVerifyMs, localGatewayReadyMs },
         teardown: teardownOnce,
+        discardState: onceAsync(async () => {
+          await teardownOnce();
+          if (treeStopped) await removeSessionStateDir(sessionStateDir);
+        }),
       },
     };
   } catch (error) {

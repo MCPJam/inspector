@@ -815,6 +815,8 @@ export async function runHarnessTurn(
    * caring which other one also ran.
    */
   let localTeardown: (() => Promise<void>) | null = null;
+  let discardLocalState: (() => Promise<void>) | undefined;
+  let retainLocalState = false;
   // This turn's claim on the box, held across the preparation window (step 3a)
   // and given up the moment the lease is recorded — recording it consumes the
   // claim, and from then on the lease's own per-box fence is what excludes other
@@ -1798,6 +1800,33 @@ export async function runHarnessTurn(
       // relocating work the user deliberately scoped to their machine is the
       // dishonesty this design exists to remove, so the message says what
       // failed and the caller decides.
+      // Local providers identify their sandbox by the harness session id. Resolve
+      // continuity BEFORE preparation so the gateway, supervisor and SDK all
+      // refer to the same session, including approval continuations.
+      const localComputerId = harnessExecutionTarget
+        ? `${harnessExecutionTarget.machineId}:${harnessExecutionTarget.runtimeId}`
+        : undefined;
+      const localEligibility = localComputerId
+        ? getHarnessResumeEligibility({
+            state: continuity?.state ?? null,
+            computerId: localComputerId,
+            sandboxId: continuity?.state?.harnessSessionId ?? "",
+          })
+        : undefined;
+      if (
+        harnessExecutionTarget &&
+        isApprovalResume &&
+        !(localEligibility?.resume && continuity?.state?.awaitingApproval)
+      ) {
+        throw new Error(
+          "The local session for this approval is no longer available. Start a new turn.",
+        );
+      }
+      const localSessionId = harnessExecutionTarget
+        ? localEligibility?.resume
+          ? continuity!.state!.harnessSessionId
+          : `local-${crypto.randomUUID()}`
+        : undefined;
       let localPrepared: PreparedLocalHarnessTurn | null = null;
       if (harnessExecutionTarget) {
         // Its own run id rather than the cloud path's `turnRunId`, which is
@@ -1808,7 +1837,7 @@ export async function runHarnessTurn(
           target: harnessExecutionTarget,
           harnessId: harnessAdapter.id,
           modelId,
-          sessionId: `local-${localRunId}`,
+          sessionId: localSessionId!,
           runId: localRunId,
           actor: {
             isGuest: false,
@@ -1831,6 +1860,7 @@ export async function runHarnessTurn(
         }
         localPrepared = preparation.prepared;
         localTeardown = preparation.prepared.teardown;
+        discardLocalState = preparation.prepared.discardState;
         // The mode the agent was already built around, against the mode the
         // prepared plan actually launched under. They come from the same
         // manifest mapping and should be identical; if they ever are not, the
@@ -1890,7 +1920,7 @@ export async function runHarnessTurn(
       // with no colon in them.
       const computerId =
         localPrepared !== null
-          ? `${harnessExecutionTarget!.machineId}:${localPrepared.plan.runtime.runtimeId}`
+          ? localComputerId!
           : box!.kind === "computer"
             ? box!.computerId
             : box!.sandboxRowId;
@@ -1934,64 +1964,66 @@ export async function runHarnessTurn(
       // interleave wake / bootstrap / broker-start. A refusal here is the same
       // condition a caller would otherwise meet at broker start, just detected
       // before we do any work.
-      const reservation = await reserveHarnessBox({
-        box: box!,
-        harnessId: harnessAdapter.id,
-        modelId,
-        runId: turnRunId,
-        bearer: authHeader,
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
-      if (!reservation.ok) {
-        throw new Error(reservation.error);
+      if (box !== null) {
+        const reservation = await reserveHarnessBox({
+          box: box!,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: turnRunId,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!reservation.ok) {
+          throw new Error(reservation.error);
+        }
+        // From here until the lease is minted, ANY exit must hand the box back —
+        // otherwise the next turn waits out the reservation's TTL for nothing.
+        // Cleared once the broker start succeeds, because recording the lease
+        // consumes the claim and the lease's own fence takes over.
+        reservationHeld = true;
+        releaseBoxReservation = async () => {
+          await releaseHarnessBoxReservation({
+            box: box!,
+            harnessId: harnessAdapter.id,
+            modelId,
+            runId: turnRunId,
+            bearer: authHeader,
+            signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+          }).catch(() => {});
+        };
+        reservationHeartbeatTimer = setInterval(() => {
+          if (!reservationHeld || reservationRenewalInFlight) return;
+          reservationRenewalInFlight = true;
+          void renewHarnessBoxReservation({
+            box: box!,
+            harnessId: harnessAdapter.id,
+            modelId,
+            runId: turnRunId,
+            bearer: authHeader,
+            signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+          })
+            .then((renewed) => {
+              if (!renewed.ok && reservationHeld) {
+                logger.error(
+                  "[harness] preparation reservation was lost; aborting the turn",
+                );
+                livenessAbort.abort(new Error("harness box reservation lost"));
+              }
+            })
+            .catch((err) => {
+              if (reservationHeld) {
+                logger.error(
+                  "[harness] preparation reservation renewal failed; aborting the turn",
+                  err,
+                );
+                livenessAbort.abort(new Error("harness box reservation lost"));
+              }
+            })
+            .finally(() => {
+              reservationRenewalInFlight = false;
+            });
+        }, HARNESS_RESERVATION_HEARTBEAT_MS);
       }
-      // From here until the lease is minted, ANY exit must hand the box back —
-      // otherwise the next turn waits out the reservation's TTL for nothing.
-      // Cleared once the broker start succeeds, because recording the lease
-      // consumes the claim and the lease's own fence takes over.
-      reservationHeld = true;
-      releaseBoxReservation = async () => {
-        await releaseHarnessBoxReservation({
-          box: box!,
-          harnessId: harnessAdapter.id,
-          modelId,
-          runId: turnRunId,
-          bearer: authHeader,
-          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-        }).catch(() => {});
-      };
-      reservationHeartbeatTimer = setInterval(() => {
-        if (!reservationHeld || reservationRenewalInFlight) return;
-        reservationRenewalInFlight = true;
-        void renewHarnessBoxReservation({
-          box: box!,
-          harnessId: harnessAdapter.id,
-          modelId,
-          runId: turnRunId,
-          bearer: authHeader,
-          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-        })
-          .then((renewed) => {
-            if (!renewed.ok && reservationHeld) {
-              logger.error(
-                "[harness] preparation reservation was lost; aborting the turn",
-              );
-              livenessAbort.abort(new Error("harness box reservation lost"));
-            }
-          })
-          .catch((err) => {
-            if (reservationHeld) {
-              logger.error(
-                "[harness] preparation reservation renewal failed; aborting the turn",
-                err,
-              );
-              livenessAbort.abort(new Error("harness box reservation lost"));
-            }
-          })
-          .finally(() => {
-            reservationRenewalInFlight = false;
-          });
-      }, HARNESS_RESERVATION_HEARTBEAT_MS);
 
       // Root the Shell at the host-configured working directory (COMP-16) — the
       // same `computer.workdir` the chat bash tool honors — confined under
@@ -2491,15 +2523,12 @@ export async function runHarnessTurn(
       // box (sandbox-replaced) can't, so we go fresh and SURFACE a visible reset
       // (below) instead of the adapter silently spawning a blank session. A
       // legacy pre-detach sidecar is cold-resumed (logged, not surfaced).
-      const eligibility = getHarnessResumeEligibility({
-        state: continuity?.state ?? null,
-        computerId,
-        // Null on the local path: there is no vendor sandbox id, and the
-        // continuity identity is the `<machineId>:<runtimeId>` in `computerId`
-        // above. Passing a placeholder would make a resumed local session look
-        // attachable to a box.
-        sandboxId: sandboxId ?? "",
-      });
+      const eligibility = localEligibility ??
+        getHarnessResumeEligibility({
+          state: continuity?.state ?? null,
+          computerId,
+          sandboxId: sandboxId!,
+        });
       const resumable = eligibility.resume
         ? continuity?.state ?? undefined
         : undefined;
@@ -2538,6 +2567,9 @@ export async function runHarnessTurn(
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {
+          // Preparation has already bound the local gateway and state directory
+          // to this identity. Never fall back to an unrelated SDK-generated id.
+          if (localPrepared) throw resumeErr;
           logger.warn("[harness] resume failed; starting fresh", {
             error: resumeErr instanceof Error ? resumeErr.message : resumeErr,
           });
@@ -2547,7 +2579,9 @@ export async function runHarnessTurn(
           session = await agent.createSession();
         }
       } else {
-        session = await agent.createSession();
+        session = await agent.createSession(
+          localSessionId ? { sessionId: localSessionId } : undefined,
+        );
       }
       // Surface a visible reset (transient, never persisted) so a lost session
       // reads as an explained "new session" rather than the model forgetting.
@@ -3568,7 +3602,8 @@ export async function runHarnessTurn(
               // hanging here is not.
               signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             });
-            if (!ok) await releaseHarnessLease?.();
+            retainLocalState = ok;
+            if (!ok && !localPrepared) await releaseHarnessLease?.();
           } else if (runSucceeded && !aborted && continuity) {
             const resumeState = await session.detach();
             capturedHarnessCommit = {
@@ -3595,7 +3630,7 @@ export async function runHarnessTurn(
             };
           } else {
             await session.destroy();
-            if (continuity) await releaseHarnessLease?.();
+            if (continuity && !localPrepared) await releaseHarnessLease?.();
           }
         } catch (finalizeErr) {
           logger.warn(
@@ -3605,7 +3640,7 @@ export async function runHarnessTurn(
           // stop()/destroy() threw → no resume payload to commit. Drop any
           // half-built commit and free the lane so the next turn can claim.
           capturedHarnessCommit = undefined;
-          await releaseHarnessLease?.();
+          if (!localPrepared) await releaseHarnessLease?.();
         }
       }
     } catch (err) {
@@ -3758,6 +3793,9 @@ export async function runHarnessTurn(
           persistOutcome === undefined ||
           persistOutcome.outcome === "saved" ||
           persistOutcome.outcome === "duplicate";
+        if (capturedHarnessCommit && onConversationComplete && persistOk) {
+          retainLocalState = true;
+        }
         if (persistOutcome && chatSessionId) {
           writePersistReceipt(receiptWriter, persistOutcome, {
             chatSessionId,
@@ -3770,10 +3808,23 @@ export async function runHarnessTurn(
       if (
         runSucceeded &&
         capturedHarnessCommit &&
+        !discardLocalState &&
         (!onConversationComplete || !persistOk)
       ) {
         await releaseHarnessLease?.();
       }
+    }
+    if (discardLocalState && !retainLocalState) {
+      // Keep the lane claimed until its private state has been discarded, so
+      // a successor cannot resume while this finalizer removes its directory.
+      await Promise.race([
+        discardLocalState().catch((error) => {
+          logger.warn("[harness] local session state cleanup failed", { error });
+        }),
+        new Promise<void>((resolvePromise) =>
+          setTimeout(resolvePromise, HARNESS_TEARDOWN_TIMEOUT_MS).unref?.(),
+        ),
+      ]);
     }
     // Pre-session cleanup: if the session was never established (the turn failed
     // or aborted after claimHarnessSessionState but before createSession — sandbox
@@ -3782,7 +3833,7 @@ export async function runHarnessTurn(
     // blocked with "Another turn is already running" until the lease TTL. This runs
     // on BOTH stream paths (UI onFinish + inline finally). Idempotent, and a no-op
     // on non-continuity turns (releaseHarnessLease is undefined).
-    if (!sessionEstablished) {
+    if (!sessionEstablished || (discardLocalState && !retainLocalState)) {
       await releaseHarnessLease?.();
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown
