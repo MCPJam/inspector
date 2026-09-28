@@ -70,7 +70,11 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
-import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import {
+  documentScriptNonce,
+  securityHeadersMiddleware,
+  withScriptNonce,
+} from "./middleware/security-headers.js";
 import { indexingHeadersMiddleware } from "./middleware/indexing-headers.js";
 import {
   getInspectorClientRuntimeConfigScript,
@@ -595,6 +599,9 @@ export async function createHonoApp() {
         // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
+        // Every inline script written into the document carries this
+        // response's nonce (see middleware/security-headers.ts).
+        const scriptNonce = documentScriptNonce(c);
 
         // Same invariant as the /api/session-token route above, and the same
         // bug: this path already captured `forwardedHost` for the guest
@@ -610,20 +617,29 @@ export async function createHonoApp() {
           })
         ) {
           const token = getSessionToken();
-          const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
+          const tokenScript = withScriptNonce(
+            `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`,
+            scriptNonce,
+          );
           html = html.replace("</head>", `${tokenScript}</head>`);
         } else {
           // Host not allowed - no token (security measure)
           appLogger.warn(
             `[Security] Token not injected - Host not allowed: ${host}`,
           );
-          const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
+          const warningScript = withScriptNonce(
+            `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`,
+            scriptNonce,
+          );
           html = html.replace("</head>", `${warningScript}</head>`);
         }
 
         const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
         if (runtimeConfigScript) {
-          html = html.replace("</head>", `${runtimeConfigScript}</head>`);
+          html = html.replace(
+            "</head>",
+            `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
+          );
         }
 
         // Guest bootstrap blob: mint a guest bearer server-side and inject it
@@ -647,7 +663,10 @@ export async function createHonoApp() {
               c,
             );
             if (session && session.expiresAt > Date.now()) {
-              const bootstrapScript = buildGuestBootstrapScript(session);
+              const bootstrapScript = withScriptNonce(
+                buildGuestBootstrapScript(session),
+                scriptNonce,
+              );
               html = html.replace("</head>", `${bootstrapScript}</head>`);
               for (const cookie of setCookies) {
                 appendGuestSessionSetCookie(c, cookie);
