@@ -30,7 +30,12 @@ export async function readDescribeAttachment(
   if (file.size > DESCRIBE_ATTACHMENT_MAX_BYTES) {
     return { ok: false, error: `${file.name} is larger than 1 MB.` };
   }
-  const text = (await file.text()).trim();
+  let text: string;
+  try {
+    text = (await file.text()).trim();
+  } catch {
+    return { ok: false, error: `${file.name} could not be read.` };
+  }
   if (!text) {
     return { ok: false, error: `${file.name} is empty.` };
   }

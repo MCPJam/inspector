@@ -608,6 +608,32 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
   });
 
+  it("holds Continue until an attached file has been read", async () => {
+    openDescribe();
+    const submit = screen.getByTestId("new-swarm-continue");
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Typed first." } });
+    expect(submit).not.toBeDisabled();
+
+    let finishRead!: (text: string) => void;
+    const slowFile = Object.assign(new File(["x"], "slow.md"), {
+      text: () => new Promise<string>((resolve) => (finishRead = resolve)),
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [slowFile] },
+    });
+    await waitFor(() => expect(submit).toBeDisabled());
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      "Reading the attached file…",
+    );
+
+    finishRead("Persona: Maya.");
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    expect(input.value).toBe("Typed first.\n\nPersona: Maya.");
+  });
+
   it("refuses an unsupported file with an inline error and keeps the draft", async () => {
     openDescribe();
     const input = screen.getByTestId(

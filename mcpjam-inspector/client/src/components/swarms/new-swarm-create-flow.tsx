@@ -501,16 +501,24 @@ export function NewSwarmCreateFlow({
   const attachInputRef = useRef<HTMLInputElement>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [draggingFile, setDraggingFile] = useState(false);
+  // Continue waits on this: a read that settled after generation started
+  // would append text the personas were never generated from.
+  const [pendingAttachments, setPendingAttachments] = useState(0);
   const attachFile = useCallback(async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
-    const result = await readDescribeAttachment(file);
-    if (!result.ok) {
-      setAttachError(result.error);
-      return;
+    setPendingAttachments((n) => n + 1);
+    try {
+      const result = await readDescribeAttachment(file);
+      if (!result.ok) {
+        setAttachError(result.error);
+        return;
+      }
+      setAttachError(null);
+      setDraft((current) => appendToDraft(current, result.text));
+    } finally {
+      setPendingAttachments((n) => n - 1);
     }
-    setAttachError(null);
-    setDraft((current) => appendToDraft(current, result.text));
   }, []);
   /**
    * Required, and prefilled — see {@link suggestSwarmName}. Computed once via
@@ -880,6 +888,7 @@ export function NewSwarmCreateFlow({
   const canContinue =
     generating ||
     materializing ||
+    pendingAttachments > 0 ||
     serverBlock !== null ||
     modelBlock !== null ||
     !hasSwarmName
@@ -892,6 +901,7 @@ export function NewSwarmCreateFlow({
   const continueHint = (() => {
     if (generating || materializing) return null;
     if (!canContinue) {
+      if (pendingAttachments > 0) return "Reading the attached file…";
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
       if (serverBlock) return "Pick a server to continue.";
@@ -2213,13 +2223,17 @@ export function NewSwarmCreateFlow({
                 // keeps the textarea's native drop.
                 onDragOver={(event) => {
                   if (!event.dataTransfer.types.includes("Files")) return;
+                  // Always claim a file drag: an unclaimed drop makes the
+                  // browser open the file in place of the app.
                   event.preventDefault();
+                  if (generating || materializing) return;
                   setDraggingFile(true);
                 }}
                 onDragLeave={() => setDraggingFile(false)}
                 onDrop={(event) => {
                   if (!event.dataTransfer.types.includes("Files")) return;
                   event.preventDefault();
+                  if (generating || materializing) return;
                   setDraggingFile(false);
                   void attachFile(event.dataTransfer.files);
                 }}
@@ -2251,6 +2265,7 @@ export function NewSwarmCreateFlow({
                   size="sm"
                   className="text-muted-foreground"
                   title="Or drop a .txt or .md file on the box"
+                  disabled={generating || materializing}
                   onClick={() => attachInputRef.current?.click()}
                   data-testid="new-swarm-describe-attach"
                 >

@@ -38,6 +38,15 @@ describe("readDescribeAttachment", () => {
       ),
     ).toMatchObject({ ok: false, error: "big.txt is larger than 1 MB." });
   });
+  it("returns an error result when the file cannot be read", async () => {
+    const unreadable = Object.assign(new File(["x"], "locked.md"), {
+      text: () => Promise.reject(new Error("NotReadableError")),
+    });
+    expect(await readDescribeAttachment(unreadable)).toEqual({
+      ok: false,
+      error: "locked.md could not be read.",
+    });
+  });
 });
 
 describe("appendToDraft", () => {
