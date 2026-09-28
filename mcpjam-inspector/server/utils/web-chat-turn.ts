@@ -46,6 +46,7 @@ import {
   SANDBOX_NOTICE_DATA_PART_TYPE,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
+import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type {
@@ -623,6 +624,31 @@ function emitSandboxNotices(
   if (delivered.length > 0) ack?.(delivered);
 }
 
+/**
+ * Tell the browser that earlier assistant replies in this conversation are
+ * not in this turn's model context (MJ-009), so the chat can say so.
+ * Best-effort: a failed write costs the notice, never the turn.
+ */
+function emitHistoryNotice(
+  writer: SandboxNoticeWriter | null | undefined,
+  due: boolean,
+  chatSessionId: string | undefined,
+): void {
+  if (!writer || !due) return;
+  try {
+    writer.write({
+      type: HISTORY_NOTICE_DATA_PART_TYPE,
+      data: {
+        reason: "earlier_replies_not_sent",
+        ...(chatSessionId ? { chatSessionId } : {}),
+      },
+      transient: true,
+    } as unknown as UIMessageChunk);
+  } catch (error) {
+    logger.warn("[chat] history notice stream write failed", { error });
+  }
+}
+
 export interface StreamWebChatTurnArgs {
   manager: InstanceType<typeof MCPClientManager>;
   prepare: WebChatTurnPrepareInputs;
@@ -699,11 +725,20 @@ export async function streamWebChatTurn(
   // What the server itself produced carries its signatures; anything that
   // does not verify is marked here, before conversion, so the engine leaves
   // it out of what the model is shown and persistence does not re-sign it.
-  // Always checked in hosted mode — with no signing key nothing verifies —
-  // and used as sent in local mode (null).
-  const verification = historyVerificationFor(persist.projectId);
+  // Signatures verify for this chat only. Always checked in hosted mode —
+  // with no signing key nothing verifies — and used as sent in local mode
+  // (null).
+  const verification = historyVerificationFor(
+    persist.projectId,
+    persist.chatSessionId,
+  );
   const provenance = verification?.ctx ?? null;
-  if (verification && !provenance && !warnedUnverifiableHistory) {
+  if (
+    verification &&
+    !provenance &&
+    persist.chatSessionId &&
+    !warnedUnverifiableHistory
+  ) {
     warnedUnverifiableHistory = true;
     logger.warn(
       "[web-chat-turn] no history signing key on this hosted deployment; history the server cannot verify is left out of model context",
@@ -750,6 +785,11 @@ export async function streamWebChatTurn(
         fenceKey: resolveToolOutputFenceKey(),
         excludeUnverified: provenanceReport !== null,
       };
+  // Earlier replies this turn's model will not see: the browser says so in
+  // the chat. Not on a harness turn, whose context is its own session.
+  const historyNoticeDue =
+    historyPresentation !== undefined &&
+    (provenanceReport?.omittedReplyParts ?? 0) > 0;
 
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
@@ -1434,6 +1474,7 @@ export async function streamWebChatTurn(
             runtime.ackSandboxNotices,
             runtime.abortSignal,
           );
+          emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1488,6 +1529,7 @@ export async function streamWebChatTurn(
           runtime.ackSandboxNotices,
           runtime.abortSignal,
         );
+        emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1646,6 +1688,7 @@ export async function streamWebChatTurn(
         runtime.ackSandboxNotices,
         runtime.abortSignal,
       );
+      emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp

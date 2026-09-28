@@ -2871,6 +2871,7 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         projectId: "project_1",
+        chatSessionId: "chat_1",
       });
       await lastExecution;
       const unsignedEnd = writtenChunks.find((c) => c?.type === "text-end");
@@ -2889,10 +2890,11 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         projectId: "project_1",
+        chatSessionId: "chat_1",
       });
       await lastExecution;
       const end = writtenChunks.find((c) => c?.type === "text-end");
-      const ctx = historyProvenanceContextFor("project_1")!;
+      const ctx = historyProvenanceContextFor("project_1", "chat_1")!;
       expect(
         verifyAssistantText(
           ctx,
@@ -2950,6 +2952,7 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         projectId: "project_1",
+        chatSessionId: "chat_1",
       });
       await lastExecution;
 
@@ -2959,7 +2962,7 @@ describe("mcpjam-stream-handler", () => {
       expect(output).toBeDefined();
       expect(
         verifyToolResult(
-          historyProvenanceContextFor("project_1")!,
+          historyProvenanceContextFor("project_1", "chat_1")!,
           {
             toolCallId: "call-1",
             toolName: "list_issues",

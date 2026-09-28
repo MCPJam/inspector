@@ -732,7 +732,10 @@ export async function runHarnessTurn(
   // engine's turns are (MJ-009), so its replies stay in model context when
   // the conversation continues on another engine. A no-op where nothing can
   // be signed (local mode, or no signing key).
-  const provenanceContext = historyProvenanceContextFor(projectId);
+  const provenanceContext = historyProvenanceContextFor(
+    projectId,
+    chatSessionId,
+  );
   const signChunk = provenanceContext
     ? createUiChunkProvenanceSigner(
         provenanceContext,
@@ -3807,7 +3810,11 @@ export async function runHarnessTurn(
       // strict reduction in exposure.
       execute: async (context) => {
         const writer: ChunkWriter = signChunk
-          ? { write: (chunk) => context.writer.write(signChunk(chunk)) }
+          ? {
+              write: (chunk) => {
+                for (const out of signChunk(chunk)) context.writer.write(out);
+              },
+            }
           : context.writer;
         try {
           await executeEngine({ writer });
