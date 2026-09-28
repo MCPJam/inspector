@@ -256,6 +256,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
 | Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
 | The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
+| The environment selects a brokered secret | Refused before the turn starts — brokered secrets require cloud execution. Switch to a cloud run or change the secret's delivery to materialized. |
 
 **Eval-specific pre-flight refusals** (harness eval runs only):
 
