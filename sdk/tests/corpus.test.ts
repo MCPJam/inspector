@@ -733,3 +733,63 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
     expect(config.predicates).toEqual([TOOL_CALLED_WITH]);
   });
 });
+
+describe("a negative case and toolArgumentsMatch", () => {
+  const MATCH = {
+    type: "toolArgumentsMatch",
+    toolName: "t",
+    patterns: ["Idea"],
+  };
+
+  it("refuses the default min (1) as a step assertion", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [
+            { id: "s1", kind: "prompt", prompt: "go" },
+            { id: "s2", kind: "assert", assertion: MATCH },
+          ],
+        })
+      )
+    ).toThrow(/negative case.*toolArgumentsMatch with min ≥ 1 at step 1/s);
+  });
+
+  it("refuses an explicit min ≥ 1 inherited from the suite", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...MATCH, min: 2 }] }
+      )
+    ).toThrow(/negative case.*toolArgumentsMatch check with min ≥ 1/s);
+  });
+
+  it('allows min: 0, max: 0 — "no call matches" is compatible', () => {
+    const none = { ...MATCH, min: 0, max: 0 };
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: none },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([none]);
+  });
+
+  it("allows a positive case to carry the default", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: MATCH },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([MATCH]);
+  });
+});

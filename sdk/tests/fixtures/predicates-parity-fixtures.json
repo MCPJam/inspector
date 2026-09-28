@@ -854,6 +854,68 @@
         "type": "noToolErrors",
         "role": "gating"
       }
+    },
+    {
+      "label": "toolArgumentsMatch — single pattern",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ]
+      }
+    },
+    {
+      "label": "toolArgumentsMatch — three patterns in one argument, ignore case, bounds",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea",
+          "Build",
+          "Ship"
+        ],
+        "flags": "i",
+        "argument": "elements",
+        "min": 1,
+        "max": 3
+      }
+    },
+    {
+      "label": "toolArgumentsMatch — min 0 max 0 (no call matches)",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "DROP\\s+TABLE"
+        ],
+        "flags": "i",
+        "min": 0,
+        "max": 0
+      }
+    },
+    {
+      "label": "toolArgumentsMatch — named group (translated to re2 syntax)",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "(?<label>Idea|Build)"
+        ],
+        "argument": "elements"
+      }
+    },
+    {
+      "label": "toolArgumentsMatch — advisory warn",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
@@ -1477,6 +1539,231 @@
         "type": "noToolErrors",
         "role": "require"
       }
+    },
+    {
+      "label": "toolArgumentsMatch — empty patterns",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": []
+      },
+      "why": "at least one pattern is required"
+    },
+    {
+      "label": "toolArgumentsMatch — nine patterns",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "i"
+        ]
+      },
+      "why": "at most 8 patterns"
+    },
+    {
+      "label": "toolArgumentsMatch — an empty pattern item",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea",
+          ""
+        ]
+      },
+      "why": "every pattern must be 1 to 512 characters"
+    },
+    {
+      "label": "toolArgumentsMatch — a 513-character pattern",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "why": "every pattern must be 1 to 512 characters"
+    },
+    {
+      "label": "toolArgumentsMatch — an unbalanced group",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "("
+        ]
+      },
+      "why": "the pattern must compile in re2js"
+    },
+    {
+      "label": "toolArgumentsMatch — a lookahead",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "(?=a)"
+        ]
+      },
+      "why": "re2js has no lookaround; the pattern must compile in re2js"
+    },
+    {
+      "label": "toolArgumentsMatch — a backreference",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "(a)\\1"
+        ]
+      },
+      "why": "re2js has no backreferences; the pattern must compile in re2js"
+    },
+    {
+      "label": "toolArgumentsMatch — flags g",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "g"
+      },
+      "why": "flags is closed to i, m, s, im, is, ms, ims"
+    },
+    {
+      "label": "toolArgumentsMatch — flags u",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "u"
+      },
+      "why": "flags is closed to i, m, s, im, is, ms, ims"
+    },
+    {
+      "label": "toolArgumentsMatch — flags si (non-canonical order)",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "si"
+      },
+      "why": "one spelling per flag set: is, not si"
+    },
+    {
+      "label": "toolArgumentsMatch — empty flags",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": ""
+      },
+      "why": "omit flags instead of sending an empty string"
+    },
+    {
+      "label": "toolArgumentsMatch — negative min",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": -1
+      },
+      "why": "min is a non-negative integer"
+    },
+    {
+      "label": "toolArgumentsMatch — fractional min",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 1.5
+      },
+      "why": "min is an integer"
+    },
+    {
+      "label": "toolArgumentsMatch — max below min",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 2,
+        "max": 1
+      },
+      "why": "max must be at least min"
+    },
+    {
+      "label": "toolArgumentsMatch — max 0 alone",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "max": 0
+      },
+      "why": "max must be at least the default min of 1"
+    },
+    {
+      "label": "toolArgumentsMatch — min 0 alone",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 0
+      },
+      "why": "min 0 needs a max; on its own it passes every transcript"
+    },
+    {
+      "label": "toolArgumentsMatch — empty toolName",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "",
+        "patterns": [
+          "Idea"
+        ]
+      },
+      "why": "toolName is required and non-empty"
+    },
+    {
+      "label": "toolArgumentsMatch — empty argument",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "argument": ""
+      },
+      "why": "argument, when set, is 1 to 256 characters"
+    },
+    {
+      "label": "toolArgumentsMatch — pattern (singular) instead of patterns",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "pattern": "Idea"
+      },
+      "why": "patterns (an array) is required; there is no singular pattern field"
     }
   ]
 }

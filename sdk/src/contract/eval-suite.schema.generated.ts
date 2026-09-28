@@ -1176,6 +1176,59 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   properties: {
                                     type: {
                                       type: "string",
+                                      const: "toolArgumentsMatch",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    patterns: {
+                                      minItems: 1,
+                                      maxItems: 8,
+                                      type: "array",
+                                      items: {
+                                        type: "string",
+                                        minLength: 1,
+                                        maxLength: 512,
+                                      },
+                                    },
+                                    flags: {
+                                      type: "string",
+                                      enum: [
+                                        "i",
+                                        "m",
+                                        "s",
+                                        "im",
+                                        "is",
+                                        "ms",
+                                        "ims",
+                                      ],
+                                    },
+                                    argument: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 256,
+                                    },
+                                    min: {
+                                      type: "integer",
+                                      minimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    max: {
+                                      type: "integer",
+                                      minimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory", "required"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "toolName", "patterns"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
                                       const: "noRepeatedIdenticalCall",
                                     },
                                     toolName: { type: "string", minLength: 1 },
@@ -1738,6 +1791,40 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                 {
                   type: "object",
                   properties: {
+                    type: { type: "string", const: "toolArgumentsMatch" },
+                    toolName: { type: "string", minLength: 1 },
+                    patterns: {
+                      minItems: 1,
+                      maxItems: 8,
+                      type: "array",
+                      items: { type: "string", minLength: 1, maxLength: 512 },
+                    },
+                    flags: {
+                      type: "string",
+                      enum: ["i", "m", "s", "im", "is", "ms", "ims"],
+                    },
+                    argument: { type: "string", minLength: 1, maxLength: 256 },
+                    min: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    max: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "toolName", "patterns"],
+                },
+                {
+                  type: "object",
+                  properties: {
                     type: { type: "string", const: "noRepeatedIdenticalCall" },
                     toolName: { type: "string", minLength: 1 },
                     role: {
@@ -2279,6 +2366,40 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolArgumentsMatch" },
+                    toolName: { type: "string", minLength: 1 },
+                    patterns: {
+                      minItems: 1,
+                      maxItems: 8,
+                      type: "array",
+                      items: { type: "string", minLength: 1, maxLength: 512 },
+                    },
+                    flags: {
+                      type: "string",
+                      enum: ["i", "m", "s", "im", "is", "ms", "ims"],
+                    },
+                    argument: { type: "string", minLength: 1, maxLength: 256 },
+                    min: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    max: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "toolName", "patterns"],
                 },
                 {
                   type: "object",
