@@ -340,6 +340,7 @@ import { SwarmsTab } from "../SwarmsTab";
 // branch the 402 handling turns on is the one under test.
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 import { toast } from "@/lib/toast";
+import { track } from "@/lib/analytics";
 
 /**
  * Attach an existing persona.
@@ -1302,7 +1303,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     await waitFor(() => expect(toast.warning).toHaveBeenCalled());
     const summary = vi.mocked(toast.warning).mock.calls[0][0] as string;
-    expect(summary).toContain("credit limit");
+    expect(summary).toContain("the rest need credits");
     expect(summary).not.toContain("upstream unavailable");
   });
 
@@ -3291,5 +3292,265 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     expect(
       screen.queryByTestId("new-swarm-confirm-clients"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("SwarmsTab create flow — the launch quote", () => {
+  /**
+   * Confirm prices the concrete launch before it happens. The quote advises:
+   * one that loaded and does not fit holds Launch back and offers a smaller
+   * plan, while one that failed says so and lets Launch go ahead, because
+   * launch admission decides either way.
+   */
+  const quoteMock = vi.fn();
+  const quote = (overrides: Record<string, unknown> = {}) => ({
+    sessions: 2,
+    starterSessions: 1,
+    creditSessions: 1,
+    creditsRequiredP50: 3.2,
+    creditsRequiredP90: 5,
+    admitThreshold: 6,
+    creditsAvailable: 50,
+    maxAffordableSessions: 2,
+    fits: true,
+    resetsAt: null,
+    priors: "measured",
+    perRun: [],
+    lines: [],
+    ...overrides,
+  });
+  const quoteCalls = () =>
+    quoteMock.mock.calls.map(
+      ([args]) => (args as { plannedRuns: unknown[] }).plannedRuns,
+    );
+
+  beforeEach(() => {
+    quoteMock.mockReset().mockResolvedValue(quote());
+    convexQueryMock.mockImplementation(async (name: string, args: unknown) =>
+      name === "journeyRuns:quoteSwarmLaunch"
+        ? quoteMock(args)
+        : {
+            effectiveModelId: "anthropic/claude-haiku-4.5",
+            modelSource: "host",
+          },
+    );
+  });
+
+  async function reachConfirm() {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+  }
+
+  it("quotes the launch it would make and says what is free", async () => {
+    await reachConfirm();
+
+    expect(
+      await screen.findByTestId("new-swarm-launch-quote"),
+    ).toHaveTextContent("1 free starter conversation · about 4 credits");
+    // One planned run per proposed goal, at its persona's iterations, across
+    // the selected environment, with the preset's turn limit.
+    expect(quoteMock).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      plannedRuns: [
+        expect.objectContaining({
+          environmentIds: ["env-1"],
+          sessionsPerTarget: 1,
+          maxTurns: 6,
+          setupWrites: true,
+        }),
+        expect.objectContaining({ environmentIds: ["env-1"] }),
+      ],
+    });
+    expect(submitLaunchEnabled()).toBe(true);
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() =>
+      expect(track).toHaveBeenCalledWith(
+        "swarm_create_launched",
+        expect.objectContaining({
+          estimated_credits: 4,
+          starter_sessions: 1,
+          fits: true,
+        }),
+      ),
+    );
+  });
+
+  it("holds Launch back when the plan does not fit", async () => {
+    quoteMock.mockResolvedValue(
+      quote({ fits: false, maxAffordableSessions: 0, creditsAvailable: 1 }),
+    );
+    await reachConfirm();
+
+    expect(
+      await screen.findByText(
+        /you don.t have enough credits to complete this run/i,
+      ),
+    ).toBeInTheDocument();
+    expect(submitLaunchEnabled()).toBe(false);
+    // Nothing smaller fits either, so nothing smaller is offered.
+    expect(screen.queryByTestId("new-swarm-fit-plan")).not.toBeInTheDocument();
+    expect(track).toHaveBeenCalledWith(
+      "swarm_create_credit_blocked",
+      expect.objectContaining({ sessions: 2, max_affordable_sessions: 0 }),
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("offers the smaller plan the credits fit, and applies it only once its own quote fits", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        {
+          persona: { name: "Refund Chaser", role: "Support agent" },
+          journeys: [
+            { goal: "Refund the charge" },
+            { goal: "Dispute a refund" },
+          ],
+        },
+        {
+          persona: { name: "Billing Dev", role: "Engineer wiring billing" },
+          journeys: [
+            { goal: "Wire up the subscription webhook" },
+            { goal: "Rotate the webhook secret" },
+          ],
+        },
+      ],
+    });
+    quoteMock
+      .mockResolvedValueOnce(
+        quote({ sessions: 4, fits: false, maxAffordableSessions: 2 }),
+      )
+      .mockResolvedValue(quote({ sessions: 2 }));
+    await reachConfirm();
+
+    const fit = await screen.findByTestId("new-swarm-fit-plan");
+    expect(fit).toHaveTextContent("Run 2 conversations instead");
+    expect(submitLaunchEnabled()).toBe(false);
+    fireEvent.click(fit);
+
+    // The reduced plan is quoted exactly as it would launch: one goal from
+    // EACH persona, not both goals of the first.
+    await waitFor(() => expect(quoteCalls().length).toBeGreaterThanOrEqual(2));
+    expect(quoteCalls()[1]).toHaveLength(2);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-launch-session-estimate"),
+      ).toHaveTextContent("2 conversations"),
+    );
+    expect(track).toHaveBeenCalledWith(
+      "swarm_create_fit_applied",
+      expect.objectContaining({ from_sessions: 4, to_sessions: 2 }),
+    );
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    expect(
+      screen.queryByTestId("new-swarm-credit-blocked"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the plan when the smaller one's quote does not fit either", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        {
+          persona: { name: "Refund Chaser", role: "Support agent" },
+          journeys: [
+            { goal: "Refund the charge" },
+            { goal: "Dispute a refund" },
+          ],
+        },
+      ],
+    });
+    quoteMock.mockResolvedValue(
+      quote({ sessions: 2, fits: false, maxAffordableSessions: 1 }),
+    );
+    await reachConfirm();
+
+    fireEvent.click(await screen.findByTestId("new-swarm-fit-plan"));
+
+    expect(
+      await screen.findByTestId("new-swarm-fit-message"),
+    ).toHaveTextContent(/doesn't fit your credits either/i);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent("2 conversations");
+    expect(track).not.toHaveBeenCalledWith(
+      "swarm_create_fit_applied",
+      expect.anything(),
+    );
+  });
+
+  it("says when the quote failed, and does not block the launch on it", async () => {
+    quoteMock.mockRejectedValue(new Error("quote unavailable"));
+    await reachConfirm();
+
+    expect(
+      await screen.findByTestId("new-swarm-launch-quote"),
+    ).toHaveTextContent("Couldn't estimate credits");
+    expect(submitLaunchEnabled()).toBe(true);
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("stops the wave at a 402 and says the rest need credits", async () => {
+    let seq = 0;
+    launchJourneyRunMock.mockImplementation(async () => {
+      seq += 1;
+      if (seq === 1) return { runId: "run-1" };
+      throw new LaunchJourneyRunError(
+        402,
+        "Not enough MCPJam credits to start this swarm run.",
+        false,
+        "insufficient_credits",
+        { code: "insufficient_credits", maxAffordableSessions: 0 },
+      );
+    });
+    await reachConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(
+        "Launched 1 of 2 runs — the rest need credits.",
+      ),
+    );
+  });
+
+  it("retries a busy launch with the same key, up to three times", async () => {
+    const keys = new Map<string, string[]>();
+    const busy = () =>
+      new LaunchJourneyRunError(
+        503,
+        "MCPJam is busy admitting other launches right now. Nothing was created; retry in a moment.",
+        false,
+        "spending_reservation_busy",
+        { code: "spending_reservation_busy", retryAfterMs: 1 },
+      );
+    let busyFirst = 0;
+    launchJourneyRunMock.mockImplementation(
+      async (args: { journeyId: string; launchKey: string }) => {
+        keys.set(args.journeyId, [
+          ...(keys.get(args.journeyId) ?? []),
+          args.launchKey,
+        ]);
+        // The first goal is busy twice, then lands; the second never lands.
+        if (args.journeyId === "journey-1" && busyFirst < 2) {
+          busyFirst += 1;
+          throw busy();
+        }
+        if (args.journeyId === "journey-2") throw busy();
+        return { runId: `run-${args.journeyId}` };
+      },
+    );
+    await reachConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith("Launched 1 of 2 runs"),
+    );
+    // Three tries for the first, one plus three retries for the second, and
+    // every try of a goal sent that goal's one launch key.
+    expect(keys.get("journey-1")).toHaveLength(3);
+    expect(keys.get("journey-2")).toHaveLength(4);
+    for (const tries of keys.values()) expect(new Set(tries).size).toBe(1);
   });
 });

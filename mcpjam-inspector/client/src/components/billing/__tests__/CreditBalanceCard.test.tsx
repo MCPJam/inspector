@@ -151,14 +151,22 @@ describe("CreditBalanceCard", () => {
       ).not.toBeInTheDocument();
       if (remaining === null) {
         expect(
-          screen.queryByText(/Free starter eval iterations:/),
+          screen.queryByText(/Free starter iterations:/),
         ).not.toBeInTheDocument();
       } else {
-        expect(
-          screen.getByText(/Free starter eval iterations:/),
-        ).toHaveTextContent(
-          `${remaining} remaining · one-time allowance of 500`,
-        );
+        const line = screen.getByText(/Free starter iterations:/);
+        if (remaining > 0) {
+          expect(line).toHaveTextContent(`${remaining} left, while available.`);
+          // The pool is shared: swarms draw from it too, and saying so is the
+          // only way a user learns why it moved without an eval run.
+          expect(line).toHaveTextContent(
+            "Swarm conversations on standard models draw from it without using your daily credits",
+          );
+        } else {
+          expect(line).toHaveTextContent(
+            "0 left. Swarm conversations and eval runs use your plan’s credits.",
+          );
+        }
       }
     },
   );
@@ -184,8 +192,8 @@ describe("CreditBalanceCard", () => {
         screen.queryByTestId("usage-eval-iterations"),
       ).not.toBeInTheDocument();
       expect(
-        screen.getByText(/Free starter eval iterations:/),
-      ).toHaveTextContent("5 remaining · one-time allowance of 500");
+        screen.getByText(/Free starter iterations:/),
+      ).toHaveTextContent("5 left, while available.");
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
       expect(screen.getAllByRole("progressbar")).toHaveLength(1);
       expect(screen.getByRole("progressbar")).toHaveAttribute(

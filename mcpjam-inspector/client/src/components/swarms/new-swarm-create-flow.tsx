@@ -345,6 +345,40 @@ function errorMessageOf(err: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Retries after the first try when launch admission answers 503. */
+const LAUNCH_BUSY_RETRIES = 3;
+/** The wait when the busy answer names none. */
+const LAUNCH_BUSY_RETRY_MS = 2_000;
+const LAUNCH_BUSY_MAX_WAIT_MS = 10_000;
+
+/**
+ * A launch whose admission was too busy to decide (503), sent again after the
+ * wait the backend names. Nothing was created on a 503, and the launch key is
+ * kept across tries, so a retry can land at most one run.
+ */
+async function launchWithBusyRetry<T>(launch: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await launch();
+    } catch (err) {
+      if (
+        !(err instanceof LaunchJourneyRunError) ||
+        err.status !== 503 ||
+        attempt >= LAUNCH_BUSY_RETRIES
+      ) {
+        throw err;
+      }
+      const named = (err.details as { retryAfterMs?: unknown } | undefined)
+        ?.retryAfterMs;
+      const waitMs =
+        typeof named === "number" && Number.isFinite(named) && named >= 0
+          ? Math.min(named, LAUNCH_BUSY_MAX_WAIT_MS)
+          : LAUNCH_BUSY_RETRY_MS;
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+}
+
 export function NewSwarmCreateFlow({
   organizationId,
   projectId,
@@ -1325,14 +1359,6 @@ export function NewSwarmCreateFlow({
       /** A model limit that already opened its own dialog. Kept apart from
        * `billingBlocked` so the wave's copy never mis-names which cap refused. */
       let limitDialogBlocked = false;
-      /**
-       * The 402's own message, kept SEPARATE from `firstError`. The billing
-       * summary has to state the hard stop, and `firstError` may already hold
-       * an unrelated transient failure that settled first — rendering that one
-       * under "Launched N of M" is precisely the retry-this advice the billing
-       * branch exists to avoid.
-       */
-      let billingError: string | null = null;
       let targets: LaunchTarget[] = [];
       let launched = 0;
       const runLabels = new Map<string, string>();
@@ -1563,32 +1589,34 @@ export function NewSwarmCreateFlow({
           LAUNCH_CONCURRENCY,
           async (target) => {
             try {
-              const result = await launchJourney(target.journeyId, {
-                swarmRunGroupId,
-                // The Describe selection, applied to THIS run only. Sent for
-                // reused journeys whose stored fan-out differs from it —
-                // journeys created above are already born with the selection,
-                // so an override would be a no-op restating their own config.
-                //
-                // `target.environmentIds === undefined` marks a
-                // just-created target; `null` marks a reused legacy journey
-                // with no stored fan-out, which DOES need the override.
-                ...(envPayload &&
-                target.environmentIds !== undefined &&
-                !sameEnvironmentSelection(
-                  target.environmentIds,
-                  envPayload.environmentIds,
-                )
-                  ? { environmentIds: envPayload.environmentIds }
-                  : {}),
-                // Iterations chosen on Confirm for a REUSED persona, applied
-                // to this run only. Absent on just-created targets: they are
-                // born with the chosen count, so an override would restate
-                // their own config.
-                ...(target.sessionsPerTarget != null
-                  ? { sessionsPerTarget: target.sessionsPerTarget }
-                  : {}),
-              });
+              const result = await launchWithBusyRetry(() =>
+                launchJourney(target.journeyId, {
+                  swarmRunGroupId,
+                  // The Describe selection, applied to THIS run only. Sent for
+                  // reused journeys whose stored fan-out differs from it —
+                  // journeys created above are already born with the selection,
+                  // so an override would be a no-op restating their own config.
+                  //
+                  // `target.environmentIds === undefined` marks a
+                  // just-created target; `null` marks a reused legacy journey
+                  // with no stored fan-out, which DOES need the override.
+                  ...(envPayload &&
+                  target.environmentIds !== undefined &&
+                  !sameEnvironmentSelection(
+                    target.environmentIds,
+                    envPayload.environmentIds,
+                  )
+                    ? { environmentIds: envPayload.environmentIds }
+                    : {}),
+                  // Iterations chosen on Confirm for a REUSED persona, applied
+                  // to this run only. Absent on just-created targets: they are
+                  // born with the chosen count, so an override would restate
+                  // their own config.
+                  ...(target.sessionsPerTarget != null
+                    ? { sessionsPerTarget: target.sessionsPerTarget }
+                    : {}),
+                }),
+              );
               if (result.status === "launched") {
                 launched += 1;
                 if (result.runId) {
@@ -1635,12 +1663,8 @@ export function NewSwarmCreateFlow({
               // when the first 402 came back.
               if (err instanceof LaunchJourneyRunError && err.status === 402) {
                 billingBlocked = true;
-                // Recorded on its OWN slot so the billing summary always says
-                // "credit limit" even when an unrelated failure settled first,
-                // and `??=` on both so each keeps the earliest of its kind.
-                // `firstError` still gets it as a fallback: when the 402 is the
-                // only failure and nothing launched, it is the whole story.
-                billingError ??= err.message;
+                // `firstError` gets it as a fallback: when the 402 is the only
+                // failure and nothing launched, it is the whole story.
                 firstError ??= err.message;
                 return "stop";
               }
@@ -1664,6 +1688,11 @@ export function NewSwarmCreateFlow({
         journeys: targets.length,
         runs: launched,
         intensity: pushIntensity,
+        // What Confirm quoted, when a quote loaded. Admission decided the
+        // launch; these say how close the quote was.
+        estimated_credits: payload.quote?.estimatedCredits ?? null,
+        starter_sessions: payload.quote?.starterSessions ?? null,
+        fits: payload.quote?.fits ?? null,
       });
 
       if (
@@ -1707,11 +1736,10 @@ export function NewSwarmCreateFlow({
         // ONE billing message for the whole wave. The count matters here in a
         // way it doesn't for other partial failures: the remaining runs were
         // never attempted, so "N of M" would read as M-N transient failures
-        // to retry rather than as a hard stop.
+        // to retry rather than as a hard stop. Admission refused the rest for
+        // credits, so that is what it says.
         toast.warning(
-          `Launched ${launched} of ${targets.length} runs — ${
-            billingError ?? "the organization's credit limit was reached."
-          }`,
+          `Launched ${launched} of ${targets.length} runs — the rest need credits.`,
         );
       } else {
         toast.warning(`Launched ${launched} of ${targets.length} runs`);
@@ -2114,6 +2142,8 @@ export function NewSwarmCreateFlow({
             onSaveReusedGoal={async (journeyRefId, goal) => {
               await onUpdateJourney(journeyRefId, { goal });
             }}
+            projectId={projectId}
+            maxTurns={preset.maxTurns}
           />
         ) : (
           <div

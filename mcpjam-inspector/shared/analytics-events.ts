@@ -449,6 +449,8 @@ export const ANALYTICS_EVENTS = {
   sidebar_nav_clicked: { source: "client" },
   stateless_protocol_connect: { source: "client" },
   suite_viewed: { source: "client" },
+  swarm_create_credit_blocked: { source: "client" },
+  swarm_create_fit_applied: { source: "client" },
   swarm_create_generate_completed: { source: "client" },
   swarm_create_generate_started: { source: "client" },
   swarm_create_launched: { source: "client" },

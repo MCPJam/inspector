@@ -285,12 +285,10 @@ export function CreditBalanceCard({
 
         {evalIterationQuota?.starterRemaining != null && (
           <p className="text-sm">
-            Free starter eval iterations:{" "}
-            {evalIterationQuota.starterRemaining.toLocaleString()} remaining ·
-            one-time allowance of 500.{" "}
+            Free starter iterations:{" "}
             {evalIterationQuota.starterRemaining === 0
-              ? "Further runs use your plan’s metered credits."
-              : "This allowance does not renew. Model usage consumes credits separately."}
+              ? "0 left. Swarm conversations and eval runs use your plan’s credits."
+              : `${evalIterationQuota.starterRemaining.toLocaleString()} left, while available. Swarm conversations on standard models draw from it without using your daily credits; starter eval iterations waive the iteration fee. Model usage on evals is metered as before.`}
           </p>
         )}
         {monthlyExhausted ? (

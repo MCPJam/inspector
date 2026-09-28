@@ -155,11 +155,22 @@ export function SidebarCredits({
               ) : null}
 
               {evalIterationQuota?.starterRemaining != null && (
-                <p className="text-xs">
-                  Free starter eval iterations:{" "}
-                  {evalIterationQuota.starterRemaining.toLocaleString()}{" "}
-                  remaining · one-time allowance of 500
-                </p>
+                <div className="space-y-0.5">
+                  <p className="text-xs">
+                    Free starter iterations:{" "}
+                    {evalIterationQuota.starterRemaining.toLocaleString()} left
+                    {evalIterationQuota.starterRemaining > 0
+                      ? ", while available"
+                      : ""}
+                  </p>
+                  {evalIterationQuota.starterRemaining > 0 ? (
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Swarm conversations on standard models draw from it
+                      without using your daily credits; starter eval iterations
+                      waive the iteration fee.
+                    </p>
+                  ) : null}
+                </div>
               )}
               <SidebarUsageRow
                 label={showMonthly ? "Monthly credits" : "Free daily credits"}

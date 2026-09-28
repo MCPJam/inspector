@@ -79,6 +79,13 @@ export const SWARM_QUERIES = {
    */
   estimateJourneyRunCredits: "journeyRuns:estimateJourneyRunCredits",
   /**
+   * Prices the concrete launch the create flow would make: starter and credit
+   * sessions, and whether the organization's credits fit it. A one-shot read
+   * per plan change, never a live subscription; the launch itself admits each
+   * run again.
+   */
+  quoteSwarmLaunch: "journeyRuns:quoteSwarmLaunch",
+  /**
    * The project's standing clustering settings, plus which tier they came
    * from. Resolved server-side through the same path the rebuild uses, so the
    * create flow's picker cannot show one thing while the automatic post-run

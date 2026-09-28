@@ -32,12 +32,24 @@ import {
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import {
+  useSwarmLaunchQuote,
+  type SwarmLaunchQuote,
+  type SwarmLaunchQuoteState,
+} from "@/hooks/use-swarm-launch-quote";
+import {
+  fitLaunchPlan,
+  launchPlanSessions,
+  quotePlannedRuns,
+  type LaunchPlan,
+} from "@/components/swarms/swarm-launch-plan";
+import {
   describeReusedEnvironmentMove,
   type EnvironmentMoveRow,
 } from "@/components/swarms/reused-environment-move";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { type JourneyCriterion } from "@/shared/journey-rubric";
 import { toast } from "@/lib/toast";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 /** A generated persona + journeys, still only in memory. */
@@ -104,7 +116,41 @@ export type ConfirmLaunchPayload = {
   /** Per reused journey: its current rubric. Confirm does not author
    * swarm-level grading, so this is empty from this screen. */
   reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
+  /** The launch quote Confirm showed, when one loaded. For analytics only:
+   * admission decides the launch. */
+  quote?: { estimatedCredits: number; starterSessions: number; fits: boolean };
 };
+
+/** What the quote says under the conversation total, or nothing. */
+function launchQuoteLine(state: SwarmLaunchQuoteState): string | null {
+  if (state.status === "loading") return "Estimating credits…";
+  if (state.status === "error") return "Couldn't estimate credits";
+  if (state.status !== "ready") return null;
+  const { starterSessions, creditSessions, creditsRequiredP50 } = state.quote;
+  const credits = Math.ceil(creditsRequiredP50);
+  const parts = [
+    starterSessions > 0
+      ? `${starterSessions.toLocaleString()} free starter ${
+          starterSessions === 1 ? "conversation" : "conversations"
+        }`
+      : null,
+    creditSessions > 0
+      ? `about ${credits.toLocaleString()} ${
+          credits === 1 ? "credit" : "credits"
+        }`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** The quote in the shape `swarm_create_launched` reports it. */
+function launchedQuote(quote: SwarmLaunchQuote) {
+  return {
+    estimatedCredits: Math.ceil(quote.creditsRequiredP50),
+    starterSessions: quote.starterSessions,
+    fits: quote.fits,
+  };
+}
 
 type SelectedPersona =
   | { kind: "proposed"; key: string }
@@ -852,6 +898,8 @@ export function NewSwarmConfirmStep({
   onAddReused,
   onSaveReusedPersona,
   onSaveReusedGoal,
+  projectId,
+  maxTurns,
 }: {
   proposed: ProposedPersona[];
   onProposedChange: (next: ProposedPersona[]) => void;
@@ -893,6 +941,10 @@ export function NewSwarmConfirmStep({
   ) => Promise<void>;
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
+  /** The project the launch quote is priced in; no quote without one. */
+  projectId?: string | null;
+  /** The turn limit new goals launch with, so the quote prices it. */
+  maxTurns?: number;
 }) {
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
@@ -1079,7 +1131,147 @@ export function NewSwarmConfirmStep({
   const reusedCount = activeReusedTargets.length;
   const personaTotal = proposed.length + reusedPersonas.length;
   const fanoutEnvironmentCount = Math.max(1, environmentCount);
-  const canLaunch = journeyCount > 0 && !launching && !reusedPending;
+
+  // The concrete launch, priced. Reused personas still loading their goals
+  // would price a smaller plan than the one that launches, so nothing is
+  // quoted until they have.
+  const launchPlan: LaunchPlan = {
+    proposed: proposed.map((persona) => ({
+      key: persona.key,
+      goalKeys: persona.journeys
+        .filter((journey) => journey.goal.trim())
+        .map((journey) => journey.key),
+      iterations: iterationsFor(persona.key),
+    })),
+    reused: reusedPersonas.flatMap((persona) => {
+      const targets = reusedResolved[persona._id]?.targets;
+      return targets
+        ? [
+            {
+              personaId: persona._id,
+              journeyIds: targets.map((target) => target.journeyId),
+              iterations: reusedIterationsFor(persona._id),
+            },
+          ]
+        : [];
+    }),
+  };
+  const plannedRuns =
+    reusedPending || maxTurns === undefined
+      ? null
+      : quotePlannedRuns(launchPlan, { environmentIds, maxTurns });
+  const { state: quoteState, quotePlan } = useSwarmLaunchQuote({
+    projectId,
+    plannedRuns,
+  });
+  const quote = quoteState.status === "ready" ? quoteState.quote : null;
+  const quoteLine = launchQuoteLine(quoteState);
+  // Only a quote that loaded AND does not fit holds the launch back. One that
+  // failed, or is still loading, lets it go: admission decides either way.
+  const creditBlocked = quote !== null && !quote.fits;
+  const fittedPlan =
+    creditBlocked && quote.maxAffordableSessions > 0
+      ? fitLaunchPlan(launchPlan, {
+          environmentCount,
+          maxSessions: quote.maxAffordableSessions,
+        })
+      : null;
+  const fittedSessions = fittedPlan
+    ? launchPlanSessions(fittedPlan, environmentCount)
+    : 0;
+  const offerFit =
+    fittedPlan !== null &&
+    fittedSessions > 0 &&
+    fittedSessions < launchSessionEstimate;
+  const [fitting, setFitting] = useState(false);
+  const [fitMessage, setFitMessage] = useState<string | null>(null);
+  // The plan an in-flight fit check started from. A fit applies only to the
+  // plan it priced: an edit made while it was being quoted wins.
+  const planKey = JSON.stringify(launchPlan);
+  const planKeyRef = useRef(planKey);
+  planKeyRef.current = planKey;
+  // A "that doesn't fit" note is about the plan it priced, not this one.
+  useEffect(() => setFitMessage(null), [planKey]);
+
+  useEffect(() => {
+    if (!quote || quote.fits) return;
+    track("swarm_create_credit_blocked", {
+      location: "swarms",
+      sessions: quote.sessions,
+      max_affordable_sessions: quote.maxAffordableSessions,
+      credits_required: quote.admitThreshold,
+      credits_available: quote.creditsAvailable,
+    });
+  }, [quote]);
+
+  const canLaunch =
+    journeyCount > 0 &&
+    !launching &&
+    !reusedPending &&
+    !creditBlocked &&
+    !fitting;
+
+  /**
+   * "Run K conversations instead": quote the smaller plan exactly as it would
+   * launch, and apply it only when that quote fits. The fitter works from
+   * client-side counts; the server's per-session prices are what decide.
+   */
+  const applyFit = async () => {
+    if (!fittedPlan || maxTurns === undefined) return;
+    const runs = quotePlannedRuns(fittedPlan, { environmentIds, maxTurns });
+    if (!runs) return;
+    const startedFrom = planKey;
+    setFitting(true);
+    setFitMessage(null);
+    const fittedQuote = await quotePlan(runs);
+    setFitting(false);
+    if (planKeyRef.current !== startedFrom) return;
+    if (!fittedQuote?.fits) {
+      setFitMessage(
+        fittedQuote
+          ? "That smaller plan doesn't fit your credits either. Remove goals or lower iterations to fit."
+          : "Couldn't estimate credits for the smaller plan. Remove goals or lower iterations to fit.",
+      );
+      return;
+    }
+    const keptGoals = new Map(
+      fittedPlan.proposed.map((persona) => [
+        persona.key,
+        new Set(persona.goalKeys),
+      ]),
+    );
+    onProposedChange(
+      proposed.map((persona) => ({
+        ...persona,
+        // Blank drafts stay: they never launch, and they are the user's.
+        journeys: persona.journeys.filter(
+          (journey) =>
+            !journey.goal.trim() ||
+            keptGoals.get(persona.key)?.has(journey.key),
+        ),
+      })),
+    );
+    for (const persona of fittedPlan.proposed) {
+      if (persona.iterations !== iterationsFor(persona.key)) {
+        onIterationsChange(persona.key, persona.iterations);
+      }
+    }
+    const keptReused = new Map(
+      fittedPlan.reused.map((persona) => [persona.personaId, persona]),
+    );
+    for (const persona of reusedPersonas) {
+      const kept = keptReused.get(persona._id);
+      if (!kept) removeReused(persona._id);
+      else if (kept.iterations !== reusedIterationsFor(persona._id)) {
+        onIterationsChange(persona._id, kept.iterations);
+      }
+    }
+    track("swarm_create_fit_applied", {
+      location: "swarms",
+      from_sessions: launchSessionEstimate,
+      to_sessions: fittedSessions,
+    });
+  };
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1547,6 +1739,14 @@ export function NewSwarmConfirmStep({
                 them.
               </p>
             ) : null}
+            {quoteLine ? (
+              <p
+                className="mt-1 text-xs text-muted-foreground"
+                data-testid="new-swarm-launch-quote"
+              >
+                {quoteLine}
+              </p>
+            ) : null}
           </div>
           <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
             {launchSessionEstimate.toLocaleString()}
@@ -1555,6 +1755,45 @@ export function NewSwarmConfirmStep({
             </span>
           </p>
         </div>
+
+        {creditBlocked ? (
+          <div
+            className="flex flex-wrap items-center gap-3"
+            data-testid="new-swarm-credit-blocked"
+          >
+            <p
+              role="alert"
+              className="text-sm leading-relaxed text-destructive"
+            >
+              You don&rsquo;t have enough credits to complete this run.
+            </p>
+            {offerFit ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={fitting || launching}
+                onClick={() => void applyFit()}
+                data-testid="new-swarm-fit-plan"
+              >
+                {fitting ? (
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                ) : null}
+                Run {fittedSessions.toLocaleString()}{" "}
+                {fittedSessions === 1 ? "conversation" : "conversations"}{" "}
+                instead
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {fitMessage ? (
+          <p
+            className="text-sm leading-relaxed text-muted-foreground"
+            data-testid="new-swarm-fit-message"
+          >
+            {fitMessage}
+          </p>
+        ) : null}
 
         {errorMessage ? (
           <p role="alert" className="text-sm leading-relaxed text-destructive">
@@ -1580,6 +1819,7 @@ export function NewSwarmConfirmStep({
                 rubric: [],
                 reusedTargets: activeReusedTargets,
                 reusedGrading: [],
+                ...(quote ? { quote: launchedQuote(quote) } : {}),
               })
             }
           >

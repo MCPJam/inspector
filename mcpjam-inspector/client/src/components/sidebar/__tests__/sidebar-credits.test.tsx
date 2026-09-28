@@ -264,9 +264,12 @@ describe("SidebarCredits", () => {
     expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
       "30,000 / 50,000",
     );
-    expect(screen.getByText(/Free starter eval iterations:/)).toHaveTextContent(
-      "420 remaining · one-time allowance of 500",
+    expect(screen.getByText(/Free starter iterations:/)).toHaveTextContent(
+      "420 left, while available",
     );
+    expect(
+      screen.getByText(/Swarm conversations on standard models draw from it/),
+    ).toBeInTheDocument();
   });
 
   it("offers Explore plans on the free plan", () => {
