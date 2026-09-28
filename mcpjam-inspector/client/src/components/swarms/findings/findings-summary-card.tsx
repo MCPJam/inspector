@@ -17,6 +17,7 @@ export function FindingsSummaryCard({
   summary,
   recommendation,
   narration,
+  launchReason,
 }: {
   sessionCount: number;
   /** 1–4 sentences, joined into one paragraph here. */
@@ -33,6 +34,13 @@ export function FindingsSummaryCard({
    * narration "Suggested fix" would tell a reader to go and do a description.
    */
   narration?: string | null;
+  /**
+   * Why sessions in this wave never ran, from the attempts that refused them.
+   * The paragraph can only count them ("15 of 15 sessions failed to launch.");
+   * this names the refusal, which is the one thing a reader of a wave that
+   * never ran needs (#5188). Swarm only.
+   */
+  launchReason?: string | null;
 }) {
   // Filtered before joining so an empty or whitespace-only sentence cannot
   // leave a double space mid-paragraph. The composers do not emit one today;
@@ -84,6 +92,14 @@ export function FindingsSummaryCard({
               <FindingText text={headline} />
             </p>
           </div>
+          {launchReason?.trim() ? (
+            <div data-testid="findings-launch-reason">
+              <SectionLabel>Why sessions didn't run</SectionLabel>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                {launchReason.trim()}
+              </p>
+            </div>
+          ) : null}
           {fix ? (
             // Own block, not a child of the summary paragraph:
             // `SectionLabel` renders a <p>, and a paragraph inside a

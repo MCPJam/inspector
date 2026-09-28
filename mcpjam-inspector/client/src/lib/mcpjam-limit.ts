@@ -125,6 +125,27 @@ const collectStringValues = (
   return strings;
 };
 
+/**
+ * Ask MCPJam's refusals, which are about MCPJAM's budget, not the customer's.
+ *
+ * `platform_capacity` is MCPJam's own daily budget for the feature;
+ * `agent_turn_limit` is a per-user COUNT; `agent_billing_rejected` means the
+ * claim did not hold at all. None of them is a wallet the caller can top up,
+ * and all three arrive on a surface the product tells people is free — so
+ * opening the credits dialog for one would sell credits against a refusal
+ * buying credits cannot lift.
+ *
+ * The SCREENING now lives in `shared/credit-exhaustion.ts`, which excludes
+ * these three alongside the other account-state refusals and walks nesting
+ * itself. This set remains because the refusal COPY below still needs to know
+ * which codes are the agent's.
+ */
+const AGENT_REFUSAL_CODES = new Set([
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+]);
+
 const findStringPropertyDeep = (
   value: unknown,
   key: string,
@@ -241,7 +262,8 @@ const hasFrontierSignInCode = (
   if (!value || typeof value !== "object" || seen.has(value)) return false;
   seen.add(value);
 
-  if (getStringProperty(value, "code") === "guest_model_not_allowed") return true;
+  if (getStringProperty(value, "code") === "guest_model_not_allowed")
+    return true;
   return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
 };
 
@@ -292,6 +314,144 @@ const MCPJAM_HOLDS_COMMITTED_MESSAGE =
  * A `holds_committed` refusal gets its own line: no dialog opens for it, and
  * the fix is to retry in a moment, not to buy anything.
  */
+/**
+ * The 503 a refused platform hold answers when MCPJam's own guard failed
+ * closed, as opposed to its budget being spent. Nothing lifts it at midnight,
+ * so it must not be shown as a daily limit.
+ */
+const AGENT_UNAVAILABLE_CODES = new Set([
+  "platform_generation_unavailable",
+  "agent_billing_rejected",
+]);
+
+/** Every code, at any nesting depth, that a refusal body carries. */
+const collectCodes = (
+  value: unknown,
+  out: Set<string>,
+  seen = new WeakSet<object>(),
+): void => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      collectCodes(parsed, out, seen);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  const code = getStringProperty(value, "code");
+  if (code) out.add(code);
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    collectCodes(item, out, seen);
+  }
+};
+
+/**
+ * The backend answers BOTH agent count caps with `code: "agent_turn_limit"`
+ * and tells them apart with `gatedBy`: `"user"` is the 150-a-day window,
+ * `"burst"` is the 6-a-minute one. They want opposite advice — one resets at
+ * midnight, the other in seconds — so reading only the code told a user who
+ * had paused for ten seconds to come back tomorrow.
+ */
+const findGatedBy = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): string | undefined => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findGatedBy(parsed, seen);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  return findStringPropertyDeep(value, "gatedBy", seen);
+};
+
+const findRetryAfterMs = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): number | undefined => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findRetryAfterMs(parsed, seen);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+  const direct = (value as Record<string, unknown>).retryAfterMs;
+  if (typeof direct === "number" && Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    const nested = findRetryAfterMs(item, seen);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+};
+
+/**
+ * `gatedBy` as a bare substring, for a body that never parses.
+ *
+ * The AI SDK folds a pre-stream refusal into `new Error(await res.text())` and
+ * a proxy can mangle that text, which is why the code scan below is a substring
+ * scan too. Matched as a quoted key/value pair rather than the bare word
+ * "burst", which is common enough in prose to be worth not guessing at.
+ */
+const BURST_GATED_BY_PATTERN = /"gatedBy"\s*:\s*"burst"/;
+
+const describeBurstRetry = (retryAfterMs: number | undefined): string => {
+  if (retryAfterMs === undefined) {
+    return "Too many Ask MCPJam turns in a row. Try again in a moment.";
+  }
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
+};
+
+/**
+ * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
+ * something else.
+ *
+ * The agent is free, so none of these is a wallet the reader can top up, and
+ * the raw body they arrive as reads as a crash. The two sentences say the only
+ * two things worth saying: come back after the reset, or this is ours and it is
+ * temporary.
+ */
+export function describeAgentRefusalMessage(
+  message: string | null | undefined,
+): string | null {
+  if (!message) return null;
+  const codes = new Set<string>();
+  collectCodes(message, codes);
+  // Unconditional, not a fallback for an unparseable body. `collectCodes` only
+  // records a `code` PROPERTY, so a refusal nested as plain text under some
+  // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —
+  // leaves a non-empty set that does not contain the code that actually
+  // matters, and gating the scan on `size === 0` would skip it and print the
+  // raw body. These codes are distinctive enough (none is an English word)
+  // that scanning always costs nothing.
+  for (const code of [...AGENT_REFUSAL_CODES, ...AGENT_UNAVAILABLE_CODES]) {
+    if (message.includes(code)) codes.add(code);
+  }
+  for (const code of AGENT_UNAVAILABLE_CODES) {
+    if (codes.has(code)) return "Ask MCPJam is temporarily unavailable.";
+  }
+  if (codes.has("agent_turn_limit")) {
+    // Only the DAILY cap resets at midnight. A burst throttle is seconds away,
+    // and telling that user to come back tomorrow is both wrong and the reason
+    // they would stop trying.
+    const gatedBy = findGatedBy(message);
+    if (gatedBy === "burst" || BURST_GATED_BY_PATTERN.test(message)) {
+      return describeBurstRetry(findRetryAfterMs(message));
+    }
+  }
+  if (codes.has("platform_capacity") || codes.has("agent_turn_limit")) {
+    return "Ask MCPJam has reached today's limit. It resets at 00:00 UTC.";
+  }
+  return null;
+}
+
 export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {

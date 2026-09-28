@@ -389,6 +389,12 @@ export function startEvalGeneration(
   scope: EvalAgentScope,
   instructions: string,
   options?: GenerationOptions,
+  /**
+   * Environment suites: the environment whose servers the job discovers.
+   * Required when the suite's environments connect different servers; the
+   * server refuses to guess.
+   */
+  environmentId?: string,
 ) {
   const key = evalSuiteKey(scope);
   // Reading the suite is still the scope check: generation is only startable
@@ -409,6 +415,7 @@ export function startEvalGeneration(
       instructions:
         instructions.trim() || "Generate eval cases for the suite's tools.",
       options,
+      ...(environmentId ? { environmentId } : {}),
     },
   })
     .then(({ jobId }) =>

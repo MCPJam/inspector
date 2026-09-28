@@ -888,4 +888,82 @@ describe("MessageView", () => {
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
     });
   });
+
+  describe("execution provenance", () => {
+    const execution = {
+      requested: {
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "openrouter", model: "none" },
+      },
+      resolved: {
+        rail: "openrouter",
+        wireModelId: "openai/gpt-5",
+        offering: { rail: "openrouter", providerKey: "openrouter" },
+      },
+      effectiveSettings: { reasoningEffort: "low", maxOutputTokens: 0 },
+      attempts: [],
+      deviation: {
+        kind: "provider_fallback",
+        reason: "The openrouter fallback served the request.",
+      },
+    };
+
+    it("shows what the turn ran on from the finish message's record", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "Hi" }],
+        metadata: { inputTokens: 1, outputTokens: 2, execution },
+      });
+
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+
+      expect(
+        screen.getByTestId("chat-turn-execution-provenance-line"),
+      ).toHaveTextContent(
+        "Ran on openai/gpt-5 via OpenRouter (MCPJam key), effort low, max output provider default",
+      );
+      expect(
+        screen.getByTestId("chat-turn-execution-deviation-banner"),
+      ).toHaveTextContent("Deviation: Provider fallback");
+    });
+
+    it("shows nothing for a turn without a record", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "Hi" }],
+        metadata: { inputTokens: 1, outputTokens: 2 },
+      });
+
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+
+      expect(
+        screen.queryByTestId("chat-turn-execution-provenance"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("re-renders when the finish chunk adds the record to an unchanged message", () => {
+      const parts = [{ type: "text" as const, text: "Hi" }];
+      const message = createMessage({ role: "assistant", parts });
+      const { rerender } = renderMessageView(
+        <MessageView {...defaultProps} message={message} />,
+      );
+      expect(
+        screen.queryByTestId("chat-turn-execution-provenance"),
+      ).not.toBeInTheDocument();
+
+      rerender(
+        <PreferencesStoreProvider themeMode="light" themePreset="default">
+          <MessageView
+            {...defaultProps}
+            message={{ ...message, parts, metadata: { execution } }}
+          />
+        </PreferencesStoreProvider>,
+      );
+
+      expect(
+        screen.getByTestId("chat-turn-execution-provenance"),
+      ).toBeInTheDocument();
+    });
+  });
 });

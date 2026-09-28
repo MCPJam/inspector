@@ -184,10 +184,19 @@ const JsonRpcCodeSchema = z
   .max(2_147_483_647);
 
 /**
+ * A JSON-RPC error code: any 32-bit integer, since servers define their own
+ * codes outside the reserved range. `undefined` for anything else.
+ */
+export function parseJsonRpcCode(value: unknown): number | undefined {
+  const parsed = JsonRpcCodeSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
  * Fixed wording per JSON-RPC error code. The server's own `message` and
  * `data` are never reported.
  */
-function jsonRpcErrorMessage(code: number): string {
+export function jsonRpcErrorMessage(code: number): string {
   switch (code) {
     case -32700:
       return "Parse error";
@@ -212,9 +221,9 @@ function projectJsonRpcError(
   value: unknown,
 ): JsonRpcErrorProjection | undefined {
   if (!isPlainRecord(value)) return undefined;
-  const code = JsonRpcCodeSchema.safeParse(value.code);
-  if (!code.success || typeof value.message !== "string") return undefined;
-  return { code: code.data, message: jsonRpcErrorMessage(code.data) };
+  const code = parseJsonRpcCode(value.code);
+  if (code === undefined || typeof value.message !== "string") return undefined;
+  return { code, message: jsonRpcErrorMessage(code) };
 }
 
 const JsonRpcIdSchema = z.union([
@@ -624,9 +633,14 @@ const PROTOCOL_REQUEST_HEADERS: ReadonlySet<string> = new Set([
  * cookies, and any header a server was configured with — is replaced with
  * {@link REDACTED_HEADER_VALUE}, whatever the name, independently of any
  * redaction applied upstream of this function.
+ *
+ * `echoes` names headers, lowercased, that mirror a value the response
+ * already reports; such a header keeps its value only when it is exactly that
+ * value.
  */
 export function projectRequestHeaders(
   headers: unknown,
+  echoes?: Readonly<Record<string, string | undefined>>,
 ): Record<string, string> {
   const projected: Record<string, string> = {};
   if (!isPlainRecord(headers)) return projected;
@@ -636,11 +650,13 @@ export function projectRequestHeaders(
   )) {
     const boundedName = boundText(name, MAX_HEADER_NAME_LENGTH);
     if (boundedName === undefined || typeof value !== "string") continue;
-    projected[boundedName] = PROTOCOL_REQUEST_HEADERS.has(
-      boundedName.toLowerCase(),
-    )
+    const key = boundedName.toLowerCase();
+    const echoed = echoes?.[key];
+    projected[boundedName] = PROTOCOL_REQUEST_HEADERS.has(key)
       ? (boundText(value, MAX_HEADER_VALUE_LENGTH) ?? "")
-      : REDACTED_HEADER_VALUE;
+      : echoed !== undefined && value === echoed
+        ? echoed
+        : REDACTED_HEADER_VALUE;
   }
   return projected;
 }
@@ -722,13 +738,52 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/** Events kept per hosted log array: the first half and the last half. */
+export const MAX_LOG_EVENTS = 200;
+/** Upper bound on one serialized hosted log array. */
+export const MAX_LOG_ARRAY_BYTES = 1024 * 1024;
+
+/**
+ * A log array within {@link MAX_LOG_EVENTS} and {@link MAX_LOG_ARRAY_BYTES},
+ * and how many events it left out.
+ */
+function projectLogArray(
+  events: unknown[],
+  project: (event: Record<string, unknown>) => Record<string, unknown>,
+): { events: Record<string, unknown>[]; omitted: number } {
+  const records = events.filter(isPlainRecord);
+  const half = MAX_LOG_EVENTS / 2;
+  const candidates =
+    records.length > MAX_LOG_EVENTS
+      ? [...records.slice(0, half), ...records.slice(-half)]
+      : records;
+  let omitted = records.length - candidates.length;
+  // The array's brackets, then each event and the comma before it.
+  let bytes = 2;
+  const kept: Record<string, unknown>[] = [];
+  for (const record of candidates) {
+    const projected = project(record);
+    const size =
+      Buffer.byteLength(JSON.stringify(projected), "utf8") +
+      (kept.length > 0 ? 1 : 0);
+    if (bytes + size > MAX_LOG_ARRAY_BYTES) {
+      omitted += 1;
+      continue;
+    }
+    bytes += size;
+    kept.push(projected);
+  }
+  return { events: kept, omitted };
+}
+
 /**
  * The hosted log envelope (`_rpcLogs` / `_httpLogs`) attached to a failed
  * connection, reduced the same way as a probe answer: frames in either
  * direction keep their envelope, exchanges keep their status line and
  * allowlisted response headers, request headers go through
  * {@link projectRequestHeaders}, and a transport error goes through
- * `describeTransportError`.
+ * `describeTransportError`. Each array is bounded by {@link projectLogArray};
+ * `_rpcLogsOmitted` / `_httpLogsOmitted` count what was left out.
  */
 export function projectHostedLogEnvelope(
   envelope: Record<string, unknown> | undefined,
@@ -737,14 +792,16 @@ export function projectHostedLogEnvelope(
   if (!envelope) return envelope;
   const projected: Record<string, unknown> = {};
   if (Array.isArray(envelope._rpcLogs)) {
-    projected._rpcLogs = envelope._rpcLogs
-      .filter(isPlainRecord)
-      .map(projectRpcLogEvent);
+    const rpc = projectLogArray(envelope._rpcLogs, projectRpcLogEvent);
+    projected._rpcLogs = rpc.events;
+    if (rpc.omitted > 0) projected._rpcLogsOmitted = rpc.omitted;
   }
   if (Array.isArray(envelope._httpLogs)) {
-    projected._httpLogs = envelope._httpLogs
-      .filter(isPlainRecord)
-      .map((event) => projectHttpLogEvent(event, describeTransportError));
+    const http = projectLogArray(envelope._httpLogs, (event) =>
+      projectHttpLogEvent(event, describeTransportError),
+    );
+    projected._httpLogs = http.events;
+    if (http.omitted > 0) projected._httpLogsOmitted = http.omitted;
   }
   return projected;
 }
@@ -816,7 +873,11 @@ function projectHttpLogEvent(
       request: {
         method: boundText(request.method, MAX_REQUEST_METHOD_LENGTH) ?? "",
         url: boundText(request.url, MAX_URL_LENGTH) ?? "",
-        headers: projectRequestHeaders(request.headers),
+        // `Mcp-Method` mirrors the request's JSON-RPC method, which
+        // `bodyValues` reports; its value is kept when it is that method.
+        headers: projectRequestHeaders(request.headers, {
+          "mcp-method": bodyValues?.method,
+        }),
       },
       ...(response
         ? {

@@ -25,6 +25,7 @@ import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
+import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -54,7 +55,7 @@ const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
  * lost. Returns null for any non-billing error so callers fall through to
  * their normal handling.
  */
-function asBillingRouteError(error: unknown): WebRouteError | null {
+export function asBillingRouteError(error: unknown): WebRouteError | null {
   if (!(error instanceof ConvexError)) {
     return null;
   }
@@ -156,6 +157,11 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
+    /**
+     * The Convex bearer the screenshot and replay uploads authenticate with.
+     * Pure pass-through to `finalizeEvalIteration`.
+     */
+    convexAuthToken?: string;
     /** Explicit harness lifecycle status; never infer it from the verdict. */
     status: IterationStatus;
     startedAt?: number;
@@ -167,6 +173,12 @@ export type SuiteRunRecorder = {
     // `testIteration.metadata`; the Convex validator accepts nested values.
     metadata?: Record<string, unknown>;
   }): Promise<void>;
+  /**
+   * True once a write learned the run (or its suite) was deleted. The runner
+   * polls this so a deletion seen by an iteration write stops the whole run,
+   * not just that iteration's writes. Optional: provided recorders may omit it.
+   */
+  isRunDeleted?(): boolean;
   finalize(args: {
     status: "completed" | "failed" | "cancelled" | "timed_out";
     summary?: {
@@ -204,7 +216,8 @@ export const createSuiteRunRecorder = ({
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
   let runtimeAttempt:
-    { attemptId: string; monotonicStartedAt: number } | undefined;
+    | { attemptId: string; monotonicStartedAt: number }
+    | undefined;
   const iterationRuntime = new Map<
     string,
     {
@@ -263,6 +276,7 @@ export const createSuiteRunRecorder = ({
   return {
     runId,
     suiteId,
+    isRunDeleted: () => runDeleted,
     async beginExecutionAttempt(metadata) {
       runtimeAttempt = undefined;
       iterationRuntime.clear();
@@ -579,6 +593,7 @@ export const startSuiteRunWithRecorder = async ({
   namedHostId,
   runGroupId,
   environmentId,
+  runtimeVenue,
   expectedEnvironmentRevision,
   expectedEnvironmentHostConfigId,
   expectedEnvironmentServerIds,
@@ -660,6 +675,7 @@ export const startSuiteRunWithRecorder = async ({
    * reconstruction of the mutation args would silently drop it.
    */
   environmentId?: string;
+  runtimeVenue?: "local" | "hosted";
   /**
    * The environment revision `prepareEvalRun` resolved (and captured the
    * tool snapshot against). The mutation compares it to the environment's
@@ -767,6 +783,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(namedHostId ? { namedHostId } : {}),
       ...(runGroupId ? { runGroupId } : {}),
       ...(environmentId ? { environmentId } : {}),
+      ...(runtimeVenue ? { runtimeVenue } : {}),
       ...(expectedEnvironmentRevision !== undefined
         ? { expectedEnvironmentRevision }
         : {}),
@@ -940,7 +957,8 @@ export const startSuiteRunWithRecorder = async ({
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
   let suiteDefaultPredicates:
-    import("@/shared/eval-matching").Predicate[] | undefined;
+    | import("@/shared/eval-matching").Predicate[]
+    | undefined;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -969,9 +987,11 @@ export const startSuiteRunWithRecorder = async ({
       suiteDefaults: suiteDefaultPredicates,
       suppressedSuiteStandardCheckIds: tc.suppressedSuiteStandardCheckIds,
       envelope: tc.predicates as
-        import("@/shared/eval-matching").CasePredicates | undefined,
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
       legacyCase: tc.successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
     });
 
   // Build config from test cases for backward compatibility
@@ -1001,22 +1021,27 @@ export const startSuiteRunWithRecorder = async ({
         ];
       }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
-        return tc.models.map((model: any) => ({
-          title: tc.title,
-          query: tc.query,
-          model: model.model,
-          provider: model.provider,
-          runs: tc.runs || 1,
-          expectedToolCalls: tc.expectedToolCalls || [],
-          isNegativeTest: tc.isNegativeTest,
-          expectedOutput: tc.expectedOutput,
-          steps: tc.steps,
-          advancedConfig: tc.advancedConfig,
-          matchOptions: tc.matchOptions,
-          successPredicates,
-          ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
-          testCaseId: tc._id,
-        }));
+        return tc.models.map((model: any) => {
+          // Saved selection behind this entry; invalid or absent ⇒ legacy.
+          const selection = readStoredModelSelection(model.selection);
+          return {
+            title: tc.title,
+            query: tc.query,
+            model: model.model,
+            provider: model.provider,
+            ...(selection ? { selection } : {}),
+            runs: tc.runs || 1,
+            expectedToolCalls: tc.expectedToolCalls || [],
+            isNegativeTest: tc.isNegativeTest,
+            expectedOutput: tc.expectedOutput,
+            steps: tc.steps,
+            advancedConfig: tc.advancedConfig,
+            matchOptions: tc.matchOptions,
+            successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
+            testCaseId: tc._id,
+          };
+        });
       }
 
       if (tc.model && tc.provider) {
@@ -1069,9 +1094,12 @@ export const startSuiteRunWithRecorder = async ({
     // either order.
     executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
       ?.executionBudgets ?? response?.executionBudgets) as
-      ResolvedExecutionBudgets | undefined,
+      | ResolvedExecutionBudgets
+      | undefined,
     githubCredentialPolicy: response?.githubCredentialPolicy as
-      "no_customer_credentials" | "suite_credentials" | undefined,
+      | "no_customer_credentials"
+      | "suite_credentials"
+      | undefined,
     /**
      * This start was a REPLAY of an existing run (idempotency key hit, or the
      * keyless fingerprint window), not a launch.
@@ -1087,7 +1115,9 @@ export const startSuiteRunWithRecorder = async ({
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
-      Record<string, unknown> | null | undefined,
+      | Record<string, unknown>
+      | null
+      | undefined,
     /**
      * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
      * `bundleHash` of every plugin version this run pinned, in pin order.
@@ -1113,7 +1143,8 @@ export const startSuiteRunWithRecorder = async ({
      * which mean the same thing here.
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
-      { mode?: unknown } | undefined,
+      | { mode?: unknown }
+      | undefined,
     /**
      * The run's FROZEN description-experiment marker, straight off its own
      * snapshot. The runner applies `{ [toolName]: description }` and stamps

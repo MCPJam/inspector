@@ -1,11 +1,11 @@
 /**
  * Release Dry-Run Preview tile.
  *
- * Shows exactly what `changeset version` would produce against `main`:
- * per-package current → new version, bump type, contributing changesets
- * (with their descriptions = release-note bodies), the projected
- * release_tag, which scopes are valid, and whether desktop artifacts will
- * build.
+ * Shows what "Start release" would put in the version PR, i.e. what
+ * `changeset version` would produce against `main`: per-package current → new
+ * version, bump type, contributing changesets (with their descriptions =
+ * release-note bodies), the projected release_tag, and whether desktop
+ * artifacts will build.
  */
 
 import { getBranchHead } from "@/lib/github";
@@ -77,8 +77,8 @@ export async function ReleaseDryRun() {
         <p className="text-sm leading-relaxed text-muted-foreground">
           No pending changesets.{" "}
           <code className="font-mono text-foreground">npx changeset status</code>{" "}
-          would report zero releases, and the Release workflow would fail
-          preflight.
+          would report zero releases, so Start release has nothing to put in
+          a version PR.
         </p>
       </Tile>
     );
@@ -120,18 +120,6 @@ export async function ReleaseDryRun() {
             <span className="text-foreground">
               {plan.buildDesktopArtifacts ? "mac + windows" : "no"}
             </span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">Valid scopes</span>:
-            {plan.validScopes.length === 0 ? (
-              <Badge tone="failure">none</Badge>
-            ) : (
-              plan.validScopes.map((s) => (
-                <Badge key={s} tone="info">
-                  {s}
-                </Badge>
-              ))
-            )}
           </span>
         </div>
       </div>

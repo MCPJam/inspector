@@ -46,6 +46,10 @@ import {
   buildDiscoveryCandidates,
   evaluateDiscovery,
 } from "../../services/xaa-discovery.js";
+import {
+  prepareHostedOAuthRequestHeaders,
+  projectHostedOAuthProxyResponse,
+} from "../../utils/hosted-oauth-proxy.js";
 import { WebRouteError } from "../web/errors.js";
 import {
   fetchServerClientSecret,
@@ -657,6 +661,8 @@ interface CreateXaaRouterOptions {
     projectId: string;
     bearerToken: string;
     clientIp?: string | null;
+    /** The resource the secret is requested for; forwarded to the reveal. */
+    targetUrl?: string;
   }) => Promise<ServerClientSecretResult>;
   // Confirms the caller may mint under a scoped issuer path before minting.
   // Two flavors, selected by issuerKind: "org" (/o/:orgId/...) requires org
@@ -1479,6 +1485,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
           clientIp: getClientIp(c),
+          // The resource this token request is for: the backend releases the
+          // stored secret only for that resource's origin.
+          ...(parsed.resource ? { targetUrl: parsed.resource } : {}),
         });
         url = resolved.tokenEndpoint;
         clientId = resolved.clientId;
@@ -1486,6 +1495,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         extraHeaders = undefined;
       } else {
         url = parsed.tokenEndpoint as string;
+      }
+      // Hosted: connection and cookie headers are dropped, as on the hosted
+      // OAuth proxy (MJ-001).
+      if (options.httpsOnlyProxy && extraHeaders) {
+        extraHeaders = prepareHostedOAuthRequestHeaders(extraHeaders);
       }
 
       // The shared helper already handles private_key_jwt correctly: it needs a
@@ -1549,7 +1563,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         httpsOnly: options.httpsOnlyProxy,
       });
 
-      return c.json(result);
+      // Hosted: the answer is reduced like the hosted OAuth proxy's (MJ-001).
+      return c.json(
+        options.httpsOnlyProxy ? projectHostedOAuthProxyResponse(result) : result
+      );
     } catch (error) {
       if (error instanceof OAuthProxyError) {
         return toJsonError(error.message, {
@@ -1825,6 +1842,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
           clientIp: getClientIp(c),
+          // The resource this token request is for: the backend releases the
+          // stored secret only for that resource's origin.
+          ...(parsed.resource ? { targetUrl: parsed.resource } : {}),
         });
         tokenEndpoint = resolved.tokenEndpoint;
         clientId = resolved.clientId;

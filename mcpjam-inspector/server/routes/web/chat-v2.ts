@@ -377,9 +377,8 @@ chatV2.post("/", async (c) => {
 
     // The caller's `projectId` is checked here, before anything is resolved or
     // billed against it (MJ-013). The server batch below applies the same
-    // membership check, but only to the servers a turn selected, and a turn
-    // with none skipped it: a guest or signed-in bearer could run a hosted
-    // completion against any project id. Scenario turns are exempt, since
+    // membership check to the servers a turn selected; this one covers every
+    // turn, including one that selected none. Scenario turns are exempt, since
     // their access is the `scenarioId` grant, re-checked by the runtime-config
     // fetch, not membership.
     if (!isScenarioSession) {
@@ -1048,7 +1047,21 @@ chatV2.post("/", async (c) => {
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
         xaaEnterprisePolicyOn: xaaPolicy != null,
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session is an eval
+        // surface and may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.web.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         throw new WebRouteError(
           503,

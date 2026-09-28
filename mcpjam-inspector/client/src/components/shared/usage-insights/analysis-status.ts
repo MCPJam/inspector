@@ -13,6 +13,8 @@ import type { InsightsAnalysisSummary } from "@/hooks/useUsageInsights";
  */
 export type AnalysisStatusKind =
   | "empty"
+  | "notRun"
+  | "noTranscripts"
   | "guest"
   | "deferred"
   | "analyzing"
@@ -64,6 +66,30 @@ export function analysisStatus(
       kind: "empty",
       title: "No sessions to show",
       body: "New sessions are analyzed shortly after their last message.",
+    };
+
+  // Sessions that never ran are not waiting on analysis, and no pass will
+  // ever mark them (#5188). When that is every session it is the whole story,
+  // and it outranks "Analyzing" and "Waiting": a zero-message session still
+  // inside the idle window counts as owed, which read as work in flight on a
+  // wave that was refused at launch.
+  const notRun = summary.notRun ?? 0;
+  if (notRun > 0 && notRun >= summary.total)
+    return {
+      kind: "notRun",
+      title: "These sessions didn't run",
+      body: "None of them recorded a message, so there is nothing to analyze.",
+    };
+
+  // Every session was read and had nothing in it. A backend without `notRun`
+  // lands here for the same refused wave, and so does a study whose sessions
+  // are all empty. Either way no analysis is coming.
+  const emptyTranscripts = summary.skips.empty_transcript ?? 0;
+  if (emptyTranscripts > 0 && emptyTranscripts >= summary.total)
+    return {
+      kind: "noTranscripts",
+      title: "Nothing to analyze",
+      body: "None of these sessions recorded a message.",
     };
 
   // Worded for both readers: a guest owner learns why nothing ran, and a
@@ -153,6 +179,22 @@ export function analysisStatus(
     };
 
   return null;
+}
+
+/**
+ * The one muted line under Session flow when SOME sessions never ran (#5188).
+ * The diagram is drawn from the sessions that did; this says the rest were
+ * not lost, and that nothing about them was analyzed because there was
+ * nothing to read. When none ran, `analysisStatus` says so instead.
+ */
+export function notRunNote(
+  summary: InsightsAnalysisSummary | null | undefined,
+): string | null {
+  const notRun = summary?.notRun ?? 0;
+  if (notRun <= 0 || notRun >= (summary?.total ?? 0)) return null;
+  return `${sessions(notRun)} didn't run, so ${
+    notRun === 1 ? "it has" : "they have"
+  } nothing to analyze.`;
 }
 
 /**

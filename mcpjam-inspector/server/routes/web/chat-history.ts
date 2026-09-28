@@ -187,19 +187,8 @@ chatHistory.post("/action", async (c) =>
   }),
 );
 
-// POST /chat-history/widget-snapshot/generate-upload-url
-// Body: { chatSessionId: string }
-chatHistory.post("/widget-snapshot/generate-upload-url", async (c) =>
-  handleRoute(c, async () => {
-    const bearerToken = assertBearerToken(c);
-    const body = await readJsonBody<Record<string, unknown>>(c);
-    return await proxyPost(
-      bearerToken,
-      "/direct-chat/widget-snapshot/generate-upload-url",
-      body,
-    );
-  }),
-);
+// Widget snapshot bytes go from the browser to the backend's upload route
+// (MJ-006); `create` below binds the storage ids it returned.
 
 // POST /chat-history/widget-snapshot/create
 // Body: { chatSessionId, toolCallId, toolName, serverId, widgetHtmlBlobId, ... }

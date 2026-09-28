@@ -469,14 +469,30 @@ function expectLogsProjected(body: any) {
 const originalFetch = global.fetch;
 const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 const originalHostedMode = process.env.VITE_MCPJAM_HOSTED_MODE;
+const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
 
 beforeEach(() => {
   vi.clearAllMocks();
   validateGuestTokenMock.mockResolvedValue({ valid: false });
   serverUrlRef.current = SERVER_URL;
   process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+  process.env.INSPECTOR_SERVICE_TOKEN = "test-inspector-service-token";
+  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === "https://example.convex.site/internal/server-check-queue") {
+      expect(new Headers(init?.headers).get("x-inspector-service-token")).toBe(
+        "test-inspector-service-token",
+      );
+      const { operation, requestId } = JSON.parse(String(init?.body));
+      expect(["admit", "poll", "renew", "release"]).toContain(operation);
+      expect(requestId).toEqual(expect.any(String));
+      return json({
+        state: operation === "release" ? "released" : "active",
+        expiresAt: Date.now() + 30_000,
+        active: operation === "release" ? 0 : 1,
+        waiting: 0,
+      });
+    }
     if (url.endsWith("/web/authorize")) {
       return authorizeResponse(serverUrlRef.current);
     }
@@ -489,6 +505,8 @@ beforeEach(() => {
 
 afterAll(() => {
   global.fetch = originalFetch;
+  if (originalServiceToken === undefined) delete process.env.INSPECTOR_SERVICE_TOKEN;
+  else process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
   if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
   else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
   if (originalHostedMode === undefined) {
@@ -834,16 +852,6 @@ describe("hosted validate responses (web and v1)", () => {
           }),
       ),
     ],
-    [
-      "malformed event stream",
-      fixedAnswer(
-        () =>
-          new Response("data: {UNEXPECTED_MARKER_61\n\n", {
-            status: 200,
-            headers: { "content-type": "text/event-stream" },
-          }),
-      ),
-    ],
   ])(
     "v1: reports a non-MCP HTTP 200 %s answer by its status line",
     async (_kind, answer) => {
@@ -857,6 +865,21 @@ describe("hosted validate responses (web and v1)", () => {
       );
     },
   );
+
+  it("v1: reports a malformed event stream that never completes as a timeout", async () => {
+    upstream.current = fixedAnswer(
+      () =>
+        new Response("data: {UNEXPECTED_MARKER_61\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    );
+    const res = await v1Validate(routes);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as any;
+    expect(JSON.stringify(body)).not.toMatch(MARKER);
+    expect(body.message).toBe("The MCP server did not respond in time.");
+  });
 
   it.each([
     ["web", webValidate],
@@ -968,6 +991,40 @@ describe("hosted validate responses (web and v1)", () => {
       });
     },
   );
+
+  it("web: bounds the frame log and counts what it left out", async () => {
+    const notifications = Array.from({ length: 1000 }, (_, index) => ({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", data: `note ${index}` },
+    }));
+    upstream.current = async (request) => {
+      const message = await readMessage(request.clone());
+      if (message?.method === "tools/list") {
+        const events = [
+          ...notifications,
+          { jsonrpc: "2.0", id: message.id, result: { tools: [] } },
+        ];
+        return new Response(
+          events
+            .map(
+              (event) => `event: message\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return listingServer()(request);
+    };
+    const res = await webValidate(routes);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body._rpcLogs).toHaveLength(200);
+    expect(body._rpcLogsOmitted).toBeGreaterThanOrEqual(800);
+    expect(
+      body._rpcLogs.slice(0, 100).map((event: any) => event.message.method),
+    ).toContain("initialize");
+  });
 
   it("web: reports the frames it sent by their envelope", async () => {
     upstream.current = async (request) => {

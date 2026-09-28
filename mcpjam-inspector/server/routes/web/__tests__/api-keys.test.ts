@@ -8,6 +8,7 @@ import {
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
 } from "../../../services/workos-key-bindings.js";
+import { setRevokedSessionCacheForTests } from "../../../services/revoked-session-cache.js";
 
 // The session bearer is verified in-route (resolveSessionContext); stub it to
 // a fixed WorkOS user so tests exercise the WorkOS REST flow, not JWT crypto.
@@ -55,6 +56,12 @@ vi.mock("../../../services/organizations.js", async (importOriginal) => {
       mockResolveApiKeyReadiness(...args),
   };
 });
+
+// These tests cover the routes themselves, in a process without the
+// revoked-session list. How the list gates them is covered in
+// `server/__tests__/session-revocation.test.ts` (MJ-011).
+beforeEach(() => setRevokedSessionCacheForTests(null));
+afterEach(() => setRevokedSessionCacheForTests(undefined));
 
 const OWNED_KEY_ID = "api_key_owned_1";
 const USER_KEYS_PATH = "/user_management/users/user_session_1/api_keys";

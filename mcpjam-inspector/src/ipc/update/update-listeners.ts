@@ -1,5 +1,13 @@
-import { ipcMain, BrowserWindow, autoUpdater, app } from "electron";
+import {
+  ipcMain,
+  BrowserWindow,
+  autoUpdater,
+  app,
+  net,
+  powerMonitor,
+} from "electron";
 import log from "electron-log";
+import { UpdateClock } from "./update-clock.js";
 import type {
   UpdateStatus,
   UpdateFailureReason,
@@ -32,7 +40,12 @@ let installingOnQuit = false;
 // Never reset this latch after an error. Electron registers a native observer
 // before attempting the install; calling twice can crash even if the first threw.
 let quitAndInstallCalled = false;
-let downloadTimer: ReturnType<typeof setTimeout> | undefined;
+let downloadClock: UpdateClock | undefined;
+let nativeBusy = false;
+let feedConfigured = false;
+let suspended = false;
+let powerListenersRegistered = false;
+const DOWNLOAD_RETRY_DELAYS = [30_000, 120_000];
 let quitTimer: ReturnType<typeof setTimeout> | undefined;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let downloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
@@ -43,8 +56,8 @@ function markerPath(): string {
   return attemptPath(app.getPath("userData"));
 }
 function clearDownloadTimer(): void {
-  clearTimeout(downloadTimer);
-  downloadTimer = undefined;
+  downloadClock?.stop();
+  downloadClock = undefined;
 }
 function clearQuitTimer(): void {
   clearTimeout(quitTimer);
@@ -74,9 +87,12 @@ function setStatus(status: UpdateStatus): void {
   if (status.kind === "failed") win.webContents.send("update-error", status);
 }
 
-function finishFailure(reason: UpdateFailureReason): void {
-  report(reason);
+function finishFailure(
+  reason: UpdateFailureReason,
+  action: "retry-download" | "relaunch-retry" | "instructions" = "instructions",
+): void {
   clearDownloadTimer();
+  report(reason);
   clearQuitTimer();
   stopPolling();
   terminal = true;
@@ -92,15 +108,141 @@ function finishFailure(reason: UpdateFailureReason): void {
     attemptId: a.id,
     version: a.targetVersion,
     reason,
+    action,
   });
 }
 
+function startBudget(
+  ms: number,
+  downloading: boolean,
+  expired: () => void,
+): void {
+  clearDownloadTimer();
+  downloadClock = new UpdateClock(
+    () => !app.isPackaged || (app.isReady() && net.isOnline()),
+    (active, sleep, offline) => {
+      const a = ensureAttempt();
+      if (downloading) a.activeDownloadMs += active;
+      a.sleepMs += sleep;
+      a.offlineMs += offline;
+      if (
+        downloading &&
+        !nativeBusy &&
+        currentStatus.kind === "pending" &&
+        app.isPackaged
+      ) {
+        const g = generation;
+        queueMicrotask(() => {
+          if (g === generation && currentStatus.kind === "pending")
+            checkForUpdate();
+        });
+      }
+    },
+  );
+  if (suspended) downloadClock.suspend();
+  downloadClock.start(ms, expired);
+}
+
 function startDownloadTimer(): void {
-  if (downloadTimer !== undefined) return;
-  downloadTimer = setTimeout(() => {
-    downloadTimer = undefined;
-    handleFailure("download_timeout");
-  }, downloadTimeoutMs);
+  if (downloadClock) return;
+  startBudget(downloadTimeoutMs, true, () => {
+    // A JS deadline cannot cancel Squirrel's native download. Only a confirmed
+    // native error permits a new check in this process; otherwise relaunch.
+    finishFailure("download_timeout", "relaunch-retry");
+  });
+}
+
+function onSuspend(): void {
+  suspended = true;
+  downloadClock?.suspend();
+}
+function onResume(): void {
+  suspended = false;
+  downloadClock?.resume();
+}
+
+function configureFeed(): void {
+  if (feedConfigured) return;
+  const version = app.getVersion();
+  autoUpdater.setFeedURL({
+    url: `https://update.electronjs.org/MCPJam/inspector/${process.platform}-${process.arch}/${version}`,
+    headers: {
+      "User-Agent": `mcpjam-inspector/${version} (${process.platform}: ${process.arch})`,
+    },
+    serverType: "default",
+  });
+  feedConfigured = true;
+}
+
+function checkForUpdate(): void {
+  if (
+    !app.isReady() ||
+    nativeBusy ||
+    terminal ||
+    suspended ||
+    !net.isOnline() ||
+    currentStatus.kind === "recovering" ||
+    currentStatus.kind === "retry-waiting" ||
+    currentStatus.kind === "downloaded"
+  )
+    return;
+  try {
+    configureFeed();
+  } catch {
+    finishFailure("updater_error");
+    return;
+  }
+  nativeBusy = true;
+  try {
+    autoUpdater.checkForUpdates();
+  } catch {
+    handleUpdaterError("updater_error");
+  }
+}
+
+function beginDownload(): void {
+  clearDownloadTimer();
+  const a = ensureAttempt();
+  a.phase = "downloading";
+  a.at = Date.now();
+  delete a.failure;
+  if (!persist()) {
+    finishFailure("marker_write_failed");
+    return;
+  }
+  setStatus({
+    kind: "pending",
+    version: a.targetVersion,
+    installRequested: a.userRequested,
+  });
+  startDownloadTimer();
+  if (app.isPackaged) checkForUpdate();
+}
+
+function retryDownloadFailure(): void {
+  nativeBusy = false;
+  clearDownloadTimer();
+  const a = ensureAttempt();
+  if (a.downloadRetries >= DOWNLOAD_RETRY_DELAYS.length) {
+    finishFailure("updater_error", "retry-download");
+    return;
+  }
+  const delay = DOWNLOAD_RETRY_DELAYS[a.downloadRetries++];
+  a.phase = "retry_waiting";
+  a.at = Date.now();
+  log.warn("Update download failed; retry scheduled", {
+    retry: a.downloadRetries,
+  });
+  if (!persist()) {
+    finishFailure("marker_write_failed");
+    return;
+  }
+  setStatus({
+    kind: "retry-waiting",
+    retry: a.downloadRetries,
+    version: a.targetVersion,
+  });
+  startBudget(delay, false, beginDownload);
 }
 
 function recover(): void {
@@ -149,8 +291,8 @@ function handleFailure(reason: UpdateFailureReason): void {
     reason === "install_timeout" && (a.retries === 1 || wasInstallingOnQuit)
       ? "shutdown_stuck"
       : reason;
-  report(failureReason);
   clearDownloadTimer();
+  report(failureReason);
   clearQuitTimer();
   isQuittingForUpdate = false;
   installingOnQuit = false;
@@ -227,6 +369,8 @@ function restoreAttempt(): void {
   }
   attempt = loaded.attempt;
   if (installedVersionMatches(attempt, app.getVersion())) {
+    if (attempt.retries || attempt.downloadRetries || attempt.reported.length)
+      reportUpdateFailure(attempt, "install_verified");
     if (!removeAttempt(markerPath())) {
       finishFailure("marker_write_failed");
       return;
@@ -239,6 +383,9 @@ function restoreAttempt(): void {
       kind: "failed",
       attemptId: attempt.id,
       reason: attempt.failure!,
+      action: ["updater_error", "download_timeout"].includes(attempt.failure!)
+        ? "retry-download"
+        : "instructions",
       version: attempt.targetVersion,
     });
     // A deliberate later launch can check again, but never auto-install from
@@ -260,11 +407,39 @@ function restoreAttempt(): void {
     }
     return;
   }
+  if (attempt.phase === "retry_waiting") {
+    setStatus({
+      kind: "retry-waiting",
+      retry: attempt.downloadRetries,
+      version: attempt.targetVersion,
+    });
+    startBudget(
+      DOWNLOAD_RETRY_DELAYS[attempt.downloadRetries - 1],
+      false,
+      beginDownload,
+    );
+    return;
+  }
+  if (attempt.phase === "downloading" && attempt.downloadRetries > 0) {
+    // Preserve the spent retry budget across an interrupted download. This is
+    // not permission to install unless it was already an install recovery.
+    if (attempt.retries !== 1) attempt.userRequested = false;
+    setStatus({
+      kind: "pending",
+      version: attempt.targetVersion,
+      installRequested: attempt.userRequested,
+    });
+    startDownloadTimer();
+    return;
+  }
   if (attempt.phase === "installing") {
     handleFailure("version_unchanged");
     return;
   }
-  if (attempt.userRequested && attempt.retries === 1) {
+  if (
+    (attempt.userRequested || attempt.downloadRecoveryRequested) &&
+    attempt.retries === 1
+  ) {
     attempt.phase = "downloading";
     attempt.at = Date.now();
     if (!persist()) {
@@ -273,7 +448,7 @@ function restoreAttempt(): void {
     }
     setStatus({
       kind: "pending",
-      installRequested: true,
+      installRequested: attempt.userRequested,
       version: attempt.targetVersion,
     });
     startDownloadTimer();
@@ -289,17 +464,42 @@ function restoreAttempt(): void {
 
 function handleUpdaterError(reason: UpdateFailureReason): void {
   if (
-    !isQuittingForUpdate &&
-    !installingOnQuit &&
-    (currentStatus.kind === "idle" || currentStatus.kind === "failed")
+    isQuittingForUpdate ||
+    installingOnQuit ||
+    currentStatus.kind === "downloaded"
   ) {
-    log.warn("Update check failed; will retry on the next poll");
+    handleFailure(reason);
     return;
   }
-  handleFailure(reason);
+  if (
+    currentStatus.kind === "recovering" ||
+    currentStatus.kind === "retry-waiting"
+  )
+    return;
+  nativeBusy = false;
+  if (
+    terminal &&
+    currentStatus.kind === "failed" &&
+    currentStatus.reason === "download_timeout"
+  ) {
+    // A late native error releases the download engine, so a relaunch is no
+    // longer needed. Keep the original report and expose the cheaper recovery.
+    setStatus({ ...currentStatus, action: "retry-download" });
+    return;
+  }
+  if (terminal) return;
+  if (currentStatus.kind === "pending") retryDownloadFailure();
+  else log.warn("Update check failed; will retry on the next poll");
 }
 
 export function setupAutoUpdaterEvents(): void {
+  const currentGeneration = generation;
+  void app.whenReady().then(() => {
+    if (currentGeneration !== generation || powerListenersRegistered) return;
+    powerListenersRegistered = true;
+    powerMonitor.on("suspend", onSuspend);
+    powerMonitor.on("resume", onResume);
+  });
   autoUpdater.on("checking-for-update", () =>
     log.info("Checking for updates..."),
   );
@@ -307,9 +507,11 @@ export function setupAutoUpdaterEvents(): void {
     if (
       terminal ||
       currentStatus.kind === "recovering" ||
+      currentStatus.kind === "retry-waiting" ||
       currentStatus.kind === "downloaded"
     )
       return;
+    nativeBusy = true;
     const a = ensureAttempt();
     setStatus({
       kind: "pending",
@@ -322,12 +524,21 @@ export function setupAutoUpdaterEvents(): void {
     if (
       terminal ||
       currentStatus.kind === "recovering" ||
+      currentStatus.kind === "retry-waiting" ||
       currentStatus.kind === "downloaded"
     )
       return;
+    nativeBusy = false;
     clearDownloadTimer();
-    if (currentStatus.kind === "pending") handleFailure("no_update");
-    else setStatus({ kind: "idle" });
+    if (attempt?.userRequested) handleFailure("no_update");
+    else {
+      if (!removeAttempt(markerPath())) {
+        finishFailure("marker_write_failed");
+        return;
+      }
+      attempt = undefined;
+      setStatus({ kind: "idle" });
+    }
   });
   autoUpdater.on("error", (error: Error & { domain?: string }) => {
     // An overlapping native check is not evidence that the download failed.
@@ -343,12 +554,34 @@ export function setupAutoUpdaterEvents(): void {
     );
   });
   autoUpdater.on("update-downloaded", (_event, releaseNotes, releaseName) => {
-    if (terminal || currentStatus.kind === "recovering" || isQuittingForUpdate)
+    const lateDownload =
+      currentStatus.kind === "failed" &&
+      currentStatus.reason === "download_timeout" &&
+      nativeBusy;
+    if (
+      (terminal && !lateDownload) ||
+      currentStatus.kind === "recovering" ||
+      isQuittingForUpdate
+    )
       return;
     clearDownloadTimer();
     stopPolling();
+    nativeBusy = false;
+    terminal = false;
     const a = ensureAttempt();
     a.targetVersion = updateVersion(releaseName || "");
+    if (lateDownload) a.userRequested = false;
+    if (
+      app.isPackaged &&
+      (a.downloadRetries || a.downloadRequested || a.retries || lateDownload)
+    )
+      reportUpdateFailure(a, "download_recovered");
+    delete a.failure;
+    a.phase = "downloading";
+    if (!persist()) {
+      finishFailure("marker_write_failed");
+      return;
+    }
     setStatus({
       kind: "downloaded",
       version: releaseName || "new version",
@@ -369,37 +602,10 @@ export function startUpdatePolling(): void {
     currentStatus.kind === "downloaded"
   )
     return;
-  const version = app.getVersion();
-  try {
-    autoUpdater.setFeedURL({
-      url: `https://update.electronjs.org/MCPJam/inspector/${process.platform}-${process.arch}/${version}`,
-      headers: {
-        "User-Agent": `mcpjam-inspector/${version} (${process.platform}: ${process.arch})`,
-      },
-      serverType: "default",
-    });
-    const check = () => {
-      if (
-        terminal ||
-        currentStatus.kind === "downloaded" ||
-        currentStatus.kind === "recovering"
-      )
-        return;
-      try {
-        autoUpdater.checkForUpdates();
-      } catch {
-        handleUpdaterError("updater_error");
-      }
-    };
-    pollTimer = setInterval(() => {
-      // A recovery may start in pending before its first check. Only the first
-      // check should run then; never start another check during a download.
-      if (currentStatus.kind !== "pending") check();
-    }, UPDATE_POLL_INTERVAL_MS);
-    check();
-  } catch {
-    handleFailure("updater_error");
-  }
+  pollTimer = setInterval(() => {
+    if (currentStatus.kind !== "retry-waiting") checkForUpdate();
+  }, UPDATE_POLL_INTERVAL_MS);
+  checkForUpdate();
 }
 
 function isTrusted(senderId: number): boolean {
@@ -427,17 +633,47 @@ export function registerUpdateListeners(window: BrowserWindow): void {
     isTrusted(event.sender.id) ? currentStatus : { kind: "idle" },
   );
   ipcMain.on("app:restart-for-update", (event) => {
-    if (!isTrusted(event.sender.id) || terminal || isQuittingForUpdate) return;
-    if (currentStatus.kind !== "pending" && currentStatus.kind !== "downloaded")
+    if (
+      !isTrusted(event.sender.id) ||
+      terminal ||
+      isQuittingForUpdate ||
+      currentStatus.kind !== "downloaded"
+    )
       return;
-    const a = ensureAttempt();
-    a.userRequested = true;
-    if (currentStatus.kind === "downloaded") install();
-    else {
-      // Clicking does not shorten the download's original twenty-minute budget.
-      setStatus({ ...currentStatus, installRequested: true });
-      if (!persist()) finishFailure("marker_write_failed");
+    ensureAttempt().userRequested = true;
+    install();
+  });
+  ipcMain.on("app:retry-update-download", (event) => {
+    if (
+      !isTrusted(event.sender.id) ||
+      currentStatus.kind !== "failed" ||
+      currentStatus.action !== "retry-download" ||
+      isQuittingForUpdate ||
+      quitAndInstallCalled
+    )
+      return;
+    attempt = newAttempt(app.getVersion());
+    attempt.downloadRequested = true;
+    terminal = false;
+    beginDownload();
+  });
+  ipcMain.on("app:relaunch-update-download", (event) => {
+    if (
+      !isTrusted(event.sender.id) ||
+      currentStatus.kind !== "failed" ||
+      currentStatus.action !== "relaunch-retry" ||
+      isQuittingForUpdate
+    )
+      return;
+    if (!app.isPackaged) {
+      setStatus({ kind: "recovering", attemptId: ensureAttempt().id });
+      return;
     }
+    attempt = newAttempt(app.getVersion());
+    attempt.downloadRequested = true;
+    attempt.downloadRecoveryRequested = true;
+    terminal = false;
+    recover();
   });
   if (!app.isPackaged) {
     ipcMain.on("app:simulate-update", (event) => {
@@ -460,7 +696,8 @@ export function registerUpdateListeners(window: BrowserWindow): void {
       });
     });
     ipcMain.on("app:simulate-update-error", (event) => {
-      if (isTrusted(event.sender.id)) finishFailure("updater_error");
+      if (isTrusted(event.sender.id))
+        finishFailure("updater_error", "retry-download");
     });
   }
 }
@@ -479,6 +716,14 @@ export function installUpdateOnQuit(): boolean {
 
 export function __resetUpdateStateForTests(): void {
   generation++;
+  if (powerListenersRegistered) {
+    powerMonitor.removeListener("suspend", onSuspend);
+    powerMonitor.removeListener("resume", onResume);
+  }
+  powerListenersRegistered = false;
+  suspended = false;
+  nativeBusy = false;
+  feedConfigured = false;
   clearDownloadTimer();
   clearQuitTimer();
   stopPolling();

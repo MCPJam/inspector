@@ -816,3 +816,60 @@ describe("the persona quotes a session that actually spoke", () => {
     expect(of(reversed).issue).toBe(of(built).issue);
   });
 });
+
+/**
+ * #5188: a goal whose sessions never ran used to read "No session evidence
+ * available", an analysis gap, on the persona card of a wave refused at
+ * launch. It never ran; the card has to say so.
+ */
+describe("a goal that never ran", () => {
+  function notLaunchedWire(): SwarmJourneyFindings {
+    const value = brokenWire();
+    const base = value.findings[0]!;
+    return {
+      ...value,
+      summaryKind: "notLaunched",
+      findings: [
+        {
+          ...base,
+          id: "population:not-run",
+          basis: "populationFact",
+          scopeLevel: "goal",
+          sessionIds: [],
+          citations: [],
+          verdictSeen: "notEstablished",
+          chainStage: null,
+          chainStageState: null,
+          chainStageBasis: "unmeasured",
+          disposition: "notRun",
+          tone: "muted",
+          coverageNotes: ["transcriptMissing"],
+          outcomePhrase: null,
+          mechanismPhrase: null,
+          fixPhrase: null,
+          reportExcerpt: null,
+          mechanismId: null,
+        },
+      ],
+      personas: value.personas.map((row) => ({
+        ...row,
+        disposition: "notRun",
+        tone: "muted",
+      })),
+    };
+  }
+
+  it("says no session launched rather than that evidence is missing", () => {
+    const wire = notLaunchedWire();
+    expect(swarmJourneyFindingsSchema.safeParse(wire).success).toBe(true);
+    const model = derive(wire);
+    const persona = model.personas[0]!;
+    const goal = persona.goals[0]!;
+    expect(model.neverLaunched).toBe(true);
+    expect(goal.notRun).toBe(true);
+    expect(goal.diagnosis.detail).toBe(
+      "No session launched for this goal, so nothing about the server was tested.",
+    );
+    expect(persona.issue).toBe(goal.diagnosis.detail);
+  });
+});

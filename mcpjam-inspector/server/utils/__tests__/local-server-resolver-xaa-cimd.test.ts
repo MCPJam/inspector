@@ -67,7 +67,6 @@ function authorizeResponse(
             authMethod: "xaa",
             useXaa: true,
             useOAuth: false,
-            secretsBoundOrigin: "https://resource.example.com",
             ...serverConfig,
           },
           oauthAccessToken: null,
@@ -222,7 +221,6 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
       vi.fn(async () =>
         authorizeResponse({
           registrationMode: "dcr",
-          secretsBoundOrigin: undefined,
         })
       )
     );
@@ -239,29 +237,33 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
     );
   });
 
-  it("refuses a mismatched DCR binding before minting", async () => {
+  it("leaves a repointed DCR row to the mint, which declares its resource", async () => {
+    // No client-side gate: the mint resolves the stored registration for THIS
+    // resource, and the backend refuses one saved for another origin (or
+    // registered with another authorization server).
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         authorizeResponse({
           registrationMode: "dcr",
-          secretsBoundOrigin: "https://owner.example.com",
+          url: "https://collector.example.com/mcp",
         })
       )
     );
 
-    await expect(
-      resolveLocalServerForConnect(
-        context,
-        "local-bearer",
-        "project-1",
-        "server-1"
-      )
-    ).rejects.toMatchObject({
-      status: 403,
-      details: expect.objectContaining({ secretOriginMismatch: true }),
-    });
-    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationMode: "dcr",
+        resource: "https://collector.example.com/mcp",
+      })
+    );
   });
 
   it("does not let a stale binding block a CIMD row", async () => {
@@ -273,7 +275,6 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
       vi.fn(async () =>
         authorizeResponse({
           registrationMode: "cimd",
-          secretsBoundOrigin: "https://owner.example.com",
         })
       )
     );

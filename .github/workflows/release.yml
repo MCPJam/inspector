@@ -1,17 +1,17 @@
 name: Release
 
+# Ships the versions `main` already carries. They arrive through the version PR
+# (prepare-release.yml), and release-trigger.yml dispatches this once `main` is
+# green with them on it. This run publishes whatever public package version npm
+# does not have yet, deploys, tags the commit and publishes the GitHub release.
+# It never writes to `main`, whose rulesets take changes only through a
+# reviewed pull request. Dispatching it by hand (Soundcheck's "Run release now")
+# is the retry path.
+run-name: ${{ inputs.versions != '' && format('Release {0}', inputs.versions) || 'Release' }}
+
 on:
   workflow_dispatch:
     inputs:
-      scope:
-        description: "Which release surface to publish"
-        required: true
-        default: full
-        type: choice
-        options:
-          - packages-only
-          - inspector-only
-          - full
       deploy_backend_prod:
         description: "Dispatch backend production deployment"
         required: false
@@ -27,6 +27,25 @@ on:
         required: false
         default: false
         type: boolean
+      # Set by release-trigger.yml only. `versions` names the run, which is
+      # how the trigger recognises its own earlier attempt at the same
+      # versions; `trigger_sha` is the green commit it saw.
+      versions:
+        description: "Set by release-trigger.yml: the versions this run ships"
+        required: false
+        default: ""
+        type: string
+      trigger_sha:
+        description: "Set by release-trigger.yml: the commit it found green"
+        required: false
+        default: ""
+        type: string
+
+# One release at a time. A second dispatch waits, then finds its versions
+# already on npm.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   NODE_VERSION: "24.14.0"
@@ -38,6 +57,12 @@ permissions:
 
 jobs:
   preflight:
+    # A trigger dispatch names the commit it found green, but a dispatch can
+    # only target `main`, so a push landing in between would run this on a
+    # commit nobody checked. Stand down instead: every job below skips, the
+    # run ends green without publishing, and the newer commit's own checks
+    # trigger the release again.
+    if: inputs.trigger_sha == '' || inputs.trigger_sha == github.sha
     runs-on: ubuntu-latest
     outputs:
       publish_any: ${{ steps.plan.outputs.publish_any }}
@@ -194,65 +219,35 @@ jobs:
 
             core.info(`Found successful staging deploy run ${matchingRun.id} for ${headSha}.`);
 
-      - name: Compute changeset release plan
-        run: npx changeset status --output=.changeset/status.json
-
-      - name: Select release scope
+      # What ships is what `main` carries: every public package whose committed
+      # version npm does not have yet. The version PR put those versions there.
+      # Pending changesets belong to the NEXT release and play no part here.
+      - name: Compute release plan
         id: plan
         env:
-          RELEASE_SCOPE: ${{ inputs.scope }}
-          DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
           DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
         run: |
+          node .github/scripts/unpublished-versions.mjs > "$RUNNER_TEMP/unpublished.json"
+          cat "$RUNNER_TEMP/unpublished.json"
           node <<'NODE'
           const fs = require("node:fs");
 
-          const status = JSON.parse(fs.readFileSync(".changeset/status.json", "utf8"));
-          const releases = new Map(
-            (status.releases || []).map((release) => [release.name, release])
+          const { releases: unpublished } = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/unpublished.json`, "utf8")
           );
-          const scope = process.env.RELEASE_SCOPE;
+          const releases = new Map(unpublished.map((release) => [release.name, release]));
 
-          const changed = {
+          const selected = {
             evaluators: releases.has("@mcpjam/evaluators"),
             sdk: releases.has("@mcpjam/sdk"),
             cli: releases.has("@mcpjam/cli"),
             inspector: releases.has("@mcpjam/inspector"),
           };
 
-          let selected = { ...changed };
-          if (scope === "packages-only") {
-            if (changed.inspector) {
-              throw new Error(
-                'scope="packages-only" cannot be used while @mcpjam/inspector has pending changesets.'
-              );
-            }
-            selected.inspector = false;
-          } else if (scope === "inspector-only") {
-            if (changed.evaluators || changed.sdk || changed.cli) {
-              throw new Error(
-                'scope="inspector-only" cannot be used while evaluators, sdk or cli have pending changesets.'
-              );
-            }
-            selected.evaluators = false;
-            selected.sdk = false;
-            selected.cli = false;
-          } else if (scope !== "full") {
-            throw new Error(`Unsupported release scope: ${scope}`);
-          }
-
           if (!selected.evaluators && !selected.sdk && !selected.cli && !selected.inspector) {
             throw new Error(
-              `Scope "${scope}" does not include any unpublished changesets.`
-            );
-          }
-
-          if (
-            process.env.DEPLOY_BACKEND_PROD === "true" &&
-            scope !== "full"
-          ) {
-            throw new Error(
-              "deploy_backend_prod=true is only supported with scope=full."
+              "Nothing to release: every package version on main is already on npm. " +
+                "Start a release from Soundcheck, which opens the version PR, and merge it first."
             );
           }
 
@@ -261,9 +256,17 @@ jobs:
             !selected.inspector
           ) {
             throw new Error(
-              "deploy_webapp=true requires an inspector release in the selected scope. To deploy production without cutting a release, dispatch deploy-webapp.yml directly."
+              "deploy_webapp=true requires an inspector release. To deploy production without cutting a release, dispatch deploy-webapp.yml directly."
             );
           }
+
+          // Only the backend dispatch payload reads this now; the version PR
+          // decides what ships.
+          const scope = !selected.inspector
+            ? "packages-only"
+            : selected.evaluators || selected.sdk || selected.cli
+              ? "full"
+              : "inspector-only";
 
           // Whether this release builds and publishes local-harness runtime
           // packs, read from the digest table the Inspector build itself
@@ -336,33 +339,12 @@ jobs:
           INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
         run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION"
 
-      - name: Version packages with Changesets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx changeset version
-
-      - name: Refresh root lockfile
-        run: npm install --package-lock-only --legacy-peer-deps
-
-      - name: Create release patch
-        run: git diff --binary > release.patch
-
-      - name: Upload release plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-plan
-          path: |
-            .changeset/status.json
-            release.patch
-          retention-days: 7
-
   build-mac:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     uses: ./.github/workflows/mac-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
-      apply_release_patch: true
     secrets: inherit
 
   build-windows:
@@ -371,7 +353,6 @@ jobs:
     uses: ./.github/workflows/windows-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
-      apply_release_patch: true
     secrets: inherit
 
   # The local-harness runtime pack. Not a desktop artifact — it is downloaded
@@ -440,7 +421,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # The token `finalize` pushes refs with.
           token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
       - name: Setup Node.js
@@ -455,9 +435,8 @@ jobs:
           version_tag="$(node actions/evals/release-tags.mjs "$GITHUB_SHA")"
           echo "version_tag=$version_tag" >> "$GITHUB_OUTPUT"
 
-      # Tags the commit the smoke actually ran against, NOT the version commit
-      # `finalize` pushes later: that commit has never been smoke tested, and
-      # users pinned to `evals-v1` run whatever this tag points at.
+      # Tags the commit the smoke actually ran against: users pinned to
+      # `evals-v1` run whatever this tag points at.
       - name: Publish the version tag, then move evals-v1
         env:
           VERSION_TAG: ${{ steps.tag.outputs.version_tag }}
@@ -490,7 +469,9 @@ jobs:
       - build-mac
       - build-windows
       - build-local-harness-pack
-    if: always()
+    # Not when preflight stood down (see its `if`): there is nothing to gate,
+    # and the check below would fail a run that is meant to end green.
+    if: always() && needs.preflight.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - name: Require desktop artifact jobs when inspector is included
@@ -532,9 +513,8 @@ jobs:
       #
       # This gate used to live in `finalize`, which was too late to be a gate
       # at all: by then `publish-packages` has pushed to npm and `finalize` has
-      # run `changeset version` and pushed the version commit and tag. Failing
-      # after that cannot unpublish a package or unpush a tag, and it consumes
-      # the changesets, so a re-run has no pending release to retry from.
+      # pushed the tag. Failing after that cannot unpublish a package or unpush
+      # a tag.
       #
       # `artifact-gate` is the last point that still gates `publish-packages`,
       # so a pack that does not verify stops the release rather than annotating
@@ -586,17 +566,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      # Without the patch this builds the PRE-bump versions, and the tarballs
-      # would disagree with what changeset publish then tries to publish.
-      - name: Download release patch
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -713,15 +682,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Download release patch
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -905,7 +865,6 @@ jobs:
       )
     uses: ./.github/workflows/deploy-webapp.yml
     with:
-      apply_release_patch: true
       require_staging_green: false
     secrets: inherit
 
@@ -920,10 +879,10 @@ jobs:
   # not belong: it talks only to api.github.com, never to the inspector server,
   # so the ordering rationale above does not apply to it. It was also the
   # slowest job in this tail (~3.5 min vs ~1 min) and it deployed TWICE per
-  # release — once here, then again from finalize's version commit, which
-  # touches root package-lock.json, a path in its own push trigger. That push
-  # trigger still redeploys it after every release; this job was the redundant
-  # half.
+  # release — once here, then again from the version commit, which touches
+  # root package-lock.json, a path in its own push trigger. That push trigger
+  # (now fired when the version PR merges) still redeploys it every release;
+  # this job was the redundant half.
   deploy-slack-app:
     needs:
       - preflight
@@ -935,26 +894,15 @@ jobs:
     uses: ./.github/workflows/deploy-slack-app.yml
     secrets: inherit
 
-  # These `needs` look like dead weight — the `if` below never required the
-  # deploy jobs, and with `always()` this runs even when they fail. They are
-  # NOT dead weight, and removing them breaks the satellite ordering invariant:
+  # The deploy jobs are in `needs` although the `if` below never requires
+  # them (with `always()` this runs even when they fail): the tag and the
+  # GitHub release go public only once this release's deploys are done, so
+  # the release page never announces a version production does not run yet.
+  # It costs nothing when deploy_webapp=false: those jobs are skipped, and
+  # `always()` lets this one proceed the moment publish-packages is done.
   #
-  # This job pushes the version commit, which touches `package-lock.json` — a
-  # path in BOTH satellite workflows' `push:` triggers (soundcheck's included,
-  # even though it no longer has a job here). If the push lands while
-  # deploy-webapp is still running, those push-triggered runs find the
-  # `slack-app` / `soundcheck` concurrency groups free and deploy AHEAD of the
-  # server whose contract they render.
-  #
-  # `deploy-slack-app` is the load-bearing entry: waiting for it means that by
-  # the time the push happens, the slack-app group has already been through
-  # this release's deploy, so the push-triggered run is an idempotent duplicate
-  # landing after. Waiting for `deploy-webapp` covers soundcheck, whose only
-  # release-time deploy IS that push-triggered run — the server is live before
-  # the push, so it cannot land early.
-  #
-  # Note this costs nothing when deploy_webapp=false: those jobs are skipped,
-  # and `always()` lets this one proceed the moment publish-packages is done.
+  # This job used to push the version commit to `main` as well. The version PR
+  # carries it now, so nothing here writes to `main`.
   finalize:
     needs:
       - preflight
@@ -970,18 +918,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
-
-      - name: Download release patch
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js for catalog parity heads-up
         if: fromJSON(needs.preflight.outputs.publish_sdk)
@@ -1022,24 +958,24 @@ jobs:
             echo "This warning is non-blocking. Check backend deploy/seed status before relying on the fallback snapshot."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Commit version changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git status --short
-          git commit -m "chore(release): version packages"
-
-      - name: Push release commit
-        run: |
-          git pull --rebase origin main
-          git push origin HEAD:main
-
+      # On the commit this run built, which already carries the versions. The
+      # tag ruleset forbids moving or deleting a `v*` tag, so a re-run finds
+      # it in place, and one pointing anywhere else is a real conflict.
       - name: Create and push release tag
         if: needs.preflight.outputs.release_tag != ''
+        env:
+          TAG: ${{ needs.preflight.outputs.release_tag }}
         run: |
-          git tag "${{ needs.preflight.outputs.release_tag }}"
-          git push origin "${{ needs.preflight.outputs.release_tag }}"
+          existing="$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1)"
+          if [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "$TAG already points at $GITHUB_SHA."
+          elif [ -n "$existing" ]; then
+            echo "::error::$TAG already exists at $existing, not at $GITHUB_SHA, and release tags cannot move."
+            exit 1
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
 
       - name: Download macOS artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}

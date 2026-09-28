@@ -50,14 +50,16 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
 | `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
 | `chat.builtin_tools.withheld` | `routes/web/chat-v2.ts` | `toolIds`, `unknownCount`, `reasons`, `targetKind` |
+| `chat.harness_model_unverified` | `routes/web/chat-v2.ts`, `routes/mcp/chat-v2.ts` | `harness`, `modelId`, `reason` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
+| `browser_profile.download.failed` | `routes/web/browser-profile-download.ts` | `stage`, `statusCode?`, `errorMessage?` |
 | `apikey.expiry.workos_refused` | `routes/web/api-keys.ts` | `statusCode` |
 | `apikey.inventory.truncated` | `routes/web/api-keys.ts` | `listed` |
 | `apikey.admin_revoke.completed` | `routes/web/api-keys.ts` | `workosKeyId`, `alreadyRevoked`, `bindingCleanupFailed`, `bindingCleanupAttempts`, `bindingStatus?` |
 | `apikey.admin_revoke.unavailable` | `routes/web/api-keys.ts` | `workosKeyId`, `errorMessage` |
-| `auth.session.revoke_incomplete` | `routes/web/auth-session.ts` | `reason` |
+| `auth.session.revoke_incomplete` | `routes/web/auth-session.ts` | `reason`, `status` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
 | `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
 

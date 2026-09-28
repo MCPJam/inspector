@@ -10,7 +10,9 @@ import {
   isModelSupported,
   modelSupportsTemperature,
   modelDefinitionSupportsTemperature,
+  modelObservationStatus,
   type ModelDefinition,
+  type ModelObservationStatus,
   normalizeOauthProtocolMode,
   resolveEffectiveOauthProtocolMode,
   resolveOAuthProtocolSelection,
@@ -314,15 +316,47 @@ describe("modelDefinitionSupportsTemperature", () => {
       ...over,
     } as ModelDefinition);
 
-  it("answers from the catalog when it lists parameters", () => {
+  it("answers from the catalog when its parameter list is complete", () => {
     expect(
       modelDefinitionSupportsTemperature(
-        row({ supportedParameters: ["tools", "temperature"] })
+        row({
+          supportedParameters: ["tools", "temperature"],
+          supportedParametersComplete: true,
+        })
       )
     ).toBe(true);
     expect(
       modelDefinitionSupportsTemperature(
-        row({ supportedParameters: ["tools", "max_tokens"] })
+        row({
+          supportedParameters: ["tools", "max_tokens"],
+          supportedParametersComplete: true,
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("never withdraws temperature on a partial or legacy list", () => {
+    // The legacy DTO sent only `structured_outputs` for every hosted row;
+    // reading that as "no temperature" stripped it from all of them.
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ supportedParameters: ["structured_outputs"] })
+      )
+    ).toBe(true);
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({
+          supportedParameters: ["tools", "max_tokens"],
+          supportedParametersComplete: false,
+        })
+      )
+    ).toBe(true);
+  });
+
+  it("withdraws temperature on a complete but empty list", () => {
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ supportedParameters: [], supportedParametersComplete: true })
       )
     ).toBe(false);
   });
@@ -346,14 +380,48 @@ describe("modelDefinitionSupportsTemperature", () => {
           id: "anthropic/claude-sonnet-5",
           provider: "anthropic",
           supportedParameters: ["temperature"],
+          supportedParametersComplete: true,
         })
       )
     ).toBe(false);
     expect(
       modelDefinitionSupportsTemperature(
-        row({ id: "openai/gpt-5", supportedParameters: ["temperature"] })
+        row({
+          id: "openai/gpt-5",
+          supportedParameters: ["temperature"],
+          supportedParametersComplete: true,
+        })
       )
     ).toBe(false);
+  });
+});
+
+describe("modelObservationStatus", () => {
+  it("reads an absent observation as unknown, never unsupported", () => {
+    expect(modelObservationStatus({}, "tools")).toBe("unknown");
+    expect(modelObservationStatus({ observations: {} }, "tools")).toBe(
+      "unknown"
+    );
+  });
+
+  it("collapses yes/no and endpoint-coverage statuses", () => {
+    const at = (status: ModelObservationStatus) => ({
+      observations: { gatewayZdr: { status } },
+    });
+    expect(modelObservationStatus(at("supported"), "gatewayZdr")).toBe(
+      "supported"
+    );
+    expect(modelObservationStatus(at("all"), "gatewayZdr")).toBe("supported");
+    expect(modelObservationStatus(at("unsupported"), "gatewayZdr")).toBe(
+      "unsupported"
+    );
+    expect(modelObservationStatus(at("none"), "gatewayZdr")).toBe(
+      "unsupported"
+    );
+    expect(modelObservationStatus(at("some"), "gatewayZdr")).toBe("unknown");
+    expect(modelObservationStatus(at("unknown"), "gatewayZdr")).toBe(
+      "unknown"
+    );
   });
 });
 

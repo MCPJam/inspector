@@ -4,6 +4,12 @@ import { render, screen } from "@testing-library/react";
 import type { EvalSuiteRun } from "../types";
 import { AiTriageCard } from "../ai-triage-card";
 
+const { signInMock } = vi.hoisted(() => ({ signInMock: vi.fn() }));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signIn: signInMock }),
+}));
+
 type ServerQuality = NonNullable<EvalSuiteRun["serverQuality"]>;
 type ToolInsight = ServerQuality["toolInsights"][number];
 
@@ -141,5 +147,63 @@ describe("AiTriageCard", () => {
     expect(section).not.toHaveClass("rounded-lg");
     expect(section).not.toHaveClass("border");
     expect(screen.queryByText(/^Accuracy$/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AiTriageCard refusals", () => {
+  function renderRefused(props: { signInRequired: boolean; error: string }) {
+    const onRetry = vi.fn();
+    render(
+      <AiTriageCard
+        run={baseRun}
+        iterations={[]}
+        serverQuality={null}
+        pending={false}
+        requested={true}
+        failedGeneration={false}
+        error={props.error}
+        signInRequired={props.signInRequired}
+        onRetry={onRetry}
+      />,
+    );
+    return { onRetry };
+  }
+
+  it("offers sign-in, not a failure and a retry, when a guest is refused", async () => {
+    const user = userEvent.setup();
+    signInMock.mockReset();
+    const { onRetry } = renderRefused({
+      signInRequired: true,
+      error: "Sign in to use AI analysis. It's off for guests.",
+    });
+
+    expect(screen.getByText("Sign in to analyze")).toBeInTheDocument();
+    expect(
+      screen.getByText("Sign in to use AI analysis. It's off for guests."),
+    ).not.toHaveClass("text-destructive");
+    expect(screen.queryByText("Analysis failed")).not.toBeInTheDocument();
+    // Retrying cannot work: the refusal is about who is asking.
+    expect(
+      screen.queryByRole("button", { name: /Retry/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Sign in/i }));
+    expect(signInMock).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("keeps Retry for an ordinary failure", async () => {
+    const user = userEvent.setup();
+    const { onRetry } = renderRefused({
+      signInRequired: false,
+      error: "The judge model timed out.",
+    });
+
+    expect(screen.getByText("Analysis failed")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Sign in/i }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Retry/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

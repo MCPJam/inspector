@@ -65,10 +65,7 @@
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { createAuthorizedManager } from "../routes/web/auth.js";
-import {
-  prepareEvalRun,
-  shouldSkipExecution,
-} from "../routes/shared/evals.js";
+import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
 import { createConcurrencyLimiter } from "./evals-runner.js";
 import {
   cleanupBenchmarkArtifacts,
@@ -551,7 +548,10 @@ async function postServiceRoute(
 ): Promise<ServiceRouteResponse> {
   const env = benchServiceConfig();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), SERVICE_ROUTE_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    SERVICE_ROUTE_TIMEOUT_MS,
+  );
   // The deadline stays armed through the BODY read: a response that stalls
   // mid-body would otherwise hold a slot for as long as the socket stays open.
   try {
@@ -560,9 +560,7 @@ async function postServiceRoute(
       headers: {
         "Content-Type": "application/json",
         "x-inspector-service-token": env.serviceToken,
-        ...(options?.grant
-          ? { [BENCHMARK_GRANT_HEADER]: options.grant }
-          : {}),
+        ...(options?.grant ? { [BENCHMARK_GRANT_HEADER]: options.grant } : {}),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -739,7 +737,12 @@ export function decodeClaimedJob(body: any): ClaimedBenchmarkJob | null {
       : {}),
     runnerBearer: runnerBearer as string,
     ...(readNumber(credentials, "runnerBearerExpiresAt") !== undefined
-      ? { runnerBearerExpiresAt: readNumber(credentials, "runnerBearerExpiresAt") }
+      ? {
+          runnerBearerExpiresAt: readNumber(
+            credentials,
+            "runnerBearerExpiresAt",
+          ),
+        }
       : {}),
     ...(Array.isArray(body.artifacts) ? { artifacts: body.artifacts } : {}),
   };
@@ -985,7 +988,9 @@ async function reportExecutionComplete(args: {
     { grant: args.job.grant },
   );
   if (isLeaseLostResponse(status, body)) {
-    throw new LeaseLostError("execution-complete rejected the lease generation");
+    throw new LeaseLostError(
+      "execution-complete rejected the lease generation",
+    );
   }
   if (status !== 200 || !body?.ok) {
     throw new Error(`execution-complete rejected (${status})`);
@@ -1142,13 +1147,15 @@ export function resolveEvalCellSpec(
   const missing = [
     cellId ? null : "cellId (roster row)",
     suiteId ? null : "suiteId (claim pins)",
-    environmentId || namedHostId
+    environmentId
       ? null
-      : "environmentId/namedHostId (the cell's pinned model and client profile)",
+      : "environmentId (the cell's pinned execution configuration)",
   ].filter((field): field is string => field !== null);
   if (missing.length > 0) {
     throw new JobUnexecutableError(
-      `rostered cell "${entry.evidenceKey}" cannot be launched: the claim carries no ${missing.join(", no ")}`,
+      `rostered cell "${
+        entry.evidenceKey
+      }" cannot be launched: the claim carries no ${missing.join(", no ")}`,
     );
   }
 
@@ -1227,7 +1234,9 @@ export function resolveProbeSpec(
   entry: BenchmarkRosterEntry,
 ): BenchmarkProbeSpec {
   const serverUrl =
-    typeof job.target?.serverUrl === "string" ? job.target.serverUrl.trim() : "";
+    typeof job.target?.serverUrl === "string"
+      ? job.target.serverUrl.trim()
+      : "";
   if (!serverUrl) {
     throw new JobUnexecutableError(
       `rostered probe "${entry.evidenceKey}" cannot be run: the claim carries no target.serverUrl`,
@@ -1258,7 +1267,9 @@ export function resolveConformanceSpec(
   entry: BenchmarkRosterEntry,
 ): BenchmarkConformanceSpec {
   const serverUrl =
-    typeof job.target?.serverUrl === "string" ? job.target.serverUrl.trim() : "";
+    typeof job.target?.serverUrl === "string"
+      ? job.target.serverUrl.trim()
+      : "";
   // Forward-compatible, exactly like the cell's launch pins: read where the
   // backend would naturally put it, refuse when it is not there.
   const scope = entry.conformance;
@@ -1269,7 +1280,9 @@ export function resolveConformanceSpec(
   ].filter((field): field is string => field !== null);
   if (missing.length > 0) {
     throw new JobUnexecutableError(
-      `rostered conformance "${entry.evidenceKey}" cannot be run: the claim carries no ${missing.join(", no ")}`,
+      `rostered conformance "${
+        entry.evidenceKey
+      }" cannot be run: the claim carries no ${missing.join(", no ")}`,
     );
   }
   // The endpoint always comes from the target, never from the scope: there is
@@ -1311,7 +1324,9 @@ export function assertClaimExecutable(job: ClaimedBenchmarkJob): void {
     throw new JobUnexecutableError("the claim carried no benchmark run id");
   }
   if (!job.pins?.definitionHash) {
-    throw new JobUnexecutableError("the claim carried no pinned definition hash");
+    throw new JobUnexecutableError(
+      "the claim carried no pinned definition hash",
+    );
   }
   for (const entry of job.roster ?? []) {
     // A row that already reached a terminal status owes no child, so it needs
@@ -1445,6 +1460,12 @@ async function defaultRunEvalCell(
   args: RunEvalCellArgs,
 ): Promise<{ runId: string; executed: boolean }> {
   const { job, cell } = args;
+  if (!cell.environmentId) {
+    throw new JobUnexecutableError(
+      "Benchmark cell has no prepared environment.",
+    );
+  }
+
   const writeGuard = buildWriteGuard(cell, job.benchmarkRunId, args.ledger);
   // Empty caller context = plain-JWT caller (locked by the caller-context
   // contract test); the runner bearer is the principal.
@@ -1482,8 +1503,9 @@ async function defaultRunEvalCell(
       // child ends up filed under the wrong benchmark.
       source: "benchmark",
       benchmarkRunId: job.benchmarkRunId,
-      ...(cell.environmentId ? { environmentId: cell.environmentId } : {}),
-      ...(cell.namedHostId ? { namedHostId: cell.namedHostId } : {}),
+      // Benchmark cells share the canonical environment launch core.
+      environmentId: cell.environmentId!,
+      ephemeralEnvironment: true,
       // The CELL's pinned repetition count, not the suite's `runs` default.
       // The scorer's `minimumRepetitionsPerRequiredCell` is a publication
       // floor, so a cell declared at 3 that runs once is not merely thinner
@@ -1654,9 +1676,7 @@ async function defaultRunConformanceChild(
       serverId: job.serverId,
       serverUrl: spec.serverUrl,
     },
-    ...(spec.protocolVersion
-      ? { protocolVersion: spec.protocolVersion }
-      : {}),
+    ...(spec.protocolVersion ? { protocolVersion: spec.protocolVersion } : {}),
     ...(spec.engineVersion ? { engineVersion: spec.engineVersion } : {}),
     ...(oauth ? { oauth } : {}),
     ...(spec.oauth?.headlessCheckIds?.length
@@ -1980,10 +2000,10 @@ export async function executeClaimedJob(
         const reason = result?.cancelRequested
           ? "cancelled"
           : result?.budgetStatus && result.budgetStatus !== "active"
-            ? `budget_${result.budgetStatus}`
-            : result?.runStatus && TERMINAL_RUN_STATUSES.has(result.runStatus)
-              ? `run_${result.runStatus}`
-              : undefined;
+          ? `budget_${result.budgetStatus}`
+          : result?.runStatus && TERMINAL_RUN_STATUSES.has(result.runStatus)
+          ? `run_${result.runStatus}`
+          : undefined;
         if (reason && !windDown.reason) {
           windDown.reason = reason;
           logger.info("[bench] winding down; not launching further children", {
@@ -2077,11 +2097,13 @@ export async function executeClaimedJob(
     // launched has already thrown out of `assertClaimExecutable` above; a row
     // dropped here instead would be a rostered cell the run silently never
     // ran, which is the one outcome that must not be possible.
-    const cells: Array<{ entry: BenchmarkRosterEntry; cell: BenchmarkEvalCell }> =
-      owing("eval_run").map((entry) => ({
-        entry,
-        cell: resolveEvalCellSpec(claimed, entry),
-      }));
+    const cells: Array<{
+      entry: BenchmarkRosterEntry;
+      cell: BenchmarkEvalCell;
+    }> = owing("eval_run").map((entry) => ({
+      entry,
+      cell: resolveEvalCellSpec(claimed, entry),
+    }));
 
     // READ-ONLY FIRST, deliberately. A cancellation or an exhausted budget
     // stops launching wherever it lands, and the cells worth losing to that are
@@ -2226,8 +2248,7 @@ export async function executeClaimedJob(
           discovery: { resourceMetadataFound: false },
           checks: [],
           status: "failed",
-          failureReason:
-            error instanceof Error ? error.message : String(error),
+          failureReason: error instanceof Error ? error.message : String(error),
         };
       }
       assertLeaseHeld();
@@ -2382,7 +2403,9 @@ export async function executeClaimedJob(
     const unrecorded = ledger.unpersisted();
     if (unrecorded.length > 0) {
       throw new Error(
-        `${unrecorded.length} artifact(s) were created but could not be recorded durably: ${unrecorded
+        `${
+          unrecorded.length
+        } artifact(s) were created but could not be recorded durably: ${unrecorded
           .slice(0, 20)
           .join(", ")}`,
       );
@@ -2390,7 +2413,9 @@ export async function executeClaimedJob(
 
     if (unattached.size > 0) {
       throw new Error(
-        `${unattached.size} piece(s) of evidence were produced but could not be attached: ${[
+        `${
+          unattached.size
+        } piece(s) of evidence were produced but could not be attached: ${[
           ...unattached.keys(),
         ].join(", ")}`,
       );
@@ -2487,10 +2512,7 @@ export function startBenchWorker(options?: {
   claimedBy?: string;
   /** Test seams: override the claim/execute pair. */
   claim?: typeof claimNext;
-  execute?: (
-    claimed: ClaimedBenchmarkJob,
-    claimedBy: string,
-  ) => Promise<void>;
+  execute?: (claimed: ClaimedBenchmarkJob, claimedBy: string) => Promise<void>;
 }): BenchWorkerHandle {
   const abort = new AbortController();
   const claimedBy =
@@ -2530,7 +2552,8 @@ export function startBenchWorker(options?: {
 
   const loop = (async () => {
     while (!abort.signal.aborted) {
-      let waitMs = POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
+      let waitMs =
+        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
       try {
         const claimed = await claim(claimedBy);
         if (claimed === "disabled") {

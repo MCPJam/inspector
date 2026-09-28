@@ -27,7 +27,7 @@ The third runs on **your own vendor account**:
 2. **Where it runs.** By default the host's project Computer is reserved or woken (provisioned on first use). In the desktop app and `npx @mcpjam/inspector`, a Claude Code host can instead run **natively on your own machine** — see [Running Claude Code on your machine](#running-claude-code-on-your-machine) below. A turn never moves between the two on its own: if the target you chose cannot run, you are told why, and you decide.
 3. **Credential delivery.** MCPJam installs a short-lived model credential into the sandbox's egress layer outside the VM. Neither the sandbox nor your browser ever holds a real model key. The agent runs pointed at MCPJam's model proxy, which verifies the credential and meters every generation. There is no raw-key fallback.
 4. **MCP delivery.** The two harnesses deliver MCP servers differently:
-   - **Claude Code (native)** — selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel. The runtime's own MCP client connects to them and the model calls the tools through native function calling. No upstream credentials enter the sandbox.
+   - **Claude Code (native)** — selected MCP servers are passed to the runtime through its session configuration, each pointed at MCPJam's per-server proxy tunnel. The runtime's own MCP client connects to them and the model calls the tools through native function calling. No upstream credentials enter the sandbox. MCPJam's selection is authoritative: any MCP servers listed in a workspace or user `.mcp.json` are not used, and that file is not overwritten.
    - **Codex (host-executed)** — the Codex CLI does not make MCP server tools model-callable in the mode MCPJam drives ([openai/codex#19425](https://github.com/openai/codex/issues/19425)), so MCPJam instead enumerates each selected server's tools at turn start and hands them to the agent as *host-executed* tools. The bridge injects their descriptions into the prompt, the model invokes them through a CLI shim, and **MCPJam executes them on its own server** against the already-authorized connection. Nothing about your servers — no URL, no token — enters the sandbox.
 5. **The turn runs.** The agent's own loop executes; native tools run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
 
@@ -68,6 +68,8 @@ process and hands the agent only a per-session token that works with nothing
 else. Stopping a session stops the whole process tree it started, including the
 agent binary. **Stop all local sessions** in the local-execution panel ends
 everything immediately.
+
+**Project secrets on local runs.** Local Claude Code turns support **materialized** project secrets only. Brokered secrets require cloud execution (the egress proxy that injects them is not present on your machine) and are refused before the turn starts. If your environment selects a brokered secret, switch to a cloud run or change the secret's delivery to materialized.
 
 **When it is not offered.** Your platform is not supported,
 the runtime is not installed, you are signed in as a guest, the session is a
@@ -254,6 +256,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
 | Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
 | The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
+| The environment selects a brokered secret | Refused before the turn starts — brokered secrets require cloud execution. Switch to a cloud run or change the secret's delivery to materialized. |
 
 **Eval-specific pre-flight refusals** (harness eval runs only):
 

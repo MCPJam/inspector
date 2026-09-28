@@ -15,6 +15,7 @@ import {
   mintToolApprovalId,
   TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
   toolApprovalBindingFor,
+  toolApprovalClaimKey,
 } from "../tool-approval-token";
 import { logger } from "../logger";
 
@@ -161,6 +162,9 @@ describe("mcpjam-stream-handler", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+    // A service token left stubbed by one test changes how later tests sign
+    // and claim their approvals.
+    vi.unstubAllEnvs();
   });
 
   it("awaits durable intent before allowing a provider invocation", async () => {
@@ -2867,6 +2871,7 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         projectId: "project_1",
+        chatSessionId: "chat_1",
       });
       await lastExecution;
       const unsignedEnd = writtenChunks.find((c) => c?.type === "text-end");
@@ -2885,10 +2890,11 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         projectId: "project_1",
+        chatSessionId: "chat_1",
       });
       await lastExecution;
       const end = writtenChunks.find((c) => c?.type === "text-end");
-      const ctx = historyProvenanceContextFor("project_1")!;
+      const ctx = historyProvenanceContextFor("project_1", "chat_1")!;
       expect(
         verifyAssistantText(
           ctx,
@@ -2946,6 +2952,7 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         projectId: "project_1",
+        chatSessionId: "chat_1",
       });
       await lastExecution;
 
@@ -2955,7 +2962,7 @@ describe("mcpjam-stream-handler", () => {
       expect(output).toBeDefined();
       expect(
         verifyToolResult(
-          historyProvenanceContextFor("project_1")!,
+          historyProvenanceContextFor("project_1", "chat_1")!,
           {
             toolCallId: "call-1",
             toolName: "list_issues",
@@ -3129,6 +3136,8 @@ describe("mcpjam-stream-handler", () => {
 
     it("does not let extraHeaders override the computed guest IP hash", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
+      // The hash only goes out with the service token that proves it.
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "hi" }] as any,
@@ -4775,6 +4784,145 @@ describe("mcpjam-stream-handler", () => {
           const history = approvedHistory(approvalId);
           expect((await resume(history, {})).ran).toBe(true);
           expect((await resume(history, {})).ran).toBe(true);
+        });
+
+        it("asks no backend when approvals are signed with this process's own key", async () => {
+          const approvalId = signedApprovalId(
+            "call-gated-1",
+            "run_eval_suite",
+            CALL_INPUT,
+          );
+          expect((await resume(approvedHistory(approvalId))).ran).toBe(true);
+          expect(
+            vi
+              .mocked(global.fetch)
+              .mock.calls.some(([input]) =>
+                String(input).endsWith("/internal/v1/tool-approvals/claim"),
+              ),
+          ).toBe(false);
+        });
+
+        describe("where approvals are signed with the service-token key", () => {
+          const CLAIM_URL =
+            "https://test-convex.example.com/internal/v1/tool-approvals/claim";
+          /** What the backend answers a claim with. */
+          let answerClaim: (nonceHash: string) => Response;
+          let claimsSeen: string[];
+          /** Nonce digests the backend already holds, from any process. */
+          let claimedEverywhere: Set<string>;
+
+          function claimJson(body: unknown, status = 200): Response {
+            return new Response(JSON.stringify(body), {
+              status,
+              headers: { "content-type": "application/json" },
+            });
+          }
+
+          beforeEach(() => {
+            vi.stubEnv(
+              "INSPECTOR_SERVICE_TOKEN",
+              "service-token-with-enough-length",
+            );
+            claimsSeen = [];
+            claimedEverywhere = new Set();
+            answerClaim = (nonceHash) => {
+              if (claimedEverywhere.has(nonceHash)) {
+                return claimJson({ status: "already_claimed" });
+              }
+              claimedEverywhere.add(nonceHash);
+              return claimJson({ status: "claimed" });
+            };
+            global.fetch = vi.fn(async (input, init) => {
+              if (String(input) === CLAIM_URL) {
+                const { nonceHash } = JSON.parse(String(init?.body));
+                claimsSeen.push(nonceHash);
+                return answerClaim(nonceHash);
+              }
+              return createSseResponse([
+                {
+                  type: "finish",
+                  finishReason: "stop",
+                  totalUsage: {
+                    inputTokens: 1,
+                    outputTokens: 1,
+                    totalTokens: 2,
+                  },
+                },
+              ]);
+            }) as typeof fetch;
+          });
+
+          function refusalShown(): string | undefined {
+            const shown = writtenChunks.find(
+              (chunk) =>
+                chunk?.type === "tool-output-error" &&
+                chunk.toolCallId === "call-gated-1",
+            );
+            return shown?.errorText;
+          }
+
+          it("runs the call once the backend records the claim", async () => {
+            const approvalId = signedApprovalId(
+              "call-gated-1",
+              "run_eval_suite",
+              CALL_INPUT,
+            );
+
+            expect((await resume(approvedHistory(approvalId))).ran).toBe(true);
+            expect(claimsSeen).toEqual([toolApprovalClaimKey(approvalId)]);
+
+            const again = await resume(approvedHistory(approvalId));
+            expect(again.ran).toBe(false);
+            expect(refusalShown()).toMatch(/already used/);
+          });
+
+          it("does not run an approval the backend already holds a claim for", async () => {
+            const approvalId = signedApprovalId(
+              "call-gated-1",
+              "run_eval_suite",
+              CALL_INPUT,
+            );
+            // Claimed by another process: this one has never seen it.
+            claimedEverywhere.add(toolApprovalClaimKey(approvalId)!);
+
+            const answered = await resume(approvedHistory(approvalId));
+            expect(answered.ran).toBe(false);
+            expect(refusalShown()).toMatch(/already used/);
+            expect(answered.answer?.output?.value).toMatch(/already used/);
+          });
+
+          it.each([
+            ["answers with an error", () => claimJson({ ok: false }, 503)],
+            [
+              "cannot be reached",
+              (): Response => {
+                throw new TypeError("fetch failed");
+              },
+            ],
+          ])(
+            "runs nothing when the backend %s, and says so",
+            async (_label, failure) => {
+              answerClaim = failure;
+              const approvalId = signedApprovalId(
+                "call-gated-1",
+                "run_eval_suite",
+                CALL_INPUT,
+              );
+
+              const answered = await resume(approvedHistory(approvalId));
+              expect(answered.ran).toBe(false);
+              // The user approved this call: the card carries the reason.
+              expect(refusalShown()).toMatch(/couldn't confirm/);
+              expect(
+                writtenChunks.some(
+                  (chunk) => chunk?.type === "tool-output-denied",
+                ),
+              ).toBe(false);
+              expect(answered.answer?.output?.value).toMatch(
+                /couldn't confirm/,
+              );
+            },
+          );
         });
       });
 

@@ -3,6 +3,7 @@
 #
 # Usage:
 #   .github/scripts/workos-cleanup.sh <preview-url>
+#   .github/scripts/workos-cleanup.sh --count <redirect_uris|cors_origins>
 #
 # Example:
 #   .github/scripts/workos-cleanup.sh https://mcp-inspector-pr-123.up.railway.app
@@ -28,6 +29,17 @@
 # Because they are undocumented, every call here is treated as fallible and
 # the outcome is reported via workflow annotations either way.
 #
+# Paging: the lists come back newest-first, and the cursor for the next
+# (older) page is `list_metadata.before`. `list_metadata.after` is null on
+# the first page. Until 2026-09-25 this script followed `after`, so every
+# scan stopped after the newest 100 rows and reported "already clean" for
+# anything older. Only a page shorter than the limit counts as the end of
+# the list; anything else is reported as an incomplete scan.
+#
+# `--count` lists a resource end to end and prints how many rows it has. It
+# is read-only; the preview reaper runs it first to prove the list can be read
+# completely before it deletes anything.
+#
 # Exit codes:
 #   0 — always. This is hygiene on the PR-close path: a missing entry, an
 #       unavailable endpoint, or a bad key must never block PR close.
@@ -39,12 +51,84 @@
 #       redirect URI is known to be gone. The CORS origin stays best-effort
 #       even in strict mode — see the call site at the bottom.
 #
-# WORKOS_CLEANUP_MAX_PAGES (default 10) caps pages scanned per resource.
+# WORKOS_CLEANUP_MAX_PAGES (default 50, i.e. 5,000 rows) caps pages scanned
+# per resource.
 
 set -uo pipefail
 
 STRICT="${WORKOS_CLEANUP_STRICT:-0}"
-MAX_PAGES="${WORKOS_CLEANUP_MAX_PAGES:-10}"
+MAX_PAGES="${WORKOS_CLEANUP_MAX_PAGES:-50}"
+PAGE_SIZE=100
+WORKOS_API_BASE="${WORKOS_API_BASE:-https://api.workos.com}"
+
+# list_all <resource> <outfile>
+#   Writes every row of the resource to <outfile>, one JSON object per line,
+#   following the `before` cursor until a short page. Returns 1 if the end of
+#   the list wasn't reached (HTTP failure, page cap, or a full page without a
+#   usable cursor), so a partial list can never pass for the whole one.
+list_all() {
+  local resource="$1" out="$2" before="" page=0
+  : >"$out"
+  while [ "$page" -lt "$MAX_PAGES" ]; do
+    page=$((page + 1))
+    local url="${WORKOS_API_BASE}/user_management/${resource}?limit=${PAGE_SIZE}"
+    if [ -n "$before" ]; then
+      # Cursors are WorkOS object ids (URL-safe); no escaping needed.
+      url="${url}&before=${before}"
+    fi
+
+    local resp_file http_code rows next
+    resp_file="$(mktemp)"
+    # On connection failure curl still emits "000" via -w, so don't append
+    # a fallback code — just tolerate the non-zero exit and default if empty.
+    http_code=$(curl -sS -o "$resp_file" -w "%{http_code}" --max-time 30 \
+      -H "Authorization: Bearer ${STAGING_WORKOS_API_KEY}" \
+      "$url" || true)
+    http_code="${http_code:-000}"
+    if [ "$http_code" != "200" ]; then
+      echo "::warning::WorkOS ${resource} list failed (HTTP ${http_code}) on page ${page} — scan incomplete" >&2
+      rm -f "$resp_file"
+      return 1
+    fi
+    if ! rows=$(jq '.data | length' "$resp_file" 2>/dev/null); then
+      echo "::warning::WorkOS ${resource} page ${page} was not the expected JSON — scan incomplete" >&2
+      rm -f "$resp_file"
+      return 1
+    fi
+    jq -c '.data[]' "$resp_file" >>"$out"
+    next=$(jq -r '.list_metadata.before // empty' "$resp_file" 2>/dev/null || true)
+    rm -f "$resp_file"
+
+    if [ "$rows" -lt "$PAGE_SIZE" ]; then
+      return 0
+    fi
+    if [ -z "$next" ] || [ "$next" = "$before" ]; then
+      echo "::warning::WorkOS ${resource} page ${page} was full but gave no new cursor — scan incomplete" >&2
+      return 1
+    fi
+    before="$next"
+  done
+  echo "::warning::WorkOS ${resource} scan hit the ${MAX_PAGES}-page cap — scan incomplete" >&2
+  return 1
+}
+
+if [ "${1:-}" = "--count" ]; then
+  RESOURCE="${2:-}"
+  case "$RESOURCE" in
+    redirect_uris | cors_origins) ;;
+    *) echo "::error::workos-cleanup.sh --count <redirect_uris|cors_origins>" >&2; exit 2 ;;
+  esac
+  if [ -z "${STAGING_WORKOS_API_KEY:-}" ]; then
+    echo "::error::STAGING_WORKOS_API_KEY is not set" >&2
+    exit 1
+  fi
+  ROWS_FILE="$(mktemp)"
+  trap 'rm -f "$ROWS_FILE"' EXIT
+  list_all "$RESOURCE" "$ROWS_FILE" || exit 1
+  # Distinct ids, so a cursor that repeated rows can't inflate the count.
+  jq -r '.id' "$ROWS_FILE" | sort -u | wc -l | tr -d ' '
+  exit 0
+fi
 
 PREVIEW_URL="${1:-}"
 if [ -z "$PREVIEW_URL" ]; then
@@ -58,72 +142,31 @@ if [ -z "${STAGING_WORKOS_API_KEY:-}" ]; then
   exit 0
 fi
 
-WORKOS_API_BASE="${WORKOS_API_BASE:-https://api.workos.com}"
-
 # delete_matching <resource> <field> <value>
 #   resource: redirect_uris | cors_origins
 #   field:    uri | origin
 #   value:    exact entry value to remove
 #
-# Lists the resource (following pagination cursors), collects ids whose
-# <field> equals <value> exactly, then deletes each id. Collect-then-delete
-# so deletions can't shift pagination out from under the scan. The scan
-# stops at the first match: WorkOS rejects exact duplicates (422 "already
-# exists"), so one entry per exact value is all that can exist. A scan that
-# ends without a match AND without seeing the end of the list (page cap,
-# list failure) must NOT report "already clean" — it warns instead.
+# Lists the whole resource, collects ids whose <field> equals <value>
+# exactly, then deletes each id. Collect-then-delete so deletions can't shift
+# pagination out from under the scan. A scan that didn't reach the end of the
+# list must NOT report "already clean" — it warns instead.
 # Returns 1 when removal can't be confirmed; callers decide whether it matters.
 delete_matching() {
   local resource="$1" field="$2" value="$3"
-  local after="" page=0 ids="" scan_complete=0 unconfirmed=0
+  local rows_file ids unconfirmed=0
+  rows_file="$(mktemp)"
 
-  while [ "$page" -lt "$MAX_PAGES" ]; do
-    page=$((page + 1))
-    local url="${WORKOS_API_BASE}/user_management/${resource}?limit=100"
-    if [ -n "$after" ]; then
-      # Cursors are WorkOS object ids (URL-safe); no escaping needed.
-      url="${url}&after=${after}"
-    fi
-
-    local resp_file http_code
-    resp_file="$(mktemp)"
-    # On connection failure curl still emits "000" via -w, so don't append
-    # a fallback code — just tolerate the non-zero exit and default if empty.
-    http_code=$(curl -sS -o "$resp_file" -w "%{http_code}" --max-time 30 \
-      -H "Authorization: Bearer ${STAGING_WORKOS_API_KEY}" \
-      "$url" || true)
-    http_code="${http_code:-000}"
-    if [ "$http_code" != "200" ]; then
-      echo "::warning::WorkOS ${resource} list failed (HTTP ${http_code}) on page ${page} — scan incomplete" >&2
-      rm -f "$resp_file"
-      break
-    fi
-
-    local page_ids
-    page_ids=$(jq -r --arg f "$field" --arg v "$value" \
-      '.data[]? | select(.[$f] == $v) | .id' "$resp_file" 2>/dev/null || true)
-    if [ -n "$page_ids" ]; then
-      ids="$page_ids"
-      rm -f "$resp_file"
-      scan_complete=1
-      break
-    fi
-
-    after=$(jq -r '.list_metadata.after // empty' "$resp_file" 2>/dev/null || true)
-    rm -f "$resp_file"
-    if [ -z "$after" ]; then
-      scan_complete=1
-      break
-    fi
-  done
+  if ! list_all "$resource" "$rows_file"; then
+    rm -f "$rows_file"
+    echo "::warning::Couldn't read every WorkOS ${resource} entry, so '${value}' may still be registered — verify/remove it manually in the staging WorkOS dashboard" >&2
+    return 1
+  fi
+  ids=$(jq -r --arg f "$field" --arg v "$value" 'select(.[$f] == $v) | .id' "$rows_file" | sort -u)
+  rm -f "$rows_file"
 
   if [ -z "$ids" ]; then
-    if [ "$scan_complete" -eq 1 ]; then
-      echo "::notice::No WorkOS ${resource} entry matched '${value}' (already clean)"
-    else
-      echo "::warning::WorkOS ${resource} scan ended after ${page} page(s) without finding '${value}' — verify/remove it manually in the staging WorkOS dashboard" >&2
-      return 1
-    fi
+    echo "::notice::No WorkOS ${resource} entry matched '${value}' (already clean)"
     return 0
   fi
 

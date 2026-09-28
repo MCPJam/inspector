@@ -2023,6 +2023,10 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  // Servers attached means the turn can call tools.
+                  workload={
+                    (selectedServers?.length ?? 0) > 0 ? "mcpChat" : "chat"
+                  }
                 />
               )}
             </div>

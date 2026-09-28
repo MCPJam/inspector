@@ -275,3 +275,40 @@ export async function resolveSuiteRunPluginServers(
   );
   return raw.servers;
 }
+
+/**
+ * Decision D2 for an ENVIRONMENT quick run — the backend's
+ * `testSuites:resolveQuickRunPluginServersForExecution`.
+ *
+ * A quick run has no run row: the environment it executed, plugin pins
+ * included, is frozen on each committed ITERATION. The pins are provenance,
+ * re-gated here against the live plugin lifecycle right before execution —
+ * never the id difference `effectiveServerIds − selectedServerIds` read as a
+ * standing grant. Always strict: an environment quick run only exists on a
+ * backend that also answers this query, so there is no legacy tolerance to
+ * extend.
+ */
+export async function resolveQuickRunPluginServers(
+  getConvexClient: () => ConvexHttpClient,
+  args: { iterationId: string },
+): Promise<RunPluginServer[]> {
+  const raw = await queryRunPluginResolution(
+    getConvexClient,
+    "testSuites:resolveQuickRunPluginServersForExecution",
+    { iterationId: args.iterationId },
+    "This deployment can't verify this quick run's pinned plugins yet, so it was stopped rather than executed without them. Retry after the backend deploys.",
+  );
+  assertRunPluginResolutionShape(
+    raw,
+    "This quick run's pinned plugins could not be resolved (unrecognized response). Retry after the backend deploys.",
+  );
+  assertRunPluginResolutionUsable(raw, {
+    surfaceNoun: "quick run",
+    remedy: "Update the environment's plugin pins and run the case again.",
+  });
+  readRunPluginServerIds(
+    raw,
+    "This quick run's pinned plugins resolved to an unrecognized server entry. Retry after the backend deploys.",
+  );
+  return raw.servers;
+}

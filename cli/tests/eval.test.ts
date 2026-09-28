@@ -288,6 +288,8 @@ interface EvalFixtureOptions {
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
   runCaseResult?: "passed" | "failed" | "inconclusive" | null;
+  /** The execution record `run-case`'s iteration carries (absent: none). */
+  runCaseExecution?: Record<string, unknown>;
   /** Non-terminal keeps `--wait` polling until its deadline. */
   runCaseStatus?:
     | "running"
@@ -1133,6 +1135,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               expectedToolCalls: [],
               error:
                 result === "failed" ? "Authorization: Bearer top-secret" : null,
+              ...(options.runCaseExecution
+                ? { execution: options.runCaseExecution }
+                : {}),
             },
           ],
         })
@@ -3702,6 +3707,88 @@ test("eval run --format human --reporter redirects the disclosure block to stder
   } finally {
     // A nonzero exit code otherwise leaks into `process.exitCode` for
     // whichever `main()` call in this file runs last.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait prints what each iteration ran on, after the receipt", async () => {
+  const fixture = await startEvalFixture({
+    runCaseExecution: {
+      requested: { source: "legacy", modelId: "anthropic/claude-sonnet-4.5" },
+      resolved: {
+        rail: "openrouter",
+        wireModelId: "anthropic/claude-sonnet-4.5",
+        offering: { rail: "openrouter", providerKey: "openrouter" },
+      },
+      effectiveSettings: { maxOutputTokens: 0 },
+      attempts: [],
+      deviation: {
+        kind: "provider_fallback",
+        reason: "The openrouter fallback served the request.",
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(
+      run.stdout,
+      /echo works #1: Ran on anthropic\/claude-sonnet-4\.5 via OpenRouter \(MCPJam key\), max output provider default/
+    );
+    assert.match(
+      run.stdout,
+      /Deviation: Provider fallback — The openrouter fallback served the request\./
+    );
+    assert.ok(
+      run.stdout.indexOf("View:") < run.stdout.indexOf("Iteration provenance")
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait says an iteration without a record is not recorded", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /echo works #1: not recorded/);
+    assert.doesNotMatch(run.stdout, /Ran on/);
+  } finally {
     process.exitCode = 0;
     await fixture.close();
   }
@@ -6833,7 +6920,8 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-computer",
             "default",
             "--compose-model",
@@ -6849,6 +6937,7 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
     assert.equal(run.result.exitCode, 0);
     assert.deepEqual(fixture.composeBodies.at(-1), {
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       sandboxImageId: "img-default",
       modelId: "anthropic/claude-haiku-4.5",
     });
@@ -6888,7 +6977,8 @@ test("eval run --compose-secret grants a credential to the composed cell", async
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-secret",
             "secret-vercel-token"
           ),
@@ -6902,6 +6992,7 @@ test("eval run --compose-secret grants a credential to the composed cell", async
     assert.equal(run.result.exitCode, 0);
     assert.deepEqual(fixture.composeBodies.at(-1), {
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       secretSelection: {
         mode: "explicit",
         secretIds: ["secret-vercel-token"],
@@ -7100,7 +7191,8 @@ test("eval run --compose-secret refuses a deployment that cannot grant", async (
           "suite-1",
           "--compose-host",
           "Claude Code",
-          "--compose-host-servers",
+          "--compose-server-group",
+          "group-pinned",
           "--compose-secret",
           "secret-vercel-token"
         ),
@@ -7136,7 +7228,8 @@ test("eval cases run --compose-secret refuses a deployment that cannot grant", a
           "echo works",
           "--compose-host",
           "Claude Code",
-          "--compose-host-servers",
+          "--compose-server-group",
+          "group-pinned",
           "--compose-secret",
           "secret-vercel-token"
         ),
@@ -7174,7 +7267,8 @@ test("eval run --compose-secret spends no EXTRA round trip to check", async () =
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-secret",
             "secret-vercel-token"
           ),
@@ -7208,7 +7302,8 @@ test("eval run --compose-secret spends no EXTRA round trip to check", async () =
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers"
+            "--compose-server-group",
+            "group-pinned"
           ),
           "--format",
           "json",
@@ -7242,7 +7337,8 @@ test("eval run --compose-model variadic launches one group without attaching", a
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-model",
             "anthropic/claude-haiku-4.5",
             "google/gemini-2.5-flash"
@@ -7291,7 +7387,8 @@ test("eval run --save-targets attaches the composed cell", async () => {
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--save-targets"
           ),
           "--format",
@@ -7365,7 +7462,39 @@ test("eval run refuses a composed run that names no servers", async () => {
     );
     assert.notEqual(run.result.exitCode, 0);
     assert.match(run.stderr, /--compose-server/);
-    assert.match(run.stderr, /--compose-host-servers/);
+    assert.doesNotMatch(run.stderr, /--compose-host-servers/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run rejects --compose-host-servers and names its replacement", async () => {
+  // Eval runs take their servers from a server group alone, so following the
+  // client's list could only compose an environment the backend refuses to
+  // launch. Refused before anything is composed or launched.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-client",
+          "Claude Code",
+          "--compose-host-servers"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--compose-host-servers is no longer supported/);
+    assert.match(run.stderr, /--compose-server/);
     assert.equal(fixture.composeBodies.length, 0);
     assert.equal(fixture.runBodies.length, 0);
   } finally {

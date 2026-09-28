@@ -50,6 +50,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { fetchJsonBlob } from "./blob-read.js";
+import { publicArtifactLink } from "./artifact-links.js";
 import { projectMessages } from "./chat-session-payloads.js";
 import { registerChatSessionTurnRoute } from "./chat-session-turn.js";
 
@@ -127,9 +128,9 @@ type TurnTraceRow = {
  * Preflight semantics for a caller-supplied session id.
  *
  * `getSession` refuses with a plain error that production Convex redacts to
- * "Server Error"; without `redactedIsRefusal` a cross-workspace probe answers
- * 502 — an existence oracle plus a Sentry page — instead of the 404 the
- * preflight exists to guarantee.
+ * "Server Error". `redactedIsRefusal` reads that as the refusal it is, so the
+ * preflight answers the 404 it exists to guarantee for a session the caller
+ * cannot see, rather than a 502.
  */
 function translatePreflightReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {
@@ -437,7 +438,11 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
       "chatSessions:getBrowserArtifacts" as never,
       { sessionId: session._id } as never,
     )) as { browserInteractionSteps?: Artifact[] };
-    artifacts = evidence?.browserInteractionSteps ?? [];
+    // Screenshot links only as signed `/web/artifact` links (MJ-005).
+    artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
+      ...step,
+      screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
+    }));
   }
   const turns = await Promise.all(
     selected.map(async (row) => {

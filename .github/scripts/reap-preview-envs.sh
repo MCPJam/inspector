@@ -136,6 +136,18 @@ jq -r '
       ([.serviceInstances.edges[].node.domains.customDomains[]] | length)
     ] | @tsv' "$ENVS_FILE" >"$PREVIEWS_FILE"
 
+# Read the whole WorkOS redirect URI list once before trusting any "already
+# clean" answer from it. The per-env check below relies on that list being
+# complete; until 2026-09-25 it silently read only the newest 100 rows. The
+# count also lands in the summary, so a dry run shows whether paging works.
+WORKOS_REDIRECTS="not checked (no STAGING_WORKOS_API_KEY)"
+if [ -n "${STAGING_WORKOS_API_KEY:-}" ]; then
+  if ! WORKOS_REDIRECTS=$("$SCRIPT_DIR/workos-cleanup.sh" --count redirect_uris); then
+    echo "::error::Couldn't read the full WorkOS redirect URI list; reaping nothing" >&2
+    exit 1
+  fi
+fi
+
 if ! OPEN_INSPECTOR=$(list_open_prs "$INSPECTOR_REPO" "$GITHUB_TOKEN"); then
   echo "::error::Could not list open PRs in ${INSPECTOR_REPO}; reaping nothing" >&2
   exit 1
@@ -222,7 +234,7 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN SERVICE_DOMAINS CUSTOM_DOMAINS <&
   # An env with no service domain never got a preview URL, so there is
   # nothing registered with WorkOS to remove.
   if [ "$DOMAIN" != "-" ]; then
-    if ! WORKOS_CLEANUP_STRICT=1 WORKOS_CLEANUP_MAX_PAGES=50 \
+    if ! WORKOS_CLEANUP_STRICT=1 \
       "$SCRIPT_DIR/workos-cleanup.sh" "https://${DOMAIN}"; then
       fail "$ENV_NAME" "WorkOS redirect URI removal unconfirmed; retrying next run"
       continue
@@ -241,6 +253,7 @@ VERB="Reaped" verb="reaped"
 if [ "$DRY_RUN" != "0" ]; then VERB="Would reap" verb="would reap"; fi
 SUMMARY="### Preview reaper"$'\n\n'
 SUMMARY+="${TOTAL} preview environments: ${KEPT_OPEN} kept (PR open), ${verb} ${REAPED}, deferred ${DEFERRED} (cap ${MAX_DELETIONS}/run), skipped ${SKIPPED}, failed ${FAILED}."$'\n'
+SUMMARY+="WorkOS redirect URIs read: ${WORKOS_REDIRECTS}."$'\n'
 if [ -n "$REAPED_LINES" ]; then
   SUMMARY+=$'\n'"| ${VERB} | PR |"$'\n'"|---|---|"$'\n'"${REAPED_LINES}"
 fi

@@ -14,6 +14,22 @@
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
+import { harnessPinnedVersion } from "@/shared/harness-model-support";
+
+/**
+ * The harness runtime CLI version the lease is for — the adapter's pinned
+ * version (`HARNESS_PINNED_VERSIONS`, the same constant the registry evaluates
+ * the harness × model evidence table at). The backend's lease rule reads the
+ * same evidence table, keyed by this version; absent (Cursor, whose CLI is not
+ * pinned) it evaluates as an unknown version. Pairs with
+ * MCPJam/mcpjam-backend#1614, which accepts the optional field.
+ */
+function harnessRuntimeVersionField(
+  harnessId: HarnessId,
+): { harnessRuntimeVersion?: string } {
+  const version = harnessPinnedVersion(harnessId);
+  return version ? { harnessRuntimeVersion: version } : {};
+}
 /**
  * Every registered harness id — reserve/renew/release are taken by EVERY
  * harness, brokered or not: an external-account harness still runs its CLI in
@@ -162,6 +178,7 @@ export async function startHarnessModelBroker(args: {
       body: JSON.stringify({
         ...boxRequestFields(args.box),
         harnessId: args.harnessId,
+        ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.maxOutputTokens !== undefined
@@ -343,6 +360,7 @@ export async function startLoopbackModelBroker(args: {
         delivery: "inspector-loopback-gateway",
         projectId: args.projectId,
         harnessId: args.harnessId,
+        ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         machineId: args.machineId,
         keyId: args.keyId,
@@ -518,6 +536,7 @@ export async function reserveHarnessBox(args: {
         // reservation exactly as it authorizes a lease, which for an ephemeral
         // box means checking both against what the run actually pinned.
         harnessId: args.harnessId,
+        ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         runId: args.runId,
       }),

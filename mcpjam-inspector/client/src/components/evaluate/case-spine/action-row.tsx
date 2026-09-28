@@ -6,10 +6,11 @@
  * check written after that click grades what the click did — numbering it
  * under the prompt would name the wrong thing.
  *
- * Bodies differ by kind on purpose. A prompt is the case, so it is always
- * visible and always editable. A pinned tool call and a recorded interaction
- * are three-field forms that are read far more often than edited, so they
- * collapse to one line and open on click.
+ * Bodies differ by kind on purpose. A prompt stays on screen and stays
+ * editable; the last one cannot be removed, because a case has to ask
+ * something. A pinned tool call and a recorded interaction are three-field
+ * forms that are read far more often than edited, so they collapse to one
+ * line and open on click.
  */
 
 import { useMemo, useState, type ReactNode } from "react";
@@ -47,6 +48,7 @@ export function ActionRow({
   onUpdate,
   onMove,
   onRemove,
+  canRemove,
   onHover,
   onSelect,
   defaultOpen = false,
@@ -66,6 +68,8 @@ export function ActionRow({
   onUpdate: (next: TestStep) => void;
   onMove: (dir: -1 | 1) => void;
   onRemove: () => void;
+  /** False for the case's last prompt. Every other action can leave. */
+  canRemove: boolean;
   onHover?: (stepId: string | null) => void;
   onSelect?: () => void;
   defaultOpen?: boolean;
@@ -164,7 +168,7 @@ export function ActionRow({
             >
               ↓
             </Button>
-            {step.kind !== "prompt" ? (
+            {canRemove ? (
               <Button
                 type="button"
                 variant="ghost"

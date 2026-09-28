@@ -26,7 +26,6 @@ import type {
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -40,8 +39,8 @@ import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { getHarnessAdapter } from "./harness/registry.js";
 import {
-  externalAccountHostModelRefusalReason,
-  harnessModelEligibleForRuntime,
+  harnessModelPurposeForSourceType,
+  harnessModelRefusal,
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
@@ -638,107 +637,62 @@ export async function runAssistantTurn(
     },
   );
 
-  // A host with a `harness` selected (claude-code | codex) runs the real runtime
-  // inside its computer; otherwise the emulated engine. Both satisfy the same
-  // ChatEngineLoopResult contract, so everything downstream is identical.
+  // A host with a `harness` selected (claude-code | codex | cursor) runs the
+  // real runtime inside its computer; otherwise the emulated engine. Both
+  // satisfy the same ChatEngineLoopResult contract, so everything downstream is
+  // identical.
   //
-  // Harness is MCPJam-model-only: runHarnessTurn authenticates the model via the
-  // deploy/Convex MCPJam credential path, NOT the caller's org-BYOK provider key
-  // (it ignores endpointPath / extraBodyFields). Running a BYOK turn through it
-  // would use the wrong credentials and mis-account spend, so for BYOK models we
-  // fall back to the emulated engine (which honors the org-BYOK path).
+  // THERE IS NO FALLBACK BETWEEN THEM. A harness turn whose model the harness
+  // cannot run — not MCPJam-provided (a BYOK model: the harness authenticates
+  // with MCPJam's gateway credential, never the org's key), unsupported by the
+  // runtime at its pinned version, not verified there (evals and swarms), or
+  // not the external-account runtime's sentinel — THROWS with the pre-flight's
+  // own reason. It used to warn and run the emulated engine instead, which
+  // produced a completed turn, recorded under the harness's name, that the
+  // harness never touched: a wrong answer attributed to the wrong runtime,
+  // strictly worse than a failure. Every caller here already treats a thrown
+  // turn as a failed turn.
   //
-  // The interactive web path fails closed at the chat-v2 preflight when a harness
-  // host's model is ineligible. This gate is the authoritative one for
-  // eval/synthetic (which forward `harness` unconditionally and shouldn't hard-
-  // fail a batch): when a harness was requested but the model isn't eligible, we
-  // SURFACE the fallback (not a silent emulated swap) so it's visible in logs/
-  // traces rather than misread as "observed the real harness".
+  // The interactive rails refuse earlier, at `checkHarnessRuntimeAvailable`;
+  // this is the same decision (`harnessModelRefusal` is what that pre-flight
+  // calls) for the paths that never run one — eval/synthetic forward `harness`
+  // unconditionally, and `sessionSimulation/runner.ts` drives turns without a
+  // pre-flight.
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
-  // Eligibility is BOTH "MCPJam-provided" AND "the runtime can actually run this
-  // model". The interactive routes check supportsModel in their preflight, but
-  // eval/synthetic don't — without this a codex turn on an MCPJam-provided but
-  // non-Codex model (e.g. anthropic/claude-haiku-4.5) would reach createCodex()
-  // with no native model and silently use Codex's default. Mirror the preflight.
-  const harnessAdapter = harnessRequested
-    ? getHarnessAdapter(opts.harness as string)
-    : undefined;
-  // Asked of the shared helper rather than spelled out here, because this
-  // decision has to match the pre-flight's exactly: a dispatch that says "not
-  // eligible" where the pre-flight said "available" does not error — it runs
-  // the EMULATED engine and reports the harness's name over it. That is a wrong
-  // answer attributed to the wrong runtime, which is worse than a failure.
-  //
-  // The helper also carries the external-account arm: Cursor's host seeds a
-  // `cursor/auto` sentinel that is deliberately not an MCPJam-hosted model, so
-  // the hosted-model half would otherwise reject every Cursor turn here and
-  // silently fall back. On that arm the helper asks its own question instead —
-  // is this the sentinel? — and a `false` from it is NOT a fallback signal; see
-  // the throw below.
-  const modelEligible = harnessAdapter
-    ? harnessModelEligibleForRuntime({
-        adapter: harnessAdapter,
-        modelId: harnessModelId,
-        provider: opts.modelDefinition.provider,
-        hosted: opts.modelDefinition.hosted,
-      })
-    : isHostedModelDefinition({
+  if (harnessRequested) {
+    const harnessAdapter = getHarnessAdapter(opts.harness as string);
+    // Playground chat (`direct`) may run an unverified harness × model pair
+    // with a warning; evals, scenarios and swarms may not.
+    const purpose = harnessModelPurposeForSourceType(opts.sourceType);
+    const { refusal, warning } = harnessModelRefusal({
+      adapter: harnessAdapter,
+      model: {
         id: harnessModelId,
         provider: opts.modelDefinition.provider,
         hosted: opts.modelDefinition.hosted,
-      });
-  const useHarness = harnessRequested && modelEligible;
-  if (harnessRequested && !modelEligible) {
-    // AN EXTERNAL-ACCOUNT HARNESS HAS NO FALLBACK, so ineligibility here is a
-    // hard failure rather than a degrade. The warn-and-emulate below is sound
-    // only where the emulated engine is a real substitute — a brokered harness
-    // refused for "MCPJam does not host this model" leaves an engine that runs
-    // exactly that model, on org BYOK. Neither half of that holds here: the
-    // emulated engine cannot run a sentinel at all, and the id a mis-configured
-    // host carries is one the runtime would have ignored.
-    //
-    // What the fallback would produce is the failure this whole rule exists to
-    // stop, arriving through the fix for it: a swarm or eval turn on a
-    // mis-configured Cursor host runs the EMULATED engine, completes, and is
-    // recorded under `executionEngineLabel` = `harness:cursor`. A completed run
-    // that reports success and never ran Cursor is indistinguishable in the
-    // transcript from one that did — strictly worse than the mis-attributed
-    // model id, because there is no longer anything in the record that is
-    // wrong-looking. The interactive rails fail closed at
-    // `checkHarnessRuntimeAvailable`; this is the same refusal for the paths
-    // that never call it (`sessionSimulation/runner.ts` drives turns without a
-    // pre-flight, and only its swarm caller admits targets through one).
-    //
-    // Thrown, not returned: this is a wiring/configuration error, and every
-    // caller here already treats a thrown turn as a failed turn.
-    const externalAccountRefusal = harnessAdapter
-      ? externalAccountHostModelRefusalReason({
-          harnessId: harnessAdapter.id,
-          modelId: harnessModelId,
-        })
-      : undefined;
-    if (externalAccountRefusal) {
+      },
+      purpose,
+    });
+    if (refusal) {
       // Wrapped in the SAME sentence the chat routes build around a pre-flight
       // refusal, so a reader who meets this in a run log and one who meets it in
       // a 503 are reading the same thing.
       throw new Error(
         `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${externalAccountRefusal}.`,
+          `${refusal.reason}.`,
       );
     }
-    logger.warn(
-      "[assistant-turn] harness requested but model ineligible (not MCPJam-" +
-        "provided, or unsupported by the runtime) — falling back to the emulated " +
-        "engine (surfaced, not silent)",
-      {
+    if (warning) {
+      logger.warn("[assistant-turn] running an unverified harness model", {
         harness: opts.harness,
         modelId: harnessModelId,
-        provider: opts.modelDefinition.provider,
+        reason: warning,
         sourceType: opts.sourceType,
-      },
-    );
+      });
+    }
   }
+  const useHarness = harnessRequested;
   const engineResult = useHarness
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);
