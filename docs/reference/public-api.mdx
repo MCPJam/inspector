@@ -209,6 +209,35 @@ Retry-After: 7
 Honor `Retry-After`, add jittered exponential backoff, and expect these limits
 to be tuned during the preview.
 
+### Per-server budget on server operation routes
+
+The server operation routes — `POST .../tools`, `.../tools/call`,
+`.../resources`, `.../resources/read`, `.../prompts`, and `.../prompts/get` —
+carry an additional per-server budget on top of the per-key limit above. It is
+keyed on your account and the target server, so each server you operate has its
+own independent budget.
+
+Tool calls (`.../tools/call`) have a slightly larger burst allowance than
+listing operations (`.../tools`, `.../resources`, etc.), so calling a tool does
+not spend the budget the listing operations use.
+
+When this budget is exhausted the route returns `429 RATE_LIMITED` with a
+`Retry-After` header and a `details.reason` of `"server-request-budget"`:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 2
+
+{
+  "code": "RATE_LIMITED",
+  "message": "Too many requests to this server. Slow down and retry.",
+  "details": { "reason": "server-request-budget" }
+}
+```
+
+The budget refills automatically. Honor `Retry-After` and back off — the wait
+is typically a few seconds.
+
 Other `429`s — the per-minute brakes and daily budgets described with the
 endpoints below — carry `Retry-After` whenever the refusal knows when it
 lifts, which is the ordinary case. Treat it as a hint that is usually there
