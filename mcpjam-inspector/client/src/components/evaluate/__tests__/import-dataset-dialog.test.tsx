@@ -133,6 +133,43 @@ beforeEach(() => {
   vi.mocked(readAuthoringJob).mockResolvedValue(job());
 });
 describe("document case import", () => {
+  it("writes a mixed suite's cases for the environment picked", async () => {
+    renderWithProviders(
+      <ImportDatasetDialog
+        {...props}
+        environmentChoices={[
+          {
+            environmentId: "env-a",
+            hostName: "Claude",
+            modelId: "opus",
+            serverNames: ["billing"],
+            pluginVersionCount: 0,
+          },
+          {
+            environmentId: "env-b",
+            hostName: "Cursor",
+            serverNames: ["search"],
+            pluginVersionCount: 0,
+          },
+        ]}
+      />,
+    );
+    upload();
+    const extractButton = screen.getByRole("button", { name: "Extract cases" });
+    expect(extractButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /Cursor/ }));
+    fireEvent.click(extractButton);
+    await waitFor(() =>
+      expect(authoringRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: "start",
+          input: expect.objectContaining({ environmentId: "env-b" }),
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
   it("labels file sizes and validation messages in KB", () => {
     renderWithProviders(<ImportDatasetDialog {...props} />);
     expect(screen.getByText(/Up to 100 KB/)).toBeVisible();

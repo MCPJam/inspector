@@ -40,6 +40,16 @@ jobs:
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
+      # The scripts behind prepare-release.yml, release-trigger.yml and
+      # release.yml's plan. Release itself runs rarely, so this is where a
+      # break shows up first.
+      - name: Release script tests
+        run: |
+          node --test \
+            .github/scripts/unpublished-versions.test.mjs \
+            .github/scripts/release-pr.test.mjs \
+            .github/scripts/release-trigger.test.mjs
+
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
       # ubuntu-latest rather than the Playwright container, and the tree carries

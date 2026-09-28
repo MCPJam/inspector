@@ -23,11 +23,21 @@ import type { ConvexHttpClient } from "convex/browser";
 import { logger } from "../../utils/logger.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
+export type EnvironmentServerSelection =
+  | { mode: "selected" | "none" }
+  | { mode: "local"; names: string[] }
+  | {
+      mode: "unresolved";
+      references: Array<{ name: string; serverId?: string; reason: string }>;
+    };
+
 export interface ResolvedEnvironmentForLaunch {
+  runtimeVenue?: "local" | "hosted";
   environmentRef: {
     environmentId: string;
     name: string;
     revision: number;
+    serverSelection?: EnvironmentServerSelection;
   };
   hostId: string;
   hostName?: string;
@@ -84,6 +94,24 @@ export interface ResolvedEnvironmentForLaunch {
    * would drop it silently.
    */
   computerEnvironmentId?: string;
+  /**
+   * The environment's own model OVERRIDE, verbatim (absent ⇒ it inherits the
+   * host's model). Declared for the same reason as `computerEnvironmentId`:
+   * the eval dry run judges the harness gate on the model the run will
+   * actually use, which is this override when one is set.
+   */
+  modelId?: string;
+  /**
+   * The model that will run: the override, else the host's model. The current
+   * backend refuses to resolve an environment with no model
+   * (`ENV_MODEL_REQUIRED`), so it is present there. BOTH model fields absent
+   * means a backend that predates them (deploy skew); `modelSource: 'none'`,
+   * or a present but empty `effectiveModelId`, means the environment has no
+   * model — see `assertEnvironmentQuickRunModel`.
+   */
+  effectiveModelId?: string;
+  /** Where {@link effectiveModelId} came from. */
+  modelSource?: "environment" | "host" | "none";
 }
 
 /**
@@ -103,7 +131,7 @@ export interface ResolvedEnvironmentForLaunch {
  * plugin-contributed servers.
  */
 export function environmentServerIds(
-  resolved: ResolvedEnvironmentForLaunch
+  resolved: ResolvedEnvironmentForLaunch,
 ): string[] {
   return Array.isArray(resolved.servers)
     ? resolved.servers.map((s) => s.serverId)
@@ -116,7 +144,7 @@ export function environmentServerIds(
  * projection (the manager then falls back to showing the server id).
  */
 export function environmentServerNames(
-  resolved: ResolvedEnvironmentForLaunch
+  resolved: ResolvedEnvironmentForLaunch,
 ): string[] {
   return Array.isArray(resolved.servers)
     ? resolved.servers.map((s) => s.name)
@@ -136,13 +164,27 @@ export function environmentServerNames(
  */
 export function environmentServerRefsForManager(
   resolved: ResolvedEnvironmentForLaunch,
-  manager: { hasServer(serverId: string): boolean }
+  manager: { hasServer(serverId: string): boolean },
 ): string[] {
   const serverIds = environmentServerIds(resolved);
   const serverNames = environmentServerNames(resolved);
-  return serverIds.map((serverId, index) =>
-    manager.hasServer(serverId) ? serverId : serverNames[index] ?? serverId
+  const refs = serverIds.map((serverId, index) =>
+    manager.hasServer(serverId) ? serverId : serverNames[index] ?? serverId,
   );
+  const selection = resolved.environmentRef.serverSelection;
+  if (selection?.mode === "local") {
+    if (resolved.runtimeVenue !== "local") {
+      throw new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        "This environment requires a local runner.",
+      );
+    }
+    // The caller resolves each ref against its authorized local manager;
+    // missing local servers fail before run reservation and execution.
+    refs.push(...selection.names);
+  }
+  return [...new Set(refs)];
 }
 
 /**
@@ -153,7 +195,7 @@ export function environmentServerRefsForManager(
  * been delete-and-re-added. Falls back for deploy skew.
  */
 export function environmentEffectiveServerIds(
-  resolved: ResolvedEnvironmentForLaunch
+  resolved: ResolvedEnvironmentForLaunch,
 ): string[] {
   return resolved.effectiveServerIds ?? resolved.selectedServerIds;
 }
@@ -178,13 +220,14 @@ export async function resolveEnvironmentForLaunch(
     projectId: string;
     environmentId: string;
     serverSource?: typeof EVAL_LAUNCH_SERVER_SOURCE;
-  }
+    runtimeVenue?: "local" | "hosted";
+  },
 ): Promise<ResolvedEnvironmentForLaunch> {
   let raw: unknown;
   try {
     raw = await convexClient.query(
       "projectEnvironments:resolveEnvironmentForLaunch" as any,
-      args
+      args,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -193,7 +236,7 @@ export async function resolveEnvironmentForLaunch(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "This deployment cannot resolve project environments yet. Retry after the backend deploys."
+        "This deployment cannot resolve project environments yet. Retry after the backend deploys.",
       );
     }
     // DEPLOY SKEW, the other direction: this inspector knows `serverSource` and
@@ -204,17 +247,19 @@ export async function resolveEnvironmentForLaunch(
     // sent the field — never a blanket retry.
     if (
       args.serverSource &&
-      /Object contains extra field [`'"]?serverSource(?:[`'"]|\b)/i.test(message)
+      /Object contains extra field [`'"]?serverSource(?:[`'"]|\b)/i.test(
+        message,
+      )
     ) {
       if (!loggedServerSourceDowngrade) {
         loggedServerSourceDowngrade = true;
         logger.warn(
-          "[evals] Backend does not accept serverSource yet; eval launches fall back to the client's own servers until it deploys."
+          "[evals] Backend does not accept serverSource yet; eval launches fall back to the client's own servers until it deploys.",
         );
       }
       raw = await convexClient.query(
         "projectEnvironments:resolveEnvironmentForLaunch" as any,
-        { projectId: args.projectId, environmentId: args.environmentId }
+        { projectId: args.projectId, environmentId: args.environmentId },
       );
     } else {
       throw error;
@@ -230,10 +275,13 @@ export async function resolveEnvironmentForLaunch(
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "Environment not found (it may have been archived). Update the suite's environments and retry."
+      "Environment not found (it may have been archived). Update the suite's environments and retry.",
     );
   }
-  return resolved;
+  return {
+    ...resolved,
+    ...(args.runtimeVenue ? { runtimeVenue: args.runtimeVenue } : {}),
+  };
 }
 
 /**
@@ -335,7 +383,7 @@ const LAUNCH_REJECTION_STATUS: Record<string, 400 | 404> = {
 };
 
 export function environmentLaunchRejectionError(
-  error: unknown
+  error: unknown,
 ): WebRouteError | null {
   const data = (error as { data?: unknown } | null)?.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -357,10 +405,15 @@ export function environmentLaunchRejectionError(
   // prevent, reintroduced one field lower. Matches how the shared Convex
   // translator answers every 404: the resource noun, and nothing else.
   if (status === 404) {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found", {
-      code: "ENV_NOT_FOUND",
-      reason: "env_not_found",
-    });
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "Environment not found",
+      {
+        code: "ENV_NOT_FOUND",
+        reason: "env_not_found",
+      },
+    );
   }
   const message =
     typeof record.message === "string" && record.message.trim()
@@ -380,7 +433,7 @@ export function environmentLaunchRejectionError(
 }
 
 export function environmentModelRequiredError(
-  error: unknown
+  error: unknown,
 ): WebRouteError | null {
   const data = (error as { data?: unknown } | null)?.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -395,7 +448,8 @@ export function environmentModelRequiredError(
       ? record.message
       : "This environment has no model to run. Set a model on the environment, or pin one on its client.";
   const details =
-    record.details && typeof record.details === "object" &&
+    record.details &&
+    typeof record.details === "object" &&
     !Array.isArray(record.details)
       ? (record.details as Record<string, unknown>)
       : {};
@@ -421,7 +475,7 @@ export function environmentLaunchConflictError(error?: unknown): WebRouteError {
   return new WebRouteError(
     409,
     ErrorCode.ENVIRONMENT_REVISION_CONFLICT,
-    message
+    message,
   );
 }
 
@@ -449,7 +503,7 @@ export function translateEnvironmentResolveError(error: unknown): unknown {
         return new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Environment not found"
+          "Environment not found",
         );
       }
       return new WebRouteError(
@@ -458,7 +512,7 @@ export function translateEnvironmentResolveError(error: unknown): unknown {
         typeof message === "string"
           ? message
           : "Environment cannot be launched right now.",
-        { code }
+        { code },
       );
     }
   }

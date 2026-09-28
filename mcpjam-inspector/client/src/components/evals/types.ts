@@ -238,6 +238,24 @@ export type EvalSuiteConfigTest = {
   importRunDecision?: EvalImportRunDecision;
 };
 
+export type EvalSuiteEnvironmentTarget = {
+  environmentId: string;
+  name?: string;
+  hostId?: string;
+  hostName: string | null;
+  /** Stored model override; absent ⇒ the client's own model. */
+  modelId?: string;
+  serverAttachmentId?: string;
+  /** The server group's live server names. */
+  serverNames: string[];
+  /** Pinned plugin versions, which contribute more servers at launch. */
+  pluginVersionCount: number;
+  /** The sandbox image the environment pins, if any. */
+  computerEnvironmentId?: string;
+  /** Set when the environment is archived or gone: it cannot launch. */
+  unavailable?: "archived" | "missing";
+};
+
 export type EvalSuite = {
   _id: string;
   createdBy: string;
@@ -394,6 +412,15 @@ export type EvalSuite = {
    * run start; the client never derives servers from these ids.
    */
   environmentIds?: string[];
+  /**
+   * An environment suite's TARGETS, from the backend's read: each
+   * environment's client, model and server group, with the group's live
+   * server names. Display readers derive "the suite's servers" from these —
+   * never from the legacy fields an environment suite does not read — and
+   * keep them distinct: their union is not the configuration of any one
+   * environment. Absent on a legacy suite and on an older backend.
+   */
+  environmentTargets?: EvalSuiteEnvironmentTarget[];
   /**
    * Epoch ms of the schedule's next due firing, or absent when nothing is due.
    * Denormalized on the suite by the scheduler; never computed client-side.
@@ -636,6 +663,14 @@ export type EvalIteration = {
    * an em dash rather than a currency amount.
    */
   usage?: EvalIterationUsage;
+  /**
+   * What this iteration actually ran on (backend `lib/executionRecord.ts`):
+   * resolved model, rail and connection, harness runtime, effective settings,
+   * routing attempts and any deviation. Absent on rows recorded before the
+   * record existed — render "not recorded", never a guess. Read it through
+   * `readExecutionRecord` (the `ExecutionProvenance` component does).
+   */
+  execution?: unknown;
   error?: string;
   errorDetails?: string;
   resultSource?: "reported" | "derived";

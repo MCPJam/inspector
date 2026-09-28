@@ -47,6 +47,12 @@ export type DirectRuntime = {
   llmModel: ReturnType<typeof createLlmModel>;
   modelId: string;
   provider?: string;
+  /**
+   * Provider options the run's saved settings resolve to on this rail (a
+   * reasoning effort). Belongs to the runtime, not the turn: it is decided
+   * where the rail is (`resolveTurnRuntime`).
+   */
+  providerOptions?: RunDirectChatTurnOptions["providerOptions"];
 };
 
 export type TurnRuntime = HostedRuntime | DirectRuntime;
@@ -187,6 +193,9 @@ export async function runUnifiedAssistantTurn(
     llmModel: runtime.llmModel,
     modelId: runtime.modelId,
     provider: runtime.provider,
+    ...(runtime.providerOptions
+      ? { providerOptions: runtime.providerOptions }
+      : {}),
     messageHistory: opts.messages,
     systemPrompt: opts.systemPrompt,
     temperature: opts.temperature,

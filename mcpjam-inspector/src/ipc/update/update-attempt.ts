@@ -10,9 +10,20 @@ export type UpdateAttempt = {
   at: number;
   fromVersion: string;
   targetVersion?: string;
-  phase: "downloading" | "recovering" | "installing" | "failed";
+  phase:
+    | "downloading"
+    | "retry_waiting"
+    | "recovering"
+    | "installing"
+    | "failed";
   retries: 0 | 1;
   userRequested: boolean;
+  downloadRetries: number;
+  downloadRequested: boolean;
+  downloadRecoveryRequested: boolean;
+  activeDownloadMs: number;
+  sleepMs: number;
+  offlineMs: number;
   reported: string[];
   failure?: UpdateFailureReason;
 };
@@ -49,6 +60,12 @@ export function newAttempt(version: string): UpdateAttempt {
     phase: "downloading",
     retries: 0,
     userRequested: false,
+    downloadRetries: 0,
+    downloadRequested: false,
+    downloadRecoveryRequested: false,
+    activeDownloadMs: 0,
+    sleepMs: 0,
+    offlineMs: 0,
     reported: [],
   };
 }
@@ -110,7 +127,13 @@ export function readAttempt(
     (a.targetVersion !== undefined &&
       (typeof a.targetVersion !== "string" ||
         updateVersion(a.targetVersion) !== a.targetVersion)) ||
-    !["downloading", "recovering", "installing", "failed"].includes(a.phase) ||
+    ![
+      "downloading",
+      "retry_waiting",
+      "recovering",
+      "installing",
+      "failed",
+    ].includes(a.phase) ||
     (a.retries !== 0 && a.retries !== 1) ||
     typeof a.userRequested !== "boolean" ||
     !Array.isArray(a.reported) ||
@@ -122,6 +145,27 @@ export function readAttempt(
     (a.phase === "failed" && !a.failure)
   )
     return { kind: "invalid" };
+  // Older schema-1 markers did not track download recovery. Missing fields
+  // grant no new permission; malformed present fields are never trusted.
+  for (const key of [
+    "downloadRequested",
+    "downloadRecoveryRequested",
+  ] as const) {
+    if (a[key] === undefined) a[key] = false;
+    if (typeof a[key] !== "boolean") return { kind: "invalid" };
+  }
+  for (const key of [
+    "downloadRetries",
+    "activeDownloadMs",
+    "sleepMs",
+    "offlineMs",
+  ] as const) {
+    if (a[key] === undefined) a[key] = 0;
+    if (!Number.isSafeInteger(a[key]) || a[key] < 0) return { kind: "invalid" };
+  }
+  if (a.phase === "retry_waiting" && a.downloadRetries === 0)
+    return { kind: "invalid" };
+  if (a.downloadRetries > 2) return { kind: "invalid" };
   if (Date.now() - a.at > RELAUNCH_MARKER_MAX_AGE_MS)
     return { kind: "expired", attempt: a };
   return { kind: "valid", attempt: a };

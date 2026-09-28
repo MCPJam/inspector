@@ -1,4 +1,6 @@
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { toAdapterPath } from "../adapter-path.js";
+import { resetLocalHarnessRegistryForTests } from "../session-registry.js";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +46,8 @@ vi.mock("../model-gateway.js", () => ({
 vi.mock("../node-launcher.js", () => ({
   resolveNodeLauncher: (...a: unknown[]) => resolveNodeLauncher(...(a as [])),
 }));
-vi.mock("../supervised-provider.js", () => ({
+vi.mock("../supervised-provider.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../supervised-provider.js")>(),
   createSupervisedLocalHarnessProvider: (...a: unknown[]) =>
     createSupervisedLocalHarnessProvider(...(a as [])),
 }));
@@ -169,6 +172,7 @@ beforeEach(async () => {
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
   vi.resetAllMocks();
+  resetLocalHarnessRegistryForTests();
 });
 
 afterEach(async () => {
@@ -382,5 +386,94 @@ describe("a runtime this Inspector cannot reserve", () => {
     );
     // And nothing was started that would then need tearing down.
     expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("local lane state lifetime", () => {
+  it("refuses unsafe secret names before starting a model lease", async () => {
+    await expect(prepareLocalHarnessTurn({ ...turnArgs(), scopedEnv: { HOME: "/elsewhere" } }))
+      .rejects.toThrow("not allowed");
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+  });
+
+  it.each(["ANTHROPIC_API_KEY", "anthropic_auth_token", "BRIDGE_WS_PORT", "CLAUDE_CODE_SETTINGS_FILE"])(
+    "refuses project secrets overriding runtime-owned %s", async (name) => {
+      await expect(prepareLocalHarnessTurn({ ...turnArgs(), scopedEnv: { [name]: "test" } }))
+        .rejects.toThrow("conflicts");
+      expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+    },
+  );
+
+  it("delivers scoped secrets and reports delivery only after bridge startup", async () => {
+    const delivered = vi.fn();
+    const result = await prepareLocalHarnessTurn({
+      ...turnArgs(), scopedEnv: { SERVICE_KEY: "test-value" }, onSecretEnvDelivered: delivered,
+    });
+    if (!result.ok) throw new Error(result.message);
+    expect(result.prepared.skillsBaseDir).toBe(toAdapterPath(join(stateRoot, "sessions", turnArgs().sessionId, "home", ".claude", "skills")));
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
+    expect(providerArgs.scopedEnv).toEqual({ SERVICE_KEY: "test-value" });
+    expect(delivered).not.toHaveBeenCalled();
+    await providerArgs.onBridgeStarted({ pid: 1, port: 1 });
+    expect(delivered).toHaveBeenCalledOnce();
+    await result.prepared.discardState();
+  });
+
+  it("reports missing state before mkdir, including after a previous turn discarded it", async () => {
+    const args = turnArgs();
+    const first = await prepareLocalHarnessTurn(args);
+    if (!first.ok) throw new Error(first.message);
+    expect(first.prepared.sessionStateExists).toBe(false);
+    await first.prepared.teardown();
+
+    const second = await prepareLocalHarnessTurn(args);
+    if (!second.ok) throw new Error(second.message);
+    expect(second.prepared.sessionStateExists).toBe(true);
+    await second.prepared.discardState();
+
+    const third = await prepareLocalHarnessTurn(args);
+    if (!third.ok) throw new Error(third.message);
+    expect(third.prepared.sessionStateExists).toBe(false);
+    await third.prepared.discardState();
+  });
+
+  it("validates session ids before minting a broker lease", async () => {
+    await expect(prepareLocalHarnessTurn({ ...turnArgs(), sessionId: "../escape" })).rejects.toThrow("safe path segment");
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reuse an identity whose previous tree has not stopped", async () => {
+    const args = turnArgs();
+    const first = await prepareLocalHarnessTurn(args);
+    if (!first.ok) throw new Error(first.message);
+    const second = await prepareLocalHarnessTurn(args);
+    expect(second).toMatchObject({ ok: false, status: "session-still-running" });
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    await first.prepared.teardown();
+  });
+
+  it("keeps state across turn teardown and deletes it when the lane ends", async () => {
+    const args = turnArgs();
+    const result = await prepareLocalHarnessTurn(args);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const stateFile = join(stateRoot, "sessions", args.sessionId, "transcript");
+    await writeFile(stateFile, "prior turn");
+    await result.prepared.teardown();
+    expect(await readFile(stateFile, "utf8")).toBe("prior turn");
+    await result.prepared.discardState();
+    await expect(readFile(stateFile)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps state if a process survives teardown", async () => {
+    const args = turnArgs();
+    const result = await prepareLocalHarnessTurn(args);
+    if (!result.ok) throw new Error(result.message);
+    const stateFile = join(stateRoot, "sessions", args.sessionId, "transcript");
+    await writeFile(stateFile, "prior turn");
+    supervisorFixture.stopOutcome = { stopped: false, escaped: 1 };
+    await result.prepared.discardState();
+    expect(await readFile(stateFile, "utf8")).toBe("prior turn");
   });
 });

@@ -9,6 +9,17 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-26
+
+#### Changed
+
+- **Swarms now say when a session never ran, and why** — a swarm session whose attempt ended before it recorded a single message tested nothing about the server under test. Every surface that shows such a session now says so explicitly instead of inferring something from the absence of a transcript.
+
+  - **Sessions detail**: the pane says **This session didn't run** with the refusal the attempt recorded, worded the way the Run tab words it. The judge request and the promote affordance are not shown — there is no conversation to grade or turn into a test case.
+  - **Sessions list and Findings drawer**: a **Didn't run** tag appears in place of an empty preview, so a refused session no longer reads like an ordinary session that said nothing.
+  - **Findings summary**: a **Why sessions didn't run** block names the most common refusal reason beside the existing session count. A goal whose sessions never ran no longer reads "No session evidence available" — it reads "No session launched for this goal, so nothing about the server was tested."
+  - **Insights**: when every session in a wave never ran, the flow reads **These sessions didn't run** instead of waiting on or analyzing sessions that have nothing to read. When only some sessions ran, a note beside the drawn flow counts the ones that didn't.
+
 ### 2026-09-25
 
 #### Fixed
@@ -114,6 +125,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 ### 2026-09-17
 
 #### Changed
+
+- **Ask MCPJam is now on MCPJam** — turns in the Ask MCPJam panel, and the web searches the agent runs, no longer consume your organization's credits or its free daily allowance. You do not need credits or a paid plan to use the agent; signing in is enough. Playground chat, evals, and swarms are unchanged and still spend your credits or your own API key. The out-of-credits dialog no longer opens from the agent panel, because there is no balance involved to top up. The same applies to the agent in Slack and Discord.
+
+- **The agent runs on a fixed model** — Ask MCPJam no longer follows the model selected in the Playground. It runs on a model MCPJam chooses, so switching the Playground to a frontier or BYOK model no longer changes what the agent uses. There is no agent model picker; the Playground picker is unaffected.
+
+- **Two new agent limits, neither of which credits can lift** — after a large number of turns in one UTC day, or when MCPJam's own daily budget for the feature is spent, the panel shows one line: "Ask MCPJam has reached today's limit. It resets at 00:00 UTC." An infrastructure problem on our side shows "Ask MCPJam is temporarily unavailable." Neither offers to sell credits, and nothing is charged in either case.
 
 - **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. (The chip's single-status display was further refined in the 2026-09-24 release.)
 

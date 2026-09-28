@@ -145,7 +145,10 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
-import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
+import {
+  resolveTurnBuiltInToolIds,
+  type ProjectDefaultToolConfig,
+} from "../../utils/built-in-tools/built-in-tool-policy.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -374,9 +377,8 @@ chatV2.post("/", async (c) => {
 
     // The caller's `projectId` is checked here, before anything is resolved or
     // billed against it (MJ-013). The server batch below applies the same
-    // membership check, but only to the servers a turn selected, and a turn
-    // with none skipped it: a guest or signed-in bearer could run a hosted
-    // completion against any project id. Scenario turns are exempt, since
+    // membership check to the servers a turn selected; this one covers every
+    // turn, including one that selected none. Scenario turns are exempt, since
     // their access is the `scenarioId` grant, re-checked by the runtime-config
     // fetch, not membership.
     if (!isScenarioSession) {
@@ -839,28 +841,22 @@ chatV2.post("/", async (c) => {
     // bounded by the host/project configuration, unknown ids are dropped, and
     // workspace tools follow the caller's project role — see
     // `built-in-tool-policy.ts`. Every consumer below reads this, never the
-    // resolved body value.
+    // resolved body value. It also resolves, from the same saved
+    // configuration, when this turn's workspace tools pause for approval; the
+    // turn's own setting can raise that, never lower it.
     const builtInToolPolicy = await resolveTurnBuiltInToolIds({
       requested: resolvedExecution.builtInToolIds,
       targetKind: executionTarget.kind,
       hostRuntimeConfig,
       isGuest: Boolean(c.get("guestId")),
-      loadProjectDefaultBuiltInToolIds: async () => {
-        const projectDefault = (await createConvexClient(
-          await getConvexBearerForRequest(c),
-        ).query(
+      requestedToolApproval: resolvedExecution.requireToolApproval,
+      loadProjectDefaultConfig: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
           "hostConfigsV2:getProjectDefault" as never,
           {
             projectId: hostedBody.projectId,
           } as never,
-        )) as { builtInToolIds?: unknown } | null;
-        if (!projectDefault) return null;
-        return Array.isArray(projectDefault.builtInToolIds)
-          ? projectDefault.builtInToolIds.filter(
-              (id): id is string => typeof id === "string",
-            )
-          : [];
-      },
+        )) as ProjectDefaultToolConfig | null,
       loadProjectAccess: async () =>
         (await createConvexClient(await getConvexBearerForRequest(c)).query(
           "projects:getProjectCapabilities" as never,
@@ -1051,7 +1047,21 @@ chatV2.post("/", async (c) => {
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
         xaaEnterprisePolicyOn: xaaPolicy != null,
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session is an eval
+        // surface and may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.web.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         throw new WebRouteError(
           503,
@@ -1874,6 +1884,8 @@ chatV2.post("/", async (c) => {
         // it today; the model turn and voice already send their own.
         ...(isScenarioSession && scenarioId ? { scenarioId } : {}),
         requireToolApproval,
+        // Workspace tools take the server-resolved setting instead (MJ-008).
+        workspaceToolApproval: builtInToolPolicy.workspaceToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and
         // rejects anything that isn't `personal`, so a union on the config

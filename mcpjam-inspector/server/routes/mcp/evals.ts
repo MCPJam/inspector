@@ -103,10 +103,10 @@ evals.post("/run", async (c) => {
       );
     }
 
-    const prepared = await prepareEvalRun(
-      c.mcpClientManager,
-      validationResult.data,
-    );
+    const prepared = await prepareEvalRun(c.mcpClientManager, {
+      ...validationResult.data,
+      runtimeVenue: "local",
+    });
 
     detachPreparedEvalRun({
       prepared,
@@ -288,10 +288,10 @@ evals.post("/run-test-case", async (c) => {
     }
 
     return c.json(
-      await runEvalTestCaseWithManager(
-        c.mcpClientManager,
-        validationResult.data,
-      ),
+      await runEvalTestCaseWithManager(c.mcpClientManager, {
+        ...validationResult.data,
+        runtimeVenue: "local",
+      }),
     );
   } catch (error) {
     reportRouteFailure("[Error running test case]", error, {
@@ -319,7 +319,7 @@ evals.post("/stream-test-case", async (c) => {
 
     const stream = await streamEvalTestCaseWithManager(
       c.mcpClientManager,
-      validationResult.data,
+      { ...validationResult.data, runtimeVenue: "local" },
       // Client disconnect aborts the run (including any awaited task).
       { requestSignal: c.req.raw.signal },
     );
@@ -397,10 +397,10 @@ evals.post("/generate-tests", async (c) => {
     }
 
     return c.json(
-      await generateEvalTestsWithManager(
-        c.mcpClientManager,
-        validationResult.data,
-      ),
+      await generateEvalTestsWithManager(c.mcpClientManager, {
+        ...validationResult.data,
+        runtimeVenue: "local",
+      }),
     );
   } catch (error) {
     reportRouteFailure("Error in /evals/generate-tests", error, {
@@ -426,10 +426,10 @@ evals.post("/generate-negative-tests", async (c) => {
     }
 
     return c.json(
-      await generateNegativeEvalTestsWithManager(
-        c.mcpClientManager,
-        validationResult.data,
-      ),
+      await generateNegativeEvalTestsWithManager(c.mcpClientManager, {
+        ...validationResult.data,
+        runtimeVenue: "local",
+      }),
     );
   } catch (error) {
     reportRouteFailure("Error in /evals/generate-negative-tests", error, {

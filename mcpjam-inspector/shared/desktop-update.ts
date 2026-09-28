@@ -17,12 +17,14 @@ export type FailedUpdateStatus = {
   kind: "failed";
   attemptId: string;
   reason: UpdateFailureReason;
+  action: "retry-download" | "relaunch-retry" | "instructions";
   version?: string;
 };
 
 export type UpdateStatus =
   | { kind: "idle" }
   | { kind: "pending"; version?: string; installRequested: boolean }
+  | { kind: "retry-waiting"; version?: string; retry: number }
   | { kind: "downloaded"; version: string; releaseNotes?: string }
   | { kind: "recovering"; attemptId: string; version?: string }
   | FailedUpdateStatus;

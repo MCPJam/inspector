@@ -21,6 +21,10 @@ import {
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
 import { track } from "@/lib/analytics";
+import {
+  isSessionRevokedResponse,
+  notifySessionRevoked,
+} from "@/lib/auth/session-revoked";
 
 // Extend window type for the injected token
 declare global {
@@ -613,6 +617,20 @@ export async function authFetch(
       : null;
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
+
+  // The session behind this tab's bearer was signed out elsewhere (MJ-011).
+  // No retry below can help — a fresh token for the same session is refused
+  // the same way, and swapping in a guest bearer would be wrong — so report
+  // it (the tab signs out once; see `session-revoked.ts`) and hand the
+  // refusal back to the caller.
+  if (
+    response.status === 401 &&
+    hostedAuthEligible &&
+    (await isSessionRevokedResponse(response))
+  ) {
+    notifySessionRevoked();
+    return response;
+  }
 
   // Local session-token recovery (non-hosted). The dev backend regenerates its
   // session token on every restart; if it restarted since page load the

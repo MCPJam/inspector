@@ -275,8 +275,13 @@ export function humanizeSwarmAttemptError(
 
   const headline =
     str(parsed.error) ?? str(parsed.message) ?? "The session could not run.";
-  const details = str(parsed.details);
   const code = str(parsed.code);
+  // `provider_not_allowlisted` carries the gateway's own instruction to its
+  // account owner ("Update your Provider Allowlist settings…") in `details`.
+  // That is MCPJam's setting, not the reader's; the headline already names
+  // the provider and the fix, so the upstream sentence stays out of it.
+  const details =
+    code === "provider_not_allowlisted" ? undefined : str(parsed.details);
   const retryAfterMs = num(parsed.retryAfter);
   const canTopUp = parsed.canTopUp === true;
 
@@ -318,9 +323,17 @@ export function humanizeSwarmAttemptErrorMessage(
  * another host could escape the limit, and they already disagree on
  * `mcpjam_rate_limit`. A parity test pins the overlap so a code added there is
  * not silently missed here.
+ *
+ * The three MCPJam-paid refusals are all whole-run stops, for the same reason
+ * from three directions: `platform_capacity` is MCPJam's own daily budget for
+ * the feature, so every remaining target meets the same wall;
+ * `agent_turn_limit` is keyed on the USER, and every session in a fan-out is
+ * the same user; and `agent_billing_rejected` means the attestation did not
+ * hold, which is a property of the deployment, not of one host. Burning the
+ * run's remaining targets against any of them buys nothing.
  */
 const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|account_suspended|guest_model_not_allowed|guest_input_too_large)\b/i;
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|account_suspended|guest_model_not_allowed|guest_input_too_large|platform_capacity|agent_turn_limit|agent_billing_rejected)\b/i;
 
 /**
  * True when a rate-limited attempt was stopped by MCPJam's account-wide limit

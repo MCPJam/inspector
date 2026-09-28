@@ -4,10 +4,16 @@
  * the field useful, and the explicit degradation states that replace blank
  * frames.
  */
-import { describe, expect, it } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EvalTraceBrowserInteractionStepView } from "@/shared/eval-trace";
+import {
+  registerArtifactUrls,
+  requestArtifactUrlRefresh,
+  resetArtifactUrlsForTests,
+  useArtifactUrlEpoch,
+} from "@/lib/artifact-urls";
 import {
   BrowserStepFilmstrip,
   browserStepKey,
@@ -321,6 +327,101 @@ describe("BrowserStepFilmstrip", () => {
     expect(
       await screen.findByTestId("browser-replay-video-unavailable"),
     ).toHaveTextContent("Recording failed to load — screenshots preserved.");
+  });
+
+  describe("a recording served as an artifact link", () => {
+    function signedVideoUrl(storageId: string, expiresAtSeconds: number) {
+      const encode = (value: string) =>
+        btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      const body = encode(
+        JSON.stringify({ v: 1, s: storageId, k: "video", e: expiresAtSeconds }),
+      );
+      return `https://test.convex.site/web/artifact?t=${body}.${encode("sig")}`;
+    }
+
+    beforeEach(() => {
+      resetArtifactUrlsForTests();
+    });
+
+    it("asks for a fresh link when it fails to load, then plays the fresh one", async () => {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const expired = signedVideoUrl("kg-rec", nowSeconds - 60);
+      const fresh = signedVideoUrl("kg-rec", nowSeconds + 3600);
+      const { result } = renderHook(() => useArtifactUrlEpoch());
+      render(<BrowserStepFilmstrip videoUrl={expired} steps={[step()]} />);
+
+      act(() => {
+        screen
+          .getByTestId("browser-replay-video")
+          .dispatchEvent(new Event("error"));
+      });
+      expect(result.current).toEqual(expect.any(Number));
+      expect(
+        await screen.findByTestId("browser-replay-video-unavailable"),
+      ).toHaveTextContent("Recording failed to load");
+
+      // The re-run query registers the new link; the player comes back on it.
+      act(() => registerArtifactUrls({ videoUrl: fresh }));
+      expect(
+        screen.getByTestId("browser-replay-video").getAttribute("src"),
+      ).toBe(fresh);
+    });
+
+    it("loads again once a throttled refresh may start, and that failure asks for one (MJ-005)", () => {
+      vi.useFakeTimers();
+      try {
+        const link = signedVideoUrl(
+          "kg-rec",
+          Math.floor(Date.now() / 1000) + 3600,
+        );
+        const { result } = renderHook(() => useArtifactUrlEpoch());
+        // Another link's refresh holds the throttle.
+        act(() => {
+          requestArtifactUrlRefresh();
+        });
+        const heldEpoch = result.current!;
+        render(<BrowserStepFilmstrip videoUrl={link} steps={[step()]} />);
+
+        act(() => {
+          screen
+            .getByTestId("browser-replay-video")
+            .dispatchEvent(new Event("error"));
+        });
+        expect(
+          screen.getByTestId("browser-replay-video-unavailable"),
+        ).toHaveTextContent("Recording failed to load");
+        expect(result.current).toBe(heldEpoch);
+
+        // The window passes: the player is back on the same link…
+        act(() => {
+          vi.advanceTimersByTime(30_000);
+        });
+        const video = screen.getByTestId("browser-replay-video");
+        expect(video.getAttribute("src")).toBe(link);
+
+        // …and failing again now asks for a fresh link.
+        act(() => {
+          video.dispatchEvent(new Event("error"));
+        });
+        expect(result.current).toBeGreaterThan(heldEpoch);
+        expect(
+          screen.getByTestId("browser-replay-video-unavailable"),
+        ).toHaveTextContent("Recording failed to load");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("plays the freshest link already known for the recording", () => {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const older = signedVideoUrl("kg-rec", nowSeconds + 60);
+      const fresh = signedVideoUrl("kg-rec", nowSeconds + 3600);
+      registerArtifactUrls({ videoUrl: fresh });
+      render(<BrowserStepFilmstrip videoUrl={older} steps={[step()]} />);
+      expect(
+        screen.getByTestId("browser-replay-video").getAttribute("src"),
+      ).toBe(fresh);
+    });
   });
 
   it("treats an empty-string videoUrl as no video", () => {

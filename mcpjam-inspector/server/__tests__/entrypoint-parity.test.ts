@@ -82,6 +82,8 @@ const APP_ONLY: Readonly<Record<string, string>> = {
 const INDEX_ONLY_REGISTRATIONS: Readonly<Record<string, string>> = {
   registerBrowserController:
     "Records the control plane's own origin so the local browser's egress guard can refuse a self-dial. It needs the BOUND port, which app.ts never learns — the embedder picks it. Electron registers it in src/main.ts right after serve(), and any other embedder must do the same.",
+  registerPreviewIdentityRoute:
+    "Answers the *.mcpjam.dev preview router's identity check, and mounts only when PREVIEW_EDGE_SECRET and RAILWAY_PUBLIC_DOMAIN are both set, which CI does for PR previews alone. Electron is never a PR preview, so app.ts has nothing to mount.",
 };
 
 describe("server/index.ts <-> server/app.ts parity", () => {

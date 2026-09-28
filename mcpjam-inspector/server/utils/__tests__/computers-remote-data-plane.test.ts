@@ -313,7 +313,19 @@ describe("execViaRemoteDataPlane", () => {
       });
     const result = await execViaRemoteDataPlane(execArgs);
     expect(result).toEqual({
-      error: "Computer unavailable: Missing or invalid bearer token",
+      error: "Computer unavailable: sign in again and retry.",
+    });
+  });
+
+  it("answers by status and never relays the remote's message", async () => {
+    fetchResponse = () =>
+      jsonResponse(500, {
+        code: "INTERNAL_ERROR",
+        message: "UNEXPECTED_MARKER Uncaught Error at exec",
+      });
+    const result = await execViaRemoteDataPlane(execArgs);
+    expect(result).toEqual({
+      error: "Computer unavailable: the computers service returned an error.",
     });
   });
 

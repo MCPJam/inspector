@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authorizeOrganizationKeyRevoke,
+  createWorkosKeyBinding,
   lookupWorkosKeyBinding,
   removeOrganizationKeyBinding,
   WorkosKeyBindingError,
@@ -64,6 +65,49 @@ describe("lookupWorkosKeyBinding", () => {
       );
       expect((await lookupWorkosKeyBinding("api_key_1"))?.expiresAt).toBeNull();
     }
+  });
+});
+
+describe("createWorkosKeyBinding", () => {
+  const BINDING = {
+    workosApiKeyId: "api_key_1",
+    mcpjamOrganizationId: "org-1",
+    mintedByUserId: "mcpjam_user_1",
+  };
+
+  it("carries the backend's reason code with a refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json(
+          {
+            ok: false,
+            error:
+              "Only organization owners and admins can create API keys in this organization",
+            code: "ADMINS_ONLY",
+          },
+          403,
+        ),
+      ),
+    );
+    const error = await createWorkosKeyBinding(BINDING).catch((e) => e);
+    expect(error).toBeInstanceOf(WorkosKeyBindingError);
+    expect(error.status).toBe(403);
+    expect(error.code).toBe("ADMINS_ONLY");
+    expect(error.message).toBe(
+      "Only organization owners and admins can create API keys in this organization",
+    );
+  });
+
+  it("leaves the code unset when the backend sends none", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ ok: false, error: "Internal error" }, 500)),
+    );
+    const error = await createWorkosKeyBinding(BINDING).catch((e) => e);
+    expect(error).toBeInstanceOf(WorkosKeyBindingError);
+    expect(error.status).toBe(500);
+    expect(error.code).toBeUndefined();
   });
 });
 
@@ -150,6 +194,24 @@ describe("removeOrganizationKeyBinding", () => {
     const error = await removeOrganizationKeyBinding(ARGS).catch((e) => e);
     expect(error).toBeInstanceOf(WorkosKeyBindingError);
     expect(error.status).toBe(403);
+  });
+
+  it("treats a 404 the backend answers as nothing left to remove", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ ok: false, error: "Binding not found" }, 404)),
+    );
+    await expect(removeOrganizationKeyBinding(ARGS)).resolves.toBeUndefined();
+  });
+
+  it("throws on a 404 from a route that is not there", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Not found", { status: 404 })),
+    );
+    const error = await removeOrganizationKeyBinding(ARGS).catch((e) => e);
+    expect(error).toBeInstanceOf(WorkosKeyBindingError);
+    expect(error.status).toBe(404);
   });
 });
 

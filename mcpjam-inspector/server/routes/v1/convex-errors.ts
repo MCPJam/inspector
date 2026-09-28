@@ -19,12 +19,21 @@
  *     Telling an outsider "you are not an admin here" confirms the resource
  *     exists. Only a message that names the admin requirement — which the caller
  *     can only reach if they are already a member — earns a 403.
- *   - **`kind: 'forbidden'` is a TIER denial and answers 403.** A different
- *     shape from the `FORBIDDEN` code above, raised only once membership has
- *     already resolved, so hiding it behind a 404 would tell a legitimate
- *     member their own resource does not exist. Still subject to
- *     `adminFailureIsForbidden` for the resources that deliberately hide their
- *     gate.
+ *   - **`kind: 'forbidden'` is an authorization refusal and answers 403.** A
+ *     different shape from the `FORBIDDEN` code above: the backend raises it
+ *     for eval tier denials, and through `opaqueRefusal` at the chokepoints
+ *     that already answer "missing" and "not yours" identically (a server
+ *     create, a chat session lookup). Stating it is the backend's decision.
+ *     Still subject to `adminFailureIsForbidden` for the resources that
+ *     deliberately hide their gate.
+ *   - **The role helpers are NOT that shape.** `requireProjectRole` and
+ *     `requireWorkspaceRole` throw a plain `Error`, which a production
+ *     deployment masks to `Server Error` with no data, exactly like the plain
+ *     "not found" throws beside them. Nothing here can tell that apart from a
+ *     crash, so it reaches the terminal 500 below. A route addressing one
+ *     resource it can look up resolves that with
+ *     `translateAddressedConvexWriteError`: a failed write to something the
+ *     caller cannot see answers the same 404 a read of it would.
  *   - **Infrastructure failures are 5xx.** A timeout or a reset socket is not
  *     the caller's bad input; those defer to `mapRuntimeError` so a transient
  *     outage is not reported as a validation error.
@@ -295,6 +304,18 @@ export function translateImportIneligibleError(
   return translateConvexWriteError(error, { resource: "Eval run" });
 }
 
+/**
+ * The 500s the terminal branch of `translateConvexWriteError` produced, and
+ * only those.
+ *
+ * A timeout or a dead socket can also come back as a 5xx (through
+ * `mapRuntimeError`), and a route may throw its own `WebRouteError(500)`; none
+ * of those is "the backend refused and said nothing", so none of them may be
+ * re-read as a refusal. Membership in this set is the one marker that cannot
+ * be produced any other way.
+ */
+const UNRECOGNIZED_WRITE_FAILURES = new WeakSet<WebRouteError>();
+
 export function translateConvexWriteError(
   error: unknown,
   options: TranslateConvexWriteErrorOptions
@@ -312,8 +333,11 @@ export function translateConvexWriteError(
 
   const data = convexErrorData(error);
   const code = typeof data?.code === "string" ? data.code : undefined;
+  // A blank message is no copy: every branch then uses its own fallback.
   const structuredMessage =
-    typeof data?.message === "string" ? data.message : undefined;
+    typeof data?.message === "string" && data.message.trim()
+      ? data.message
+      : undefined;
   const kind = typeof data?.kind === "string" ? data.kind : undefined;
 
   // ── The eval tier denial (mcpjam-backend lib/evalPermissions.ts) ─────────
@@ -330,17 +354,19 @@ export function translateConvexWriteError(
   // caller as a generic internal error.
   //
   // 403 rather than the neutral 404 the generic `FORBIDDEN` branch gives, and
-  // the backend is explicit about why: this denial is only reachable by a
-  // caller who ALREADY resolved membership, so it reveals nothing they could
-  // not see, while "not found" would send a legitimate member hunting for a
-  // run sitting in front of them. The denials that DO mean "you cannot see
-  // this scope at all" never arrive here — the backend collapses those into
-  // its own not-found strings before they leave the mutation.
+  // the backend is explicit about why: "not found" would send a legitimate
+  // member hunting for a run sitting in front of them. The same shape comes
+  // from the backend's `opaqueRefusal`, raised only where "missing" and "not
+  // yours" already leave by the same door, and that answers 403 too (MJ-020,
+  // MJ-021) — the backend chose to state those refusals as refusals, and it
+  // owns that decision. The project and workspace role helpers do not raise
+  // it: they throw a plain `Error`, masked in production, which lands on the
+  // terminal 500 (see `translateAddressedConvexWriteError`).
   //
   // No `/admin/i` message test, unlike the generic `FORBIDDEN` branch. That
   // test exists there because the `FORBIDDEN` code also covers membership
-  // denials, which must hide; this `kind` is only raised after membership
-  // resolved, so there is nothing left to hide.
+  // denials the backend wants hidden; this `kind` is the one it raises when it
+  // does not.
   //
   // `adminFailureIsForbidden` is still honored. A route that deliberately
   // HIDES its permission gate (sandbox images, whose gate also guards shared
@@ -804,7 +830,58 @@ export function translateConvexWriteError(
     resource,
     detail: redactForLog(error),
   });
-  return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, fallbackMessage);
+  const unrecognized = new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    fallbackMessage
+  );
+  UNRECOGNIZED_WRITE_FAILURES.add(unrecognized);
+  return unrecognized;
+}
+
+/**
+ * `translateConvexWriteError` for a write addressed at ONE resource the
+ * caller could also read — `PATCH`/`DELETE` on `/servers/:serverId`.
+ *
+ * A production deployment masks a plain backend throw to `Server Error`, and
+ * the backend's "not found" and role-check refusals on these paths are plain
+ * throws. So an update or delete of a resource in a project the caller does
+ * not belong to, and one of an id that does not exist, both arrive here with
+ * nothing to classify and fall to the terminal 500.
+ *
+ * Only on that branch, `isVisible` is asked whether the caller can see the
+ * resource at all, using the same read a `GET` of it answers from:
+ *
+ *   - not visible → the same 404 the `GET` gives. One answer for "missing"
+ *     and "not yours", so it confirms nothing the read does not;
+ *   - visible → the 500 stands. The caller can see the thing and the write
+ *     still failed, so the failure is ours, and it stays in the 5xx range the
+ *     monitors watch;
+ *   - the lookup itself fails → the 500 stands, rather than guessing.
+ *
+ * Every classified outcome — a coded refusal, `kind: 'forbidden'`, a timeout
+ * — is returned exactly as `translateConvexWriteError` gave it, without the
+ * extra read.
+ */
+export async function translateAddressedConvexWriteError(
+  error: unknown,
+  options: TranslateConvexWriteErrorOptions,
+  isVisible: () => Promise<boolean>
+): Promise<WebRouteError> {
+  const translated = translateConvexWriteError(error, options);
+  if (!UNRECOGNIZED_WRITE_FAILURES.has(translated)) return translated;
+  let visible: boolean;
+  try {
+    visible = await isVisible();
+  } catch {
+    return translated;
+  }
+  if (visible) return translated;
+  return new WebRouteError(
+    404,
+    ErrorCode.NOT_FOUND,
+    options.notFoundMessage ?? `${options.resource} not found`
+  );
 }
 
 /**
@@ -829,6 +906,10 @@ export function translateConvexWriteError(
  *     redaction preserves `ConvexError` data and nothing else, which is why
  *     the backend puts customer copy there).
  *
+ * The one other shape admitted is `kind: 'forbidden'`, the backend's
+ * authorization refusal, which carries no `code`: it is just as deliberate, and
+ * its only copy is the optional `message` the backend chose to send.
+ *
  * Anything without both — a `TypeError`, a dead socket, a Convex validator
  * rejection, a plain `throw new Error(...)` whose text may name our internals
  * — returns `undefined` here and keeps its opaque 500. This function never
@@ -847,7 +928,11 @@ export function translateStructuredConvexRefusal(
   const data = convexErrorData(error);
   const code = typeof data?.code === "string" ? data.code.trim() : "";
   const message = typeof data?.message === "string" ? data.message.trim() : "";
-  if (!code || !message) return undefined;
+  // `kind: 'forbidden'` is the backend's authorization refusal, and it carries
+  // no `code` — without this it would reach the caller as a 500 from every
+  // route that does not translate its own writes (MJ-020, MJ-021).
+  const forbidden = data?.kind === "forbidden";
+  if (!forbidden && (!code || !message)) return undefined;
   return translateConvexWriteError(error, {
     resource: "Resource",
     fallbackMessage: "The platform refused this request.",

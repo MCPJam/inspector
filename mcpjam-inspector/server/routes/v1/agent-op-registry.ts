@@ -1320,8 +1320,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     // say-so. Prompt-injected content plus a project name learned from
     // `list_projects` is all that takes. The dial at the target also fires the
     // moment the model calls, human or no human. In-app chat already requires
-    // approval for this operation (`APPROVAL_REQUIRED_IDS`); the tier now
-    // agrees with it.
+    // approval for this operation (it changes state, see
+    // `built-in-tools/mcpjam.ts`); the tier now agrees with it.
     //
     // The OAuth path does end up asking twice. That is the acceptable cost:
     // the first click authorizes "start probing this URL as me", the second

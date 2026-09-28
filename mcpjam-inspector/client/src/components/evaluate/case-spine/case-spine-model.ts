@@ -12,6 +12,7 @@
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import {
   actionRows,
+  countModelSteps,
   isAssertStep,
   stepTurnIndices,
   type TestStep,
@@ -138,6 +139,20 @@ export function deleteActionPlan(
     movedFollowers,
     becomesLeading: !previous,
   };
+}
+
+/**
+ * Whether this action can leave the case.
+ *
+ * A case has to keep one prompt — that is the question the run answers. Any
+ * prompt can be removed while another remains, and every other action can
+ * always be removed.
+ */
+export function canRemoveAction(steps: TestStep[], actionId: string): boolean {
+  const target = steps.find((step) => step.id === actionId);
+  if (!target) return false;
+  if (target.kind !== "prompt") return true;
+  return countModelSteps(steps) > 1;
 }
 
 /** Remove an action and every check nested under it. */

@@ -517,6 +517,7 @@ export function RunDetailView({
     requested: serverQualityRequested,
     failedGeneration: serverQualityFailedGeneration,
     error: serverQualityError,
+    signInRequired: serverQualitySignInRequired,
     requestServerQuality,
     unavailable: serverQualityUnavailable,
   } = useServerQuality(selectedRunDetails, { autoRequest: true });
@@ -726,6 +727,7 @@ export function RunDetailView({
         requested={serverQualityRequested}
         failedGeneration={serverQualityFailedGeneration}
         error={serverQualityError}
+        signInRequired={serverQualitySignInRequired}
         onRetry={() => requestServerQuality(true)}
         source={source}
         hostNamesById={hostNamesById}
