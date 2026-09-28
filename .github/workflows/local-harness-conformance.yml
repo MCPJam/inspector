@@ -28,6 +28,10 @@ on:
   pull_request:
     paths:
       - "mcpjam-inspector/server/utils/harness/local/**"
+      - "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts"
+      - "mcpjam-inspector/server/utils/harness/registry.ts"
+      - "mcpjam-inspector/package.json"
+      - "package-lock.json"
       - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
       # The launcher is part of the foundation Windows conformance rests on,
       # and this is the only workflow that compiles it. Left out of the filter,
