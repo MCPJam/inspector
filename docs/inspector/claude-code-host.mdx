@@ -45,23 +45,33 @@ your actual checkout, and the commands it runs happen on your machine.
 
 **This is not a sandbox.** The agent runs as your user account. The folder you
 grant is where it *starts*, not a boundary it cannot leave: anything your user
-can read or change, it can read or change. Edits inside the folder run freely;
-commands still ask for approval in chat. If that is not what you want, run the
-host hosted, which is the default.
+can read or change, it can read or change. **Evals and swarms run commands
+without asking for approval.** If that is not what you want, run the host
+hosted, which is the default.
 
-Three things happen once, in this order, before your first local turn:
+### Setting up
 
-1. **Install the local runtime.** About 200 MB, downloaded once and shared by
-   every project: Claude Code, its supporting runtime, and the Node it runs on.
-   MCPJam verifies the download's signature and then verifies the contents
-   again after extraction, and refuses anything that does not match what this
-   Inspector build expects.
-2. **Choose the project folder.** In the desktop app this opens your OS folder
-   picker. This is the directory the agent starts in.
-3. **Authorize.** The authorization is scoped to this project and this machine,
-   and it expires on its own. Changing the runtime, the folder, or the
-   permission profile means authorizing again — the old authorization does not
-   carry over, by design.
+Add a Claude Code client from the **Add client** dialog. When local execution
+is available for your account, the dialog shows a disclosure before you create
+the client:
+
+> Claude Code runs in a private project workspace on this computer. Creating
+> this client installs its runtime and allows local commands with your full
+> OS-user permissions. Evals and swarms run commands without asking for
+> approval.
+
+Click **Create** to save the client and start the runtime installation in the
+background. The dialog closes immediately; a progress notice in the composer
+tracks the install. If setup does not finish before you send your first message,
+a **Set up** button appears in the composer — click it to complete setup without
+losing your draft.
+
+The runtime (~200 MB) is downloaded once and shared across all projects on this
+machine. MCPJam verifies the download's signature and the extracted contents,
+and refuses anything that does not match what this Inspector build expects.
+Authorization is durable and scoped to this project and this machine; it renews
+automatically in the background and does not require another click unless
+something changes (runtime update, account change, or explicit revocation).
 
 While a local turn runs, MCPJam keeps the model credential in the Inspector
 process and hands the agent only a per-session token that works with nothing
