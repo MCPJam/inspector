@@ -12,16 +12,15 @@ import {
   runHostedDoctor,
   validateServerCore,
 } from "../web/servers.js";
-import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
-import { v1OnError, v1Resource } from "./envelope.js";
+import { v1Resource } from "./envelope.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
-  describeHostedConnectFailure,
-  projectHostedConnectFailureDetails,
-} from "../../utils/hosted-connect-failure.js";
-import { createHostedRpcLogCollector } from "../web/hosted-rpc-logs.js";
-import { translateConvexWriteError } from "./convex-errors.js";
+  translateAddressedConvexWriteError,
+  translateConvexWriteError,
+  type TranslateConvexWriteErrorOptions,
+} from "./convex-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const servers = new Hono();
@@ -117,13 +116,34 @@ function convexClient(token: string): ConvexHttpClient {
   return client;
 }
 
+const SERVER_WRITE_ERROR_OPTIONS: TranslateConvexWriteErrorOptions = {
+  resource: "Server",
+  conflictMessage: "A server with that name already exists in this workspace.",
+  fallbackMessage: "Server write rejected",
+};
+
 function translateServerWriteError(error: unknown): WebRouteError {
-  return translateConvexWriteError(error, {
-    resource: "Server",
-    conflictMessage:
-      "A server with that name already exists in this workspace.",
-    fallbackMessage: "Server write rejected",
-  });
+  return translateConvexWriteError(error, SERVER_WRITE_ERROR_OPTIONS);
+}
+
+/** A failed write to one server; one this caller cannot see answers 404. */
+function translateAddressedServerWriteError(
+  error: unknown,
+  token: string,
+  projectId: string,
+  serverId: string
+): Promise<WebRouteError> {
+  return translateAddressedConvexWriteError(
+    error,
+    SERVER_WRITE_ERROR_OPTIONS,
+    async () =>
+      (
+        (await convexClient(token).query(
+          "servers:getProjectServers" as any,
+          { projectId } as any
+        )) as Array<Record<string, unknown>>
+      ).some((row) => String(row._id ?? row.id) === serverId)
+  );
 }
 
 async function findProjectServer(
@@ -234,7 +254,12 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
     );
     return v1Resource(c, await findProjectServer(token, projectId, serverId));
   } catch (error) {
-    throw translateServerWriteError(error);
+    throw await translateAddressedServerWriteError(
+      error,
+      token,
+      projectId,
+      serverId
+    );
   }
 });
 
@@ -256,45 +281,29 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
       { projectId, serverId } as any
     );
   } catch (error) {
-    throw translateServerWriteError(error);
+    throw await translateAddressedServerWriteError(
+      error,
+      token,
+      projectId,
+      serverId
+    );
   }
   return v1Resource(c, { id: serverId, deleted: true });
 });
 
 // POST /v1/projects/:projectId/servers/:serverId/validate
 // Connect to the server and capture an inspection snapshot. Wraps the same
-// validateServerCore the web /servers/validate route uses.
-servers.post("/projects/:projectId/servers/:serverId/validate", async (c) => {
-  // Hosted: the exchange log the failure is described from, as on the web
-  // twin. It is read here and never returned.
-  const collector = HOSTED_MODE ? createHostedRpcLogCollector(null) : undefined;
-  try {
-    return await runV1ServerOp(
-      c,
-      projectServerSchema,
-      (manager, body) => validateServerCore(c, manager, body),
-      (ctx, result) => v1Resource(ctx, result),
-      {
-        timeoutMs: WEB_CONNECT_TIMEOUT_MS,
-        rpcLogger: collector?.rpcLogger,
-        httpLogger: collector?.httpLogger,
-      },
-    );
-  } catch (error) {
-    // Hosted: the target's status line in place of its answer, as on the web
-    // twin (MJ-001). Errors this server authored keep their wording.
-    if (!HOSTED_MODE || error instanceof WebRouteError) throw error;
-    const failure = describeHostedConnectFailure(
-      error,
-      collector?.buildEnvelope() as Record<string, unknown> | undefined,
-    );
-    return v1OnError(error, c, {
-      message: failure.message,
-      ...(failure.blockedTarget ? { code: "VALIDATION_ERROR" as const } : {}),
-      details: projectHostedConnectFailureDetails,
-    });
-  }
-});
+// validateServerCore the web /servers/validate route uses. Hosted, a failure is
+// answered by `runV1ServerOp` as on the web twin (MJ-001).
+servers.post("/projects/:projectId/servers/:serverId/validate", async (c) =>
+  runV1ServerOp(
+    c,
+    projectServerSchema,
+    (manager, body) => validateServerCore(c, manager, body),
+    (ctx, result) => v1Resource(ctx, result),
+    { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
+  )
+);
 
 // POST /v1/projects/:projectId/servers/:serverId/doctor
 // Run the shared SDK doctor workflow (probe -> connect -> initialize ->

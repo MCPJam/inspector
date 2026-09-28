@@ -279,22 +279,54 @@ describe("POST /api/web/browser-profiles/upload", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("asks the per-user route on a local install without the service credential", async () => {
+  it("says saving is unavailable on a local install without the service credential, and asks the backend nothing", async () => {
     hostedMode.value = false;
     delete process.env.INSPECTOR_SERVICE_TOKEN;
 
     const res = await upload(makeApp(), new Uint8Array([1, 2, 3]));
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ storageId: "kg2_profile_archive" });
-    const [mintUrl, mintInit] = fetchMock.mock.calls[0] as FetchCall;
-    expect(mintUrl).toBe(`${CONVEX_HTTP_URL}/browser-profiles/upload-url`);
-    expect(mintInit.headers).toMatchObject({
-      Authorization: "Bearer user-bearer",
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      message: "Saving browser profiles isn't available on this server.",
     });
-    expect(mintInit.headers).not.toHaveProperty("x-inspector-service-token");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamedBytes).toBeNull();
+  });
+
+  it("uses the service route on a local install that holds the credential", async () => {
+    hostedMode.value = false;
+
+    const res = await upload(makeApp(), new Uint8Array([1, 2, 3]));
+
+    expect(res.status).toBe(200);
+    const [mintUrl] = fetchMock.mock.calls[0] as FetchCall;
+    expect(mintUrl).toBe(
+      `${CONVEX_HTTP_URL}/internal/v1/browser-profiles/upload-url`,
+    );
     expect(streamedBytes).toEqual(new Uint8Array([1, 2, 3]));
   });
+
+  it.each([
+    ["with", "service-token-1", true],
+    ["without", undefined, false],
+  ])(
+    "reports whether archives can be saved and loaded %s the service credential",
+    async (_label, token, archives) => {
+      hostedMode.value = false;
+      if (token === undefined) delete process.env.INSPECTOR_SERVICE_TOKEN;
+      else process.env.INSPECTOR_SERVICE_TOKEN = token;
+
+      const res = await makeApp().request(
+        "/api/web/browser-profiles/availability",
+        { headers: { Authorization: "Bearer user-bearer" } },
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ archives });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("no longer serves the upload-url operation to the browser", async () => {
     const res = await makeApp().request(

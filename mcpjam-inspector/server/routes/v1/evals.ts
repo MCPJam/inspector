@@ -6545,8 +6545,8 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
   };
   try {
     // Project scope first, on the SUITE — the revision list is scoped by the
-    // suite id alone, so without this a caller could read another project's
-    // history by guessing an id.
+    // suite id alone, so the suite's project is checked against the path
+    // before any revision is read.
     const suite: SuiteDoc | null = await convex.query(
       "testSuites:getTestSuite" as any,
       { suiteId },

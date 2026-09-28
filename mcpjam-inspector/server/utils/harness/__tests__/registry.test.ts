@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
@@ -15,6 +15,12 @@ import {
   patchClaudeCodeHarnessBootstrap,
   registeredHarnessIds,
 } from "../registry";
+
+vi.mock("../claude-code-bootstrap.js", async (original) => {
+  const actual = await original<typeof import("../claude-code-bootstrap.js")>();
+  return { ...actual, createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness) };
+});
+import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
 
 describe("harness registry", () => {
   it("returns the claude-code adapter", () => {
@@ -432,6 +438,7 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("anthropic/claude-");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     // The overrides MERGE over `permissionOptions.settings` (the adapter's own
@@ -508,6 +515,7 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     expect(bridge?.content).toContain(
       "settings: { ...(permissionOptions.settings ?? {})",
@@ -516,6 +524,41 @@ const toUserMessage = (options) => ({
     // now, not a bridge-source rewrite (the installed bridge has no reference
     // at all, so a reappearing one means the patch regressed to the old form).
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+  });
+
+  it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
+    const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
+      model: "haiku",
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }) as any);
+    const bootstrap = (await original.getBootstrap?.())!;
+    const legacy = {
+      ...bootstrap,
+      files: bootstrap.files.map((file) => ({
+        ...file,
+        content: file.content.replace("      strictMcpConfig: true,\n", ""),
+      })),
+    };
+    for (const recipe of [legacy, bootstrap]) {
+      const patched = patchClaudeCodeHarnessBootstrap({
+        ...original,
+        getBootstrap: async () => recipe,
+      });
+      const result = await patched.getBootstrap?.();
+      const bridge = result?.files.find((file) => file.path.endsWith("/bridge.mjs"));
+      expect(bridge?.content.match(/strictMcpConfig: true/g)).toHaveLength(1);
+    }
+    const malformed = patchClaudeCodeHarnessBootstrap({
+      ...original,
+      getBootstrap: async () => ({
+        ...legacy,
+        files: legacy.files.map((file) => ({
+          ...file,
+          content: file.content.replace("      mcpServers,\n      cwd: workdir,", "      cwd: workdir,"),
+        })),
+      }),
+    });
+    await expect(malformed.getBootstrap?.()).rejects.toThrow("MCP query options shape changed");
   });
 
   it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
@@ -631,27 +674,24 @@ const toUserMessage = (options) => ({
     expect(() => getHarnessAdapter("pi")).toThrow(/Unsupported harness/);
   });
 
-  describe("deliverMcpServers (refactor guard — Claude .mcp.json unchanged)", () => {
+  describe("native MCP delivery", () => {
     const mcpJson = {
       mcpServers: {
         weather: { type: "http" as const, url: "https://example.com/mcp" },
       },
     };
 
-    it("Claude Code writes the same path + content the inline write did", async () => {
+    it("Claude Code uses session configuration without writing workspace files", () => {
       const adapter = getHarnessAdapter("claude-code");
-      const writes: { path: string; content: string }[] = [];
-      await adapter.deliverMcpServers?.({
-        writeTextFile: async (a) => {
-          writes.push(a);
-        },
-        sessionWorkDir: "/home/user/work",
-        mcpJson,
+      expect(adapter.mcpNativeDelivery).toBe("session-config");
+      expect(adapter.deliverMcpServers).toBeUndefined();
+      const runtime = adapter.createHarness({
+        modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson,
       });
-      expect(writes).toHaveLength(1);
-      expect(writes[0]!.path).toBe("/home/user/work/.mcp.json");
-      // Content is the canonical serialization (same helper as before the refactor).
-      expect(JSON.parse(writes[0]!.content)).toEqual(mcpJson);
+      expect(runtime.harnessId).toBe("claude-code");
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        mcpServers: mcpJson.mcpServers,
+      }));
     });
 
     it("Codex writes no sandbox MCP config — its servers are host-executed", () => {

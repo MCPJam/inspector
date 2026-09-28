@@ -377,9 +377,8 @@ chatV2.post("/", async (c) => {
 
     // The caller's `projectId` is checked here, before anything is resolved or
     // billed against it (MJ-013). The server batch below applies the same
-    // membership check, but only to the servers a turn selected, and a turn
-    // with none skipped it: a guest or signed-in bearer could run a hosted
-    // completion against any project id. Scenario turns are exempt, since
+    // membership check to the servers a turn selected; this one covers every
+    // turn, including one that selected none. Scenario turns are exempt, since
     // their access is the `scenarioId` grant, re-checked by the runtime-config
     // fetch, not membership.
     if (!isScenarioSession) {
