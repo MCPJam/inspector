@@ -523,6 +523,8 @@ identified by **name**, so renaming `suiteName` in your code does not rename
 the suite — it creates a second one and leaves the first behind. Deleting the
 one you no longer report into is how you clean that up.
 
+If a run is in progress when you delete its suite or the run itself, the runner stops within approximately 10 seconds and the run is recorded as cancelled. No further AI calls are made after the runner detects the deletion.
+
 ## Reading results
 
 ### Suite navigation
