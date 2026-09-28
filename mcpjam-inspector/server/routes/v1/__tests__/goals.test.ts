@@ -59,6 +59,7 @@ vi.mock("../../../services/sessionSimulation/launch-journey-run.js", () => ({
 
 import goals from "../goals.js";
 import { v1OnError } from "../envelope.js";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 
 const PROJECT = "proj_a";
 const OTHER_PROJECT = "proj_b";
@@ -449,6 +450,52 @@ describe("POST .../goals/:goalId/runs", () => {
     expect(res.status).toBe(403);
     expect((await res.json()) as { message?: string }).toMatchObject({
       message: "Swarms is not currently available.",
+    });
+  });
+
+  it("carries a credits refusal's numbers to the caller", async () => {
+    // What `launchJourneyRun` throws for the backend's 402. Publicly it is
+    // FORBIDDEN (retrying the same launch cannot help); the numbers say how
+    // far short it is and how many sessions still fit.
+    const details = {
+      code: "insufficient_credits",
+      creditsRequired: 120,
+      creditsAvailable: 40,
+      maxAffordableSessions: 3,
+      resetsAt: 1_790_000_000_000,
+    };
+    launchMock.mockRejectedValue(
+      new WebRouteError(
+        402,
+        ErrorCode.BILLING_LIMIT_REACHED,
+        "Not enough MCPJam credits to start this swarm run.",
+        details,
+      ),
+    );
+    const res = await launch();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Not enough MCPJam credits to start this swarm run.",
+      details,
+    });
+  });
+
+  it("answers a busy launch as a retryable 429 with its wait", async () => {
+    launchMock.mockRejectedValue(
+      new WebRouteError(
+        503,
+        ErrorCode.RATE_LIMITED,
+        "MCPJam is busy admitting other launches right now. Nothing was created; retry in a moment.",
+        { code: "spending_reservation_busy", retryAfterMs: 2000 },
+      ).withHeaders({ "Retry-After": "2" }),
+    );
+    const res = await launch({ headers: { "idempotency-key": "key-123" } });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("2");
+    expect(await res.json()).toMatchObject({
+      code: "RATE_LIMITED",
+      details: { code: "spending_reservation_busy", retryAfterMs: 2000 },
     });
   });
 

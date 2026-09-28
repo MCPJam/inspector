@@ -325,7 +325,9 @@ export function toCliError(error: unknown): CliError {
     // A usage-limit refusal keeps its exit code and wire code (it is not an
     // auth or credit failure), but says when to come back and whether credits
     // would help, and carries `retryAfterSeconds` into the JSON `details` so a
-    // script can wait instead of parsing prose.
+    // script can wait instead of parsing prose. A launch the credits cannot
+    // fund says how far short it is and how many sessions fit, with the same
+    // numbers in `details.refusal` for a script to re-plan on.
     const refusal = describePlatformRefusal(error);
     if (refusal) {
       return cliError(

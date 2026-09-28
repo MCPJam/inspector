@@ -381,6 +381,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/swarms": "createSwarm",
   "patch /projects/{projectId}/swarms/{swarmId}": "updateSwarm",
   "delete /projects/{projectId}/swarms/{swarmId}": "archiveSwarm",
+  "post /projects/{projectId}/swarms/quote": "quoteSwarmLaunch",
   // The insights layer over runs. `get_swarms_overview` and the finding
   // operations KEPT their names; only the routes under them moved with the
   // noun, so the SDK method is the same on both spellings.

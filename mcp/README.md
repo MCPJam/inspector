@@ -147,6 +147,7 @@ so results respect the caller's project access.
 | `create_swarm` | Create a container to author goals under. Runs nothing. | — |
 | `update_swarm` | Edit a swarm container's name, description, fan-out or config. | — |
 | `archive_swarm` | Take a swarm container off the roster. Goals authored under it keep working. | — |
+| `quote_swarm_launch` | Price a launch before running it: how many sessions are free starter conversations, what the rest cost in credits, and whether the organization's credits fit it. Spends nothing and reserves nothing. | — |
 | `get_swarms_overview` | The project's recent runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. | — |
 | `get_goal_run_scorecard` | Per-criterion pass/fail counts for one run. Deterministic, so read this first when explaining a failure. | — |
 | `list_swarm_findings` | Criteria that keep failing across waves, with how long each has been failing. | — |

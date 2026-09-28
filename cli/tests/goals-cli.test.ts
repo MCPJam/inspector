@@ -196,3 +196,79 @@ test("swarms update refuses both iteration spellings", async () => {
     "refused before any write"
   );
 });
+
+/** Run `cloud swarms quote` with these flags; return the quote request body. */
+async function quoteBody(flags: string[]): Promise<unknown> {
+  const requests = captureRequests();
+  await buildProgram().parseAsync(
+    ["cloud", "swarms", "quote", ...flags, "--api-key", "sk_test"],
+    { from: "user" }
+  );
+  const quote = requests.find((r) => r.url.endsWith("/swarms/quote"));
+  assert.ok(quote, "expected a quote request");
+  assert.equal(quote.init?.method, "POST");
+  return JSON.parse(String(quote.init?.body));
+}
+
+test("swarms quote prices one run per goal, with the shared overrides", async () => {
+  assert.deepEqual(
+    await quoteBody([
+      "--goal",
+      "goal-1",
+      "--goal",
+      "goal-2",
+      "--iterations",
+      "2",
+    ]),
+    {
+      plannedRuns: [
+        { goalId: "goal-1", iterations: 2 },
+        { goalId: "goal-2", iterations: 2 },
+      ],
+    }
+  );
+});
+
+test("swarms quote prices bare environments as one run", async () => {
+  assert.deepEqual(
+    await quoteBody(["--environment", "env-1", "--max-turns", "6"]),
+    { plannedRuns: [{ environmentIds: ["env-1"], maxTurns: 6 }] }
+  );
+});
+
+test("swarms quote forwards a --plan the flags cannot express", async () => {
+  const plan = [
+    { key: "a", goalId: "goal-1", iterations: 1 },
+    { key: "b", goalId: "goal-2", environmentIds: ["env-2"], iterations: 3 },
+  ];
+  assert.deepEqual(await quoteBody(["--plan", JSON.stringify(plan)]), {
+    plannedRuns: plan,
+  });
+});
+
+test("swarms quote refuses a plan it cannot price, before any request", async () => {
+  for (const flags of [
+    [],
+    ["--environment", "env-1"],
+    ["--plan", "not json"],
+    ["--plan", "[]"],
+    ["--plan", '[{"goalId":"g"}]', "--goal", "goal-1"],
+  ]) {
+    const requests = captureRequests();
+    await assert.rejects(
+      buildProgram().parseAsync(
+        ["cloud", "swarms", "quote", ...flags, "--api-key", "sk_test"],
+        { from: "user" }
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error, JSON.stringify(flags));
+        return true;
+      }
+    );
+    assert.equal(
+      requests.filter((r) => r.url.endsWith("/swarms/quote")).length,
+      0,
+      `${JSON.stringify(flags)}: refused before any request`
+    );
+  }
+});

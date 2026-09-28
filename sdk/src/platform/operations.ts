@@ -164,6 +164,7 @@ import type {
   PlatformSessionSummary,
   PlatformSwarm,
   PlatformSwarmArchived,
+  PlatformSwarmQuote,
   PlatformSwarmFinding,
   PlatformSwarmOverview,
   PlatformSwarmRunInsights,
@@ -15229,6 +15230,111 @@ export const archiveSwarmOperation: PlatformOperation<
   },
 };
 
+const quoteSwarmLaunchInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  plannedRuns: z
+    .array(
+      z.object({
+        key: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Echoed on this run's quote; defaults to its index."),
+        goalId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "Goal to launch. Its stored environments, iterations and turn limit apply unless named here."
+          ),
+        environmentIds: z
+          .array(z.string().trim().min(1))
+          .min(1)
+          .optional()
+          .describe(
+            "Fan out across these project environments instead of the goal's authored targets."
+          ),
+        iterations: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Sessions run against each target."),
+        maxTurns: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Required without a goalId."),
+        setupWrites: z.boolean().optional(),
+      })
+    )
+    .min(1)
+    .describe(
+      "The runs the launch would start: one per goal, with the settings it would launch with."
+    ),
+});
+
+export type QuoteSwarmLaunchInput = z.infer<typeof quoteSwarmLaunchInput>;
+export type QuoteSwarmLaunchResult = {
+  project: SelectedProjectInfo;
+  quote: PlatformSwarmQuote;
+};
+
+export const quoteSwarmLaunchOperation: PlatformOperation<
+  QuoteSwarmLaunchInput,
+  QuoteSwarmLaunchResult
+> = {
+  name: "quote_swarm_launch",
+  title: "Quote an MCPJam swarm launch",
+  description:
+    "Price a launch before running it: how many sessions are free starter conversations, what the rest would cost in credits, and whether the organization's credits fit it (fits, maxAffordableSessions). Reads only and spends nothing. Nothing is reserved, so a quote that fits is not a promise; the launch admits each run again.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A quote is computed on request and stored nowhere."
+  ),
+  inputSchema: quoteSwarmLaunchInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const quote = await client.quoteSwarmLaunch(
+      {
+        projectId: project.id,
+        // Field by field: the route refuses a key it does not know.
+        plannedRuns: input.plannedRuns.map((run) => ({
+          ...(run.key !== undefined ? { key: run.key } : {}),
+          ...(run.goalId !== undefined ? { goalId: run.goalId } : {}),
+          ...(run.environmentIds !== undefined
+            ? { environmentIds: run.environmentIds }
+            : {}),
+          ...(run.iterations !== undefined
+            ? { iterations: run.iterations }
+            : {}),
+          ...(run.maxTurns !== undefined ? { maxTurns: run.maxTurns } : {}),
+          ...(run.setupWrites !== undefined
+            ? { setupWrites: run.setupWrites }
+            : {}),
+        })),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), quote };
+  },
+};
+
 const generationGroundingInput = z.object({
   project: z
     .string()
@@ -18965,6 +19071,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
+  quoteSwarmLaunchOperation,
   getSwarmOverviewOperation,
   getGoalRunScorecardOperation,
   listSwarmFindingsOperation,

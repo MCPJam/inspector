@@ -154,6 +154,11 @@ const PAIRS: Readonly<Record<string, string>> = {
   GoalArchived: "PlatformGoalArchived",
   Swarm: "PlatformSwarm",
   SwarmArchived: "PlatformSwarmArchived",
+  SwarmQuotePlannedRun: "PlatformSwarmQuotePlannedRun",
+  SwarmQuote: "PlatformSwarmQuote",
+  SwarmQuoteRun: "PlatformSwarmQuoteRun",
+  SwarmQuoteTarget: "PlatformSwarmQuoteTarget",
+  SwarmQuoteLine: "PlatformSwarmQuoteLine",
 
   // ── A2: Swarm runs ────────────────────────────────────────────────────
   GoalRun: "PlatformGoalRun",

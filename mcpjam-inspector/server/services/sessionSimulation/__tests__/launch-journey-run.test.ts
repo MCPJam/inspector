@@ -475,6 +475,70 @@ describe("launchJourneyRun", () => {
     });
   });
 
+  it("forwards a credits refusal's numbers for the caller to act on", async () => {
+    // The wave fan-out and the v1 envelope both read these off `details`; the
+    // message alone cannot say how many sessions would still fit.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        402,
+        JSON.stringify({
+          ok: false,
+          code: "insufficient_credits",
+          message: "Not enough MCPJam credits to start this swarm run.",
+          details: {
+            code: "insufficient_credits",
+            creditsRequired: 120,
+            creditsAvailable: 40,
+            maxAffordableSessions: 3,
+            resetsAt: 1_790_000_000_000,
+          },
+        }),
+        "nope",
+      ),
+    );
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status: 402,
+      code: "BILLING_LIMIT_REACHED",
+      message: "Not enough MCPJam credits to start this swarm run.",
+      details: {
+        code: "insufficient_credits",
+        creditsRequired: 120,
+        creditsAvailable: 40,
+        maxAffordableSessions: 3,
+        resetsAt: 1_790_000_000_000,
+      },
+    });
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a busy launch admission to a retryable refusal with its wait", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        503,
+        JSON.stringify({
+          ok: false,
+          code: "spending_reservation_busy",
+          message:
+            "MCPJam is busy admitting other launches right now. Nothing was created; retry in a moment.",
+          isRetryable: true,
+          retryAfterMs: 2000,
+          details: { code: "spending_reservation_busy", retryAfterMs: 2000 },
+        }),
+        "busy",
+        "2",
+      ),
+    );
+    const error = await launchJourneyRun(DEPS, INPUT).catch((e) => e);
+    expect(error).toMatchObject({
+      status: 503,
+      code: "RATE_LIMITED",
+      message: expect.stringContaining("Nothing was created"),
+      details: { code: "spending_reservation_busy", retryAfterMs: 2000 },
+      headers: { "Retry-After": "2" },
+    });
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
   it("rejects a hostless snapshot AFTER create — and the run row is the cost", async () => {
     // Documenting the one place the ordering rule is violated by necessity:
     // only the create knows the pinned host set, so this check cannot happen

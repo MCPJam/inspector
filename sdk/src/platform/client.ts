@@ -110,6 +110,8 @@ import type {
   PlatformUserTestingSessionDetail,
   PlatformSwarm,
   PlatformSwarmArchived,
+  PlatformSwarmQuote,
+  PlatformSwarmQuotePlannedRun,
   PlatformSwarmFinding,
   PlatformSwarmOverview,
   PlatformSwarmRunInsights,
@@ -4998,6 +5000,25 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(projectId)}/swarms/${encodeURIComponent(
         swarmId
       )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Price a swarm launch before it happens: how many sessions are free
+   * starter conversations, what the rest cost in credits, and whether the
+   * organization's credits fit it. Reads only — nothing is reserved, and the
+   * launch admits each run again.
+   */
+  quoteSwarmLaunch(
+    params: { projectId: string; plannedRuns: PlatformSwarmQuotePlannedRun[] },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmQuote> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/swarms/quote`,
       { body },
       options
     );

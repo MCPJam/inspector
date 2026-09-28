@@ -41,6 +41,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { looksLikeConvexId } from "./convex-id-param.js";
 
 const swarms = new Hono();
 
@@ -325,6 +326,161 @@ swarms.patch("/projects/:projectId/swarms/:swarmId", async (c) => {
   }
 
   return v1Resource(c, toSwarmDto(row));
+});
+
+/**
+ * One run a launch would start, in the public vocabulary: a goal and its
+ * stored settings, or bare environments with the settings spelled out.
+ * Anything named here overrides the goal's own value, exactly as the launch
+ * does.
+ */
+const quotePlannedRunSchema = z
+  .strictObject({
+    /** Echoed on `perRun[].key`; defaults to the run's index. */
+    key: z.string().trim().min(1).max(200).optional(),
+    goalId: z.string().trim().min(1).optional(),
+    environmentIds: z.array(z.string().trim().min(1)).min(1).optional(),
+    iterations: swarmConfigFields.iterations.optional(),
+    maxTurns: swarmConfigFields.maxTurns.optional(),
+    setupWrites: swarmConfigFields.setupWrites,
+  })
+  .refine(
+    (run) =>
+      run.goalId !== undefined ||
+      (run.environmentIds !== undefined && run.maxTurns !== undefined),
+    {
+      message:
+        "Each planned run needs a goalId, or environmentIds and maxTurns.",
+    },
+  );
+
+const quoteSchema = z.strictObject({
+  plannedRuns: z.array(quotePlannedRunSchema).min(1),
+});
+
+type SwarmQuote = {
+  sessions: number;
+  starterSessions: number;
+  creditSessions: number;
+  creditsRequiredP50: number;
+  creditsRequiredP90: number;
+  admitThreshold: number;
+  creditsAvailable: number;
+  maxAffordableSessions: number;
+  fits: boolean;
+  resetsAt: number | null;
+  priors: "measured" | "history";
+  perRun: Array<{
+    key: string;
+    journeyId?: string;
+    sessions: number;
+    starterSessions: number;
+    creditSessions: number;
+    creditsP50: number;
+    creditsP90: number;
+    admitCredits: number;
+    targets: Array<{
+      targetId?: string;
+      label?: string;
+      sessions: number;
+      starterSessions: number;
+      funding: "starter" | "credits";
+      fundingReason?: string;
+      creditsP50: number;
+      creditsP90: number;
+    }>;
+  }>;
+  lines: Array<{
+    kind: string;
+    label: string;
+    units: number;
+    creditsP50: number;
+    credits: number;
+    usd: number;
+  }>;
+};
+
+/** The backend quote in the public vocabulary: goals, not journeys. */
+function toSwarmQuoteDto(quote: SwarmQuote) {
+  const { perRun, ...totals } = quote;
+  return {
+    ...totals,
+    perRun: perRun.map(({ journeyId, ...run }) => ({
+      ...run,
+      goalId: journeyId ?? null,
+    })),
+  };
+}
+
+// POST /v1/projects/:projectId/swarms/quote
+//
+// Prices a launch BEFORE it happens: the concrete runs it would start, how
+// many of their sessions are free starter conversations, what the rest would
+// cost in credits, and whether the organization's credits fit it. Reads only;
+// nothing is reserved, so a quote that fits is not a promise — the launch
+// admits each run again and is authoritative.
+//
+// A POST because the plan is a body, not because anything is written.
+swarms.post("/projects/:projectId/swarms/quote", async (c) => {
+  const projectId = c.req.param("projectId");
+  const body = await parseBody(c, quoteSchema);
+  // Shape-gated before Convex sees them: a malformed id fails its validator
+  // before the handler runs, and production reports that as the same redacted
+  // error a crash produces. A goal the caller cannot see answers the same 404.
+  for (const run of body.plannedRuns) {
+    if (run.goalId !== undefined && !looksLikeConvexId(run.goalId)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Goal not found");
+    }
+    if (run.environmentIds?.some((id) => !looksLikeConvexId(id))) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Environment not found",
+      );
+    }
+  }
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+
+  let quote: SwarmQuote;
+  try {
+    quote = (await client.query(
+      "journeyRuns:quoteSwarmLaunch" as never,
+      {
+        projectId,
+        plannedRuns: body.plannedRuns.map((run, index) => ({
+          key: run.key ?? String(index),
+          ...(run.goalId !== undefined ? { journeyId: run.goalId } : {}),
+          ...(run.environmentIds !== undefined
+            ? { environmentIds: run.environmentIds }
+            : {}),
+          // Stored under its stored name; only the public spelling moved.
+          ...(run.iterations !== undefined
+            ? { sessionsPerTarget: run.iterations }
+            : {}),
+          ...(run.maxTurns !== undefined ? { maxTurns: run.maxTurns } : {}),
+          ...(run.setupWrites !== undefined
+            ? { setupWrites: run.setupWrites }
+            : {}),
+        })),
+      } as never,
+    )) as SwarmQuote;
+  } catch (error) {
+    // The quote's refusals are the backend's prose written for the caller
+    // (a goal not in this project, a count out of range), which the write
+    // translator keeps as 400/404 with their message; a read failure that is
+    // not one of those is still ours.
+    throw (error as { data?: unknown } | null)?.data !== undefined
+      ? translateConvexWriteError(error, {
+          resource: "Goal",
+          fallbackMessage: "This launch could not be quoted.",
+        })
+      : translateConvexReadError(error, {
+          scope: "v1.swarms.quote",
+          notFoundMessage: "Project not found",
+        });
+  }
+
+  return v1Resource(c, toSwarmQuoteDto(quote));
 });
 
 // DELETE /v1/projects/:projectId/swarms/:swarmId

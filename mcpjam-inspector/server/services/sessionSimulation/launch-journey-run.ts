@@ -341,6 +341,31 @@ export async function launchJourneyRun(
         ? routeError.withHeaders({ "Retry-After": err.retryAfter })
         : routeError;
     }
+    // Launch admission lost its concurrency race on every retry, so nothing
+    // was admitted. The launch key makes sending the same launch again safe,
+    // and the backend's `Retry-After` says when. RATE_LIMITED is the public
+    // code that means "retry after this": a generic client already waits on
+    // it, where a 5xx code would read as an outage. The hosted wizard keeps
+    // the 503 and retries it itself. Only the backend's own busy refusal: any
+    // other 503 is an upstream fault and stays one.
+    const busyDetails =
+      err instanceof SwarmAgentError && err.status === 503
+        ? launchFailureDetails(err)
+        : undefined;
+    if (
+      err instanceof SwarmAgentError &&
+      busyDetails?.code === "spending_reservation_busy"
+    ) {
+      const routeError = new WebRouteError(
+        503,
+        ErrorCode.RATE_LIMITED,
+        launchFailureMessage(err),
+        busyDetails,
+      );
+      throw err.retryAfter
+        ? routeError.withHeaders({ "Retry-After": err.retryAfter })
+        : routeError;
+    }
     throw err;
   }
 

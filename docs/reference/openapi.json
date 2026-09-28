@@ -9194,6 +9194,60 @@
         }
       }
     },
+    "/projects/{projectId}/swarms/quote": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "post": {
+        "operationId": "quoteSwarmLaunch",
+        "tags": ["Swarms"],
+        "summary": "Quote a swarm launch",
+        "description": "Prices a launch before it happens: the concrete runs it would start, how many of their sessions are free starter conversations, what the rest would cost in credits, and whether the organization's credits fit it. Reads only; a POST because the plan is a body. Nothing is reserved, so a quote that fits is not a promise: the launch admits each run again, and its answer is the one that counts.",
+        "requestBody": {
+          "required": true,
+          "description": "The runs the launch would start.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwarmQuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The quote.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmQuote"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/goals": {
       "parameters": [
         {
@@ -26787,6 +26841,240 @@
           "archived": {
             "type": "boolean",
             "enum": [true]
+          }
+        }
+      },
+      "SwarmQuoteRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["plannedRuns"],
+        "properties": {
+          "plannedRuns": {
+            "type": "array",
+            "minItems": 1,
+            "description": "The runs the launch would start: one per goal, with the settings it would launch with.",
+            "items": {
+              "$ref": "#/components/schemas/SwarmQuotePlannedRun"
+            }
+          }
+        }
+      },
+      "SwarmQuotePlannedRun": {
+        "type": "object",
+        "description": "One run the launch would start. A goal brings its stored environments and settings, and anything named here overrides them, exactly as the launch does. Without a goal, `environmentIds` and `maxTurns` are required.",
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Echoed on this run's `perRun[].key`; defaults to its index."
+          },
+          "goalId": {
+            "type": "string"
+          },
+          "environmentIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Fan out across these project environments instead of the goal's authored targets."
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Sessions run against EACH target."
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "setupWrites": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SwarmQuote": {
+        "type": "object",
+        "description": "What a swarm launch would cost before it happens. Nothing is reserved: `fits` is today's answer, and the launch admits each run again.",
+        "required": [
+          "sessions",
+          "starterSessions",
+          "creditSessions",
+          "creditsRequiredP50",
+          "creditsRequiredP90",
+          "admitThreshold",
+          "creditsAvailable",
+          "maxAffordableSessions",
+          "fits",
+          "resetsAt",
+          "priors",
+          "perRun",
+          "lines"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "integer"
+          },
+          "starterSessions": {
+            "type": "integer",
+            "description": "Sessions MCPJam funds as free starter conversations."
+          },
+          "creditSessions": {
+            "type": "integer",
+            "description": "Sessions the organization's credits pay for."
+          },
+          "creditsRequiredP50": {
+            "type": "number"
+          },
+          "creditsRequiredP90": {
+            "type": "number"
+          },
+          "admitThreshold": {
+            "type": "number",
+            "description": "What the launch needs to be admitted in full."
+          },
+          "creditsAvailable": {
+            "type": "number"
+          },
+          "maxAffordableSessions": {
+            "type": "integer",
+            "description": "Sessions, in plan order, the available credits admit."
+          },
+          "fits": {
+            "type": "boolean"
+          },
+          "resetsAt": {
+            "type": ["number", "null"],
+            "description": "When the organization's daily credits refill, as epoch milliseconds."
+          },
+          "priors": {
+            "type": "string",
+            "enum": ["measured", "history"],
+            "description": "`history` when the project's own past runs sized the estimate."
+          },
+          "perRun": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmQuoteRun"
+            }
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmQuoteLine"
+            }
+          }
+        }
+      },
+      "SwarmQuoteRun": {
+        "type": "object",
+        "required": [
+          "key",
+          "goalId",
+          "sessions",
+          "starterSessions",
+          "creditSessions",
+          "creditsP50",
+          "creditsP90",
+          "admitCredits",
+          "targets"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "goalId": {
+            "type": ["string", "null"]
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "starterSessions": {
+            "type": "integer"
+          },
+          "creditSessions": {
+            "type": "integer"
+          },
+          "creditsP50": {
+            "type": "number"
+          },
+          "creditsP90": {
+            "type": "number"
+          },
+          "admitCredits": {
+            "type": "number",
+            "description": "What launch admission holds this run to."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmQuoteTarget"
+            }
+          }
+        }
+      },
+      "SwarmQuoteTarget": {
+        "type": "object",
+        "required": [
+          "sessions",
+          "starterSessions",
+          "funding",
+          "creditsP50",
+          "creditsP90"
+        ],
+        "properties": {
+          "targetId": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "starterSessions": {
+            "type": "integer",
+            "description": "Of `sessions`, how many are free starter conversations."
+          },
+          "funding": {
+            "type": "string",
+            "enum": ["starter", "credits"],
+            "description": "`starter` only when every session on the target is."
+          },
+          "fundingReason": {
+            "type": "string",
+            "description": "Why the target's sessions are on credits, when they are."
+          },
+          "creditsP50": {
+            "type": "number"
+          },
+          "creditsP90": {
+            "type": "number"
+          }
+        }
+      },
+      "SwarmQuoteLine": {
+        "type": "object",
+        "required": ["kind", "label", "units", "creditsP50", "credits", "usd"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["prompt_fee", "persona", "host", "grounding", "computer"]
+          },
+          "label": {
+            "type": "string"
+          },
+          "units": {
+            "type": "number"
+          },
+          "creditsP50": {
+            "type": "number"
+          },
+          "credits": {
+            "type": "number"
+          },
+          "usd": {
+            "type": "number"
           }
         }
       },

@@ -243,6 +243,7 @@
   "/api-reference/swarms/list-journeys",
   "/api-reference/swarms/list-personas",
   "/api-reference/swarms/list-swarms",
+  "/api-reference/swarms/quote-a-swarm-launch",
   "/api-reference/swarms/update-a-journey",
   "/api-reference/swarms/update-a-persona",
   "/api-reference/swarms/update-a-swarm",

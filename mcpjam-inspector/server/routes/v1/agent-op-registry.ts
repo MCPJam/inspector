@@ -135,6 +135,7 @@ import {
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
+  quoteSwarmLaunchOperation,
   listGoalRunsOperation,
   getGoalRunOperation,
   launchGoalRunOperation,
@@ -2156,6 +2157,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getSwarmOperation, tier: "direct" },
   { operation: createSwarmOperation, tier: "direct" },
   { operation: updateSwarmOperation, tier: "direct" },
+  {
+    operation: quoteSwarmLaunchOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Before proposing `launch_goal_run`, price it with `quote_swarm_launch`: it says how many sessions are free starter conversations, what the rest cost in credits, and whether the organization's credits fit (`fits`, `maxAffordableSessions`). It spends nothing and reserves nothing, so a launch that fit can still be refused. Say that rather than promising it.",
+    ],
+  },
   { operation: listGoalRunsOperation, tier: "direct" },
   {
     operation: getGoalRunOperation,

@@ -4592,6 +4592,87 @@ export interface PlatformSwarmArchived {
   archived: true;
 }
 
+/**
+ * One run a swarm launch would start. A goal brings its stored environments
+ * and settings; anything named here overrides them, exactly as the launch
+ * does. Without a goal, `environmentIds` and `maxTurns` are required.
+ */
+export interface PlatformSwarmQuotePlannedRun {
+  /** Echoed on the run's `perRun[].key`; defaults to its index. */
+  key?: string;
+  goalId?: string;
+  environmentIds?: string[];
+  /** Sessions run against EACH target. */
+  iterations?: number;
+  maxTurns?: number;
+  setupWrites?: boolean;
+}
+
+/** Who pays for a target's sessions: MCPJam (`starter`) or credits. */
+export type PlatformSwarmQuoteFunding = "starter" | "credits";
+
+export interface PlatformSwarmQuoteTarget {
+  targetId?: string;
+  label?: string;
+  sessions: number;
+  /** Of `sessions`, how many are free starter conversations. */
+  starterSessions: number;
+  /** `starter` only when every session on the target is. */
+  funding: PlatformSwarmQuoteFunding;
+  /** Why the target's sessions are on credits, when they are. */
+  fundingReason?: string;
+  creditsP50: number;
+  creditsP90: number;
+}
+
+export interface PlatformSwarmQuoteRun {
+  key: string;
+  goalId: string | null;
+  sessions: number;
+  starterSessions: number;
+  creditSessions: number;
+  creditsP50: number;
+  creditsP90: number;
+  /** What launch admission holds this run to. */
+  admitCredits: number;
+  targets: PlatformSwarmQuoteTarget[];
+}
+
+export interface PlatformSwarmQuoteLine {
+  kind: "prompt_fee" | "persona" | "host" | "grounding" | "computer";
+  label: string;
+  units: number;
+  creditsP50: number;
+  credits: number;
+  usd: number;
+}
+
+/**
+ * What a swarm launch would cost before it happens. Nothing is reserved:
+ * `fits` is today's answer, and the launch admits each run again.
+ */
+export interface PlatformSwarmQuote {
+  sessions: number;
+  /** Sessions MCPJam funds as free starter conversations. */
+  starterSessions: number;
+  /** Sessions the organization's credits pay for. */
+  creditSessions: number;
+  creditsRequiredP50: number;
+  creditsRequiredP90: number;
+  /** What the launch needs to be admitted in full. */
+  admitThreshold: number;
+  creditsAvailable: number;
+  /** Sessions, in plan order, the available credits admit. */
+  maxAffordableSessions: number;
+  fits: boolean;
+  /** When the organization's daily credits refill, as epoch milliseconds. */
+  resetsAt: number | null;
+  /** `history` when the project's own past runs sized the estimate. */
+  priors: "measured" | "history";
+  perRun: PlatformSwarmQuoteRun[];
+  lines: PlatformSwarmQuoteLine[];
+}
+
 /** One rubric criterion's tally over a run. The four counts are NOT mergeable. */
 export interface PlatformScorecardCriterion {
   id: string;

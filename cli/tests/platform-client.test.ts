@@ -226,3 +226,37 @@ test("a usage-limit refusal keeps its code and exit, and carries when to retry",
     retryAfterSeconds: 120,
   });
 });
+
+test("a launch the credits cannot fund says what fits, and carries the numbers", () => {
+  const error = toCliError(
+    new PlatformApiError(
+      "Not enough MCPJam credits to start this swarm run.",
+      "FORBIDDEN",
+      {
+        status: 403,
+        details: {
+          code: "insufficient_credits",
+          creditsRequired: 120,
+          creditsAvailable: 40,
+          maxAffordableSessions: 3,
+          resetsAt: Date.UTC(2026, 8, 29),
+        },
+      },
+    ),
+  );
+  assert.equal(error.code, "FORBIDDEN");
+  assert.equal(error.exitCode, 1);
+  assert.equal(
+    error.message,
+    "Not enough MCPJam credits to start this swarm run. It needs about 120 credits and 40 are available. Launch at most 3 sessions instead. Daily credits refill at 2026-09-29T00:00:00.000Z. Retrying the same launch will not help.",
+  );
+  assert.deepEqual((error.details as Record<string, unknown>).refusal, {
+    status: 403,
+    code: "FORBIDDEN",
+    reason: "insufficient_credits",
+    creditsRequired: 120,
+    creditsAvailable: 40,
+    maxAffordableSessions: 3,
+    resetsAt: Date.UTC(2026, 8, 29),
+  });
+});

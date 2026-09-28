@@ -2541,6 +2541,7 @@ describe("operation catalog consistency", () => {
     create_swarm: { name: "checkout", sessionsPerTarget: 1, maxTurns: 8 },
     update_swarm: { swarm: "sw", name: "checkout v2" },
     archive_swarm: { swarm: "sw" },
+    quote_swarm_launch: { plannedRuns: [{ goalId: "j" }] },
     get_swarms_overview: {},
     get_goal_run_scorecard: { run: "r" },
     list_swarm_findings: {},

@@ -333,6 +333,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_goal_run:
     "The Swarms tab has a Stop control with the run in front of you; a chat tool would cancel by id with none of that context.",
+  quote_swarm_launch:
+    "A price belongs with the launch it prices. The Swarms create flow quotes the exact plan on its confirm step, and a chat that cannot launch has no use for one.",
   // Swarms authoring writes that REMOVE or SPEND. The reversible half of
   // authoring (create/update persona, journey, swarm) is advertised above —
   // you can see the result in the tab and undo it. These cannot be undone by

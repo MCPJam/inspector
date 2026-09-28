@@ -97,13 +97,16 @@ export function isPlatformApiError(error: unknown): error is PlatformApiError {
 }
 
 /**
- * What a caller may safely say about a RATE_LIMITED refusal, read from the
- * error rather than its prose.
+ * What a caller may safely say about a refusal, read from the error rather
+ * than its prose: a RATE_LIMITED usage limit, or a launch the organization's
+ * credits cannot fund.
  *
  * Included operations (generation, insights) refuse on usage limits that
  * credits cannot lift, and the backend says so in the envelope it forwards as
  * `details`: its own refusal `code`, which bucket refused (`gatedBy`), whether
- * a top-up would help (`canTopUp`), and when to come back. Surfaces that show
+ * a top-up would help (`canTopUp`), and when to come back. A swarm launch the
+ * credits cannot fund says how far short it is instead (`creditsRequired`,
+ * `creditsAvailable`, `maxAffordableSessions`, `resetsAt`). Surfaces that show
  * an error to a person or a model (MCP, CLI, agents) read it here so they give
  * the same answer.
  *
@@ -125,15 +128,29 @@ export interface PlatformRefusal {
   retryable?: boolean;
   /** Seconds until retrying can succeed, from `Retry-After` or the envelope. */
   retryAfterSeconds?: number;
+  /** Credits the refused launch needed. */
+  creditsRequired?: number;
+  /** Credits the organization had available when it was refused. */
+  creditsAvailable?: number;
+  /** The most sessions the available credits fund; 0 when none do. */
+  maxAffordableSessions?: number;
+  /** When the organization's daily credits refill, as epoch milliseconds. */
+  resetsAt?: number;
 }
 
 const REFUSAL_REASON_PATTERN = /^[a-z0-9_]{1,64}$/;
+
+/**
+ * The backend's code for a launch its credits cannot fund. The v1 surface
+ * reports it as FORBIDDEN (retrying the same call cannot help), so the code
+ * in `details` is what marks it as a refusal worth describing.
+ */
+const INSUFFICIENT_CREDITS_REASON = "insufficient_credits";
 
 export function describePlatformRefusal(
   error: unknown
 ): PlatformRefusal | undefined {
   if (!isPlatformApiError(error)) return undefined;
-  if (error.status !== 429 && error.code !== "RATE_LIMITED") return undefined;
   const details = error.details ?? {};
   const text = (key: string): string | undefined => {
     const value = details[key];
@@ -141,8 +158,18 @@ export function describePlatformRefusal(
       ? value
       : undefined;
   };
+  const creditRefusal =
+    error.status === 402 || text("code") === INSUFFICIENT_CREDITS_REASON;
+  if (error.status !== 429 && error.code !== "RATE_LIMITED" && !creditRefusal)
+    return undefined;
   const flag = (key: string): boolean | undefined =>
     typeof details[key] === "boolean" ? (details[key] as boolean) : undefined;
+  const count = (key: string): number | undefined => {
+    const value = details[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : undefined;
+  };
   const retryAfterMs = details.retryAfterMs;
   const retryAfterSeconds =
     error.retryAfter !== undefined
@@ -163,15 +190,47 @@ export function describePlatformRefusal(
   if (retryable !== undefined) refusal.retryable = retryable;
   if (retryAfterSeconds !== undefined)
     refusal.retryAfterSeconds = retryAfterSeconds;
+  for (const key of [
+    "creditsRequired",
+    "creditsAvailable",
+    "maxAffordableSessions",
+    "resetsAt",
+  ] as const) {
+    const value = count(key);
+    if (value !== undefined) refusal[key] = value;
+  }
   return refusal;
 }
 
 /**
  * One sentence telling a reader what to do about a refusal: when to come
- * back, and — when the server said so — that credits will not help. Never
- * suggests a top-up, another identity, or a retry loop.
+ * back, and — when the server said so — that credits will not help. For a
+ * launch its credits cannot fund, how far short it is and how many sessions
+ * would fit. Never suggests a top-up, another identity, or a retry loop.
  */
 export function platformRefusalHint(refusal: PlatformRefusal): string {
+  if (
+    refusal.creditsRequired !== undefined ||
+    refusal.maxAffordableSessions !== undefined
+  ) {
+    return [
+      refusal.creditsRequired !== undefined &&
+      refusal.creditsAvailable !== undefined
+        ? `It needs about ${refusal.creditsRequired} credits and ${refusal.creditsAvailable} are available.`
+        : undefined,
+      refusal.maxAffordableSessions === undefined
+        ? undefined
+        : refusal.maxAffordableSessions > 0
+          ? `Launch at most ${refusal.maxAffordableSessions} sessions instead.`
+          : "No sessions fit the available credits.",
+      refusal.resetsAt !== undefined
+        ? `Daily credits refill at ${new Date(refusal.resetsAt).toISOString()}.`
+        : undefined,
+      "Retrying the same launch will not help.",
+    ]
+      .filter((sentence): sentence is string => sentence !== undefined)
+      .join(" ");
+  }
   const when =
     refusal.retryAfterSeconds !== undefined
       ? `Retry after ${refusal.retryAfterSeconds}s, not sooner.`

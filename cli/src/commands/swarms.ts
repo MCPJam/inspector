@@ -43,6 +43,7 @@ import {
   listPersonasOperation,
   listSwarmFindingsOperation,
   listSwarmsOperation,
+  quoteSwarmLaunchOperation,
   requestSwarmRunInsightsOperation,
   undismissSwarmFindingOperation,
   updateGoalOperation,
@@ -132,6 +133,78 @@ function goalGroundingArgs(options: GroundingOptions & { goalCount?: string }) {
 }
 
 type ProjectOptions = PlatformOptions & { project?: string };
+
+type QuoteOptions = ProjectOptions & {
+  goal?: string[];
+  environment?: string[];
+  iterations?: string;
+  maxTurns?: string;
+  plan?: string;
+};
+
+/**
+ * The planned runs a `swarms quote` prices: one per `--goal`, each taking the
+ * shared flags as overrides, or one bare run over `--environment`. `--plan`
+ * takes the whole list as JSON for a plan the flags cannot say, and is checked
+ * against the operation's own schema so a malformed one fails locally.
+ */
+function quotePlannedRunsOf(options: QuoteOptions) {
+  if (options.plan !== undefined) {
+    if (
+      options.goal?.length ||
+      options.environment?.length ||
+      options.iterations !== undefined ||
+      options.maxTurns !== undefined
+    ) {
+      throw usageError(
+        "Use either --plan or --goal/--environment/--iterations/--max-turns, not both."
+      );
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(options.plan);
+    } catch {
+      throw usageError("--plan must be a JSON array of planned runs.");
+    }
+    const parsed = quoteSwarmLaunchOperation.inputSchema.safeParse({
+      plannedRuns: raw,
+    });
+    if (!parsed.success) {
+      throw usageError(
+        `--plan is not a valid list of planned runs: ${
+          parsed.error.issues[0]?.message ?? "invalid"
+        }`
+      );
+    }
+    return parsed.data.plannedRuns;
+  }
+  const iterations = parseIntegerOption(
+    options.iterations,
+    "--iterations",
+    SESSIONS_BOUNDS
+  );
+  const maxTurns = parseIntegerOption(
+    options.maxTurns,
+    "--max-turns",
+    TURNS_BOUNDS
+  );
+  const shared = {
+    ...(options.environment?.length
+      ? { environmentIds: options.environment }
+      : {}),
+    ...(iterations !== undefined ? { iterations } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
+  };
+  if (options.goal?.length) {
+    return options.goal.map((goalId) => ({ goalId, ...shared }));
+  }
+  if (!options.environment?.length || maxTurns === undefined) {
+    throw usageError(
+      "Pass --goal, or --environment with --max-turns, or --plan."
+    );
+  }
+  return [shared];
+}
 
 /**
  * The two execution knobs, on the commands that take them.
@@ -858,6 +931,40 @@ export function registerSwarmAuthoringCommands(
       ...(options.maxTurns !== undefined
         ? { maxTurns: parseIntegerOption(options.maxTurns, "--max-turns") }
         : {}),
+    })
+  );
+
+  bindOperation(
+    addProjectOption(
+      swarms
+        .command("quote")
+        .description(
+          "Price a launch before running it: how many sessions are free starter conversations, what the rest cost in credits, and whether your credits fit it. Spends nothing and reserves nothing."
+        )
+        .option(
+          "--goal <id>",
+          "A goal to launch, with its stored settings. One run per goal. Repeatable.",
+          (value: string, previous: string[] = []) => [...previous, value]
+        )
+        .option(
+          "--environment <id>",
+          "Fan out across these environments instead of each goal's own. Repeatable.",
+          (value: string, previous: string[] = []) => [...previous, value]
+        )
+        .option("--iterations <n>", "Sessions per target, for every run.")
+        .option(
+          "--max-turns <n>",
+          "Turn limit for every run. Required without --goal."
+        )
+        .option(
+          "--plan <json>",
+          "The planned runs as a JSON array, for a plan the flags cannot express."
+        )
+    ),
+    quoteSwarmLaunchOperation,
+    (options: QuoteOptions) => ({
+      project: options.project,
+      plannedRuns: quotePlannedRunsOf(options),
     })
   );
 
