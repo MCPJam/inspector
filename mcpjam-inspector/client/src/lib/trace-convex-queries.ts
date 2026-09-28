@@ -1,7 +1,11 @@
 import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { reportCaught } from "./error-reporting";
-import { isAuthorizationRefusal } from "./authorization-refusal";
+import {
+  isAuthorizationRefusal,
+  isSessionRevokedError,
+} from "./authorization-refusal";
+import { notifySessionRevoked } from "./auth/session-revoked";
 import {
   configureConvexQueryDiagnostics,
   safeQueryError,
@@ -29,6 +33,12 @@ export function traceConvexQueries(
     const report = (error: unknown) => {
       try {
         if (isAuthorizationRefusal(error)) return;
+        // Signed out elsewhere: not a fault, and this tab should follow.
+        // `notifySessionRevoked` acts once per page load.
+        if (isSessionRevokedError(error)) {
+          notifySessionRevoked();
+          return;
+        }
         const original =
           error instanceof Error
             ? error

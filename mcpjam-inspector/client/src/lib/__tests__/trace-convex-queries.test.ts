@@ -5,6 +5,10 @@ import { ConvexError } from "convex/values";
 vi.mock("../error-reporting", () => ({ reportCaught: vi.fn() }));
 import { reportCaught } from "../error-reporting";
 import { traceConvexQueries } from "../trace-convex-queries";
+import {
+  resetSessionRevokedForTests,
+  setSessionRevokedHandler,
+} from "../auth/session-revoked";
 
 const query = makeFunctionReference<"query">("scenarios:listScenarios");
 const failure = new Error(
@@ -48,6 +52,7 @@ function fixture() {
 describe("traced watches", () => {
   beforeEach(() => {
     vi.mocked(reportCaught).mockReset();
+    resetSessionRevokedForTests();
   });
   it("preserves args, options, results, other watch methods and cleanup", () => {
     const f = fixture();
@@ -140,6 +145,32 @@ describe("traced watches", () => {
     watch.onUpdate(() => {});
     expect(() => watch.localQueryResult()).toThrow();
     expect(reportCaught).not.toHaveBeenCalled();
+  });
+  it("signs the tab out once, and reports nothing, when its session was signed out elsewhere", () => {
+    const signOut = vi.fn();
+    setSessionRevokedHandler(signOut);
+    const revoked = new ConvexError({
+      kind: "session_revoked",
+      message: "Authentication required",
+    });
+    const f = fixture();
+    f.set(undefined, revoked);
+    const first = f.client.watchQuery(query, {});
+    first.onUpdate(() => {});
+    const second = f.client.watchQuery(query, { other: true });
+    second.onUpdate(() => {});
+    expect(() => first.localQueryResult()).toThrow(revoked);
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(signOut).toHaveBeenCalledOnce();
+  });
+  it("still reports a plain Server Error and does not sign out", () => {
+    const signOut = vi.fn();
+    setSessionRevokedHandler(signOut);
+    const f = fixture();
+    f.set(undefined, failure);
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    expect(reportCaught).toHaveBeenCalledOnce();
+    expect(signOut).not.toHaveBeenCalled();
   });
   it("isolates reporting failures without swallowing consumer exceptions", () => {
     const f = fixture();
