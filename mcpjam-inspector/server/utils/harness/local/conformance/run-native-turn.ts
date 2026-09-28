@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
-import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { createClaudeCodeHarness } from "../../claude-code-bootstrap.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -506,7 +506,7 @@ async function main() {
     targetKind: "local-native", bridgePort, bridgeReadinessTimeoutMs: 30_000,
     onBridgeStarted: async ({ pid }) => { bridgePid = pid; mark("bridge_listening_verified_loopback"); },
   });
-  const harness = createClaudeCode({
+  const harness = createClaudeCodeHarness({
     model: "haiku",
     auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: gatewayUrl },
     thinking: { type: "disabled" },
