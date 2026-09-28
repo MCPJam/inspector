@@ -9,29 +9,31 @@ afterEach(() => { vi.unstubAllEnvs(); config.HOSTED_MODE = false; });
 
 describe("development conformance evidence", () => {
   it("overrides only the unpublished Claude Code evidence in local development", () => {
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ENVIRONMENT", "dev");
     vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", "dev-run-42");
+    vi.stubEnv("NODE_ENV", "production");
     const manifests = localHarnessManifestsForDevelopment();
     expect(manifests["claude-code"].lifecycleConformanceVersion).toBe("dev-run-42");
     expect(LOCAL_HARNESS_MANIFEST["claude-code"].lifecycleConformanceVersion).toBe("");
     expect(manifests.codex).toBe(LOCAL_HARNESS_MANIFEST.codex);
   });
 
-  it.each(["production", "test", ""])("ignores override in %s builds", (env) => {
-    vi.stubEnv("NODE_ENV", env);
+  it.each(["prod", "test", ""])("ignores override in %s builds", (env) => {
+    vi.stubEnv("ENVIRONMENT", env);
+    vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", "dev-run-42");
     expect(localHarnessManifestsForDevelopment()).toBe(LOCAL_HARNESS_MANIFEST);
   });
 
   it("ignores override on hosted deployments even in development", () => {
     config.HOSTED_MODE = true;
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ENVIRONMENT", "dev");
     vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", "dev-run-42");
     expect(localHarnessManifestsForDevelopment()).toBe(LOCAL_HARNESS_MANIFEST);
   });
 
   it("keeps recorded evidence and ignores empty overrides", () => {
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ENVIRONMENT", "dev");
     vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", " ");
     expect(localHarnessManifestsForDevelopment()).toBe(LOCAL_HARNESS_MANIFEST);
     vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", "dev-run-42");

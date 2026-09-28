@@ -147,7 +147,7 @@ export function localHarnessManifestsForDevelopment(
   manifests: Readonly<Record<string, LocalHarnessCompatibility>> = LOCAL_HARNESS_MANIFEST,
 ): Readonly<Record<string, LocalHarnessCompatibility>> {
   const version = process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION?.trim();
-  if (HOSTED_MODE || process.env.NODE_ENV !== "development" || !version) {
+  if (HOSTED_MODE || process.env.ENVIRONMENT !== "dev" || !version) {
     return manifests;
   }
   return Object.fromEntries(

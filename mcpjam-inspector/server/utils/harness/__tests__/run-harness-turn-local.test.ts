@@ -4,6 +4,8 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "Done",
+  stateExists: true,
+  streamError: null as Error | null,
   create: vi.fn(),
   continuations: [] as unknown[],
   teardown: vi.fn(async () => {}),
@@ -27,6 +29,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
     continueStream = async () => this.stream();
     stream = vi.fn(async () => ({
       fullStream: (async function* () {
+        if (harnessState.streamError) throw harnessState.streamError;
         for (const part of harnessState.streamParts) {
           yield part;
         }
@@ -137,6 +140,7 @@ vi.mock("../local/local-turn.js", () => ({
       plan: { runtime: { runtimeId: "runtime-1" } },
       sandbox: {}, auth: {}, sandboxWorkDir: "project",
       permissionMode: "allow-edits",
+      sessionStateExists: harnessState.stateExists,
       teardown: harnessState.teardown,
       discardState: harnessState.discardState,
     },
@@ -181,6 +185,14 @@ describe("runHarnessTurn local continuity", () => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
     harnessState.continuations = [];
+    harnessState.stateExists = true;
+    harnessState.streamError = null;
+    harnessState.discardState.mockImplementation(async () => {
+      harnessState.stateExists = false;
+    });
+    harnessState.session.destroy.mockImplementation(async () => {
+      harnessState.stateExists = false;
+    });
     harnessState.session.detach.mockImplementation(async () => ({
       data: { bridge: { sandboxId: harnessState.session.sessionId } },
     }));
@@ -297,6 +309,59 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(harnessState.discardState).toHaveBeenCalledOnce();
+  });
+
+  it.each(["stop", "error", "persist-failure"])(
+    "recovers on turn 3 after turn 2 ends with %s and removes its state",
+    async (failure) => {
+      let saved: any;
+      let persistFails = false;
+      const options = baseOptions({
+        onConversationComplete: async (_messages: unknown, _trace: unknown, commit: unknown) => {
+          if (persistFails) return { outcome: "failed" };
+          saved = commit;
+          return { outcome: "saved" };
+        },
+      });
+      await runHarnessTurn(options as any, "none");
+      const firstState = saved;
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true, leaseId: "lease-2", stateVersion: 2,
+        fingerprintChanged: false, state: firstState,
+      } as any);
+      if (failure === "persist-failure") {
+        persistFails = true;
+      } else {
+        harnessState.streamError = failure === "stop"
+          ? new DOMException("Stopped", "AbortError")
+          : new Error("Turn failed");
+      }
+      await runHarnessTurn(options as any, "none");
+      expect(harnessState.stateExists).toBe(false);
+      expect(saved).toBe(firstState);
+      harnessState.streamError = null;
+      persistFails = false;
+
+      const result = await runHarnessTurn(options as any, "ui");
+      const stream = await result.response!.text();
+      expect(stream).toContain('"type":"data-harness-reset"');
+      expect(stream).toContain('"reason":"resume-failed"');
+      expect(harnessState.create).toHaveBeenLastCalledWith({
+        sessionId: firstState.harnessSessionId,
+      });
+      expect(saved.harnessSessionId).toBe(firstState.harnessSessionId);
+      expect(saved).not.toBe(firstState);
+      expect(stream).toContain("Done");
+    },
+  );
+
+  it("rejects an approval whose local state was removed", async () => {
+    resume(true);
+    harnessState.stateExists = false;
+    harnessState.continuations = [{ approvalId: "approval-1", approved: true }];
+    await runHarnessTurn(baseOptions() as any, "none");
+    expect(harnessState.create).not.toHaveBeenCalled();
+    expect(harnessState.teardown).toHaveBeenCalledOnce();
   });
 
   it("does not create an unrelated fresh session on a local resume failure", async () => {

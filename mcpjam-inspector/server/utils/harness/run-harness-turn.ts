@@ -2529,13 +2529,24 @@ export async function runHarnessTurn(
           computerId,
           sandboxId: sandboxId!,
         });
-      const resumable = eligibility.resume
+      // Preparation recreates a missing directory. Use its pre-creation
+      // observation, not the now-existing path or the sidecar's own id, to
+      // decide whether the SDK can resume from disk.
+      const localStateMissing =
+        eligibility.resume && localPrepared?.sessionStateExists === false;
+      if (localStateMissing && isApprovalResume) {
+        throw new Error(
+          "The local session for this approval is no longer available. Start a new turn.",
+        );
+      }
+      const resumable = eligibility.resume && !localStateMissing
         ? continuity?.state ?? undefined
         : undefined;
       // Categorical reason to surface to the client (never a raw sandbox id).
       // Only hard resets are shown; legacy-cold-resume is a logged attempt.
-      let resetReason: HarnessResetReason | undefined =
-        eligibility.reason === "sandbox-replaced"
+      let resetReason: HarnessResetReason | undefined = localStateMissing
+        ? "resume-failed"
+        : eligibility.reason === "sandbox-replaced"
           ? "sandbox-replaced"
           : undefined;
       if (eligibility.reason === "legacy-cold-resume") {

@@ -390,6 +390,24 @@ describe("a runtime this Inspector cannot reserve", () => {
 
 
 describe("local lane state lifetime", () => {
+  it("reports missing state before mkdir, including after a previous turn discarded it", async () => {
+    const args = turnArgs();
+    const first = await prepareLocalHarnessTurn(args);
+    if (!first.ok) throw new Error(first.message);
+    expect(first.prepared.sessionStateExists).toBe(false);
+    await first.prepared.teardown();
+
+    const second = await prepareLocalHarnessTurn(args);
+    if (!second.ok) throw new Error(second.message);
+    expect(second.prepared.sessionStateExists).toBe(true);
+    await second.prepared.discardState();
+
+    const third = await prepareLocalHarnessTurn(args);
+    if (!third.ok) throw new Error(third.message);
+    expect(third.prepared.sessionStateExists).toBe(false);
+    await third.prepared.discardState();
+  });
+
   it("validates session ids before minting a broker lease", async () => {
     await expect(prepareLocalHarnessTurn({ ...turnArgs(), sessionId: "../escape" })).rejects.toThrow("safe path segment");
     expect(startLoopbackModelBroker).not.toHaveBeenCalled();

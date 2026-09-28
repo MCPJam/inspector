@@ -67,7 +67,7 @@ import {
   registerLocalHarnessSession,
   getLocalHarnessSession,
 } from "./session-registry.js";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { reserveLoopbackPort } from "./bridge-endpoint.js";
 import { createRequire } from "node:module";
 
@@ -104,6 +104,8 @@ export interface PreparedLocalHarnessTurn {
    * directly is what put bridge state inside the user's checkout.
    */
   sandboxWorkDir: string;
+  /** Observed before preparation creates the directory; a sidecar alone is insufficient. */
+  sessionStateExists: boolean;
   permissionMode: "allow-reads" | "allow-edits" | "allow-all";
   brokerRunId: string;
   /** Fields for the turn's timing telemetry. Durations, never paths. */
@@ -381,6 +383,12 @@ async function prepareWithReservedRuntime(outer: {
   // too, not just the teardown path.
   let gateway: LocalModelGateway | null = null;
   try {
+    const sessionStateExists = await stat(sessionStateDir)
+      .then((entry) => entry.isDirectory())
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
     await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
 
     const gatewayStartedAt = Date.now();
@@ -518,6 +526,7 @@ async function prepareWithReservedRuntime(outer: {
           ANTHROPIC_BASE_URL: started.baseUrl,
         } as HarnessAuth,
         sandboxWorkDir: "project",
+        sessionStateExists,
         permissionMode,
         brokerRunId: broker.runId,
         timings: { localRuntimeVerifyMs, localGatewayReadyMs },
