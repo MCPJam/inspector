@@ -381,6 +381,8 @@ An expired OAuth access token could not be refreshed.
 **Next steps**
 - Click **Reconnect** on the server card to run a fresh OAuth flow.
 
+When the authorization server explicitly refuses the refresh, the toast reads **Token refresh rejected** and quotes the server's own RFC 6749 error code and description — for example, `invalid_request: "Unsupported grant_type"`. That message comes directly from the authorization server and is the most actionable detail for diagnosing why the grant was rejected.
+
 ### Consent required
 
 `auth/consent_required`
