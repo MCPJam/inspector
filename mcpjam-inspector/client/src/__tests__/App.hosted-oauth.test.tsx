@@ -709,6 +709,23 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
     expect(reload).toHaveBeenCalledTimes(1);
+    sessionStorage.clear();
+  });
+
+  it("does not reload over a sign-out navigation", () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+    sessionStorage.clear();
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser" ? null : undefined,
+    );
+    markSignOutInProgress();
+
+    render(<App />);
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("shows loading before any hosted authorize CTA can render", async () => {

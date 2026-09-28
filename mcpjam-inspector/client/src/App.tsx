@@ -2846,7 +2846,7 @@ export default function App() {
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   // A guest whose row vanished was most likely promoted in another tab; a
   // reload picks up the shared AuthKit session. Once per tab to avoid loops.
-  const [guestReloadUsed] = useState(() => {
+  const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
     try {
       return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
     } catch {
@@ -2860,6 +2860,7 @@ export default function App() {
     !isWorkOsLoading &&
     currentUser === null &&
     !isEnsuringUser &&
+    !isSignOutInProgress() &&
     !guestReloadUsed;
   useEffect(() => {
     try {
@@ -2870,7 +2871,8 @@ export default function App() {
         sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
       }
     } catch {
-      // Storage unavailable: fall through to the setup error.
+      // Without storage there is no loop guard: show the setup error instead.
+      setGuestReloadUsed(true);
     }
   }, [shouldReloadForMissingGuest, currentUser]);
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
