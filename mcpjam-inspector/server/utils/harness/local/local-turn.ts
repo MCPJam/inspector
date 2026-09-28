@@ -91,8 +91,8 @@ export interface LocalHarnessExecutionTarget {
   grantToken: string;
   /** The acting user, resolved by the route from the verified bearer. */
   actingUserId: string;
-    /** Server scheduler-owned session identity; never parsed from renderer input. */
-    localSessionId?: string;
+  /** Server scheduler-owned session identity; never parsed from renderer input. */
+  localSessionId?: string;
 }
 
 export interface PreparedLocalHarnessTurn {

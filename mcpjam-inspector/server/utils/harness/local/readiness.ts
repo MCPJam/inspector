@@ -3,7 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../../config.js";
 import { resolveLocalHarnessActor, type LocalHarnessActor } from "./acting-user.js";
 import { authorizeLocalHarness, readLocalHarnessAuthorization } from "./authorization.js";
@@ -101,7 +101,7 @@ export async function ensureLocalHarnessTarget(args: {
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, scope: args.scope,
   });
   return { grantId: granted.grantId, expiresAt: granted.expiresAt,
-    workspaceDisplayRoot: (workspace.canonicalPath === homedir() || workspace.canonicalPath.startsWith(`${homedir()}/`)) ? `~${workspace.canonicalPath.slice(homedir().length)}` : workspace.canonicalPath,
+    workspaceDisplayRoot: (workspace.canonicalPath === homedir() || workspace.canonicalPath.startsWith(`${homedir()}${sep}`)) ? `~${workspace.canonicalPath.slice(homedir().length)}` : workspace.canonicalPath,
     runtime: { runtimeId: runtime.runtime.runtimeId, adapterVersion: runtime.runtime.adapterVersion, digest: runtime.runtime.digest, packVersion: status.packVersion },
     target: {
     kind: "local-native", machineId, workspaceGrantId, runtimeId: runtime.runtime.runtimeId,

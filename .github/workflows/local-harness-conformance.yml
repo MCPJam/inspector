@@ -6,10 +6,7 @@
 # supervisor, a real bridge and the real vendor CLI, with a mock upstream
 # standing in only for Anthropic.
 #
-# Two runners, because two of the facts this suite pins are darwin-specific: the
-# `(node)` command an exiting process reports, and the `ps -g` group probe.
-# Everything else is portable, so ubuntu covers the rest and is the job a change
-# to the foundation has to get past.
+# Five native targets cover platform-specific process supervision and delivery.
 name: Local harness conformance
 
 on:
@@ -80,6 +77,9 @@ jobs:
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
+      - name: Build shared evaluator contracts
+        run: npm run build -w @mcpjam/evaluators
+
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
         run: npx vitest run server/utils/harness/local
