@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Ref } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
+import { cn } from "@mcpjam/design-system/cn";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
@@ -46,6 +47,8 @@ interface AuthenticationSectionProps {
   showAuthSettings: boolean;
   bearerToken: string;
   onBearerTokenChange: (value: string) => void;
+  bearerTokenError?: string | null;
+  bearerTokenInputRef?: Ref<HTMLInputElement>;
   /** True when a saved bearer token exists but its value is hidden. */
   hasStoredBearerToken?: boolean;
   /** Hosted-mode reveal for the saved bearer token. */
@@ -115,9 +118,7 @@ interface AuthenticationSectionProps {
   projectDefaultIdentity?: { subject: string; email: string } | null;
   xaaDcrClientId?: string;
   xaaDcrTokenEndpointAuthMethod?:
-    | "client_secret_post"
-    | "client_secret_basic"
-    | "none";
+    "client_secret_post" | "client_secret_basic" | "none";
   xaaDcrIssuer?: string;
   xaaDcrClientSecretExpiresAt?: number;
   xaaDcrRegisteredAt?: number;
@@ -152,6 +153,8 @@ export function AuthenticationSection({
   showAuthSettings,
   bearerToken,
   onBearerTokenChange,
+  bearerTokenError = null,
+  bearerTokenInputRef,
   hasStoredBearerToken = false,
   onRevealBearerToken,
   isRevealingBearerToken = false,
@@ -293,7 +296,7 @@ export function AuthenticationSection({
       setRevealError(
         error instanceof Error
           ? error.message
-          : "Failed to reveal client secret"
+          : "Failed to reveal client secret",
       );
     } finally {
       setIsRevealingClientSecret(false);
@@ -340,7 +343,7 @@ export function AuthenticationSection({
   // revealed value; once the user starts editing it tracks their replacement.
   const secretFieldValue = isReplacingSecret
     ? clientSecret
-    : visibleRevealedClientSecret ?? "";
+    : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
     registrationMode === "preregistered" || useCustomClientId;
   const effectiveXaaRegistrationMode =
@@ -360,7 +363,7 @@ export function AuthenticationSection({
     activeMcpProfile?.mcpProtocolVersion;
   const effectiveOauthProtocolMode = resolveEffectiveOauthProtocolMode(
     oauthProtocolMode,
-    effectiveWireProtocolVersion
+    effectiveWireProtocolVersion,
   );
   const oauthPlan =
     authType === "oauth" || authType === "auto"
@@ -385,7 +388,7 @@ export function AuthenticationSection({
               registrationMode === "preregistered" &&
               clientId.trim() === "" &&
               blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
-            )
+            ),
         )
       : [];
   const showOauthPlanBanner =
@@ -408,7 +411,7 @@ export function AuthenticationSection({
               onAuthTypeChange(value);
             }}
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full" aria-label="Authentication">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -428,8 +431,8 @@ export function AuthenticationSection({
                   ? "Host policy: enterprise-managed — uses Cross-App Access for this server."
                   : "Host policy: enterprise-managed — fails to connect until an XAA client registration is added or an explicit method overrides."
                 : autoSelectsXaa
-                ? "Uses Cross-App Access for this server."
-                : "Anonymous first, then OAuth if required."}
+                  ? "Uses Cross-App Access for this server."
+                  : "Anonymous first, then OAuth if required."}
             </p>
           )}
           {hostPolicyEnterpriseManaged && authType !== "auto" && (
@@ -465,6 +468,7 @@ export function AuthenticationSection({
             </div>
             <div className="relative">
               <Input
+                ref={bearerTokenInputRef}
                 type={isBearerTokenVisible ? "text" : "password"}
                 value={bearerToken}
                 onChange={(e) => onBearerTokenChange(e.target.value)}
@@ -473,7 +477,15 @@ export function AuthenticationSection({
                     ? "Saved — enter a new value to replace"
                     : "Enter your bearer token"
                 }
-                className="h-10 pr-10"
+                aria-invalid={bearerTokenError ? true : undefined}
+                aria-describedby={
+                  bearerTokenError ? "bearer-token-error" : undefined
+                }
+                className={cn(
+                  "h-10 pr-10",
+                  bearerTokenError &&
+                    "border-destructive focus-visible:ring-destructive/30",
+                )}
               />
               <button
                 type="button"
@@ -497,6 +509,15 @@ export function AuthenticationSection({
                 )}
               </button>
             </div>
+            {bearerTokenError ? (
+              <p
+                id="bearer-token-error"
+                className="text-xs text-destructive"
+                role="alert"
+              >
+                {bearerTokenError}
+              </p>
+            ) : null}
             {hasStoredBearerToken && !bearerToken && (
               <p className="text-xs text-muted-foreground">
                 A saved token is hidden. Leave blank to keep it, or enter a new
@@ -790,7 +811,7 @@ export function AuthenticationSection({
                                 title="Copy client secret"
                                 onClick={() =>
                                   void handleCopyRevealedSecret(
-                                    secretFieldValue
+                                    secretFieldValue,
                                   )
                                 }
                                 className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"

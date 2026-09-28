@@ -4,8 +4,11 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FIRST_RUN_OAUTH_OVERLAY_READY_EVENT } from "@/lib/first-run-oauth-return";
 
 const motionState = vi.hoisted(() => ({ reduced: false }));
 
@@ -14,6 +17,7 @@ vi.mock("framer-motion", () => ({
 }));
 
 import {
+  FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS,
   FIRST_RUN_WELCOME_AUTO_ADVANCE_MS,
   FirstRunOnboardingOverlay,
   type FirstRunConnectionState,
@@ -24,6 +28,7 @@ function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
   skipWelcome = false,
   recoveryServerDraft?: FirstRunServerDraft,
+  guestSessionRefused = false,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
@@ -33,6 +38,7 @@ function renderOverlay(
   const onOpenPlayground = vi.fn();
   const onWelcomeShown = vi.fn();
   const onSkip = vi.fn();
+  const onSignIn = vi.fn();
   const view = render(
     <FirstRunOnboardingOverlay
       open
@@ -47,6 +53,8 @@ function renderOverlay(
       onOpenPlayground={onOpenPlayground}
       onWelcomeShown={onWelcomeShown}
       onSkip={onSkip}
+      guestSessionRefused={guestSessionRefused}
+      onSignIn={onSignIn}
     />,
   );
   return {
@@ -59,6 +67,7 @@ function renderOverlay(
     onOpenPlayground,
     onWelcomeShown,
     onSkip,
+    onSignIn,
     rerenderWithConnectionState: (
       nextConnectionState: FirstRunConnectionState,
     ) =>
@@ -76,6 +85,8 @@ function renderOverlay(
           onOpenPlayground={onOpenPlayground}
           onWelcomeShown={onWelcomeShown}
           onSkip={onSkip}
+          guestSessionRefused={guestSessionRefused}
+          onSignIn={onSignIn}
         />,
       ),
   };
@@ -88,6 +99,28 @@ afterEach(() => {
 });
 
 describe("FirstRunOnboardingOverlay", () => {
+  it("surfaces a refused guest session inside server choice", async () => {
+    const { onConnectDemo, onConnectOwnServer, onSignIn } = renderOverlay(
+      { status: "idle" },
+      true,
+      undefined,
+      true,
+    );
+
+    expect(
+      screen.getByText("Guest session limit reached"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Try the Excalidraw demo server" }),
+    ).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(onSignIn).toHaveBeenCalledOnce();
+    expect(onConnectDemo).not.toHaveBeenCalled();
+    expect(onConnectOwnServer).not.toHaveBeenCalled();
+  });
+
   it("records the welcome when it is shown and can resume at server choice", () => {
     const { onWelcomeShown } = renderOverlay();
     expect(onWelcomeShown).toHaveBeenCalledOnce();
@@ -271,12 +304,14 @@ describe("FirstRunOnboardingOverlay", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
-    expect(onConnectOwnServer).toHaveBeenLastCalledWith({
-      name: "Example",
-      transport: "http",
-      urlOrCommand: "https://mcp.example.com/mcp",
-      authentication: "auto",
-    });
+    expect(onConnectOwnServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        name: "Example",
+        transport: "http",
+        urlOrCommand: "https://mcp.example.com/mcp",
+        authentication: "auto",
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(onReturnToChoice).toHaveBeenCalledOnce();
@@ -326,6 +361,7 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("shows honest progress, supports cancel, and waits for an explicit Playground action", () => {
+    vi.useFakeTimers();
     const {
       onCancelConnection,
       onOpenPlayground,
@@ -341,7 +377,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Connecting to My server" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Reach server")).toBeInTheDocument();
+    expect(screen.getByText("Connect server")).toBeInTheDocument();
     expect(screen.getByText("Negotiate MCP compatibility")).toBeInTheDocument();
     expect(screen.getByText("Load tools")).toBeInTheDocument();
 
@@ -359,11 +395,11 @@ describe("FirstRunOnboardingOverlay", () => {
       serverName: "My server",
       serverKind: "personal",
     });
-    expect(screen.getByText("Load tools").parentElement).toHaveClass(
+    expect(screen.getByText("Load tools").closest("li")).toHaveClass(
       "text-left",
     );
     expect(
-      screen.getByText("Reach server").parentElement?.querySelector("svg"),
+      screen.getByText("Connect server").parentElement?.querySelector("svg"),
     ).toHaveClass("text-success");
 
     rerenderWithConnectionState({
@@ -371,6 +407,9 @@ describe("FirstRunOnboardingOverlay", () => {
       serverName: "My server",
       serverKind: "personal",
       toolCount: 3,
+    });
+    act(() => {
+      vi.advanceTimersByTime(FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS);
     });
     expect(
       screen.getByRole("heading", { name: "Connected to My server" }),
@@ -395,9 +434,10 @@ describe("FirstRunOnboardingOverlay", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
-  it("shows a dedicated OAuth authorization recovery modal", () => {
+  it("expands OAuth authorization recovery within connection progress", () => {
     const {
       onAuthorizeConnection,
       onCancelConnection,
@@ -412,21 +452,38 @@ describe("FirstRunOnboardingOverlay", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Multiaccount needs authorization",
+        name: "Connecting to Multiaccount",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("The server returned 401 Unauthorized"),
+      screen.getByText("Your server needs authorization to connect."),
     ).toBeInTheDocument();
+    expect(screen.getByText("Connect server")).toHaveClass("text-destructive");
+    expect(screen.getByText("Authentication")).toBeInTheDocument();
+    const failedConnectionStep = screen.getByRole("button", {
+      name: "Connect server",
+    });
+    expect(failedConnectionStep).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(failedConnectionStep);
+    expect(screen.queryByText("Authentication")).not.toBeInTheDocument();
+    fireEvent.click(failedConnectionStep);
+    expect(screen.getByText("Authentication")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Use a token instead" }),
+      screen.getByRole("button", { name: "Advanced Settings" }),
     ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Bearer token")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Edit server details" }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
-    expect(onAuthorizeConnection).toHaveBeenCalledOnce();
+    expect(onAuthorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authentication: "auto",
+        oauthProtocolMode: "auto",
+        registrationMode: "auto",
+      }),
+    );
     expect(onCancelConnection).not.toHaveBeenCalled();
 
     fireEvent.click(
@@ -439,7 +496,7 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("restores saved server details before editing a remounted OAuth recovery", () => {
-    renderOverlay(
+    const { rerenderWithConnectionState } = renderOverlay(
       {
         status: "authorization-required",
         serverName: "Multiaccount",
@@ -457,6 +514,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Edit server details" }),
     );
+    rerenderWithConnectionState({ status: "idle" });
 
     expect(screen.getByLabelText("Name")).toHaveValue("Multiaccount");
     expect(screen.getByLabelText("Server URL or command")).toHaveValue(
@@ -464,11 +522,140 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
-  it("can retry an authorization challenge with a bearer token", () => {
+  it("submits the displayed Auto mode after leaving Bearer authorization for server details", async () => {
     const { onConnectOwnServer, rerenderWithConnectionState } = renderOverlay(
-      { status: "idle" },
+      {
+        status: "authorization-required",
+        serverName: "Multiaccount",
+        serverKind: "personal",
+      },
       true,
+      {
+        name: "Multiaccount",
+        transport: "http",
+        urlOrCommand: "https://multiaccount.example/mcp",
+        authentication: "auto",
+      },
     );
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit server details" }));
+    rerenderWithConnectionState({ status: "idle" });
+
+    expect(screen.getByLabelText("Authentication")).toHaveValue("auto");
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        urlOrCommand: "https://multiaccount.example/mcp",
+        authentication: "auto",
+      }),
+    );
+  });
+
+  it("resets hidden Bearer auth when a retry fails directly into server details", async () => {
+    const { onConnectOwnServer, rerenderWithConnectionState } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Multiaccount",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Multiaccount",
+        transport: "http",
+        urlOrCommand: "https://multiaccount.example/mcp",
+        authentication: "auto",
+      },
+    );
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+
+    rerenderWithConnectionState({
+      status: "failed",
+      serverName: "Multiaccount",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
+    expect(screen.getByLabelText("Authentication")).toHaveValue("auto");
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith(
+      expect.objectContaining({ authentication: "auto" }),
+    );
+  });
+
+  it("shows restored custom client credentials and separate OAuth scopes", async () => {
+    const { onAuthorizeConnection } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Multiaccount",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Multiaccount",
+        transport: "http",
+        urlOrCommand: "https://multiaccount.example/mcp",
+        authentication: "auto",
+        registrationMode: "auto",
+        clientId: "custom-client",
+        oauthScopes: ["read", "write"],
+      },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Advanced Settings" }));
+    expect(screen.getByPlaceholderText("Your OAuth Client ID")).toHaveValue(
+      "custom-client",
+    );
+    expect(screen.getByPlaceholderText("Optional scopes separated by spaces"))
+      .toHaveValue("read write");
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    expect(onAuthorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "custom-client",
+        oauthScopes: ["read", "write"],
+      }),
+    );
+  });
+
+  it("does not reuse a recovered server identity for a new server", () => {
+    const { onConnectOwnServer } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Notion",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Notion",
+        transport: "http",
+        urlOrCommand: "https://mcp.notion.com/mcp",
+        authentication: "oauth",
+        oauthResourceUrl: "https://mcp.notion.com/mcp",
+      },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(screen.getByLabelText("Server URL or command")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://multiaccount.mcpjam.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(onConnectOwnServer).toHaveBeenCalledWith({
+      name: "Multiaccount",
+      transport: "http",
+      urlOrCommand: "https://multiaccount.mcpjam.com/mcp",
+      authentication: "auto",
+    });
+  });
+
+  it("can select bearer authentication through the shared auth settings", async () => {
+    const { onAuthorizeConnection, rerenderWithConnectionState } =
+      renderOverlay({ status: "idle" }, true);
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
@@ -481,21 +668,114 @@ describe("FirstRunOnboardingOverlay", () => {
       serverKind: "personal",
       error: "401 Unauthorized",
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use a token instead" }),
-    );
-    fireEvent.change(screen.getByLabelText("Bearer token"), {
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect with token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
-    expect(onConnectOwnServer).toHaveBeenLastCalledWith({
-      name: "Secure",
-      transport: "http",
-      urlOrCommand: "https://secure.example/mcp",
-      authentication: "bearer",
-      bearerToken: "secret-token",
+    expect(onAuthorizeConnection).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        name: "Secure",
+        transport: "http",
+        urlOrCommand: "https://secure.example/mcp",
+        authentication: "bearer",
+        bearerToken: "secret-token",
+      }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+  });
+
+  it("keeps authorization in place until a selected bearer token is provided", async () => {
+    const { onAuthorizeConnection, rerenderWithConnectionState } =
+      renderOverlay({ status: "idle" }, true);
+
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    rerenderWithConnectionState({
+      status: "authorization-required",
+      serverName: "Secure",
+      serverKind: "personal",
+      error: "401 Unauthorized",
+    });
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+
+    const tokenInput = screen.getByPlaceholderText("Enter your bearer token");
+    expect(tokenInput).toHaveFocus();
+    expect(tokenInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Enter a bearer token to continue.")).toBeVisible();
+    expect(onAuthorizeConnection).not.toHaveBeenCalled();
+  });
+
+  it("keeps XAA authorization in place until required credentials are provided", async () => {
+    const { onAuthorizeConnection } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Enterprise",
+        serverKind: "personal",
+        error: "XAA credentials are required",
+      },
+      true,
+      {
+        name: "Enterprise",
+        transport: "http",
+        urlOrCommand: "https://enterprise.example/mcp",
+        authentication: "xaa",
+        registrationMode: "preregistered",
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+
+    const clientId = screen.getByPlaceholderText(
+      "Client ID registered with the server's authorization server",
+    );
+    expect(
+      screen.getByText("Client ID is required when using custom credentials"),
+    ).toBeVisible();
+    await waitFor(() => expect(clientId).toHaveFocus());
+    expect(onAuthorizeConnection).not.toHaveBeenCalled();
+  });
+
+  it("preserves XAA as a distinct authorization method", async () => {
+    const { onAuthorizeConnection } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Enterprise",
+        serverKind: "personal",
+        error: "XAA credentials are required",
+      },
+      true,
+      {
+        name: "Enterprise",
+        transport: "http",
+        urlOrCommand: "https://enterprise.example/mcp",
+        authentication: "xaa",
+        registrationMode: "preregistered",
+        clientId: "client-123",
+      },
+    );
+
+    expect(
+      await screen.findByText("Cross-App Access (XAA)"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+
+    expect(onAuthorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authentication: "xaa",
+        registrationMode: "preregistered",
+        clientId: "client-123",
+      }),
+    );
   });
 
   it("keeps demo failures out of the personal-server credential form", () => {
@@ -558,7 +838,7 @@ describe("FirstRunOnboardingOverlay", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("only offers credential modes that the onboarding form can submit", () => {
+  it("keeps editable server details on the compact credential choices", () => {
     const { rerenderWithConnectionState } = renderOverlay();
 
     rerenderWithConnectionState({
@@ -571,10 +851,22 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "OAuth" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "None" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: "Bearer token" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Bearer Token" })).toBeNull();
     expect(screen.queryByLabelText("Header")).not.toBeInTheDocument();
+  });
+
+  it("signals when the hydrated OAuth return modal is ready", () => {
+    const onReady = vi.fn();
+    window.addEventListener(FIRST_RUN_OAUTH_OVERLAY_READY_EVENT, onReady);
+
+    renderOverlay({
+      status: "connecting",
+      serverName: "Multiaccount",
+      serverKind: "personal",
+    });
+
+    expect(onReady).toHaveBeenCalledOnce();
+    window.removeEventListener(FIRST_RUN_OAUTH_OVERLAY_READY_EVENT, onReady);
   });
 
   it("requires a server URL or command before opening the details sheet", () => {
