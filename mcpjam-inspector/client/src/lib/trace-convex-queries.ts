@@ -1,5 +1,6 @@
 import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
+import { ConvexError } from "convex/values";
 import { reportCaught } from "./error-reporting";
 import {
   isAuthorizationRefusal,
@@ -12,6 +13,19 @@ import {
 } from "./convex-query-diagnostics";
 
 const installed = new WeakSet<ConvexReactClient>();
+
+/**
+ * The backend's structured "this run or suite was deleted" answer. A page
+ * still watching a run the user just deleted gets this once before the list
+ * drops it; the page already treats it as a failed run, so it is not a fault.
+ */
+function isParentDeletedRefusal(error: unknown): boolean {
+  return (
+    error instanceof ConvexError &&
+    (error.data as { reason?: unknown } | undefined)?.reason ===
+      "eval_parent_deleted"
+  );
+}
 
 /** Observe only existing watches and cached results, never issue another query. */
 export function traceConvexQueries(
@@ -32,7 +46,8 @@ export function traceConvexQueries(
     let lastReportedMessage: string | undefined;
     const report = (error: unknown) => {
       try {
-        if (isAuthorizationRefusal(error)) return;
+        if (isAuthorizationRefusal(error) || isParentDeletedRefusal(error))
+          return;
         // Signed out elsewhere: not a fault, and this tab should follow.
         // `notifySessionRevoked` acts once per page load.
         if (isSessionRevokedError(error)) {

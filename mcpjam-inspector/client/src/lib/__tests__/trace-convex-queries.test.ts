@@ -172,6 +172,19 @@ describe("traced watches", () => {
     expect(reportCaught).toHaveBeenCalledOnce();
     expect(signOut).not.toHaveBeenCalled();
   });
+  it("does not report a run or suite the user deleted", () => {
+    const f = fixture();
+    const deleted = new ConvexError({
+      code: "NOT_FOUND",
+      reason: "eval_parent_deleted",
+      message: "Suite run not found",
+    });
+    f.set(undefined, deleted);
+    const watch = f.client.watchQuery(query, {});
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow();
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
   it("isolates reporting failures without swallowing consumer exceptions", () => {
     const f = fixture();
     f.set(undefined, failure);
