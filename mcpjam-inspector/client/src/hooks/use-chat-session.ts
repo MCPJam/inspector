@@ -2435,8 +2435,11 @@ export function useChatSession(
             );
         } else if (isHistoryNoticeDataPart(part)) {
           // Earlier replies in this chat are not in the model's context this
-          // turn; the thread says so, once, inline.
-          const sessionId = chatSessionIdRef.current;
+          // turn; the thread says so, once, inline. Recorded for the chat the
+          // turn belongs to, which the part names: a part from an earlier
+          // turn can arrive after a reset, fork or thread switch.
+          const sessionId =
+            part.data.chatSessionId ?? chatSessionIdRef.current;
           if (sessionId) {
             useHistoryNoticeStore
               .getState()

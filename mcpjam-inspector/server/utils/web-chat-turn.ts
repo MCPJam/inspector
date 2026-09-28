@@ -632,12 +632,16 @@ function emitSandboxNotices(
 function emitHistoryNotice(
   writer: SandboxNoticeWriter | null | undefined,
   due: boolean,
+  chatSessionId: string | undefined,
 ): void {
   if (!writer || !due) return;
   try {
     writer.write({
       type: HISTORY_NOTICE_DATA_PART_TYPE,
-      data: { reason: "earlier_replies_not_sent" },
+      data: {
+        reason: "earlier_replies_not_sent",
+        ...(chatSessionId ? { chatSessionId } : {}),
+      },
       transient: true,
     } as unknown as UIMessageChunk);
   } catch (error) {
@@ -1470,7 +1474,7 @@ export async function streamWebChatTurn(
             runtime.ackSandboxNotices,
             runtime.abortSignal,
           );
-          emitHistoryNotice(writer, historyNoticeDue);
+          emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1525,7 +1529,7 @@ export async function streamWebChatTurn(
           runtime.ackSandboxNotices,
           runtime.abortSignal,
         );
-        emitHistoryNotice(writer, historyNoticeDue);
+        emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1684,7 +1688,7 @@ export async function streamWebChatTurn(
         runtime.ackSandboxNotices,
         runtime.abortSignal,
       );
-      emitHistoryNotice(writer, historyNoticeDue);
+      emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp

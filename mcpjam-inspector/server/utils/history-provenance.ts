@@ -963,12 +963,15 @@ function approvalIssuedFor(
 /**
  * Verify one tool part — its CALL and, when it has one, its RESULT — and mark
  * both on the metadata its call and result convert with. A part without a
- * readable call id and tool name is a call the server did not issue.
+ * readable call id and tool name is a call the server did not issue. A call
+ * counts once: `seenToolCalls` holds the calls already counted, by what their
+ * signature covers.
  */
 function verifyUiToolPart(
   ctx: ProvenanceContext | null,
   part: Record<string, unknown>,
   options: ClientHistoryVerificationOptions,
+  seenToolCalls: Set<string>,
 ): {
   part: Record<string, unknown>;
   callVerified: boolean;
@@ -1007,6 +1010,15 @@ function verifyUiToolPart(
           verifyToolCall(ctx, call, signature),
         )) ||
       approvalIssuedFor(part, call, options);
+    if (callVerified) {
+      const key = JSON.stringify(toolCallContent(call));
+      if (seenToolCalls.has(key)) {
+        callVerified = false;
+        resultVerified = false;
+      } else {
+        seenToolCalls.add(key);
+      }
+    }
   }
   const resultUnverified = !callVerified || (withResult && !resultVerified);
   const marked = (metadata: unknown) =>
@@ -1105,8 +1117,9 @@ function hasReplyContent(part: Record<string, unknown>): boolean {
 /**
  * Check a browser-sent UI-message history against the server's signatures,
  * and mark what does not verify. With no signing context nothing verifies.
- * A current-form signature verifies only for this chat, and an item id only
- * once. Earlier forms never verify because they do not bind a chat. Never throws;
+ * A current-form signature verifies only for this chat, and an item id or a
+ * tool call only once. Earlier forms never verify because they do not bind a
+ * chat. Never throws;
  * content is never removed here — see {@link presentHistoryForModel} for what
  * the model is shown.
  */
@@ -1125,6 +1138,7 @@ export function verifyClientHistory(
     omittedReplyParts: 0,
   };
   const seenItemIds = new Set<string>();
+  const seenToolCalls = new Set<string>();
   for (const message of messages) {
     if (!isRecord(message)) {
       report.messages.push(message);
@@ -1177,7 +1191,7 @@ export function verifyClientHistory(
         continue;
       }
       if (isToolUiPart(part)) {
-        const tool = verifyUiToolPart(ctx, part, options);
+        const tool = verifyUiToolPart(ctx, part, options, seenToolCalls);
         if (!tool.callVerified) {
           report.unverifiedToolCalls += 1;
           report.omittedReplyParts += 1;

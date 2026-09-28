@@ -14,7 +14,14 @@ export type HistoryNoticeReason = "earlier_replies_not_sent";
 
 export interface HistoryNoticeDataPart {
   type: typeof HISTORY_NOTICE_DATA_PART_TYPE;
-  data: { reason: HistoryNoticeReason };
+  data: {
+    reason: HistoryNoticeReason;
+    /**
+     * The chat the turn belongs to. The browser records the notice for it,
+     * not for whichever chat happens to be open when the part arrives.
+     */
+    chatSessionId?: string;
+  };
 }
 
 export const HISTORY_NOTICE_MESSAGE =
@@ -27,9 +34,12 @@ export function isHistoryNoticeDataPart(
   const candidate = value as Record<string, unknown>;
   if (candidate.type !== HISTORY_NOTICE_DATA_PART_TYPE) return false;
   const data = candidate.data;
+  if (!data || typeof data !== "object") return false;
+  const record = data as Record<string, unknown>;
   return (
-    !!data &&
-    typeof data === "object" &&
-    (data as Record<string, unknown>).reason === "earlier_replies_not_sent"
+    record.reason === "earlier_replies_not_sent" &&
+    (record.chatSessionId === undefined ||
+      (typeof record.chatSessionId === "string" &&
+        record.chatSessionId.length > 0))
   );
 }

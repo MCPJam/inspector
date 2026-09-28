@@ -199,6 +199,27 @@ describe("useChatSession history notice", () => {
     });
   });
 
+  it("records the notice for the chat the part names, not the open one", async () => {
+    const { result } = await renderChatSession();
+    const openChat = result.current.chatSessionId;
+
+    act(() => {
+      mockState.chatOnData?.({
+        type: HISTORY_NOTICE_DATA_PART_TYPE,
+        data: {
+          reason: "earlier_replies_not_sent",
+          chatSessionId: "chat-from-an-earlier-turn",
+        },
+        transient: true,
+      });
+    });
+
+    expect(useHistoryNoticeStore.getState().chats).toEqual({
+      "chat-from-an-earlier-turn": true,
+    });
+    expect(useHistoryNoticeStore.getState().chats[openChat]).toBeUndefined();
+  });
+
   it("ignores a part it does not recognise", async () => {
     await renderChatSession();
     act(() => {

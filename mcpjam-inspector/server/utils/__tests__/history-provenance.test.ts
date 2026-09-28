@@ -13,6 +13,7 @@ import {
   toolApprovalBindingFor,
 } from "../tool-approval-token";
 import {
+  CALL_PROVENANCE_FIELD,
   CLIENT_PROVENANCE,
   createUiChunkProvenanceSigner,
   DEMOTED_SYSTEM_MESSAGE_LABEL,
@@ -313,6 +314,66 @@ describe("signatures name the chat and the item", () => {
     expect(second.providerMetadata.mcpjam.provenance).toBe(CLIENT_PROVENANCE);
     const first = partsOf(report.messages[0]).find((p) => p.type === "text");
     expect(first.providerMetadata.mcpjam.provenance).toBeUndefined();
+  });
+
+  it("count a tool call once per history", () => {
+    const call = {
+      toolCallId: "call_1",
+      toolName: "list_issues",
+      input: { state: "open" },
+    };
+    const signedPart = (input: Record<string, unknown>) => {
+      const claim = { ...call, input };
+      return {
+        type: "tool-list_issues",
+        toolCallId: call.toolCallId,
+        state: "output-available",
+        input,
+        output: { ok: true },
+        callProviderMetadata: { mcpjam: { callSig: signToolCall(ctx, claim) } },
+        resultProviderMetadata: {
+          mcpjam: {
+            resultSig: signToolResult(ctx, { ...claim, output: { ok: true } }),
+          },
+        },
+      };
+    };
+    const assistant = (id: string, part: Record<string, unknown>) => ({
+      id,
+      role: "assistant",
+      parts: [part],
+    });
+
+    const replayed = verifyClientHistory(
+      [
+        assistant("a1", signedPart(call.input)),
+        userMessage("u2", "again"),
+        assistant("a2", structuredClone(signedPart(call.input))),
+      ],
+      ctx,
+    );
+    expect(replayed.unverifiedToolCalls).toBe(1);
+    expect(replayed.unverifiedToolResults).toBe(1);
+    const [firstPart] = partsOf(replayed.messages[0]);
+    expect(
+      firstPart.callProviderMetadata.mcpjam[CALL_PROVENANCE_FIELD],
+    ).toBeUndefined();
+    const [secondPart] = partsOf(replayed.messages[2]);
+    expect(secondPart.callProviderMetadata.mcpjam[CALL_PROVENANCE_FIELD]).toBe(
+      CLIENT_PROVENANCE,
+    );
+
+    // A provider that reuses an id for a different call issued both.
+    const reused = verifyClientHistory(
+      [
+        assistant("a1", signedPart(call.input)),
+        userMessage("u2", "again"),
+        assistant("a2", signedPart({ state: "closed" })),
+      ],
+      ctx,
+    );
+    expect(reused.unverifiedToolCalls).toBe(0);
+    expect(reused.unverifiedToolResults).toBe(0);
   });
 
   it("round-trip a genuine multi-turn conversation unchanged", async () => {

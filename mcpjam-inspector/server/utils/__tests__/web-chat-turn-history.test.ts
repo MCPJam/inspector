@@ -434,7 +434,7 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     ).toEqual([
       {
         type: HISTORY_NOTICE_DATA_PART_TYPE,
-        data: { reason: "earlier_replies_not_sent" },
+        data: { reason: "earlier_replies_not_sent", chatSessionId: "chat_1" },
         transient: true,
       },
     ]);
@@ -714,7 +714,7 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     expect(modelRequests[0]!.raw).not.toContain("Partial answer");
     expect(nextTurn).toContainEqual({
       type: HISTORY_NOTICE_DATA_PART_TYPE,
-      data: { reason: "earlier_replies_not_sent" },
+      data: { reason: "earlier_replies_not_sent", chatSessionId: "chat_1" },
       transient: true,
     });
   });
