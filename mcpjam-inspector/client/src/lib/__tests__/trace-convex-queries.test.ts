@@ -5,6 +5,10 @@ import { ConvexError } from "convex/values";
 vi.mock("../error-reporting", () => ({ reportCaught: vi.fn() }));
 import { reportCaught } from "../error-reporting";
 import { traceConvexQueries } from "../trace-convex-queries";
+import {
+  markSignOutInProgress,
+  resetSignOutLatchForTests,
+} from "../auth/sign-out-latch";
 
 const query = makeFunctionReference<"query">("scenarios:listScenarios");
 const failure = new Error(
@@ -48,6 +52,7 @@ function fixture() {
 describe("traced watches", () => {
   beforeEach(() => {
     vi.mocked(reportCaught).mockReset();
+    resetSignOutLatchForTests();
   });
   it("preserves args, options, results, other watch methods and cleanup", () => {
     const f = fixture();
@@ -140,6 +145,19 @@ describe("traced watches", () => {
     watch.onUpdate(() => {});
     expect(() => watch.localQueryResult()).toThrow();
     expect(reportCaught).not.toHaveBeenCalled();
+  });
+  it("does not report failures while a sign-out is in progress", () => {
+    const f = fixture();
+    f.set(undefined, failure);
+    markSignOutInProgress();
+    const watch = f.client.watchQuery(query, {});
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow(failure);
+    expect(reportCaught).not.toHaveBeenCalled();
+    // Once the latch expires, a still-failing watch is reported as usual.
+    resetSignOutLatchForTests();
+    f.update();
+    expect(reportCaught).toHaveBeenCalledOnce();
   });
   it("isolates reporting failures without swallowing consumer exceptions", () => {
     const f = fixture();

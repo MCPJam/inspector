@@ -2,6 +2,7 @@ import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { reportCaught } from "./error-reporting";
 import { isAuthorizationRefusal } from "./authorization-refusal";
+import { isSignOutInProgress } from "./auth/sign-out-latch";
 import {
   configureConvexQueryDiagnostics,
   safeQueryError,
@@ -29,6 +30,12 @@ export function traceConvexQueries(
     const report = (error: unknown) => {
       try {
         if (isAuthorizationRefusal(error)) return;
+        // Sign-out revokes the session server-side before this tab navigates
+        // away, and every open subscription fails at once — masked as `Server
+        // Error` in production, so they cannot be told apart from a real
+        // fault (INSPECTOR-CLIENT-2H9 was 13 of these from one click). The
+        // latch is armed before every `signOut()`; see `sign-out-latch`.
+        if (isSignOutInProgress()) return;
         const original =
           error instanceof Error
             ? error
