@@ -4242,7 +4242,8 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit server details" }));
     await expect(authorizationResult).resolves.toBe(false);
     await screen.findByRole("heading", { name: "Set up your server" });
-    expect(screen.getByLabelText("Authentication")).toHaveValue("auto");
+    expect(screen.getByRole("combobox", { name: "Authentication" }))
+      .toHaveTextContent("Auto");
 
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledTimes(2));
