@@ -169,12 +169,18 @@ function isWidgetAssertion(assertion: unknown): boolean {
 }
 
 /**
- * A `toolArgumentsMatch` that needs at least one matching call (`min`
- * defaults to 1). Contradicts a negative case, which passes only when no tool
- * is called; `min: 0` ("no call matches", with its required `max`) does not.
+ * A `toolInputMatches` or `toolResultMatches` that needs at least one matching
+ * call or result (`min` defaults to 1). Contradicts a negative case, which
+ * passes only when no tool is called — so there is neither a call nor a
+ * result to match; `min: 0` ("none matches", with its required `max`) does
+ * not.
  */
-function demandsMatchingCall(predicate: Predicate): boolean {
-  return predicate.type === "toolArgumentsMatch" && (predicate.min ?? 1) >= 1;
+function demandsMatchingUnit(predicate: Predicate): boolean {
+  return (
+    (predicate.type === "toolInputMatches" ||
+      predicate.type === "toolResultMatches") &&
+    (predicate.min ?? 1) >= 1
+  );
 }
 
 function hostedOnlyStep(
@@ -343,14 +349,14 @@ export function evalTestFromPlatformCase(
         }
         const predicate = parsed.data as Predicate;
         // A negative case passes only when NO tool is called, and a
-        // `toolArgumentsMatch` with `min ≥ 1` (the default) demands a matching
-        // call. `min: 0, max: 0` — "no call matches" — is the one spelling
-        // that can hold beside it.
-        if (evalCase.isNegative && demandsMatchingCall(predicate)) {
+        // `toolInputMatches` / `toolResultMatches` with `min ≥ 1` (the
+        // default) demands a matching call or result. `min: 0, max: 0` —
+        // "none matches" — is the one spelling that can hold beside it.
+        if (evalCase.isNegative && demandsMatchingUnit(predicate)) {
           throw new Error(
             `Eval case "${evalCase.title}" (${evalCase.id}) is a negative ` +
               `case (passes only when NO tool is called) but asserts ` +
-              `toolArgumentsMatch with min ≥ 1 at step ${index}. Those cannot ` +
+              `${predicate.type} with min ≥ 1 at step ${index}. Those cannot ` +
               `both hold. Fix the case in the dashboard, or run it hosted.`
           );
         }
@@ -464,15 +470,17 @@ export function evalTestFromPlatformCase(
           `calls. Fix the case in the dashboard, or run it hosted.`
       );
     }
-    // Same reasoning for a `toolArgumentsMatch` that needs a matching call,
-    // reached through case or suite checks.
-    if (predicates.some(demandsMatchingCall)) {
+    // Same reasoning for a `toolInputMatches` / `toolResultMatches` that
+    // needs a matching call or result, reached through case or suite checks.
+    const demanding = predicates.find(demandsMatchingUnit);
+    if (demanding) {
+      const unit = demanding.type === "toolResultMatches" ? "result" : "call";
       throw new Error(
         `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
-          `(passes only when NO tool is called) but a toolArgumentsMatch ` +
+          `(passes only when NO tool is called) but a ${demanding.type} ` +
           `check with min ≥ 1 applies to it — from the case, or inherited ` +
           `from the suite. Those cannot both hold. Use min: 0, max: 0 for ` +
-          `"no call matches", or fix the check in the dashboard.`
+          `"no ${unit} matches", or fix the check in the dashboard.`
       );
     }
   }

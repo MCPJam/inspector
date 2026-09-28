@@ -235,7 +235,7 @@ export function canonicalJsonBounded(
  * The bounded twin of {@link write}. Every branch mirrors it rule for rule;
  * the only difference is that output goes through `out`, which refuses to
  * grow past the budget. Change one without the other and the byte-identity
- * property test in `tests/tool-arguments-match.test.ts` fails.
+ * property test in `tests/tool-input-matches.test.ts` fails.
  */
 function writeBounded(
   value: unknown,

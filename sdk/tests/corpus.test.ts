@@ -734,9 +734,12 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
   });
 });
 
-describe("a negative case and toolArgumentsMatch", () => {
+describe.each([
+  { type: "toolInputMatches", unit: "call" },
+  { type: "toolResultMatches", unit: "result" },
+] as const)("a negative case and $type", ({ type, unit }) => {
   const MATCH = {
-    type: "toolArgumentsMatch",
+    type,
     toolName: "t",
     patterns: ["Idea"],
   };
@@ -752,7 +755,7 @@ describe("a negative case and toolArgumentsMatch", () => {
           ],
         })
       )
-    ).toThrow(/negative case.*toolArgumentsMatch with min ≥ 1 at step 1/s);
+    ).toThrow(new RegExp(`negative case.*${type} with min ≥ 1 at step 1`, "s"));
   });
 
   it("refuses an explicit min ≥ 1 inherited from the suite", () => {
@@ -764,10 +767,15 @@ describe("a negative case and toolArgumentsMatch", () => {
         }),
         { suiteChecks: [{ ...MATCH, min: 2 }] }
       )
-    ).toThrow(/negative case.*toolArgumentsMatch check with min ≥ 1/s);
+    ).toThrow(
+      new RegExp(
+        `negative case.*${type} check with min ≥ 1.*"no ${unit} matches"`,
+        "s"
+      )
+    );
   });
 
-  it('allows min: 0, max: 0 — "no call matches" is compatible', () => {
+  it('allows min: 0, max: 0 — "none matches" is compatible', () => {
     const none = { ...MATCH, min: 0, max: 0 };
     const config = evalTestFromPlatformCase(
       evalCase({
