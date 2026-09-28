@@ -118,6 +118,13 @@ export interface ResolveTurnRuntimeArgs {
    */
   swarmStarterStep?: { targetId: string; sessionIdx?: number };
   /**
+   * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`, and
+   * `/stream/platform` for a starter step): the backend holds credits against
+   * it. Sent on that rail ONLY. Nothing in this repo shows `/stream/org` or
+   * the direct engine reading it, so a BYOK turn keeps its own limits.
+   */
+  maxOutputTokens?: number;
+  /**
    * The settings this turn runs with, already resolved once by
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
    * host defaults). `temperature` is what the caller hands the engine; a
@@ -420,9 +427,15 @@ export async function resolveTurnRuntime(
           }
         : undefined;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection || starterClaim
+      args.extraBodyFields ||
+      hostedSelection ||
+      starterClaim ||
+      args.maxOutputTokens !== undefined
         ? {
             ...(args.extraBodyFields ?? {}),
+            ...(args.maxOutputTokens !== undefined
+              ? { maxOutputTokens: args.maxOutputTokens }
+              : {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
             ...(starterClaim ?? {}),
           }
