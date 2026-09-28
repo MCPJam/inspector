@@ -15,6 +15,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
+import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { reportCaught } from "./lib/error-reporting";
 import {
   handleWorkosRefreshFailure,
@@ -77,6 +78,9 @@ initSentry();
 
 // Stop browser page translation from crashing React; see the module comment.
 installTranslatedPageDomGuard();
+
+// Offer a reload when a deploy has removed this build's lazy chunks.
+installStaleChunkRecovery();
 
 // The invariant a browser can actually decide. Its reasoning, and the half
 // that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
