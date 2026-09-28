@@ -6735,7 +6735,8 @@
         "operationId": "createEvalIngestUploadUrl",
         "tags": ["Eval runs"],
         "summary": "Get an upload URL for a run artifact",
-        "description": "Mints a short-lived URL for uploading a widget blob or other artifact referenced by an ingested run.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "description": "Retired. Every request answers `410 Gone` with `code: \"FEATURE_NOT_SUPPORTED\"` and `details.code: \"SDK_UPGRADE_REQUIRED\"`. `@mcpjam/sdk` 8.17.0 and later upload a run artifact by sending its bytes to `POST /projects/{projectId}/eval-ingest/artifacts`, which returns the `storageId` the run's results reference. Upgrade the SDK if a report logs this answer.\n\nThe gateway passes the backend's status and body through verbatim.",
+        "deprecated": true,
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -6761,16 +6762,6 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "The backend's response, passed through.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EvalIngestResponse"
-                }
-              }
-            }
-          },
           "400": {
             "$ref": "#/components/responses/ValidationError"
           },
@@ -6782,6 +6773,16 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "410": {
+            "description": "The route is retired. The body names the upgrade: `details.code` is `SDK_UPGRADE_REQUIRED`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
