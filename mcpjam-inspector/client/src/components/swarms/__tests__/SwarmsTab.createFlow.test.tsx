@@ -3504,6 +3504,50 @@ describe("SwarmsTab create flow — the launch quote", () => {
     ).toHaveLength(2);
   });
 
+  it("drops a fit still being quoted when the user goes back to Describe", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        {
+          persona: { name: "Refund Chaser", role: "Support agent" },
+          journeys: [
+            { goal: "Refund the charge" },
+            { goal: "Dispute a refund" },
+          ],
+        },
+      ],
+    });
+    let resolveFit: (value: unknown) => void = () => {};
+    quoteMock
+      .mockResolvedValueOnce(
+        quote({ sessions: 2, fits: false, maxAffordableSessions: 1 }),
+      )
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (resolveFit = resolve)),
+      )
+      .mockResolvedValue(
+        quote({ sessions: 2, fits: false, maxAffordableSessions: 1 }),
+      );
+    await reachConfirm();
+
+    fireEvent.click(await screen.findByTestId("new-swarm-fit-plan"));
+    await waitFor(() => expect(quoteCalls().length).toBeGreaterThanOrEqual(2));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i }),
+    );
+    resolveFit(quote({ sessions: 1 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent("2 conversations");
+    expect(track).not.toHaveBeenCalledWith(
+      "swarm_create_fit_applied",
+      expect.anything(),
+    );
+  });
+
   it("keeps the plan when the smaller one's quote does not fit either", async () => {
     generateSwarmPersonaBatchMock.mockResolvedValue({
       personas: [

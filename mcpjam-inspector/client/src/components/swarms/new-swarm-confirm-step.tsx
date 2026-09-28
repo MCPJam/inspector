@@ -1186,10 +1186,20 @@ export function NewSwarmConfirmStep({
   const [fitting, setFitting] = useState(false);
   const [fitMessage, setFitMessage] = useState<string | null>(null);
   // The plan an in-flight fit check started from. A fit applies only to the
-  // plan it priced: an edit made while it was being quoted wins.
-  const planKey = JSON.stringify(launchPlan);
+  // plan it priced, environments and turn limit included: an edit made while
+  // it was being quoted wins.
+  const planKey = JSON.stringify({ launchPlan, environmentIds, maxTurns });
   const planKeyRef = useRef(planKey);
   planKeyRef.current = planKey;
+  // Leaving Confirm drops a fit still being quoted, so it cannot edit the
+  // draft the user went back to.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   // A "that doesn't fit" note is about the plan it priced, not this one.
   useEffect(() => setFitMessage(null), [planKey]);
 
@@ -1224,6 +1234,7 @@ export function NewSwarmConfirmStep({
     setFitting(true);
     setFitMessage(null);
     const fittedQuote = await quotePlan(runs);
+    if (!mountedRef.current) return;
     setFitting(false);
     if (planKeyRef.current !== startedFrom) return;
     if (!fittedQuote?.fits) {
