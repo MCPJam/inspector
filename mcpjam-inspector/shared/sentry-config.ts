@@ -275,22 +275,10 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
  * previous build — so every deploy re-alerts on nothing new.
  *
  * Keyed on the step and `extra.finding`, which the reporting adapter computes
- * with the SDK's `stepFailureFindingKey` — not on the message text, which is
- * wrong in both directions:
- *
- * - Cut at its first sentence, it MERGES different failures: every era's
- *   machine reports `Could not discover authorization server metadata. …`,
- *   with what each well-known URL returned after the period.
- * - Whole, it SPLITS one failure: the server under test chooses part of it
- *   (status text, free-form `error_description`, URLs, ids), so one finding
- *   would open a new issue per server wording and per request, unbounded.
- *
- * The key strips exactly the known registration advisory, reduces response
- * failures to label, status and OAuth `error` code, and otherwise keeps the
- * full cause with URLs and ids replaced and the length capped. It lives in the
- * SDK because the SDK writes these messages; computed here, from text alone,
- * it would drift from them. (The first version of this rule cut at the first
- * sentence, and claimed that never merged different failures. It did.)
+ * with the SDK's `stepFailureFindingKey`, not on the message text. Why the
+ * text is wrong in both directions, and what the key does instead, is written
+ * once, on `stepFailureFindingKey`. It lives in the SDK next to the code that
+ * writes these messages.
  *
  * A report without `finding` — none should exist, since the adapter and this
  * rule ship together — falls back to its message capped at the same length,

@@ -1,3 +1,4 @@
+import { describeAuthorizationServerDiscoveryFailure } from "../../src/oauth/state-machines/shared/authorization-server-discovery.js";
 import { FALLBACK_HINT } from "../../src/oauth/state-machines/shared/dynamic-client-registration.js";
 import {
   describeAuthenticatedRequestFailure,
@@ -106,23 +107,24 @@ describe("stepFailureFindingKey", () => {
     );
   });
 
-  // Review of #5473: the cause of a discovery failure comes AFTER the first
-  // period, so cutting there merged all three into one issue.
-  // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532):
-  // every URL tried, and what each returned.
-  const discovery = (...attempts: string[]) =>
-    `Could not discover authorization server metadata. ${attempts.join("; ")}.`;
+  // The cause of a discovery failure comes AFTER the first period, so
+  // cutting there would merge all three into one issue. Built with the real
+  // writer, so a change to its wording reaches these tests.
   const wellKnown =
     "https://auth.example.com/.well-known/oauth-authorization-server";
 
   it("keeps discovery failures with different causes apart", () => {
     const keys = [
-      discovery(
-        `${wellKnown}/t returned HTTP 404`,
-        `${wellKnown} returned HTTP 404`
-      ),
-      discovery(`${wellKnown} returned HTTP 500`),
-      discovery(`${wellKnown} failed: Failed to fetch`),
+      describeAuthorizationServerDiscoveryFailure([
+        { url: `${wellKnown}/t`, status: 404 },
+        { url: wellKnown, status: 404 },
+      ]),
+      describeAuthorizationServerDiscoveryFailure([
+        { url: wellKnown, status: 500 },
+      ]),
+      describeAuthorizationServerDiscoveryFailure([
+        { url: wellKnown, error: new TypeError("Failed to fetch") },
+      ]),
     ].map(stepFailureFindingKey);
     expect(new Set(keys).size).toBe(3);
   });
@@ -130,13 +132,41 @@ describe("stepFailureFindingKey", () => {
   it("keeps one discovery cause together across servers' URLs", () => {
     expect(
       stepFailureFindingKey(
-        discovery("https://a.example/.well-known/x returned HTTP 500")
+        describeAuthorizationServerDiscoveryFailure([
+          { url: "https://a.example/.well-known/x", status: 500 },
+        ])
       )
     ).toBe(
       stepFailureFindingKey(
-        discovery("https://b.example/other returned HTTP 500")
+        describeAuthorizationServerDiscoveryFailure([
+          { url: "https://b.example/other", status: 500 },
+        ])
       )
     );
+  });
+
+  // Discovery joins its attempts with `; `, so every unresolved host but the
+  // last is followed by the next attempt rather than the end of the message.
+  it("keeps a discovery DNS failure together across hosts", () => {
+    const unresolved = (host: string) =>
+      describeAuthorizationServerDiscoveryFailure(
+        [
+          `https://${host}/.well-known/oauth-authorization-server`,
+          `https://${host}/.well-known/openid-configuration`,
+        ].map((url) => ({
+          url,
+          error: new Error(
+            `Backend debug proxy error: 400 Bad Request: Could not resolve ${host}`
+          ),
+        }))
+      );
+
+    const key = stepFailureFindingKey(unresolved("auth.tenant-a.example.com"));
+    expect(key).toBe(
+      stepFailureFindingKey(unresolved("auth.tenant-b.example.com"))
+    );
+    expect(key).toContain("Could not resolve <host>; <url> failed:");
+    expect(key).not.toContain("tenant-a");
   });
 
   it("replaces ids that would split one finding per request", () => {

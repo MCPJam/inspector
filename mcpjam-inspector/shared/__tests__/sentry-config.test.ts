@@ -663,9 +663,12 @@ describe("groupOAuthDebuggerStepFailures", () => {
     const findings = [
       stepEvent("Dynamic Client Registration failed (400)."),
       stepEvent("Dynamic Client Registration failed (401)."),
-      stepEvent("Token request failed: 400: invalid_client: invalid_client_secret", {
-        step: "token_request",
-      }),
+      stepEvent(
+        "Token request failed: 400: invalid_client: invalid_client_secret",
+        {
+          step: "token_request",
+        },
+      ),
       stepEvent(
         "MCP server returned HTTP 404 Not Found where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
         { step: "request_unauthenticated" },
@@ -725,7 +728,9 @@ describe("groupOAuthDebuggerStepFailures", () => {
 
     expect(
       new Set(
-        [invalidTarget, registration, wrongStatus].map((f) => JSON.stringify(f)),
+        [invalidTarget, registration, wrongStatus].map((f) =>
+          JSON.stringify(f),
+        ),
       ).size,
     ).toBe(3);
     // The two registration events were one finding, one with the advisory.
@@ -739,13 +744,18 @@ describe("groupOAuthDebuggerStepFailures", () => {
   it("keeps discovery failures with different causes apart", () => {
     // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532).
     const prefix = "Could not discover authorization server metadata.";
-    const url = "https://auth.example.com/.well-known/oauth-authorization-server";
+    const url =
+      "https://auth.example.com/.well-known/oauth-authorization-server";
     const keys = [
       `${prefix} ${url}/t returned HTTP 404; ${url} returned HTTP 404.`,
       `${prefix} ${url} returned HTTP 500.`,
       `${prefix} ${url} failed: Failed to fetch.`,
     ].map((value) =>
-      JSON.stringify(fingerprint(stepEvent(value, { step: "request_authorization_server_metadata" }))),
+      JSON.stringify(
+        fingerprint(
+          stepEvent(value, { step: "request_authorization_server_metadata" }),
+        ),
+      ),
     );
     expect(new Set(keys).size).toBe(3);
   });
@@ -753,12 +763,20 @@ describe("groupOAuthDebuggerStepFailures", () => {
   // Review of #5473: the server writes part of a token failure, so keyed on
   // the whole text one finding opened an issue per server wording.
   it("keeps one token failure together across servers' wording", () => {
-    const keys = [
+    // Asserts the value, not that the three agree: with the rule off, all
+    // three fingerprints are `undefined` and would agree too.
+    for (const value of [
       "Token request failed: 400 Bad Request: invalid_grant: Authorization code not found or expired",
       "Token request failed: 400: invalid_grant: code already used",
       "Token request failed: 400 Client Error: invalid_grant",
-    ].map((value) => JSON.stringify(fingerprint(stepEvent(value, { step: "token_request" }))));
-    expect(new Set(keys).size).toBe(1);
+    ]) {
+      expect(fingerprint(stepEvent(value, { step: "token_request" }))).toEqual([
+        "oauth-debugger-step",
+        "token_request",
+        "Token request failed: 400: invalid_grant",
+        "prod",
+      ]);
+    }
   });
 
   it("separates the same finding on different steps", () => {
@@ -791,8 +809,12 @@ describe("groupOAuthDebuggerStepFailures", () => {
   it("falls back to the capped message, never a first-sentence cut", () => {
     // No `finding` should reach here — the adapter and this rule ship
     // together — but if one does, it must split rather than merge.
-    const value = `Could not discover authorization server metadata. https://a.test/x returned HTTP 404; ${"x".repeat(300)}`;
-    const [, , finding] = fingerprint(stepEvent(value, { withFinding: false }))!;
+    const value = `Could not discover authorization server metadata. https://a.test/x returned HTTP 404; ${"x".repeat(
+      300,
+    )}`;
+    const [, , finding] = fingerprint(
+      stepEvent(value, { withFinding: false }),
+    )!;
     expect(finding).toBe(value.slice(0, 160));
     expect(finding).toContain("returned HTTP 404");
   });

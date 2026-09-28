@@ -21,11 +21,11 @@ import { responseFailureFindingKey } from "./response-error.js";
  * So each part is handled by what it is, in the module that writes it:
  *
  * 1. The registration advisory ({@link FALLBACK_HINT}) is removed exactly —
- *    it is appended only when a fallback client exists, to what is otherwise
- *    the same finding. With it, every trailing period: the two registration
- *    forms place one differently, and a cause that already ends in a period
- *    (Firefox's `NetworkError when attempting to fetch resource.`) gains a
- *    second one before the hint.
+ *    it is appended only when no pre-registered client is available to fall
+ *    back to, to what is otherwise the same finding. With it, every trailing
+ *    period: the two registration forms place one differently, and a cause
+ *    that already ends in a period (Firefox's `NetworkError when attempting
+ *    to fetch resource.`) gains a second one before the hint.
  * 2. A response failure reduces to label, status and OAuth `error` code
  *    ({@link responseFailureFindingKey}).
  * 3. Anything else keeps its full text, cause included, with every part a
@@ -37,17 +37,15 @@ import { responseFailureFindingKey } from "./response-error.js";
  *    Hosts are replaced only where the proxy's wording puts one, never
  *    anywhere a dotted name appears. A dotted name is also a property path,
  *    and our own step crashes quote one (`e.json is not a function`,
- *    `evaluating 'e.body.issuer'`), so a global rule merged different MCPJam
- *    bugs into one issue.
+ *    `evaluating 'e.body.issuer'`); replacing those would merge different
+ *    MCPJam bugs into one issue.
  */
 export function stepFailureFindingKey(message: string): string {
   // Cut before any pattern runs, after the hint so removing it still works.
-  // Three of the rules below have now been found quadratic on a crafted
-  // message, and the server writes this text; a bound here is what keeps the
-  // next one added from being reachable at all. It costs nothing: the key is
-  // cut to 160 characters, and only text a replacement would have pulled
-  // inside that window from past character 4000 is lost — which needs the
-  // 4000 before it to compress 25-fold.
+  // This bounds the exported function for any caller, since the server writes
+  // this text and no pattern below then sees more than this. (The debugger's
+  // reporting path already passes sanitized text capped well under it.) The
+  // key is cut to 160 characters, so nothing real is lost.
   const withoutHint = stripTrailingPeriod(
     message.endsWith(` ${FALLBACK_HINT}`)
       ? message.slice(0, -(FALLBACK_HINT.length + 1))
@@ -60,16 +58,15 @@ export function stepFailureFindingKey(message: string): string {
 }
 
 const MAX_KEY_CHARS = 160;
-/** Worst case across the rules below is ~10ms at this length. */
 const MAX_NORMALIZED_CHARS = 4000;
 
 const PERIOD = ".".charCodeAt(0);
 
 /**
  * Not `/\.+$/`: an unanchored-start `+` before `$` retries the run from every
- * index when the match fails, so a message padded with periods costs O(n²)
- * (80k of them took 2s locally, and `error_description` is the server's
- * text). A scan from the end is linear and says the same thing.
+ * index when the match fails, so a message padded with periods costs O(n²),
+ * and `error_description` is the server's text. A scan from the end is linear
+ * and says the same thing.
  */
 function stripTrailingPeriod(text: string): string {
   let end = text.length;
@@ -77,24 +74,27 @@ function stripTrailingPeriod(text: string): string {
   return end === text.length ? text : text.slice(0, end);
 }
 
-// Where the debug proxy puts a host (`oauth-proxy.ts`, `pinned-dns.ts`):
+// Where the debug proxy puts a host. This wording is copied by hand from
+// `oauth-proxy.ts` and `pinned-dns.ts`, so it CAN drift from them; the tests
+// pin each form, and a change to a refusal there needs a change here.
 //   Could not resolve <host>
 //   Could not resolve <lowercased target label> <host>
 //   <host> resolves to a private or reserved address (<ip>)
 //   … is a private/reserved host (<host>)
 //   Refusing a plaintext connection to "<host>": …
-// The resolve form's host is the message's last word, after the label's plain
-// words, so the lazy words give way until the token reaches the end.
+// The resolve form's host is the last word of its attempt: the end of the
+// message, or the `; ` before the next attempt when discovery reports several
+// (`describeAuthorizationServerDiscoveryFailure`). The lazy label words give
+// way until the token reaches one of those.
 //
 // Every host run is bounded to {1,253}, the maximum length of a DNS name. The
-// private-address rule is why: its token comes BEFORE its literal, so with an
-// unbounded `+` the engine retried the whole run from each index and a message
-// padded with periods cost O(n^2) — 4.6s for 60k of them, and the server
-// writes this text. The other three sit behind a literal and fail fast, but
+// private-address rule is why: its token comes BEFORE its literal, so an
+// unbounded `+` would retry the whole run from each index, O(n²) on a message
+// padded with periods. The other three sit behind a literal and fail fast, but
 // they are bounded too so the next edit here cannot reintroduce it.
 const PROXY_HOSTS: ReadonlyArray<[RegExp, string]> = [
   [
-    /(\bCould not resolve (?:[a-z-]{1,63} ){0,8}?)[^\s"'()]{1,253}(?=[)"',;]*$)/g,
+    /(\bCould not resolve (?:[a-z-]{1,63} ){0,8}?)[^\s"'();]{1,253}(?=[)"',]*(?:;|$))/g,
     "$1<host>",
   ],
   [
@@ -128,9 +128,9 @@ function normalizeVariableText(text: string): string {
       //
       // The digit test is a callback, not a `(?=[A-Za-z0-9_-]*\d)` lookahead.
       // `-` is in the class but is not a `\w`, so in a run like `a-a-a-…`
-      // every letter sits at a `\b` and the lookahead rescanned the rest of
-      // the run from each one: 80k characters took 3.1s. Matching the token
-      // first and testing it once is linear.
+      // every letter sits at a `\b` and the lookahead would rescan the rest of
+      // the run from each one. Matching the token first and testing it once is
+      // linear.
       .replace(/\b[A-Za-z0-9_-]{16,}\b/g, (token) =>
         /\d/.test(token) ? "<id>" : token
       )

@@ -399,7 +399,7 @@ function withStepFailureReporting(
         extra: {
           // What error reporting groups on — see `groupOAuthDebuggerStepFailures`.
           // From the sanitized text, never the raw one, and computed by the SDK
-          // that writes these messages, so the key cannot drift from them.
+          // that writes these messages, next to their writers.
           finding: stepFailureFindingKey(sanitized),
           // Prefer the step this update is moving TO. An update that both
           // advances the step and carries an error would otherwise be
