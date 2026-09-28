@@ -82,10 +82,10 @@ jobs:
             node_dist: win-x64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -94,7 +94,7 @@ jobs:
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -245,7 +245,7 @@ jobs:
           "${{ inputs.pack_version }}"
 
       - name: Upload the pack
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}
           path: ${{ runner.temp }}/pack-out/local-harness-pack-*
@@ -265,7 +265,7 @@ jobs:
       flat: ${{ steps.merge.outputs.flat }}
     steps:
       - name: Download every pack
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: local-harness-pack-*
           path: packs
@@ -290,10 +290,10 @@ jobs:
           echo "$map"
 
       - name: Check out the Inspector sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
