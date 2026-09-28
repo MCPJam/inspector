@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "8.17.0",
+  "version": "8.18.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -188,7 +188,7 @@
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/xai": "^2.0.29",
     "@cfworker/json-schema": "^4.1.1",
-    "@mcpjam/evaluators": "^0.3.0",
+    "@mcpjam/evaluators": "^0.4.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@noble/hashes": "^2.4.0",
