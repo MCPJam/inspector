@@ -136,6 +136,179 @@ function write(value: unknown, ancestors: Set<object>): string {
   }
 }
 
+/**
+ * The outcome of {@link canonicalJsonBounded}.
+ *
+ * `overBudget` and `uncanonical` are both "we could not read this value", and
+ * they stay distinct only so a reason can say which. Neither is ever a
+ * truncated string: a prefix of canonical JSON is not canonical JSON, and a
+ * caller that matched against one would be grading text the value never had.
+ */
+export type CanonicalJsonBoundedResult =
+  | { ok: true; json: string }
+  | { ok: false; reason: "overBudget" }
+  | { ok: false; reason: "uncanonical"; message: string };
+
+/** Thrown internally to unwind the writer the moment the budget is spent. */
+const OVER_BUDGET: unique symbol = Symbol("canonicalJsonBounded.overBudget");
+
+/** Appends output while counting it, and stops at the first overflow. */
+class BoundedOutput {
+  private readonly parts: string[] = [];
+  private length = 0;
+
+  constructor(private readonly maxChars: number) {}
+
+  /** Characters still available before the budget is exceeded. */
+  remaining(): number {
+    return this.maxChars - this.length;
+  }
+
+  push(text: string): void {
+    if (text.length > this.remaining()) throw OVER_BUDGET;
+    this.parts.push(text);
+    this.length += text.length;
+  }
+
+  /**
+   * `JSON.stringify(text)` is at least `text.length + 2` characters, so a
+   * string that cannot fit is refused BEFORE it is escaped. Escaping a
+   * multi-megabyte argument only to throw the result away is the work the
+   * budget exists to avoid.
+   */
+  pushString(text: string, suffix = ""): void {
+    if (text.length + 2 + suffix.length > this.remaining()) throw OVER_BUDGET;
+    this.push(JSON.stringify(text) + suffix);
+  }
+
+  toString(): string {
+    return this.parts.join("");
+  }
+}
+
+/**
+ * {@link canonicalJson} with a character budget, for reading values nobody
+ * bounded before we got them — a model-authored tool call's arguments.
+ *
+ * For any value whose canonical form fits in `maxChars` UTF-16 code units the
+ * output is BYTE-IDENTICAL to `canonicalJson(value)`: same key order, same
+ * number form, same escaping, same `undefined` rules. It is a second writer
+ * rather than a wrapper because the point is to STOP — `canonicalJson` builds
+ * the whole string before anyone can measure it, and a caller that measured
+ * afterwards would already have paid for a value of any size. This one counts
+ * as it writes and unwinds the moment the next piece would not fit, so a
+ * ten-megabyte argument costs about `maxChars` of work.
+ *
+ * `canonicalJson` itself is untouched: it is a hash input, and hashes are
+ * pinned across four runtimes.
+ *
+ * Never throws. A value `canonicalJson` would refuse (a non-finite number, a
+ * cycle, a class instance, a getter that throws) is `uncanonical`; one that
+ * does not fit is `overBudget`.
+ */
+export function canonicalJsonBounded(
+  value: unknown,
+  maxChars: number,
+): CanonicalJsonBoundedResult {
+  if (value === undefined) {
+    return {
+      ok: false,
+      reason: "uncanonical",
+      message: "Cannot canonicalize `undefined` at the root",
+    };
+  }
+  const out = new BoundedOutput(maxChars);
+  try {
+    writeBounded(value, new Set(), out);
+  } catch (error) {
+    if (error === OVER_BUDGET) return { ok: false, reason: "overBudget" };
+    return {
+      ok: false,
+      reason: "uncanonical",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  return { ok: true, json: out.toString() };
+}
+
+/**
+ * The bounded twin of {@link write}. Every branch mirrors it rule for rule;
+ * the only difference is that output goes through `out`, which refuses to
+ * grow past the budget. Change one without the other and the byte-identity
+ * property test in `tests/tool-arguments-match.test.ts` fails.
+ */
+function writeBounded(
+  value: unknown,
+  ancestors: Set<object>,
+  out: BoundedOutput,
+): void {
+  if (value === null) {
+    out.push("null");
+    return;
+  }
+
+  switch (typeof value) {
+    case "boolean":
+      out.push(value ? "true" : "false");
+      return;
+    case "number":
+      out.push(canonicalizeNumber(value));
+      return;
+    case "string":
+      out.pushString(value);
+      return;
+    case "object":
+      break;
+    default:
+      throw new CanonicalJsonError(
+        `Cannot canonicalize value of type ${typeof value}`,
+      );
+  }
+
+  if (ancestors.has(value as object)) {
+    throw new CanonicalJsonError("Cannot canonicalize a circular structure");
+  }
+  ancestors.add(value as object);
+
+  try {
+    if (Array.isArray(value)) {
+      out.push("[");
+      const length = value.length;
+      for (let index = 0; index < length; index += 1) {
+        if (index > 0) out.push(",");
+        const entry = value[index];
+        if (entry === undefined) out.push("null");
+        else writeBounded(entry, ancestors, out);
+      }
+      out.push("]");
+      return;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new CanonicalJsonError(
+        "Cannot canonicalize a non-plain object (only plain objects, arrays and " +
+          "JSON primitives are part of the contract)",
+      );
+    }
+
+    const record = value as Record<string, unknown>;
+    out.push("{");
+    let first = true;
+    for (const key of Object.keys(record).sort()) {
+      const entry = record[key];
+      if (entry === undefined) continue;
+      if (!first) out.push(",");
+      first = false;
+      out.pushString(key, ":");
+      writeBounded(entry, ancestors, out);
+    }
+    out.push("}");
+  } finally {
+    ancestors.delete(value as object);
+  }
+}
+
 /** Lowercase hex SHA-256 of a UTF-8 string. */
 export function sha256Hex(text: string): string {
   return bytesToHex(sha256(utf8ToBytes(text)));

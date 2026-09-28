@@ -1,4 +1,5 @@
 import { RESPONSE_CLOSE_TO_IMPLEMENTATION } from "../predicates/response-close-to.js";
+import { TOOL_ARGUMENTS_MATCH_IMPLEMENTATION } from "../predicates/tool-arguments-match.js";
 /**
  * Pure mappers from every legacy verdict source into the one contract shape.
  *
@@ -73,13 +74,20 @@ export function predicateScoreDefinition(
       explicit || generatedPredicateScorerId(predicate, options.ordinal),
     idSource: explicit ? "explicit" : "generated",
     scorerVersion: PREDICATES_VERSION,
+    // Kinds whose verdict depends on more than the authored rule — an engine,
+    // an encoding, a budget — digest that implementation beside the rule.
     implementationHash: canonicalDigest(
       predicate.type === "responseCloseTo"
         ? {
             ...RESPONSE_CLOSE_TO_IMPLEMENTATION,
             rule: stripCheckPolicy(predicate),
           }
-        : stripCheckPolicy(predicate),
+        : predicate.type === "toolArgumentsMatch"
+          ? {
+              ...TOOL_ARGUMENTS_MATCH_IMPLEMENTATION,
+              rule: stripCheckPolicy(predicate),
+            }
+          : stripCheckPolicy(predicate),
     ),
     label: predicate.type,
     deterministic: true,

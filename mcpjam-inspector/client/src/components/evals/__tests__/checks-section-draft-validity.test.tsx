@@ -331,4 +331,30 @@ describe("ChecksSection raw-JSON draft validity", () => {
     fireEvent.change(textarea, { target: { value: '{"type": "object"}' } });
     expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
   });
+
+  it("reports a toolArgumentsMatch pattern re2js cannot compile", () => {
+    // Unlike a JSON draft, the pattern IS written through — the schema
+    // refuses the predicate — and it is reported here too, so a caller that
+    // listens only to this sees it.
+    const onDraftValidityChange = vi.fn();
+    render(
+      <Harness
+        initial={[
+          {
+            type: "toolArgumentsMatch",
+            toolName: "search",
+            patterns: ["ok"],
+          } as Predicate,
+        ]}
+        onDraftValidityChange={onDraftValidityChange}
+      />,
+    );
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
+    const pattern = screen.getByLabelText("Pattern 1");
+    fireEvent.change(pattern, { target: { value: "(?=a)" } });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.change(pattern, { target: { value: "a" } });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
+  });
 });

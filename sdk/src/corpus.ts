@@ -168,6 +168,15 @@ function isWidgetAssertion(assertion: unknown): boolean {
   );
 }
 
+/**
+ * A `toolArgumentsMatch` that needs at least one matching call (`min`
+ * defaults to 1). Contradicts a negative case, which passes only when no tool
+ * is called; `min: 0` ("no call matches", with its required `max`) does not.
+ */
+function demandsMatchingCall(predicate: Predicate): boolean {
+  return predicate.type === "toolArgumentsMatch" && (predicate.min ?? 1) >= 1;
+}
+
 function hostedOnlyStep(
   step: PlatformEvalStep,
   index: number,
@@ -333,6 +342,18 @@ export function evalTestFromPlatformCase(
           );
         }
         const predicate = parsed.data as Predicate;
+        // A negative case passes only when NO tool is called, and a
+        // `toolArgumentsMatch` with `min ≥ 1` (the default) demands a matching
+        // call. `min: 0, max: 0` — "no call matches" — is the one spelling
+        // that can hold beside it.
+        if (evalCase.isNegative && demandsMatchingCall(predicate)) {
+          throw new Error(
+            `Eval case "${evalCase.title}" (${evalCase.id}) is a negative ` +
+              `case (passes only when NO tool is called) but asserts ` +
+              `toolArgumentsMatch with min ≥ 1 at step ${index}. Those cannot ` +
+              `both hold. Fix the case in the dashboard, or run it hosted.`
+          );
+        }
         // A gating `toolCalledWith` becomes an expectation rather than a
         // predicate, so it grades through the tool matcher exactly as the
         // hosted `deriveExpectedToolCalls` does. An advisory one stays a
@@ -441,6 +462,17 @@ export function evalTestFromPlatformCase(
         `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
           `(passes only when NO tool is called) but declares expected tool ` +
           `calls. Fix the case in the dashboard, or run it hosted.`
+      );
+    }
+    // Same reasoning for a `toolArgumentsMatch` that needs a matching call,
+    // reached through case or suite checks.
+    if (predicates.some(demandsMatchingCall)) {
+      throw new Error(
+        `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
+          `(passes only when NO tool is called) but a toolArgumentsMatch ` +
+          `check with min ≥ 1 applies to it — from the case, or inherited ` +
+          `from the suite. Those cannot both hold. Use min: 0, max: 0 for ` +
+          `"no call matches", or fix the check in the dashboard.`
       );
     }
   }

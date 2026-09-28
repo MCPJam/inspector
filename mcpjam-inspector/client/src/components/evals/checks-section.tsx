@@ -50,7 +50,16 @@ import type {
   ArgMatchMode,
   CasePredicates,
 } from "@/shared/eval-matching";
-import { predicateSchema } from "@mcpjam/sdk/predicates";
+import {
+  MAX_TOOL_ARGUMENT_NAME_CHARS,
+  MAX_TOOL_ARGUMENT_PATTERN_CHARS,
+  MAX_TOOL_ARGUMENT_PATTERNS,
+  predicateSchema,
+  TOOL_ARGUMENT_PATTERN_FLAGS,
+  toolArgumentPatternError,
+  toolArgumentsMatchBoundsError,
+  type ToolArgumentPatternFlags,
+} from "@mcpjam/sdk/predicates";
 import { OverrideBadge } from "./override-badge";
 import { cn } from "@/lib/utils";
 import {
@@ -190,6 +199,11 @@ const FIELD_OWNED_PATHS: ReadonlySet<string> = new Set([
   "beforeToolName",
   "needle",
   "pattern",
+  // `toolArgumentsMatch`: one issue path covers every pattern row, so the
+  // rows say which one is wrong; the count fields word their own bounds.
+  "patterns",
+  "min",
+  "max",
 ]);
 
 function useFieldValidation(
@@ -488,7 +502,7 @@ export function CheckRow({
 
   // Issues no field renders itself. Zod's own wording, since we know nothing
   // more specific about them. Shown as soon as they exist, NOT behind the
-  // touched gate: a blank check only ever fails on the four field-owned paths
+  // touched gate: a blank check only ever fails on the field-owned paths
   // (see `blankPredicate`), so an issue here means the user typed something —
   // a zero into a count that must be positive — and hiding it would leave a
   // disabled Save with no explanation in the editors that never turn on
@@ -1004,6 +1018,16 @@ function CheckFields({
           copy="Validates every call's arguments against the tool's declared inputSchema, and names which rule broke. Valid arguments can still miss what the user asked for \u2014 this does not judge intent. Reports an error, not a failure, when the run captured no tool inventory."
           onChange={onChange}
           availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "toolArgumentsMatch":
+      return (
+        <ToolArgumentsMatchFields
+          predicate={predicate}
+          onChange={onChange}
+          availableTools={availableTools}
+          toolArgSchemas={toolArgSchemas}
           readOnly={readOnly}
         />
       );
@@ -1861,6 +1885,439 @@ function ResponseMatchesFields({
           {error}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+type ToolArgumentsMatchPredicate = Extract<
+  Predicate,
+  { type: "toolArgumentsMatch" }
+>;
+
+/** The flag letters, in the one order the wire accepts. */
+const PATTERN_FLAG_LETTERS = ["i", "m", "s"] as const;
+type PatternFlagLetter = (typeof PATTERN_FLAG_LETTERS)[number];
+
+/**
+ * The flag string for a set of letters — `"im"`, never `"mi"` — or
+ * `undefined` for none. Looked up in the closed list, so a spelling the
+ * schema refuses cannot be written.
+ */
+function patternFlagsOf(
+  letters: ReadonlySet<PatternFlagLetter>,
+): ToolArgumentPatternFlags | undefined {
+  const spelled = PATTERN_FLAG_LETTERS.filter((l) => letters.has(l)).join("");
+  return TOOL_ARGUMENT_PATTERN_FLAGS.find((flags) => flags === spelled);
+}
+
+/**
+ * A re2js compile error in words an author can act on. re2js is linear-time,
+ * so it has no lookaround and no backreferences — the two JavaScript idioms
+ * someone is most likely to type, and the two its own message names worst.
+ */
+function patternErrorCopy(error: string): string {
+  if (/`\(\?<?[=!]/.test(error)) {
+    return "Lookahead and lookbehind aren't supported. To require two things in the same call, add another pattern.";
+  }
+  if (/invalid escape sequence: `\\[1-9]/.test(error)) {
+    return "Backreferences like \\1 aren't supported.";
+  }
+  return `Not a valid pattern: ${error.replace(/^error parsing regexp: /, "")}`;
+}
+
+/**
+ * What one pattern row shows: the compile error as typed, a stored pattern
+ * over the cap, or — only once touched — that it is empty.
+ */
+function patternRowError(
+  pattern: string,
+  compileError: string | undefined,
+  emptyError: string | null,
+): string | null {
+  if (compileError !== undefined) return patternErrorCopy(compileError);
+  if (pattern.length > MAX_TOOL_ARGUMENT_PATTERN_CHARS) {
+    return `At most ${MAX_TOOL_ARGUMENT_PATTERN_CHARS} characters`;
+  }
+  return pattern === "" ? emptyError : null;
+}
+
+/** Which top-level key the patterns read, or the whole arguments object. */
+function ToolArgumentField({
+  value,
+  onChange,
+  argNames,
+  readOnly,
+}: {
+  value: string | undefined;
+  onChange: (next: string | undefined) => void;
+  /** Keys from the chosen tool's input schema; empty means free text. */
+  argNames: string[];
+  readOnly: boolean;
+}) {
+  const id = useId();
+  // Same encoding as `ResultToolFilterField`: the sentinel is unprefixed, so
+  // no argument name — not even one spelled "whole" — can collide with it.
+  const WHOLE = "whole";
+  const encode = (name: string) => `arg:${name}`;
+  const decode = (option: string) =>
+    option === WHOLE ? undefined : option.slice("arg:".length);
+  // A saved key the schema no longer lists stays selectable, or the trigger
+  // would show nothing for a check that still reads it.
+  const names =
+    value !== undefined && !argNames.includes(value)
+      ? [value, ...argNames]
+      : argNames;
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-[11px]">
+        Argument
+      </Label>
+      {argNames.length > 0 && !readOnly ? (
+        <Select
+          value={value === undefined ? WHOLE : encode(value)}
+          onValueChange={(next) => onChange(decode(next))}
+        >
+          <SelectTrigger id={id} className="h-8 text-xs" aria-label="Argument">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={WHOLE} className="text-xs">
+              Whole arguments
+            </SelectItem>
+            {names.map((name) => (
+              <SelectItem
+                key={name}
+                value={encode(name)}
+                className="font-mono text-xs"
+              >
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          id={id}
+          value={value ?? ""}
+          aria-label="Argument"
+          maxLength={MAX_TOOL_ARGUMENT_NAME_CHARS}
+          onChange={(e) =>
+            onChange(e.target.value === "" ? undefined : e.target.value)
+          }
+          placeholder="Whole arguments"
+          className="h-8 font-mono text-xs"
+          disabled={readOnly}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * `toolArgumentsMatch`: what went INTO a call, checked with patterns.
+ *
+ * The everyday fields are the tool, the argument, the pattern list and Ignore
+ * case; the other two flags and the count sit behind "More options", because
+ * the default — at least one call matches every pattern — is what almost
+ * every author means.
+ *
+ * Every edit goes through `update`, which DROPS an optional field the author
+ * emptied rather than writing its default: the predicate is the criterion's
+ * identity, so `min: 1` beside an omitted `min` would be two ids for one
+ * check.
+ */
+export function ToolArgumentsMatchFields({
+  predicate,
+  onChange,
+  availableTools,
+  toolArgSchemas,
+  readOnly,
+}: {
+  predicate: ToolArgumentsMatchPredicate;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
+  readOnly: boolean;
+}) {
+  const patternsLabelId = useId();
+  const patternRowId = useId();
+  const ignoreCaseId = useId();
+  const multilineId = useId();
+  const dotAllId = useId();
+  const minId = useId();
+  const maxId = useId();
+  const patterns = predicate.patterns;
+  const flags = predicate.flags;
+  const letters = new Set(
+    PATTERN_FLAG_LETTERS.filter((letter) => flags?.includes(letter)),
+  );
+  const [moreOpen, setMoreOpen] = useState(
+    () =>
+      letters.has("m") ||
+      letters.has("s") ||
+      predicate.min !== undefined ||
+      predicate.max !== undefined,
+  );
+
+  const update = (patch: Partial<ToolArgumentsMatchPredicate>) => {
+    const next = { ...predicate, ...patch };
+    for (const key of ["flags", "argument", "min", "max"] as const) {
+      if (next[key] === undefined) delete next[key];
+    }
+    onChange(next);
+  };
+  const setFlag = (letter: PatternFlagLetter, on: boolean) => {
+    const next = new Set(letters);
+    if (on) next.add(letter);
+    else next.delete(letter);
+    update({ flags: patternFlagsOf(next) });
+  };
+  const setPattern = (index: number, pattern: string) =>
+    update({ patterns: patterns.map((p, i) => (i === index ? pattern : p)) });
+  const setCount = (key: "min" | "max", raw: string) => {
+    const n = raw === "" ? undefined : Math.floor(Number(raw));
+    if (n !== undefined && (!Number.isFinite(n) || n < 0)) return;
+    update(key === "min" ? { min: n } : { max: n });
+  };
+
+  // Compiled live, with the flags the evaluator will use: the same call the
+  // schema makes, so a row this marks valid is one Save accepts. The schema
+  // refuses the predicate too, which is what blocks Save; registering the
+  // draft keeps a caller that listens only to `onDraftValidityChange` honest.
+  const compileErrors = patterns.map((pattern) =>
+    pattern ? toolArgumentPatternError(pattern, flags) : undefined,
+  );
+  useInvalidDraftRegistration(
+    !readOnly && compileErrors.some((error) => error !== undefined),
+  );
+  // An empty row waits for a touch like every other required field; the
+  // schema flags it on `patterns`, the path every row shares.
+  const { error: emptyError, markTouched } = useFieldValidation(
+    "patterns",
+    "Enter a pattern",
+  );
+
+  // Bounds are worded here, beside the inputs, rather than in the row-level
+  // line: the schema only reaches its bounds rule once every other field
+  // parses, and "at least 0 on its own" deserves saying while it is typed.
+  const bounds = toolArgumentsMatchBoundsError(predicate.min, predicate.max);
+  const countFallback = "Enter a whole number, 0 or more";
+  const minIssue = useFieldValidation("min", countFallback).error;
+  const maxIssue = useFieldValidation("max", countFallback).error;
+  let countError = minIssue ?? maxIssue;
+  if (bounds?.path === "min") {
+    countError =
+      '"At least 0" needs an "at most" too: on its own it passes every transcript.';
+  } else if (bounds) {
+    const floor = predicate.min ?? "1 when left empty";
+    countError = `"At most" can't be below "at least" (${floor}).`;
+  }
+
+  const argNames = Object.keys(toolArgSchemas?.[predicate.toolName] ?? {});
+
+  return (
+    <div className="space-y-3">
+      <ToolNameField
+        value={predicate.toolName}
+        onChange={(toolName) => {
+          // A key the new tool's schema does not declare would leave every
+          // call "missing" it; a tool with no known schema keeps the key.
+          const known = toolArgSchemas?.[toolName];
+          const keep =
+            predicate.argument === undefined ||
+            !known ||
+            Object.prototype.hasOwnProperty.call(known, predicate.argument);
+          update({ toolName, argument: keep ? predicate.argument : undefined });
+        }}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+      <ToolArgumentField
+        value={predicate.argument}
+        onChange={(argument) => update({ argument })}
+        argNames={argNames}
+        readOnly={readOnly}
+      />
+      <div className="space-y-1.5">
+        <Label id={patternsLabelId} className="text-[11px]">
+          Patterns
+        </Label>
+        <p className="text-[11px] text-muted-foreground">
+          A call passes only if it matches every pattern. Use{" "}
+          <code className="font-mono">A|B</code> for either.
+        </p>
+        <ul aria-labelledby={patternsLabelId} className="space-y-1.5">
+          {patterns.map((pattern, index) => {
+            const rowId = `${patternRowId}-${index}`;
+            const error = patternRowError(
+              pattern,
+              compileErrors[index],
+              emptyError,
+            );
+            return (
+              // Index keys are safe: a row holds no state of its own, so a
+              // removal above only moves values, never a draft.
+              <li key={index} className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    id={rowId}
+                    value={pattern}
+                    aria-label={`Pattern ${index + 1}`}
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? `${rowId}-error` : undefined}
+                    maxLength={MAX_TOOL_ARGUMENT_PATTERN_CHARS}
+                    onChange={(e) => {
+                      markTouched();
+                      setPattern(index, e.target.value);
+                    }}
+                    onBlur={markTouched}
+                    placeholder={index === 0 ? "e.g. Idea" : "e.g. Build|Ship"}
+                    className="h-8 font-mono text-xs"
+                    disabled={readOnly}
+                  />
+                  {readOnly ? null : (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() =>
+                        update({
+                          patterns: patterns.filter((_, i) => i !== index),
+                        })
+                      }
+                      disabled={patterns.length <= 1}
+                      aria-label={`Remove pattern ${index + 1}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+                {error ? (
+                  <p
+                    id={`${rowId}-error`}
+                    className="text-[11px] text-destructive"
+                  >
+                    {error}
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        {patterns.length > MAX_TOOL_ARGUMENT_PATTERNS ? (
+          <p className="text-[11px] text-destructive">
+            At most {MAX_TOOL_ARGUMENT_PATTERNS} patterns.
+          </p>
+        ) : null}
+        {readOnly ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 text-xs"
+            onClick={() => update({ patterns: [...patterns, ""] })}
+            disabled={patterns.length >= MAX_TOOL_ARGUMENT_PATTERNS}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add pattern
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch
+          id={ignoreCaseId}
+          checked={letters.has("i")}
+          onCheckedChange={(on) => setFlag("i", on)}
+          disabled={readOnly}
+        />
+        <Label htmlFor={ignoreCaseId} className="text-[11px]">
+          Ignore case
+        </Label>
+      </div>
+      <details
+        open={moreOpen}
+        onToggle={(event) =>
+          setMoreOpen((event.currentTarget as HTMLDetailsElement).open)
+        }
+        className="text-[11px] text-muted-foreground"
+      >
+        <summary className="cursor-pointer py-1">More options</summary>
+        <div className="mt-2 space-y-3">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Switch
+                id={multilineId}
+                checked={letters.has("m")}
+                onCheckedChange={(on) => setFlag("m", on)}
+                disabled={readOnly}
+              />
+              <Label htmlFor={multilineId} className="text-[11px]">
+                <code className="font-mono">^</code> and{" "}
+                <code className="font-mono">$</code> match at line breaks
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id={dotAllId}
+                checked={letters.has("s")}
+                onCheckedChange={(on) => setFlag("s", on)}
+                disabled={readOnly}
+              />
+              <Label htmlFor={dotAllId} className="text-[11px]">
+                <code className="font-mono">.</code> matches line breaks
+              </Label>
+            </div>
+          </div>
+          <fieldset className="space-y-1.5">
+            <legend className="text-[11px] font-medium text-foreground">
+              Matching calls
+            </legend>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor={minId} className="text-[11px]">
+                At least
+              </Label>
+              <Input
+                id={minId}
+                type="number"
+                min={0}
+                step={1}
+                value={predicate.min ?? ""}
+                aria-invalid={countError ? true : undefined}
+                onChange={(e) => setCount("min", e.target.value)}
+                placeholder="1"
+                className="h-8 w-20 text-xs"
+                disabled={readOnly}
+              />
+              <Label htmlFor={maxId} className="text-[11px]">
+                At most
+              </Label>
+              <Input
+                id={maxId}
+                type="number"
+                min={0}
+                step={1}
+                value={predicate.max ?? ""}
+                aria-invalid={countError ? true : undefined}
+                onChange={(e) => setCount("max", e.target.value)}
+                placeholder="No limit"
+                className="h-8 w-24 text-xs"
+                disabled={readOnly}
+              />
+            </div>
+            <p>
+              Counts only calls that match every pattern, not all calls. At
+              least 0 and at most 0 means no call matches &mdash; not that the
+              tool was never called.
+            </p>
+            {countError ? (
+              <p role="alert" className="text-destructive">
+                {countError}
+              </p>
+            ) : null}
+          </fieldset>
+        </div>
+      </details>
     </div>
   );
 }

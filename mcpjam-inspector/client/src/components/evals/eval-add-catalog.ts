@@ -100,6 +100,7 @@ const predicateIcons: Record<PredicateKind, LucideIcon> = {
   toolCalledBefore: ListOrdered,
   noDestructiveToolCalled: ShieldCheck,
   argumentsMatchToolSchema: Braces,
+  toolArgumentsMatch: Regex,
   noToolErrors: ShieldCheck,
   toolResultContains: TextSearch,
   toolResultMatchesSchema: FileJson,

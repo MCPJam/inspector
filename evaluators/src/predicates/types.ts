@@ -2,6 +2,15 @@ import {
   MAX_RESPONSE_CLOSE_TO_CHARS,
   normalizeCloseToText,
 } from "./response-close-to.js";
+import {
+  MAX_TOOL_ARGUMENT_NAME_CHARS,
+  MAX_TOOL_ARGUMENT_PATTERN_CHARS,
+  MAX_TOOL_ARGUMENT_PATTERNS,
+  TOOL_ARGUMENT_PATTERN_FLAGS,
+  toolArgumentPatternError,
+  toolArgumentsMatchBoundsError,
+  type ToolArgumentPatternFlags,
+} from "./tool-arguments-match.js";
 /**
  * State-based predicate system for deterministic eval gating.
  *
@@ -199,6 +208,33 @@ export type Predicate = (
    */
   | { type: "argumentsMatchToolSchema"; toolName?: string }
   /**
+   * A call to `toolName` whose arguments match EVERY pattern in `patterns`
+   * occurred at least `min` (default 1) and at most `max` times.
+   *
+   * ONE CALL, ALL PATTERNS: three labels split across three calls never add
+   * up to a match. "Any of these" is alternation inside one pattern (`A|B`).
+   * The subject is the whole arguments object as canonical JSON (sorted keys,
+   * no whitespace), or only the top-level `argument` when set — a string
+   * value as it is, anything else as canonical JSON; a call without that key
+   * does not match. Patterns run on re2js (linear time; no lookaround, no
+   * backreferences) with the one shared `flags` set.
+   *
+   * `min` and `max` count MATCHING calls, not all calls. `min: 0, max: 0`
+   * means "no call matches" — NOT "the tool was never called", which is
+   * `toolNeverCalled`. A call whose subject cannot be read (over the budget,
+   * or not serializable) is counted neither way, and a verdict it could have
+   * decided is `status: "error"`.
+   */
+  | {
+      type: "toolArgumentsMatch";
+      toolName: string;
+      patterns: string[];
+      flags?: ToolArgumentPatternFlags;
+      argument?: string;
+      min?: number;
+      max?: number;
+    }
+  /**
    * OBSERVATION. No call repeated the one immediately before it with equal
    * arguments.
    *
@@ -298,6 +334,7 @@ export const TURN_SCOPABLE_PREDICATE_KINDS = [
   "toolCallCountUnder",
   "toolCalledBefore",
   "noRepeatedIdenticalCall",
+  "toolArgumentsMatch",
 ] as const satisfies readonly PredicateType[];
 
 export function isTurnScopablePredicateKind(kind: string): boolean {
@@ -608,6 +645,45 @@ export const predicateUnion = z.discriminatedUnion("type", [
     toolName: z.string().min(1).optional(),
     ...checkPolicyShape,
   }),
+  z
+    .object({
+      type: z.literal("toolArgumentsMatch"),
+      toolName: z.string().min(1),
+      // Authored order is kept — it is part of the criterion id.
+      patterns: z
+        .array(z.string().min(1).max(MAX_TOOL_ARGUMENT_PATTERN_CHARS))
+        .min(1)
+        .max(MAX_TOOL_ARGUMENT_PATTERNS),
+      flags: z.enum(TOOL_ARGUMENT_PATTERN_FLAGS).optional(),
+      argument: z.string().min(1).max(MAX_TOOL_ARGUMENT_NAME_CHARS).optional(),
+      min: z.number().int().nonnegative().optional(),
+      max: z.number().int().nonnegative().optional(),
+      ...checkPolicyShape,
+    })
+    // On the variant, not only on `predicateSchema`, so `predicateUnion`
+    // (re-exported as `assertionUnion`) refuses a pattern re2js cannot compile
+    // too. Compiled WITH the flags: the validity rule is the exact call the
+    // evaluator makes.
+    .superRefine((value, ctx) => {
+      value.patterns.forEach((pattern, index) => {
+        const error = toolArgumentPatternError(pattern, value.flags);
+        if (error !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["patterns", index],
+            message: `pattern does not compile in re2js: ${error}`,
+          });
+        }
+      });
+      const bounds = toolArgumentsMatchBoundsError(value.min, value.max);
+      if (bounds) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [bounds.path],
+          message: bounds.message,
+        });
+      }
+    }),
   z.object({
     type: z.literal("noRepeatedIdenticalCall"),
     toolName: z.string().min(1).optional(),

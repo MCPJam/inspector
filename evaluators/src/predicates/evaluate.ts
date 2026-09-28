@@ -1,4 +1,13 @@
 import { normalizedResponseDistance } from "./response-close-to.js";
+import {
+  compilePatterns,
+  describeMatch,
+  encodeCallSubject,
+  MAX_DISPLAYED_PATTERN_CHARS,
+  toolArgumentsMatchConfigError,
+  toolArgumentsMatchVerdict,
+  type ToolArgumentsMatchTally,
+} from "./tool-arguments-match.js";
 /**
  * Pure evaluator for the state-based predicate library.
  *
@@ -2005,6 +2014,105 @@ export function evaluatePredicate(
           ? `no full page from ${scopeLabel(predicate.toolName)} to inspect`
           : `all ${inspected} full page(s) carried continuation metadata`
       );
+    }
+
+    case "toolArgumentsMatch": {
+      // A rule that reached us without passing the schema (a loose API path,
+      // a row from a newer writer) is unscored rather than failed: a check
+      // nobody could validly have written says nothing about the server.
+      const configError = toolArgumentsMatchConfigError(predicate);
+      if (configError !== undefined) {
+        return evidenceError(predicate, configError);
+      }
+      const compiled = compilePatterns(predicate.patterns, predicate.flags);
+      if (!compiled.ok) {
+        // The engine's message quotes the pattern, so it is scrubbed like the
+        // pattern itself would be.
+        return evidenceError(
+          predicate,
+          `toolArgumentsMatch pattern ${compiled.index + 1} does not compile ` +
+            `in re2js: ${truncate(scrubText(compiled.message), MAX_VALUE_CHARS)}`
+        );
+      }
+      const bounds = { min: predicate.min ?? 1, max: predicate.max };
+      const calls = callsTo(transcript, predicate.toolName);
+      const tally: ToolArgumentsMatchTally = {
+        calls: calls.length,
+        matched: 0,
+        unreadable: 0,
+        missingArgument: 0,
+      };
+      // Every call is read, so every count in the reason is exact.
+      const unmatched: TranscriptToolCall[] = [];
+      for (const call of calls) {
+        const subject = encodeCallSubject(call.arguments, predicate.argument);
+        if (subject.kind === "missing") {
+          tally.missingArgument += 1;
+          unmatched.push(call);
+        } else if (subject.kind === "unreadable") {
+          tally.unreadable += 1;
+        } else if (compiled.compiled.every((re) => re.test(subject.text))) {
+          tally.matched += 1;
+        } else {
+          unmatched.push(call);
+        }
+      }
+      const verdict = toolArgumentsMatchVerdict(tally, bounds);
+      // Authored patterns are shown through the FREE-TEXT scrubber: an
+      // author who pinned a literal token in a pattern must not see it
+      // persisted into every reason. The stored predicate keeps it as
+      // written — it is the rule.
+      const flags = predicate.flags ?? "";
+      const shownPatterns = predicate.patterns.slice(0, MAX_ITEMS_SHOWN);
+      const patternsShown =
+        shownPatterns
+          .map(
+            (pattern) =>
+              `/${truncate(
+                scrubText(pattern),
+                MAX_DISPLAYED_PATTERN_CHARS
+              )}/${flags}`
+          )
+          .join(", ") +
+        (predicate.patterns.length > MAX_ITEMS_SHOWN
+          ? `, +${predicate.patterns.length - MAX_ITEMS_SHOWN} more`
+          : "");
+      // Values keep their KEY on the way through `brief()` — the argument's
+      // own name, or the whole arguments object — so `SENSITIVE_KEY`
+      // redaction still sees `apiKey`. A bare value would lose the one thing
+      // redaction keys on.
+      const argument = predicate.argument;
+      const sample = (call: TranscriptToolCall): string => {
+        const args = (call.arguments ?? {}) as Record<string, unknown>;
+        if (argument === undefined) return brief(args);
+        return Object.prototype.hasOwnProperty.call(args, argument)
+          ? brief({ [argument]: args[argument] })
+          : `(no "${argument}")`;
+      };
+      // Shown only when too FEW calls matched: the calls that did not are
+      // the evidence. A too-many failure's evidence is the count itself.
+      const tooMany = bounds.max !== undefined && tally.matched > bounds.max;
+      const samplesShown =
+        verdict === "fail" && !tooMany && unmatched.length > 0
+          ? `[${unmatched.slice(0, MAX_ITEMS_SHOWN).map(sample).join(", ")}${
+              unmatched.length > MAX_ITEMS_SHOWN
+                ? `, +${unmatched.length - MAX_ITEMS_SHOWN} more`
+                : ""
+            }]`
+          : undefined;
+      const reason = describeMatch({
+        toolName: predicate.toolName,
+        argument,
+        patternCount: predicate.patterns.length,
+        tally,
+        bounds,
+        verdict,
+        patternsShown,
+        samplesShown,
+      });
+      if (verdict === "pass") return pass(predicate, reason);
+      if (verdict === "fail") return fail(predicate, reason);
+      return evidenceError(predicate, reason);
     }
 
     default: {
