@@ -632,7 +632,7 @@ describe("useAppState active organization recovery", () => {
       );
       window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
-      const { result, rerender } = renderHook(() =>
+      const { result } = renderHook(() =>
         useAppState({
           currentUserId: "user-1",
           currentActorKey: "user-1",

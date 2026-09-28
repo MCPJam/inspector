@@ -96,6 +96,7 @@ export interface FirstRunServerDraft {
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  clearClientSecret?: boolean;
   oauthAllowPathScopedIssuer?: boolean;
   xaaClientAuth?: XaaClientAuthMethod;
   xaaAuthzIssuer?: string;
@@ -229,6 +230,7 @@ export function FirstRunOnboardingOverlay({
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [clearClientCredentials, setClearClientCredentials] = useState(false);
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
     null,
@@ -270,6 +272,7 @@ export function FirstRunOnboardingOverlay({
     setClientId(recoveryServerDraft.clientId ?? "");
     setUseCustomClientId(Boolean(recoveryServerDraft.clientId));
     setClientSecret(recoveryServerDraft.clientSecret ?? "");
+    setClearClientCredentials(false);
     setOauthAllowPathScopedIssuer(
       recoveryServerDraft.oauthAllowPathScopedIssuer ?? false,
     );
@@ -305,6 +308,7 @@ export function FirstRunOnboardingOverlay({
     setUseCustomClientId(false);
     setClientId("");
     setClientSecret("");
+    setClearClientCredentials(false);
     setClientIdError(null);
     setClientSecretError(null);
     setXaaConfigurationError(null);
@@ -364,10 +368,11 @@ export function FirstRunOnboardingOverlay({
       return false;
     }
 
-    if (serverAuthentication !== "xaa") return true;
-
     const usesPreregisteredCredentials =
-      registrationMode === "auto" || registrationMode === "preregistered";
+      serverAuthentication === "xaa"
+        ? registrationMode === "auto" || registrationMode === "preregistered"
+        : (serverAuthentication === "oauth" || serverAuthentication === "auto") &&
+          registrationMode === "preregistered";
     if (usesPreregisteredCredentials && clientId.trim().length < 3) {
       setClientIdError(
         clientId.trim()
@@ -385,6 +390,7 @@ export function FirstRunOnboardingOverlay({
       setClientSecretError("Client Secret cannot be only whitespace");
       return false;
     }
+    if (serverAuthentication !== "xaa") return true;
     if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
       setXaaConfigurationError(
         "Enter both a subject and email for an identity override, or leave both blank.",
@@ -448,8 +454,11 @@ export function FirstRunOnboardingOverlay({
           .split(/\s+/)
           .map((scope) => scope.trim())
           .filter(Boolean),
-        clientId: clientId.trim() || undefined,
-        clientSecret: clientSecret.trim() || undefined,
+        clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
+        clientSecret: clearClientCredentials
+          ? undefined
+          : clientSecret.trim() || undefined,
+        clearClientSecret: clearClientCredentials,
         oauthAllowPathScopedIssuer,
         xaaClientAuth,
         xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
@@ -462,6 +471,7 @@ export function FirstRunOnboardingOverlay({
       bearerToken,
       clientId,
       clientSecret,
+      clearClientCredentials,
       oauthAllowPathScopedIssuer,
       oauthProtocolMode,
       oauthScopesInput,
@@ -498,8 +508,11 @@ export function FirstRunOnboardingOverlay({
         .split(/\s+/)
         .map((scope) => scope.trim())
         .filter(Boolean),
-      clientId: clientId.trim() || undefined,
-      clientSecret: clientSecret.trim() || undefined,
+      clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
+      clientSecret: clearClientCredentials
+        ? undefined
+        : clientSecret.trim() || undefined,
+      clearClientSecret: clearClientCredentials,
       oauthAllowPathScopedIssuer,
       xaaClientAuth,
       xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
@@ -511,6 +524,7 @@ export function FirstRunOnboardingOverlay({
     bearerToken,
     clientId,
     clientSecret,
+    clearClientCredentials,
     connectionState,
     oauthAllowPathScopedIssuer,
     oauthProtocolMode,
@@ -914,7 +928,19 @@ export function FirstRunOnboardingOverlay({
                     oauthProtocolMode={oauthProtocolMode}
                     onOauthProtocolModeChange={setOauthProtocolMode}
                     registrationMode={registrationMode}
-                    onOauthRegistrationModeChange={setRegistrationMode}
+                    onOauthRegistrationModeChange={(value) => {
+                      if (
+                        registrationMode === "preregistered" &&
+                        value !== "preregistered"
+                      ) {
+                        setClientId("");
+                        setClientSecret("");
+                        setClearClientCredentials(true);
+                      } else if (value === "preregistered") {
+                        setClearClientCredentials(false);
+                      }
+                      setRegistrationMode(value);
+                    }}
                     oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
                     onOauthAllowPathScopedIssuerChange={
                       setOauthAllowPathScopedIssuer
@@ -981,7 +1007,8 @@ export function FirstRunOnboardingOverlay({
                     : connectionState.status === "preparing"
                     ? "Preparing your MCPJam workspace"
                     : "Connecting to "}
-                  {!guestSessionRefused && connectionState.status !== "preparing"
+                  {!guestSessionRefused &&
+                  connectionState.status !== "preparing"
                     ? connectionState.serverName
                     : null}
                 </DialogTitle>
@@ -1008,7 +1035,8 @@ export function FirstRunOnboardingOverlay({
                   completedSteps={visibleCompletedConnectionSteps}
                 />
               )}
-              {!guestSessionRefused && connectionState.status !== "connected" ? (
+              {!guestSessionRefused &&
+              connectionState.status !== "connected" ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -1203,7 +1231,19 @@ export function FirstRunOnboardingOverlay({
                   oauthProtocolMode={oauthProtocolMode}
                   onOauthProtocolModeChange={setOauthProtocolMode}
                   registrationMode={registrationMode}
-                  onOauthRegistrationModeChange={setRegistrationMode}
+                  onOauthRegistrationModeChange={(value) => {
+                    if (
+                      registrationMode === "preregistered" &&
+                      value !== "preregistered"
+                    ) {
+                      setClientId("");
+                      setClientSecret("");
+                      setClearClientCredentials(true);
+                    } else if (value === "preregistered") {
+                      setClearClientCredentials(false);
+                    }
+                    setRegistrationMode(value);
+                  }}
                   oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
                   onOauthAllowPathScopedIssuerChange={
                     setOauthAllowPathScopedIssuer
@@ -1227,9 +1267,7 @@ export function FirstRunOnboardingOverlay({
                   xaaAuthzIssuer={xaaAuthzIssuer}
                   onXaaAuthzIssuerChange={setXaaAuthzIssuer}
                   xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
-                  onXaaAllowPathScopedIssuerChange={
-                    setXaaAllowPathScopedIssuer
-                  }
+                  onXaaAllowPathScopedIssuerChange={setXaaAllowPathScopedIssuer}
                   xaaSubject={xaaSubject}
                   onXaaSubjectChange={setXaaSubject}
                   xaaEmail={xaaEmail}
@@ -1271,7 +1309,10 @@ function GuestSessionRefusalNotice({ onSignIn }: { onSignIn?: () => void }) {
       className="mt-4 rounded-md border border-warning/30 bg-warning/10 p-3"
     >
       <div className="flex items-start gap-2.5">
-        <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+        <AlertCircle
+          className="mt-0.5 size-4 shrink-0 text-warning"
+          aria-hidden
+        />
         <div className="min-w-0">
           <p className="text-[12px] font-semibold text-card-foreground">
             Guest session limit reached

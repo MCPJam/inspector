@@ -505,10 +505,12 @@ function buildOAuthProfileFromFormData(
   const registrationStrategy =
     formData.registrationMode && formData.registrationMode !== "auto"
       ? formData.registrationMode
-      : (existingProfile?.registrationStrategy ??
+      : (formData.clearClientSecret
+          ? "dcr"
+          : existingProfile?.registrationStrategy) ??
         (formData.clientId || formData.clientSecret || formData.hasClientSecret
           ? "preregistered"
-          : "dcr"));
+          : "dcr");
   const customHeaders = Object.entries(formData.headers ?? {})
     .filter(([key, value]) => key.trim() && value)
     .map(([key, value]) => ({ key, value }));
@@ -3606,7 +3608,7 @@ export function useServerState({
           : false;
       const clientSecretSyncOptions = buildSecretSyncOptions(formData);
 
-      const serverEntryForSave: ServerWithName = {
+      let serverEntryForSave: ServerWithName = {
         name: formData.name,
         config: mcpConfig,
         lastConnectionTime: new Date(),
@@ -3844,6 +3846,78 @@ export function useServerState({
             }
             if (typeof proceed === "object") {
               Object.assign(formData, proceed);
+              const updatedEntry: ServerWithName = {
+                ...serverEntryForSave,
+                oauthFlowProfile: buildOAuthProfileFromFormData(
+                  formData,
+                  serverEntryForSave.oauthFlowProfile,
+                ),
+                oauthProtocolMode: formData.oauthProtocolMode ?? "auto",
+                registrationMode:
+                  formData.registrationMode ?? serverEntryForSave.registrationMode,
+                oauthAllowPathScopedIssuer:
+                  formData.oauthAllowPathScopedIssuer ??
+                  serverEntryForSave.oauthAllowPathScopedIssuer,
+                hasClientSecret:
+                  !formData.clearClientSecret &&
+                  Boolean(
+                    formData.clientSecret ||
+                      formData.hasClientSecret ||
+                      serverEntryForSave.hasClientSecret,
+                  ),
+              };
+              try {
+                const resynced = await syncServerToConvex(
+                  formData.name,
+                  updatedEntry,
+                  buildSecretSyncOptions(formData),
+                );
+                if (isStaleOp(formData.name, token)) return;
+                if (
+                  HOSTED_MODE &&
+                  isAuthenticated &&
+                  !useLocalFallback &&
+                  !resynced.ok
+                ) {
+                  throw new Error(
+                    "Could not save authorization settings before redirecting. Please try again.",
+                  );
+                }
+                if (resynced.ok) {
+                  hostedServerId = resynced.serverId;
+                  syncedConnectionTarget = {
+                    projectId: resynced.projectId,
+                    serverId: resynced.serverId,
+                  };
+                  injectHostedServerMapping(formData.name, resynced.serverId);
+                }
+                serverEntryForSave = updatedEntry;
+                saveOAuthConfigToLocalStorage(formData);
+                if (!isAuthenticated) {
+                  const project = appState.projects[appState.activeProjectId];
+                  if (project) {
+                    dispatch({
+                      type: "UPDATE_PROJECT",
+                      projectId: appState.activeProjectId,
+                      updates: {
+                        servers: {
+                          ...project.servers,
+                          [formData.name]: updatedEntry,
+                        },
+                      },
+                    });
+                  }
+                }
+              } catch (error) {
+                if (isStaleOp(formData.name, token)) return;
+                const message =
+                  error instanceof Error
+                    ? error.message
+                    : "Could not save authorization settings before redirecting. Please try again.";
+                failWithoutEscalation(message);
+                showConnectionError(message);
+                return;
+              }
             }
             autoOAuthEscalation.markPending(escalationIdentity);
           }
@@ -5963,6 +6037,13 @@ export function useServerState({
       },
     ) => {
       let connectionIntent = options?.connectionIntent;
+      if (
+        options?.forceOAuthFlow &&
+        options.replaceExistingOAuthConnection === false &&
+        !connectionIntent
+      ) {
+        connectionIntent = { kind: "add" };
+      }
       if (
         options?.forceOAuthFlow &&
         options.replaceExistingOAuthConnection !== false &&
