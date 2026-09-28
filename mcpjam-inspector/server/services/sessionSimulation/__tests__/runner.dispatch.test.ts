@@ -341,6 +341,29 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
+  it("sends the output ceiling on the plain hosted /stream rail for a credit-funded step", async () => {
+    // No starter claim: the step bills credits on the default hosted
+    // endpoint, which is the rail that reserves against the ceiling.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.extraBodyFields.maxOutputTokens).toBe(16_384);
+    expect(opts.extraBodyFields.billingFeature).toBeUndefined();
+    expect(opts.extraBodyFields.providerKey).toBeUndefined();
+  });
+
   it("keeps the output ceiling off the org-BYOK rail (/stream/org)", async () => {
     // Only the MCPJam-hosted rail holds credits against it; nothing shows
     // /stream/org reading it, so a BYOK step keeps its own limits.
