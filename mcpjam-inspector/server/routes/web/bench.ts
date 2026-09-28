@@ -11,6 +11,7 @@ import {
 } from "./errors.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
+import { backendFailureText } from "../../utils/backend-failure-text.js";
 
 /**
  * Connector Bench relay.
@@ -325,12 +326,16 @@ type BackendBody = {
   [key: string]: unknown;
 };
 
-function backendMessage(body: BackendBody | null, fallback: string): string {
-  if (typeof body?.error === "string" && body.error.trim()) return body.error;
-  if (typeof body?.message === "string" && body.message.trim()) {
-    return body.message;
-  }
-  return fallback;
+function backendMessage(
+  status: number,
+  body: BackendBody | null,
+  fallback: string,
+): string {
+  const detail =
+    typeof body?.error === "string" && body.error.trim()
+      ? body.error
+      : body?.message;
+  return backendFailureText({ source: "bench", status, detail, fallback });
 }
 
 /**
@@ -421,7 +426,11 @@ async function callBackend(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        backendMessage(body, "The benchmark service rejected this request."),
+        backendMessage(
+          response.status,
+          body,
+          "The benchmark service rejected this request.",
+        ),
       );
     case 401:
       // Ambiguous between "the caller's bearer expired" and "our service token
@@ -430,20 +439,28 @@ async function callBackend(
       throw new WebRouteError(
         401,
         ErrorCode.UNAUTHORIZED,
-        backendMessage(body, "Sign in again to run a benchmark."),
+        backendMessage(response.status, body, "Sign in again to run a benchmark."),
       );
     case 402:
       throw new WebRouteError(
         402,
         ErrorCode.BILLING_LIMIT_REACHED,
-        backendMessage(body, "This benchmark run exceeds your plan's limits."),
+        backendMessage(
+          response.status,
+          body,
+          "This benchmark run exceeds your plan's limits.",
+        ),
         body ? (body as Record<string, unknown>) : undefined,
       );
     case 403:
       throw new WebRouteError(
         403,
         ErrorCode.FORBIDDEN,
-        backendMessage(body, "You do not have access to this benchmark."),
+        backendMessage(
+          response.status,
+          body,
+          "You do not have access to this benchmark.",
+        ),
       );
     case 409:
       // The envelope rides along, as it does on 402. `CONFLICT` cannot
@@ -453,20 +470,28 @@ async function callBackend(
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        backendMessage(body, "This benchmark run is no longer in that state."),
+        backendMessage(
+          response.status,
+          body,
+          "This benchmark run is no longer in that state.",
+        ),
         body ? (body as Record<string, unknown>) : undefined,
       );
     case 429:
       throw new WebRouteError(
         429,
         ErrorCode.RATE_LIMITED,
-        backendMessage(body, "Too many benchmark requests. Try again shortly."),
+        backendMessage(
+          response.status,
+          body,
+          "Too many benchmark requests. Try again shortly.",
+        ),
       );
     default:
       throw new WebRouteError(
         response.status >= 500 || response.ok ? 502 : response.status,
         ErrorCode.SERVER_UNREACHABLE,
-        backendMessage(body, options.unreachableMessage),
+        backendMessage(response.status, body, options.unreachableMessage),
       );
   }
 }

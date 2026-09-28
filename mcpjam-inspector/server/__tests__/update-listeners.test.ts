@@ -6,6 +6,8 @@ import path from "path";
 const mocks = vi.hoisted(() => ({
   version: "3.10.0",
   packaged: true,
+  online: true,
+  power: new Map<string, () => void>(),
   handlers: new Map<string, (...args: any[]) => void>(),
   ipc: new Map<string, (...args: any[]) => any>(),
   files: new Map<string, string>(),
@@ -34,7 +36,14 @@ vi.mock("node:fs", () => ({
   },
 }));
 vi.mock("electron", () => ({
+  net: { isOnline: () => mocks.online },
+  powerMonitor: {
+    on: (name: string, fn: () => void) => mocks.power.set(name, fn),
+    removeListener: (name: string) => mocks.power.delete(name),
+  },
   app: {
+    whenReady: () => Promise.resolve(),
+    isReady: () => true,
     get isPackaged() {
       return mocks.packaged;
     },
@@ -126,6 +135,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   mocks.files.clear();
   mocks.packaged = true;
+  mocks.online = true;
   mocks.version = "3.10.0";
   for (const fn of [
     mocks.install,
@@ -203,7 +213,9 @@ describe("update recovery", () => {
     emit("error", new Error("again"));
     expect(mocks.relaunch).toHaveBeenCalledTimes(1);
     expect(mocks.install).toHaveBeenCalledTimes(2);
-    expect(mocks.capture).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.capture.mock.calls.filter(([e]) => e.level === "error"),
+    ).toHaveLength(2);
   });
 
   it("reports an unchanged version after installation, then spends the one recovery", async () => {
@@ -244,10 +256,10 @@ describe("update recovery", () => {
     emit("update-available");
     emit("error", new Error("offline"));
     await settle();
-    expect(status()).toMatchObject({ kind: "failed", reason: "updater_error" });
+    expect(status()).toMatchObject({ kind: "retry-waiting", retry: 1 });
     expect(mocks.relaunch).not.toHaveBeenCalled();
     expect(mocks.quit).not.toHaveBeenCalled();
-    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    expect(mocks.capture).not.toHaveBeenCalled();
   });
 
   it("retains the full download deadline after an Update click", async () => {
@@ -256,10 +268,17 @@ describe("update recovery", () => {
     click();
     click();
     await vi.advanceTimersByTimeAsync(19 * 60_000 - 1);
-    expect(status()).toMatchObject({ kind: "pending", installRequested: true });
+    expect(status()).toMatchObject({
+      kind: "pending",
+      installRequested: false,
+    });
     expect(mocks.relaunch).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(mocks.relaunch).toHaveBeenCalledTimes(1);
+    expect(status()).toMatchObject({
+      kind: "failed",
+      action: "relaunch-retry",
+    });
+    expect(mocks.relaunch).not.toHaveBeenCalled();
   });
 
   it("installs a slow download normally", async () => {
@@ -267,6 +286,8 @@ describe("update recovery", () => {
     click();
     await vi.advanceTimersByTimeAsync(90_000);
     emit("update-downloaded", {}, "", "3.11.0");
+    expect(mocks.install).not.toHaveBeenCalled();
+    click();
     expect(mocks.install).toHaveBeenCalledTimes(1);
     expect(mocks.relaunch).not.toHaveBeenCalled();
   });
@@ -425,7 +446,7 @@ describe("update recovery", () => {
 
   it("checks again without unattended installation after reopening a failed attempt", async () => {
     emit("update-available");
-    emit("error", new Error("offline"));
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
     await boot();
     const failure = status();
     expect(failure.kind).toBe("failed");
@@ -534,7 +555,13 @@ describe("polling and IPC", () => {
       throw new Error("offline");
     });
     mod.startUpdatePolling();
-    expect(status()).toMatchObject({ kind: "failed", reason: "updater_error" });
+    expect(status().kind).toBe("retry-waiting");
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(status()).toMatchObject({
+      kind: "failed",
+      reason: "updater_error",
+      action: "retry-download",
+    });
     expect(mocks.capture).toHaveBeenCalledTimes(1);
     expect(mocks.relaunch).toHaveBeenCalledTimes(1);
   });
@@ -676,4 +703,304 @@ describe("persisted attempts", () => {
     expect(captured).not.toContain("secret");
     expect(captured).not.toContain("/Users");
   });
+});
+
+describe("download retry actions", () => {
+  const retry = () => mocks.ipc.get("app:retry-update-download")?.(event);
+  const relaunch = () => mocks.ipc.get("app:relaunch-update-download")?.(event);
+  async function exhaust() {
+    emit("update-available");
+    emit("error", new Error("offline"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    emit("error", new Error("offline"));
+    await vi.advanceTimersByTimeAsync(120_000);
+    emit("error", new Error("offline"));
+  }
+  it("retries twice with backoff, reports exhaustion once, and allows a fresh manual retry", async () => {
+    emit("update-available");
+    emit("error", new Error("offline"));
+    emit("error", new Error("duplicate"));
+    expect(status()).toMatchObject({ kind: "retry-waiting", retry: 1 });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(mocks.check).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    emit("error", new Error("offline"));
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    expect(mocks.capture).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocks.check).toHaveBeenCalledTimes(2);
+    emit("error", new Error("offline"));
+    emit("error", new Error("duplicate"));
+    expect(status()).toMatchObject({
+      kind: "failed",
+      action: "retry-download",
+    });
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.capture.mock.calls[0][0].contexts.update.download_retries,
+    ).toBe(2);
+    const oldId = marker().id;
+    retry();
+    retry();
+    expect(status().kind).toBe("pending");
+    expect(mocks.check).toHaveBeenCalledTimes(3);
+    expect(marker().id).not.toBe(oldId);
+    downloaded();
+    expect(status().kind).toBe("downloaded");
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+  });
+  it("records a successful automatic retry without an error alert", async () => {
+    emit("update-available");
+    emit("error", new Error("network"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    downloaded();
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    expect(mocks.capture.mock.calls[0][0]).toMatchObject({
+      level: "info",
+      tags: { update_reason: "download_recovered" },
+    });
+    expect(mocks.install).not.toHaveBeenCalled();
+  });
+  it("preserves the retry budget across relaunch during backoff", async () => {
+    emit("update-available");
+    emit("error", new Error("network"));
+    expect(marker().downloadRetries).toBe(1);
+    await boot();
+    mod.startUpdatePolling();
+    expect(status().kind).toBe("retry-waiting");
+    expect(mocks.check).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    emit("error", new Error("network"));
+    expect(marker().downloadRetries).toBe(2);
+    await boot();
+    mod.startUpdatePolling();
+    await vi.advanceTimersByTimeAsync(120_000);
+    emit("error", new Error("network"));
+    expect(status().action).toBe("retry-download");
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+  });
+  it("does not start another native check on timeout and accepts late success", async () => {
+    mod.startUpdatePolling();
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(status().action).toBe("relaunch-retry");
+    retry();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    emit("update-downloaded", {}, "", "3.11.0");
+    expect(status().kind).toBe("downloaded");
+    expect(mocks.install).not.toHaveBeenCalled();
+    click();
+    expect(mocks.install).toHaveBeenCalledTimes(1);
+  });
+  it("switches to in-process retry if a timed-out native download later errors", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    emit("error", new Error("finally stopped"));
+    expect(status().action).toBe("retry-download");
+    retry();
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+  });
+  it("relaunches a stuck download once only on request, without authorizing installation", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+    relaunch();
+    relaunch();
+    await settle();
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1);
+    expect(marker()).toMatchObject({
+      userRequested: false,
+      downloadRecoveryRequested: true,
+      retries: 1,
+    });
+    await boot();
+    mod.startUpdatePolling();
+    expect(status()).toMatchObject({
+      kind: "pending",
+      installRequested: false,
+    });
+    downloaded();
+    expect(mocks.install).not.toHaveBeenCalled();
+    click();
+    expect(mocks.install).toHaveBeenCalledTimes(1);
+  });
+  it("does not loop if a user-requested download relaunch also stalls", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    relaunch();
+    await settle();
+    await boot();
+    mod.startUpdatePolling();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(status().action).toBe("relaunch-retry");
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1);
+  });
+  it("reports stuck shutdown from relaunch-to-retry", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    relaunch();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(status()).toMatchObject({
+      reason: "shutdown_stuck",
+      action: "instructions",
+    });
+    relaunch();
+    retry();
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1);
+  });
+  it("pauses the download budget through a long sleep and records awake time", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    mocks.power.get("suspend")?.();
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+    expect(status().kind).toBe("pending");
+    mocks.power.get("resume")?.();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(status().reason).toBe("download_timeout");
+    expect(mocks.capture.mock.calls[0][0].contexts.update).toMatchObject({
+      active_download_ms: 20 * 60_000,
+      sleep_ms: 2 * 60 * 60_000,
+    });
+  });
+  it("pauses downloads while offline and resumes the remaining allowance", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    mocks.online = false;
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(status().kind).toBe("pending");
+    mocks.online = true;
+    await vi.advanceTimersByTimeAsync(30_000 + 15 * 60_000);
+    expect(status().reason).toBe("download_timeout");
+    expect(
+      mocks.capture.mock.calls[0][0].contexts.update.offline_ms,
+    ).toBeGreaterThanOrEqual(60 * 60_000);
+  });
+  it("pauses retry backoff while offline and asleep", async () => {
+    emit("update-available");
+    emit("error", new Error("network"));
+    mocks.online = false;
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(mocks.check).not.toHaveBeenCalled();
+    mocks.online = true;
+    mocks.power.get("suspend")?.();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    mocks.power.get("resume")?.();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+  });
+  it("starts a restored recovery after connectivity returns", async () => {
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    relaunch();
+    await settle();
+    mocks.online = false;
+    await boot();
+    mod.startUpdatePolling();
+    expect(mocks.check).not.toHaveBeenCalled();
+    mocks.online = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+  });
+  it("rejects retry IPC from another window", async () => {
+    await exhaust();
+    mocks.ipc.get("app:retry-update-download")?.({ sender: { id: 99 } });
+    expect(status().kind).toBe("failed");
+    expect(mocks.check).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("download marker compatibility", () => {
+  it("reads old markers without granting download-relaunch or install permission", async () => {
+    downloaded();
+    const old = marker();
+    for (const key of [
+      "downloadRetries",
+      "downloadRequested",
+      "downloadRecoveryRequested",
+      "activeDownloadMs",
+      "sleepMs",
+      "offlineMs",
+    ])
+      delete old[key];
+    mocks.files.set(file, JSON.stringify(old));
+    await boot();
+    mod.startUpdatePolling();
+    downloaded();
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(status().kind).toBe("downloaded");
+  });
+  it.each([
+    { downloadRetries: 3 },
+    { downloadRetries: -1 },
+    { downloadRetries: 0.5 },
+    { downloadRecoveryRequested: "true" },
+    { sleepMs: -1 },
+    { phase: "retry_waiting", downloadRetries: 0 },
+  ])("rejects malformed retry state: %j", async (invalid) => {
+    downloaded();
+    mocks.files.set(file, JSON.stringify({ ...marker(), ...invalid }));
+    await boot();
+    expect(status().reason).toBe("marker_invalid");
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+  });
+  it("keeps retry count after relaunch during a retried download", async () => {
+    emit("update-available");
+    emit("error", new Error("offline"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(marker()).toMatchObject({
+      phase: "downloading",
+      downloadRetries: 1,
+    });
+    await boot();
+    mod.startUpdatePolling();
+    emit("error", new Error("offline"));
+    expect(status()).toMatchObject({ kind: "retry-waiting", retry: 2 });
+  });
+  it("surfaces a marker write failure without running another native download", async () => {
+    emit("update-available");
+    mocks.write.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    emit("error", new Error("network"));
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(status()).toMatchObject({
+      kind: "failed",
+      reason: "marker_write_failed",
+      action: "instructions",
+    });
+    expect(mocks.check).not.toHaveBeenCalled();
+  });
+  it("does not install after a timed-out authorized recovery completes late", async () => {
+    downloaded();
+    click();
+    emit("error", new Error("install"));
+    await settle();
+    await boot();
+    mod.startUpdatePolling();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    emit("update-downloaded", {}, "", "3.11.0");
+    expect(status().kind).toBe("downloaded");
+    expect(mocks.install).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("joins an existing startup check when Retry is clicked, without getting stuck or checking twice", async () => {
+  emit("update-available");
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  await boot();
+  mod.startUpdatePolling();
+  expect(status().action).toBe("retry-download");
+  mocks.ipc.get("app:retry-update-download")?.(event);
+  expect(status().kind).toBe("pending");
+  expect(mocks.check).toHaveBeenCalledTimes(1);
+  downloaded();
+  expect(status().kind).toBe("downloaded");
+  expect(mocks.install).not.toHaveBeenCalled();
 });

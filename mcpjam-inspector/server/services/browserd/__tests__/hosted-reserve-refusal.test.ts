@@ -52,6 +52,21 @@ describe("classifyHostedReserveError", () => {
     expect(refusal?.error).not.toContain("billing_feature_not_included");
   });
 
+  it("keeps the control plane's own text out of a start failure's message", () => {
+    const refusal = classifyHostedReserveError(
+      new HostedReserveError("sandbox sbx-4411 exited during boot", 502),
+    );
+    expect(refusal?.error).not.toContain("sbx-4411");
+    expect(refusal?.detail).toBe("sandbox sbx-4411 exited during boot");
+  });
+
+  it("carries no detail on the refusals that do not need one", () => {
+    const refusal = classifyHostedReserveError(
+      new HostedReserveError("nope", 403),
+    );
+    expect(refusal).not.toHaveProperty("detail");
+  });
+
   it("omits the upstream code when the control plane sent none", () => {
     const refusal = classifyHostedReserveError(
       new HostedReserveError("nope", 429),

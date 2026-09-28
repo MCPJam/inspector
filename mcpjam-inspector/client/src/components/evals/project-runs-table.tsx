@@ -6,6 +6,7 @@ import {
   EvaluateHistoryRow,
   EvaluateHistoryRowSkeleton,
 } from "../evaluate/evaluate-history-row";
+import { useDeleteRunLaunch } from "../evaluate/delete-run-launch";
 import { Input } from "@mcpjam/design-system/input";
 import {
   readRunGitMetadata,
@@ -249,8 +250,17 @@ export function ProjectRunsTable({
   historyMetricsEnabled = false,
   evaluateLayout = false,
   emptyState,
+  onDeleteRun,
+  canDeleteRun,
 }: {
   projectId: string;
+  /**
+   * Evaluate layout only: adds a delete button to each row the caller may
+   * delete. A row is one launch, so it deletes every run in it.
+   */
+  onDeleteRun?: (runId: string) => Promise<void>;
+  /** Per-run permission; every run in a row must pass for its button. */
+  canDeleteRun?: (row: ProjectRunRow) => boolean;
   historyMetricsEnabled?: boolean;
   /** Ding Dong's flat launch table; legacy eval screens keep their grouping. */
   evaluateLayout?: boolean;
@@ -274,6 +284,8 @@ export function ProjectRunsTable({
   const [suiteExpansion, setSuiteExpansion] = useState<Map<string, boolean>>(
     new Map(),
   );
+  const showDeleteColumn = evaluateLayout && onDeleteRun != null;
+  const deleteLaunch = useDeleteRunLaunch(onDeleteRun);
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
@@ -1105,7 +1117,10 @@ export function ProjectRunsTable({
         >
           <RunHistoryTable aria-label="Project runs">
             {evaluateLayout ? (
-              <EvaluateHistoryHeader showSuite />
+              <EvaluateHistoryHeader
+                showSuite
+                showActions={showDeleteColumn}
+              />
             ) : (
               <TableHeader>
                 <TableRow>
@@ -1199,7 +1214,11 @@ export function ProjectRunsTable({
                     launch.runs.some((row) => !history.details.has(row._id))
                   ) {
                     return (
-                      <EvaluateHistoryRowSkeleton key={launch.key} showSuite />
+                      <EvaluateHistoryRowSkeleton
+                        key={launch.key}
+                        showSuite
+                        showActions={showDeleteColumn}
+                      />
                     );
                   }
                   return (
@@ -1211,6 +1230,21 @@ export function ProjectRunsTable({
                       historyRows={historyRows}
                       hostNamesById={hostNamesById}
                       showSuite
+                      showActions={showDeleteColumn}
+                      onDelete={
+                        // A run whose suite is gone is already being
+                        // cleaned up; the backend refuses to delete it.
+                        showDeleteColumn &&
+                        representative.suiteName !== null &&
+                        launch.runs.every((row) => canDeleteRun?.(row) ?? true)
+                          ? () =>
+                              deleteLaunch.request({
+                                runIds: launch.runs.map((row) => row._id),
+                                runNumber: representative.runNumber,
+                                suiteName: representative.suiteName,
+                              })
+                          : undefined
+                      }
                       onOpen={
                         representative.suiteName !== null
                           ? () =>
@@ -1282,6 +1316,7 @@ export function ProjectRunsTable({
           ) : null}
         </div>
       </section>
+      {showDeleteColumn ? deleteLaunch.dialog : null}
     </div>
   );
 }

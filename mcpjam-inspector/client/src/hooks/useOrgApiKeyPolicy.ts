@@ -5,7 +5,7 @@ import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
 
 /**
  * The lowest organization role that may create API keys bound to the org.
- * `member` is what every organization has until an admin changes it.
+ * `admin` is what every organization has until an admin changes it (MJ-010).
  */
 export type ApiKeyMintMinimumRole = "member" | "admin";
 

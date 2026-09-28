@@ -23,6 +23,7 @@ import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { cn } from "@/lib/utils";
+import { HISTORY_NOTICE_MESSAGE } from "@/shared/history-notice";
 import {
   useResolvedHostStyleForIndicator,
   usesClaudeInlineStreamingFooter,
@@ -127,6 +128,11 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
    */
   showSenderAvatars?: boolean;
   resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
+  /**
+   * The message to show the "earlier replies aren't sent to the model"
+   * notice above, once. Unset: no notice.
+   */
+  historyNoticeBeforeMessageId?: string;
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T) {
@@ -269,6 +275,7 @@ export function TranscriptThread({
   showSenderAvatars = false,
   resolveSenderAvatar,
   recorder,
+  historyNoticeBeforeMessageId,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -522,6 +529,14 @@ export function TranscriptThread({
             }
             {...restWrapperProps}
           >
+            {message.id === historyNoticeBeforeMessageId ? (
+              <p
+                data-testid="history-context-notice"
+                className="mb-4 text-center text-xs text-muted-foreground"
+              >
+                {HISTORY_NOTICE_MESSAGE}
+              </p>
+            ) : null}
             {isFocused ? (
               <motion.div
                 key={String(navigationKey ?? "focus")}

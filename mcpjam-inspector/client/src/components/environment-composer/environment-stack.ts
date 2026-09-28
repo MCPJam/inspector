@@ -26,6 +26,17 @@ import type {
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { isNamedEnvironment } from "@/lib/environment-label";
+import {
+  harnessModelRefusalReason,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
+import {
+  selectionKey,
+  type ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
+import type { ModelDefinition } from "@/shared/types";
+import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
 
 /**
  * Structured model axis (D2). Never auto-seed a host's default modelId as
@@ -35,6 +46,14 @@ import { isNamedEnvironment } from "@/lib/environment-label";
 export type ModelSelection = {
   includeClientDefaults: boolean;
   explicitModelIds: string[];
+  /**
+   * The saved model selection (`@mcpjam/sdk` `ModelSelection`) behind an
+   * explicit id, keyed by that id: which credentials the picked row runs on.
+   * Optional — an id without an entry is a legacy pick (hosted-first). Kept
+   * beside `explicitModelIds` rather than replacing it so every reader of the
+   * id list keeps working. See {@link syncExplicitModelSelections}.
+   */
+  explicitModelSelections?: Record<string, SavedModelSelection>;
 };
 
 export const DEFAULT_MODEL_SELECTION: ModelSelection = {
@@ -125,21 +144,105 @@ export function modelChoiceCount(
   );
 }
 
-/** Inherit first, then explicit ids in list order. Host-major mint uses this. */
+/** A client × model cell the client's harness cannot run, and why. */
+export type SkippedModelCell = {
+  clientId: string;
+  modelId: string;
+  reason: string;
+};
+
+/**
+ * Inherit first, then explicit ids in list order. Host-major mint uses this.
+ *
+ * With a `harness` target, explicit models the harness cannot run for
+ * `purpose` (the harness × model evidence table, at the runtime's pinned
+ * version) are NOT minted into cells — they are returned in `skipped` with the
+ * reason, so the surface can say which client × model pairs it left out
+ * instead of minting an environment the run admission will refuse. The
+ * inherit cell is never skipped here: the client's own model is the host's
+ * configuration, judged by the server's admission.
+ */
 export function expandModelChoices(
   selection: ModelSelection | undefined,
-): Array<{
-  modelId: string | undefined;
-}> {
+  options?: {
+    /** The client these choices fan out for (reported on skipped cells). */
+    clientId?: string;
+    /** The client's harness, `null`/absent for an emulated client. */
+    harness?: HarnessModelTarget | null;
+    /** Defaults to `eval`: every composer surface launches compared runs. */
+    purpose?: HarnessModelPurpose;
+  },
+): {
+  cells: Array<{
+    modelId: string | undefined;
+    /** The saved selection behind an explicit id, when it has one. */
+    modelSelection?: SavedModelSelection;
+  }>;
+  skipped: SkippedModelCell[];
+} {
   const resolved = selection ?? emptyModelSelection();
-  const choices: Array<{ modelId: string | undefined }> = [];
+  const cells: Array<{
+    modelId: string | undefined;
+    modelSelection?: SavedModelSelection;
+  }> = [];
+  const skipped: SkippedModelCell[] = [];
   if (resolved.includeClientDefaults) {
-    choices.push({ modelId: undefined });
+    cells.push({ modelId: undefined });
   }
   for (const modelId of resolved.explicitModelIds) {
-    choices.push({ modelId });
+    const reason = harnessModelRefusalReason(
+      modelId,
+      options?.harness,
+      options?.purpose ?? "eval",
+    );
+    if (reason) {
+      skipped.push({ clientId: options?.clientId ?? "", modelId, reason });
+      continue;
+    }
+    const modelSelection = resolved.explicitModelSelections?.[modelId];
+    cells.push(
+      modelSelection?.modelId === modelId
+        ? { modelId, modelSelection }
+        : { modelId },
+    );
   }
-  return choices;
+  return { cells, skipped };
+}
+
+/**
+ * Keep `explicitModelSelections` in step with `explicitModelIds` after a
+ * picker edit. For every explicit id: the row the user just picked (when it
+ * is that id) wins; else the selection already saved for it; else the first
+ * listed row with that id (hosted rows list first, matching the legacy
+ * hosted-first read). A row that cannot be saved beside its unchanged id
+ * ({@link selectionBesideLegacyId}) leaves the id legacy. Entries for ids no
+ * longer picked are dropped.
+ */
+export function syncExplicitModelSelections(
+  next: ModelSelection,
+  context: {
+    models: readonly ModelDefinition[];
+    previous?: ModelSelection;
+    picked?: ModelDefinition;
+  },
+): ModelSelection {
+  const { explicitModelSelections: _stale, ...rest } = next;
+  const selections: Record<string, SavedModelSelection> = {};
+  for (const id of next.explicitModelIds) {
+    const kept =
+      next.explicitModelSelections?.[id] ??
+      context.previous?.explicitModelSelections?.[id];
+    const row = context.models.find((model) => String(model.id) === id);
+    const selection =
+      context.picked && String(context.picked.id) === id
+        ? selectionBesideLegacyId(context.picked, "evalTarget")
+        : (kept ??
+          (row ? selectionBesideLegacyId(row, "evalTarget") : undefined));
+    if (selection) selections[id] = selection;
+  }
+  return Object.keys(selections).length > 0
+    ? { ...rest, explicitModelSelections: selections }
+    : rest;
 }
 
 export function sameModelSelection(
@@ -150,7 +253,12 @@ export function sameModelSelection(
   if (a.explicitModelIds.length !== b.explicitModelIds.length) return false;
   const left = [...a.explicitModelIds].sort();
   const right = [...b.explicitModelIds].sort();
-  return left.every((id, i) => id === right[i]);
+  if (!left.every((id, i) => id === right[i])) return false;
+  const keyOf = (sel: ModelSelection, id: string) => {
+    const saved = sel.explicitModelSelections?.[id];
+    return saved ? selectionKey(saved) : "";
+  };
+  return left.every((id) => keyOf(a, id) === keyOf(b, id));
 }
 
 /**
@@ -210,6 +318,9 @@ export function stackFromEnvironment(
     modelSelection: {
       includeClientDefaults: !env.modelId,
       explicitModelIds: env.modelId ? [env.modelId] : [],
+      ...(env.modelId && env.modelSelection?.modelId === env.modelId
+        ? { explicitModelSelections: { [env.modelId]: env.modelSelection } }
+        : {}),
     },
   };
 }
@@ -305,12 +416,23 @@ function reconstructModelSelection(
     return emptyModelSelection();
   }
   const keys = new Set<string>();
+  const selections: Record<string, SavedModelSelection> = {};
   for (const env of environments) {
     keys.add(modelChoiceKey(env));
+    if (
+      env.modelId &&
+      env.modelSelection?.modelId === env.modelId &&
+      !selections[env.modelId]
+    ) {
+      selections[env.modelId] = env.modelSelection;
+    }
   }
   return {
     includeClientDefaults: keys.has("__inherit__") || keys.size === 0,
     explicitModelIds: [...keys].filter((k) => k !== "__inherit__").sort(),
+    ...(Object.keys(selections).length > 0
+      ? { explicitModelSelections: selections }
+      : {}),
   };
 }
 

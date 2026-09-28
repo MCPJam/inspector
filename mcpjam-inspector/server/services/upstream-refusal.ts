@@ -11,8 +11,7 @@
  * `inspector-mcpjam-fault` all count 5xx, so a customer hitting their own
  * daily allowance paged the on-call.
  *
- * The pattern copied here is the one `routes/shared/markdown-case-import.ts`
- * already uses: on a refusal the backend owns, re-emit what it said at the
+ * The pattern is: on a refusal the backend owns, re-emit what it said at the
  * status it said it with. The difference is that this produces a typed
  * `WebRouteError` rather than a raw `Response`, so the same refusal travels
  * both surfaces — the hosted `/api/web/*` envelope via `webErrorFromRoute`,

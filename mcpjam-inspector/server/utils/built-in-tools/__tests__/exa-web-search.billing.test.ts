@@ -1,0 +1,365 @@
+/**
+ * Ask MCPJam's web search is platform-paid, and the service token is what
+ * makes that claim credible to Convex.
+ *
+ * The case that matters is the one that is easy to get wrong: a deployment
+ * that asks for platform billing but has no token. Sending the search anyway
+ * would not degrade gracefully — it would go through as an ordinary
+ * CUSTOMER-PAID search and bill a signed-in user's organization for a feature
+ * the product calls free. So the tool refuses before it reaches Convex.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildExaWebSearchTool } from "../exa-web-search";
+
+const BILLING_FEATURE = "mcpjam_agent";
+
+/**
+ * A Convex answer. `confirm` is the `x-mcpjam-platform-paid` value a backend
+ * that honoured the claim stamps; `null` models one that ignored it.
+ */
+const exaResponse = (confirm: string | null = BILLING_FEATURE) =>
+  new Response(JSON.stringify({ results: [{ title: "t", url: "u" }] }), {
+    status: 200,
+    headers: confirm === null ? {} : { "x-mcpjam-platform-paid": confirm },
+  });
+
+function runSearch(opts: {
+  billingFeature?: string;
+}): Promise<{ error?: string; results?: unknown[] }> {
+  const tool = buildExaWebSearchTool({
+    authHeader: "Bearer user-token",
+    projectId: "project-1",
+    chatSessionId: "session-1",
+    ...(opts.billingFeature ? { billingFeature: opts.billingFeature } : {}),
+  }) as unknown as {
+    execute: (
+      input: { query: string },
+      ctx: { toolCallId: string; abortSignal?: AbortSignal },
+    ) => Promise<{ error?: string; results?: unknown[] }>;
+  };
+  return tool.execute({ query: "what changed in MCP" }, { toolCallId: "tc_1" });
+}
+
+/** One tool instance, invoked repeatedly — the per-turn scope the latch uses. */
+function buildTool(opts: { billingFeature?: string }) {
+  const t = buildExaWebSearchTool({
+    authHeader: "Bearer user-token",
+    projectId: "project-1",
+    chatSessionId: "session-1",
+    ...(opts.billingFeature ? { billingFeature: opts.billingFeature } : {}),
+  }) as unknown as {
+    execute: (
+      input: { query: string },
+      ctx: { toolCallId: string; abortSignal?: AbortSignal },
+    ) => Promise<{ error?: string; results?: unknown[] }>;
+  };
+  return (n: number) =>
+    t.execute({ query: `q${n}` }, { toolCallId: `tc_${n}` });
+}
+
+describe("exa web search — platform billing attestation", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+    global.fetch = vi.fn().mockResolvedValue(exaResponse());
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    delete process.env.CONVEX_HTTP_URL;
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses rather than billing the customer when the token is missing", async () => {
+    // The whole point of the change: never silently fall back onto the
+    // customer's credits for a turn the product says is free.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBe("Web search is temporarily unavailable.");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("sends the claim with the token when it is configured", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    await runSearch({ billingFeature: BILLING_FEATURE });
+    const call = (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+      .calls[0];
+    expect(call?.[1]?.headers["x-inspector-service-token"]).toBe(
+      "inspector-secret",
+    );
+    expect(JSON.parse(call?.[1]?.body as string).billingFeature).toBe(
+      BILLING_FEATURE,
+    );
+  });
+
+  it("refuses results the backend did not confirm as platform-paid", async () => {
+    // Refusing on a missing token covers OUR half only. A backend that
+    // predates the claim ignores it, runs the search on the CUSTOMER's
+    // allowance and answers an ordinary 200 with results — so without this
+    // the model gets its answer and the organization gets the bill.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    global.fetch = vi.fn().mockResolvedValue(exaResponse(null));
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBe("Web search is temporarily unavailable.");
+    expect(result.results).toBeUndefined();
+  });
+
+  it("refuses when the backend confirms a DIFFERENT feature", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    global.fetch = vi.fn().mockResolvedValue(exaResponse("mcpjam_insights"));
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBe("Web search is temporarily unavailable.");
+  });
+
+  it("returns results when the backend confirms the claim", async () => {
+    // The guard must not refuse the searches it exists to allow.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBeUndefined();
+    expect(result.results).toHaveLength(1);
+  });
+
+  it("returns results for an unclaimed search with no confirmation", async () => {
+    // The Playground is customer-paid on purpose and must never be gated on
+    // a header it never asked for.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    global.fetch = vi.fn().mockResolvedValue(exaResponse(null));
+    const result = await runSearch({});
+    expect(result.error).toBeUndefined();
+    expect(result.results).toHaveLength(1);
+  });
+
+  it("stops searching for the rest of the turn after a failed attestation", async () => {
+    // The header check runs AFTER `fetch`, so without a latch every later
+    // search in the same answer is charged to the customer before being
+    // refused — one turn can make many. The refusal has to be per-TURN, not
+    // per-call, for "we lose at most one search" to be true.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockResolvedValue(exaResponse(null));
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const first = await run(1);
+    const second = await run(2);
+
+    expect(first.error).toBe("Web search is temporarily unavailable.");
+    expect(second.error).toBe("Web search is temporarily unavailable.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops CONCURRENT siblings after one failed attestation", async () => {
+    // The reported case, and the one the model produces most often:
+    // `executeToolCallsFromMessages` runs sibling tool calls concurrently, so
+    // all three used to read the unset latch before any response arrived and
+    // all three dispatched. Three customer-paid searches, not one.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse(null));
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const results = await Promise.all([run(1), run(2), run(3)]);
+
+    for (const result of results) {
+      expect(result.error).toBe("Web search is temporarily unavailable.");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds siblings until the first claimed search answers", async () => {
+    // The bound has to hold while the probe is still IN FLIGHT, not merely
+    // after it settles — that is the whole window the concurrent case exploits.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    let releaseFirst!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await firstInFlight;
+      return exaResponse(null);
+    });
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const pending = Promise.all([run(1), run(2), run(3)]);
+    // Let every sibling reach the gate while the probe is unresolved.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    const results = await pending;
+    for (const result of results) {
+      expect(result.error).toBe("Web search is temporarily unavailable.");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets concurrent siblings through once attestation is proven", async () => {
+    // The gate must cost one round trip per TURN, not serialize a healthy
+    // answer's searches forever.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    // Prove it first, then fan out.
+    expect((await run(0)).results).toHaveLength(1);
+    const results = await Promise.all([run(1), run(2), run(3)]);
+    for (const result of results) expect(result.results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("serializes an unproven batch but still answers all of it", async () => {
+    // Concurrent siblings arriving BEFORE anything is proven: the first probes,
+    // and because it comes back healthy the rest must all still run.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const results = await Promise.all([run(1), run(2), run(3)]);
+    for (const result of results) expect(result.results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("never gates an UNCLAIMED search, even concurrently", async () => {
+    // The Playground is customer-paid by design. Queueing its searches behind
+    // one another would be a pure latency regression for a path that has
+    // nothing to attest.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    let releaseAll!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await held;
+      return exaResponse(null);
+    });
+    global.fetch = fetchMock;
+
+    const run = buildTool({});
+    const pending = Promise.all([run(1), run(2), run(3)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // All three in flight at once: no gate on this path.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    releaseAll();
+    await pending;
+  });
+
+  it("sends a claimed search to the PLATFORM route, never the legacy one", async () => {
+    // The route IS the claim. Posting a claimed search to the customer-paid
+    // route is what bills the customer for a search the product calls free.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    await buildTool({ billingFeature: BILLING_FEATURE })(1);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/tools/exa/search/platform",
+    );
+  });
+
+  it("leaves an UNCLAIMED search on the ordinary route", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse(null));
+    global.fetch = fetchMock;
+
+    await buildTool({})(1);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain("/tools/exa/search");
+    expect(url).not.toContain("/platform");
+  });
+
+  it("stops without charging when the backend has no platform route", async () => {
+    // The legacy-backend case, and the only one where "nothing was charged" is
+    // actually provable: a 404 is the ROUTER refusing, so Exa never ran. The
+    // search must NOT be retried against the customer-paid route.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    expect((await run(1)).error).toBe("Web search is temporarily unavailable.");
+
+    // One attempt, to the platform route, and no fallback to the legacy one.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/platform");
+
+    // And the rest of the turn stops rather than each search rediscovering it.
+    expect((await run(2)).error).toBe("Web search is temporarily unavailable.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the turn when the platform route disappears mid-session", async () => {
+    // Rollback while a turn is in flight: the first search is confirmed
+    // platform-paid, then the route goes away. The later search must refuse
+    // rather than fall back to the customer's allowance.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => exaResponse())
+      .mockImplementation(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    expect((await run(1)).results).toHaveLength(1);
+    expect((await run(2)).error).toBe("Web search is temporarily unavailable.");
+
+    // Two attempts, both to the platform route — never a legacy retry.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).toContain("/platform");
+    }
+
+    // Latched, so a third search costs nothing further.
+    expect((await run(3)).error).toBe("Web search is temporarily unavailable.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps searching for the whole turn while attestation holds", async () => {
+    // The latch must not fire on a healthy turn: every search still goes out.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    expect((await run(1)).results).toHaveLength(1);
+    expect((await run(2)).results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never latches an unclaimed search, even with no confirmation", async () => {
+    // The Playground is customer-paid by design; a missing header is not a
+    // signal there and must never stop its later searches.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse(null));
+    global.fetch = fetchMock;
+
+    const run = buildTool({});
+    expect((await run(1)).results).toHaveLength(1);
+    expect((await run(2)).results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves an unclaimed search alone, token or no token", async () => {
+    // The Playground's search: no claim, so no token and no refusal — it is
+    // customer-paid by design and must keep working either way.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    await runSearch({});
+    const call = (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+      .calls[0];
+    expect(call).toBeDefined();
+    const body = JSON.parse(call?.[1]?.body as string);
+    expect(body.billingFeature).toBeUndefined();
+    expect(call?.[1]?.headers["x-inspector-service-token"]).toBeUndefined();
+  });
+});

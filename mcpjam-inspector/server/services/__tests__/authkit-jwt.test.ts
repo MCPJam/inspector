@@ -46,10 +46,12 @@ async function sign(
     sub?: string;
     expSecondsFromNow?: number;
     orgId?: string | null;
+    sid?: string;
   } = {},
 ): Promise<string> {
   const payload: Record<string, unknown> = {};
   if (opts.orgId !== null) payload.org_id = opts.orgId ?? "org_active";
+  if (opts.sid) payload.sid = opts.sid;
   const builder = new SignJWT(payload)
     .setProtectedHeader({ alg: "RS256" })
     .setSubject(opts.sub ?? SUB)
@@ -66,6 +68,16 @@ describe("verifyAuthKitToken", () => {
     const token = await sign(trustedPrivate, { orgId: "org_active" });
     const result = await verifyAuthKitToken(token, deps());
     expect(result).toEqual({ sub: SUB, orgId: "org_active" });
+  });
+
+  it("returns the session id when the token carries one", async () => {
+    const token = await sign(trustedPrivate, { sid: "session_01" });
+    const result = await verifyAuthKitToken(token, deps());
+    expect(result).toEqual({
+      sub: SUB,
+      orgId: "org_active",
+      sid: "session_01",
+    });
   });
 
   it("returns orgId undefined when the token has no org_id", async () => {

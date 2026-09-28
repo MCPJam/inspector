@@ -5,12 +5,17 @@ import type { UpdateFailureReason } from "../../../shared/desktop-update.js";
 
 export function reportUpdateFailure(
   attempt: UpdateAttempt,
-  reason: UpdateFailureReason,
+  reason: UpdateFailureReason | "download_recovered" | "install_verified",
 ): void {
   const key = `${attempt.retries}:${attempt.phase}:${reason}`;
   if (attempt.reported.includes(key)) return;
   attempt.reported.push(key);
-  log.error("Desktop update failed", {
+  const recovered =
+    reason === "download_recovered" || reason === "install_verified";
+  const message = recovered
+    ? "Desktop update recovered"
+    : "Desktop update failed";
+  (recovered ? log.info : log.error)(message, {
     reason,
     phase: attempt.phase,
     attemptId: attempt.id,
@@ -30,8 +35,8 @@ export function reportUpdateFailure(
         extra: undefined,
       }));
       Sentry.captureEvent({
-        message: "Desktop update failed",
-        level: "error",
+        message,
+        level: recovered ? "info" : "error",
         fingerprint: ["desktop-update", attempt.phase, reason],
         tags: {
           component: "desktop-updater",
@@ -44,6 +49,12 @@ export function reportUpdateFailure(
             from_version: attempt.fromVersion,
             target_version: attempt.targetVersion,
             retries: attempt.retries,
+            download_retries: attempt.downloadRetries,
+            user_requested: attempt.userRequested,
+            download_requested: attempt.downloadRequested,
+            active_download_ms: attempt.activeDownloadMs,
+            sleep_ms: attempt.sleepMs,
+            offline_ms: attempt.offlineMs,
             platform: process.platform,
             arch: process.arch,
             elapsed_ms: Math.max(0, Date.now() - attempt.at),

@@ -119,7 +119,10 @@ vi.mock("convex/browser", async () => {
   };
 });
 
-import { runSyntheticHostSession } from "../runner.js";
+import {
+  captureAndPersistWidgetSnapshotsForSession,
+  runSyntheticHostSession,
+} from "../runner.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -926,5 +929,43 @@ describe("runSyntheticHostSession — execution budgets", () => {
     const result = await runSyntheticHostSession(adapter);
 
     expect(result.outcome).toBe("succeeded");
+  });
+});
+
+describe("captureAndPersistWidgetSnapshotsForSession — upload scope", () => {
+  it("uploads as the session's bearer, scoped to its chat", async () => {
+    await captureAndPersistWidgetSnapshotsForSession({
+      messages: [],
+      mcpClientManager: {} as any,
+      convexAuthToken: "token",
+      chatSessionId: "chat-1",
+    });
+
+    expect(captureMcpAppWidgetSnapshotsMock.mock.calls[0]![0]).toMatchObject({
+      uploadTarget: { convexAuthToken: "token", chatSessionId: "chat-1" },
+    });
+    expect(
+      captureMcpAppWidgetSnapshotsMock.mock.calls[0]![0].uploadTarget,
+    ).not.toHaveProperty("scenarioId");
+  });
+
+  it("carries a hosted scenario's grant with the uploads", async () => {
+    await captureAndPersistWidgetSnapshotsForSession({
+      messages: [],
+      mcpClientManager: {} as any,
+      convexAuthToken: "token",
+      chatSessionId: "chat-1",
+      scenarioId: "scn_1",
+      accessVersion: 3,
+    });
+
+    expect(
+      captureMcpAppWidgetSnapshotsMock.mock.calls[0]![0].uploadTarget,
+    ).toEqual({
+      convexAuthToken: "token",
+      chatSessionId: "chat-1",
+      scenarioId: "scn_1",
+      accessVersion: 3,
+    });
   });
 });

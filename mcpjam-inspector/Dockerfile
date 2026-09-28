@@ -70,6 +70,10 @@ ARG VITE_MCPJAM_VIEW_SUBDOMAINS
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
 # is not readable back out of the dashboard or API.
 ARG SENTRY_AUTH_TOKEN
+# Same handling as SENTRY_AUTH_TOKEN, for `@posthog/rollup-plugin` in the same
+# config: a PostHog personal API key with error tracking write. Absent, the
+# plugin is disabled and PostHog exceptions stay unsymbolicated.
+ARG POSTHOG_PERSONAL_API_KEY
 
 COPY evaluators ./evaluators
 RUN npm run build -w @mcpjam/evaluators
@@ -139,6 +143,7 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
+    if [ -n "$POSTHOG_PERSONAL_API_KEY" ]; then export POSTHOG_PERSONAL_API_KEY; fi; \
     MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################

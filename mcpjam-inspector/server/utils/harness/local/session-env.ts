@@ -210,7 +210,17 @@ export function buildLocalHarnessEnv(
   env.CI = "1";
   env.NO_COLOR = "1";
 
-  for (const [name, value] of Object.entries(opts.scoped ?? {})) {
+  validateLocalHarnessScopedEnv(opts.scoped ?? {});
+  Object.assign(env, opts.scoped);
+
+  return env;
+}
+
+/** Validate caller-supplied secrets before reserving a runtime or model lease. */
+export function validateLocalHarnessScopedEnv(
+  scoped: Readonly<Record<string, string>>,
+): void {
+  for (const [name, value] of Object.entries(scoped)) {
     if (SCOPED_NAME_DENYLIST.has(name.toUpperCase())) {
       throw new LocalHarnessEnvError(
         `scoped environment entry ${name} is not allowed: it would redirect ` +
@@ -228,10 +238,21 @@ export function buildLocalHarnessEnv(
         `scoped environment value for ${name} contains a control character`,
       );
     }
-    env[name] = value;
   }
+}
 
-  return env;
+/** Project secrets must not impersonate runtime-owned model or bridge credentials. */
+export function validateLocalHarnessSecretEnv(
+  scoped: Readonly<Record<string, string>>,
+): void {
+  validateLocalHarnessScopedEnv(scoped);
+  for (const name of Object.keys(scoped)) {
+    if (/^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i.test(name)) {
+      throw new LocalHarnessEnvError(
+        `Project secret ${name} conflicts with the local harness runtime.`,
+      );
+    }
+  }
 }
 
 /**

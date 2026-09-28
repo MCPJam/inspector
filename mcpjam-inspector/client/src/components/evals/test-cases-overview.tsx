@@ -29,7 +29,11 @@ import {
 import { ImportClaimBadge } from "./import-claim-badge";
 import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
 import { computeIterationResult } from "./pass-criteria";
-import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
+import {
+  formatRelativeTime,
+  getEffectiveSuiteServers,
+  suiteHasRunnableServers,
+} from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
 import {
@@ -205,9 +209,10 @@ export function TestCasesOverview({
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
-  // Environment suites route single-case runs to "Run all" (the quick-run path
-  // can't resolve an environment's closed server set), so their per-case Run
-  // controls never spend — no estimate belongs beside them.
+  // An environment suite's per-case Run executes its environments (each
+  // environment's own model and servers), which the per-model quick-run
+  // estimate does not describe, so no estimate is shown beside it. Its servers
+  // resolve server-side: the browser's connections do not gate it.
   const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
   const canShowByHost = hostAttachmentCount >= 2;
@@ -790,9 +795,11 @@ export function TestCasesOverview({
                     rowTone === "diverge" && "bg-warning/[0.05]",
                     rowTone === "allfail" && "bg-destructive/[0.05]",
                   );
-                  const hasConfiguredSuiteServers = suiteServers.length > 0;
+                  const hasConfiguredSuiteServers = isEnvironmentSuite
+                    ? suiteHasRunnableServers(suite)
+                    : suiteServers.length > 0;
                   const missingServers =
-                    connectedServerNames == null
+                    connectedServerNames == null || isEnvironmentSuite
                       ? []
                       : suiteServers.filter(
                           (serverName) => !connectedServerNames.has(serverName)

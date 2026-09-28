@@ -5,6 +5,7 @@ import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
+import { DetailBackLink } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
@@ -1393,8 +1394,9 @@ export function ScenarioChatPage({
           selectedServerNames={sessionServersActive.map(
             (server) => server.serverName,
           )}
+          // No `showContextPopover`: the token/cost ring is a developer's
+          // gauge, and here it showed outside testers their session's cost.
           minimalMode
-          showContextPopover
           reasoningDisplayMode="hidden"
           hostedContext={{
             scenarioId: session.scenarioId,
@@ -1504,6 +1506,25 @@ export function ScenarioChatPage({
                             the scenario's internal name is the author's
                             label for it and means nothing to them. */}
                         <div className="flex min-w-0 flex-1 items-center gap-2">
+                          {/* Leaving goes on the LEFT, with the arrow — where
+                              every other back control in the app sits (the
+                              study's own "← User Testing"). On the right it
+                              read as one more thing to do in the session,
+                              beside Copy link and What to try. Preview only:
+                              a share-link tester has no study to go back to. */}
+                          {sessionForCurrentLink && isPreviewSurface ? (
+                            <>
+                              <DetailBackLink
+                                label="Back to study"
+                                onBack={handleReturnToStudy}
+                                testId="scenario-preview-back-to-study"
+                              />
+                              <div
+                                aria-hidden
+                                className="mx-1 h-5 w-px shrink-0 bg-border"
+                              />
+                            </>
+                          ) : null}
                           {sessionForCurrentLink ? (
                             <>
                               <img
@@ -1548,17 +1569,6 @@ export function ScenarioChatPage({
                           />
                         </button>
                         <div className="flex flex-1 items-center justify-end gap-1.5">
-                          {sessionForCurrentLink && isPreviewSurface ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-muted-foreground"
-                              onClick={handleReturnToStudy}
-                              data-testid="scenario-preview-back-to-study"
-                            >
-                              Back to study
-                            </Button>
-                          ) : null}
                           {session && shareableToken ? (
                             <Button
                               variant="ghost"

@@ -718,3 +718,63 @@ describe("external-account hosts: the host's model is what an eval case runs", (
     }
   });
 });
+
+describe("checkEvalHarnessAdmission — version-keyed model support", () => {
+  it("refuses a case whose model the pinned runtime runs without tools", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: { harness: "codex" },
+      serverIds: ["s1"],
+      cases: [
+        { title: "luna", model: "openai/gpt-5.6-luna", provider: "openai" },
+        { title: "fine", model: "openai/gpt-5.5", provider: "openai" },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("Codex harness can't run this host's model");
+    expect(verdict.reason).toContain("Ineligible cases: luna");
+    expect(verdict.reason).not.toContain("fine");
+  });
+
+  it("refuses an UNVERIFIED pair for evals, naming harness and version", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "fable",
+          model: "anthropic/claude-fable-5",
+          provider: "anthropic",
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(
+      /^not verified for claude-code \d+\.\d+\.\d+\. Ineligible cases: fable$/
+    );
+  });
+
+  it("static admission refuses a host-pinned unverified model too", () => {
+    const verdict = checkEvalHarnessStaticAdmission({
+      hostConfig: harnessHost({ modelId: "anthropic/claude-fable-5" }),
+      serverIds: ["s1"],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(/^not verified for claude-code /);
+  });
+
+  it("refuses a non-Anthropic model on Claude Code instead of letting the CLI default", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [{ title: "gpt", model: "openai/gpt-5.5", provider: "openai" }],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain(
+      "Claude Code harness can't run this host's model"
+    );
+  });
+});

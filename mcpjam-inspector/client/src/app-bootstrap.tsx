@@ -8,12 +8,14 @@ import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
+import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
+import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { reportCaught } from "./lib/error-reporting";
 import {
   handleWorkosRefreshFailure,
@@ -76,6 +78,9 @@ initSentry();
 
 // Stop browser page translation from crashing React; see the module comment.
 installTranslatedPageDomGuard();
+
+// Offer a reload when a deploy has removed this build's lazy chunks.
+installStaleChunkRecovery();
 
 // The invariant a browser can actually decide. Its reasoning, and the half
 // that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
@@ -464,7 +469,12 @@ if (isInIframe) {
     // initializes the SDK, or feature start falls back to the remote fetch
     // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
     // No-op (and no chunk download) off the error-capture surfaces.
-    await preloadPosthogBundledExtensions();
+    // Flag values come from our server and are bootstrapped into the SDK at
+    // init (MJ-015); the fetch is bounded and resolves to null on any failure.
+    const [, serverFeatureFlags] = await Promise.all([
+      preloadPosthogBundledExtensions(),
+      loadBootstrapFeatureFlags(),
+    ]);
 
     root.render(
       <StrictMode>
@@ -474,7 +484,7 @@ if (isInIframe) {
         <ErrorBoundary name="root">
           <PostHogProvider
             apiKey={getPostHogKey()}
-            options={getPostHogOptions()}
+            options={getPostHogOptions(serverFeatureFlags)}
           >
             {Providers}
           </PostHogProvider>

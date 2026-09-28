@@ -1,6 +1,7 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
   isMCPJamModelLimitError,
   isSpendBudgetReachedCode,
@@ -76,9 +77,9 @@ describe("isMCPJamModelLimitError", () => {
           code: "RATE_LIMITED",
           message: "MCPJam's daily generation budget is used up.",
           details: { code, canTopUp: false, isRetryable: true },
-        })
+        }),
       ).toBe(false);
-    }
+    },
   );
 
   it("does not match the org spend-budget refusal", () => {
@@ -676,6 +677,175 @@ it.each(["platform_free_budget_exhausted", "account_suspended"])(
   },
 );
 
+/**
+ * Ask MCPJam is paid by MCPJam, so none of its refusals is a wallet anyone can
+ * top up. Selling credits against one would be wrong twice over: the credits
+ * would not lift the refusal, and the surface was advertised as free.
+ */
+describe("Ask MCPJam refusals", () => {
+  const CODES = [
+    "platform_capacity",
+    "agent_turn_limit",
+    "agent_billing_rejected",
+  ];
+
+  it.each(CODES)("keeps %s out of the credits dialog", (code) => {
+    expect(isMCPJamModelLimitError({ code })).toBe(false);
+    // …and when the same code arrives nested, which is how a refused stream
+    // step reaches the client: the body as a JSON-encoded `message`.
+    expect(
+      isMCPJamModelLimitError({
+        message: JSON.stringify({ code, error: "user_rate_limit" }),
+      }),
+    ).toBe(false);
+    expect(notifyMCPJamLimitError({ code })).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it.each(["platform_capacity", "agent_turn_limit"])(
+    "describes %s as today's limit, with the reset a reader can act on",
+    (code) => {
+      expect(describeAgentRefusalMessage(JSON.stringify({ code }))).toBe(
+        "Ask MCPJam has reached today's limit. It resets at 00:00 UTC.",
+      );
+    },
+  );
+
+  it.each(["platform_generation_unavailable", "agent_billing_rejected"])(
+    "describes %s as temporary, because no reset time lifts it",
+    (code) => {
+      expect(describeAgentRefusalMessage(JSON.stringify({ code }))).toBe(
+        "Ask MCPJam is temporarily unavailable.",
+      );
+    },
+  );
+
+  it("finds a refusal nested as plain text under another code", () => {
+    // `collectCodes` only records a `code` PROPERTY, so this payload yields
+    // {RATE_LIMITED} — non-empty, but without the code that decides the copy.
+    // Gating the substring scan on an empty set would skip it here and print
+    // the raw body at the user.
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({ code: "RATE_LIMITED", details: "agent_turn_limit" }),
+      ),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "UPSTREAM",
+          details: { note: "agent_billing_rejected" },
+        }),
+      ),
+    ).toBe("Ask MCPJam is temporarily unavailable.");
+  });
+
+  it("reads the code out of a body that is not JSON at all", () => {
+    // The AI SDK folds a pre-stream refusal into `new Error(await res.text())`,
+    // and a proxy can mangle that text on the way. A distinctive code in a
+    // string is still the truth about what happened.
+    expect(
+      describeAgentRefusalMessage(
+        'HTTP 429: ... "code":"agent_turn_limit" ...',
+      ),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+  });
+
+  it("keeps the burst throttle's own timing instead of sending it to midnight", () => {
+    // The reported case. `agent_turn_limit` covers BOTH the 150/day and the
+    // 6/minute cap; only `gatedBy` says which. Ten seconds of waiting was
+    // being reported as "come back tomorrow".
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "agent_turn_limit",
+          gatedBy: "burst",
+          retryAfterMs: 10000,
+          error: "Too many Ask MCPJam turns in a row. Retry in a moment.",
+        }),
+      ),
+    ).toBe("Too many Ask MCPJam turns in a row. Try again in 10s.");
+  });
+
+  it("reads a burst throttle out of a nested envelope", () => {
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "UPSTREAM",
+          details: {
+            body: {
+              code: "agent_turn_limit",
+              gatedBy: "burst",
+              retryAfterMs: 4200,
+            },
+          },
+        }),
+      ),
+    ).toBe("Too many Ask MCPJam turns in a row. Try again in 5s.");
+  });
+
+  it("reads a burst throttle out of a body that is not JSON at all", () => {
+    expect(
+      describeAgentRefusalMessage(
+        'HTTP 429: {"code":"agent_turn_limit","gatedBy":"burst"',
+      ),
+    ).toBe("Too many Ask MCPJam turns in a row. Try again in a moment.");
+  });
+
+  it("still sends the DAILY cap to midnight", () => {
+    // The distinction has to cut both ways, or the fix just moves the bug.
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "agent_turn_limit",
+          gatedBy: "user",
+          retryAfterMs: 3600000,
+        }),
+      ),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+    // And a body that names no `gatedBy` keeps the daily wording it had.
+    expect(
+      describeAgentRefusalMessage(JSON.stringify({ code: "agent_turn_limit" })),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+  });
+
+  it("rounds a sub-second wait up rather than saying 0s", () => {
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "agent_turn_limit",
+          gatedBy: "burst",
+          retryAfterMs: 120,
+        }),
+      ),
+    ).toBe("Too many Ask MCPJam turns in a row. Try again in 1s.");
+  });
+
+  it("does not read the word burst out of ordinary prose", () => {
+    // The substring fallback matches a quoted key/value pair, not the word, so
+    // a daily refusal that happens to mention it keeps the midnight copy.
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "agent_turn_limit",
+          gatedBy: "user",
+          error: "daily limit reached after a burst of requests",
+        }),
+      ),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+  });
+
+  it("leaves anything else to the caller's own message", () => {
+    expect(describeAgentRefusalMessage(null)).toBeNull();
+    expect(
+      describeAgentRefusalMessage("MCP server closed the connection"),
+    ).toBeNull();
+    expect(
+      describeAgentRefusalMessage(JSON.stringify({ code: "user_rate_limit" })),
+    ).toBeNull();
+  });
+});
+
 describe("credit exhaustion during a run", () => {
   it.each([
     { code: "org_rate_limit" },
@@ -727,5 +897,7 @@ describe("credit exhaustion during a run", () => {
 });
 
 it("recognizes the new credit-exhaustion wording without losing recovery actions", () => {
-  expect(describeMCPJamLimitMessage("Out of MCPJam credits.")).toContain("Out of MCPJam credits.");
+  expect(describeMCPJamLimitMessage("Out of MCPJam credits.")).toContain(
+    "Out of MCPJam credits.",
+  );
 });

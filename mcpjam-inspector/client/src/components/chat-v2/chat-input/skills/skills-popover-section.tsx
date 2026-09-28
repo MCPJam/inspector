@@ -279,13 +279,13 @@ export function SkillsPopoverSection({
   }, [connectedServerSignature, projectId]);
 
   /**
-   * Injects a server skill as a synthetic `loadSkill` result.
+   * Adds a server skill to the next message, as context the user picked.
    *
    * The content is loaded through the SAME verified path the chat tool uses,
-   * and wrapped in the SAME shared banner — a popover click must produce a
-   * message the tool could genuinely have returned. A skill that fails a
-   * mandatory check is not injected at all: silently injecting unverified
-   * content would defeat every check upstream of it.
+   * and wrapped in the SAME shared banner — the model reads exactly what
+   * `loadSkill` would have returned. A skill that fails a mandatory check is
+   * not added at all: sending content that failed verification would defeat
+   * every check upstream of it.
    */
   const handleServerSkillClick = useCallback(
     async (item: ServerSkillPickerItem) => {

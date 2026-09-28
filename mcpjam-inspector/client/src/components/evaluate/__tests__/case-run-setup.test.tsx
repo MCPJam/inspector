@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CaseRunSetup } from "../case-workspace/case-run-setup";
+// The harness × model picker locks read each host's config; these tests have
+// no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: () => null,
 }));

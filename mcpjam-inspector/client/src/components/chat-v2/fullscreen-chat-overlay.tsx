@@ -35,6 +35,8 @@ import {
   isToolPart,
 } from "@/components/chat-v2/thread/thread-helpers";
 import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
+import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
+import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
 
 function extractTextFromUnknown(value: unknown): string {
@@ -125,6 +127,22 @@ function getToolEntrySignature(part: FullscreenToolPart): string {
 }
 
 function getMessageEntries(message: UIMessage): FullscreenMessageEntry[] {
+  // Context the user added shows as one line naming it, not its full text.
+  const contextBlocks = getUserContextBlocks(message);
+  if (contextBlocks) {
+    const summary = describeUserContext(contextBlocks);
+    return summary
+      ? [
+          {
+            kind: "bubble",
+            key: `${message.id ?? message.role}:context`,
+            message,
+            text: summary,
+          },
+        ]
+      : [];
+  }
+
   const parts = Array.isArray(message?.parts) ? message.parts : [];
   const entries: FullscreenMessageEntry[] = [];
   const hasTextPart = parts.some((part) => getTextPartPreview(part).length > 0);

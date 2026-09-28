@@ -77,6 +77,10 @@ describe("internal-code -> public-code mapping", () => {
     "TASKS_UNSUPPORTED",
     "SCENARIO_ACCESS_DENIED",
     "SCENARIO_ACCESS_STALE",
+    // Inspector-only, and mapped at the v1 boundary (`mapErrorToV1`) rather
+    // than in the shared table: UNAUTHORIZED + `details.reason`. Pinned in
+    // envelope.test.ts.
+    "SESSION_REVOKED",
   ];
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {

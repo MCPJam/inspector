@@ -5,7 +5,9 @@ import { MCPSidebar } from "@/components/mcp-sidebar";
 import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
 
 const { launchEngagement } = vi.hoisted(() => ({ launchEngagement: vi.fn() }));
-vi.mock("@/lib/launch-analytics", () => ({ trackLaunchEngagement: launchEngagement }));
+vi.mock("@/lib/launch-analytics", () => ({
+  trackLaunchEngagement: launchEngagement,
+}));
 
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
@@ -53,10 +55,12 @@ const mockUpdateState: {
   status: { kind: string; [key: string]: unknown };
   restartAndInstall: ReturnType<typeof vi.fn>;
   showUpdateError: ReturnType<typeof vi.fn>;
+  retryUpdate: ReturnType<typeof vi.fn>;
 } = {
   status: { kind: "idle" },
   restartAndInstall: vi.fn(),
   showUpdateError: vi.fn(),
+  retryUpdate: vi.fn(),
 };
 
 vi.mock("@/hooks/useUpdateNotification", () => ({
@@ -65,6 +69,7 @@ vi.mock("@/hooks/useUpdateNotification", () => ({
     restartRequested: false,
     restartAndInstall: mockUpdateState.restartAndInstall,
     showUpdateError: mockUpdateState.showUpdateError,
+    retryUpdate: mockUpdateState.retryUpdate,
     simulateUpdate: vi.fn(),
   }),
 }));
@@ -109,7 +114,8 @@ vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
-  Sidebar: ({ children }: { children: ReactNode }) => sidebarHidden ? null : <div>{children}</div>,
+  Sidebar: ({ children }: { children: ReactNode }) =>
+    sidebarHidden ? null : <div>{children}</div>,
   SidebarContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -242,56 +248,97 @@ describe("sidebar invite CTA", () => {
 
   it("shows the launch announcement to signed-in users and guests", () => {
     const { unmount } = renderSidebar();
-    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Platform launch" }),
+    ).toBeInTheDocument();
     unmount();
-    mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
     mockUseAuth.mockReturnValue({ user: null });
     renderSidebar();
-    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Platform launch" }),
+    ).toBeInTheDocument();
   });
 
   it("classifies authenticated anonymous Convex sessions as guests", () => {
     launchEngagement.mockClear();
     mockUseAuth.mockReturnValue({ user: null, isLoading: false });
-    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
     renderSidebar();
-    fireEvent.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
-    expect(launchEngagement).toHaveBeenCalledWith(expect.objectContaining({ action: "opened", audience: "guest" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
+    expect(launchEngagement).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "opened", audience: "guest" }),
+    );
   });
 
   it("waits for auth resolution before showing the announcement", () => {
     mockUseAuth.mockReturnValue({ user: null, isLoading: true });
     const view = renderSidebar();
-    expect(screen.queryByRole("region", { name: "Platform launch" })).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Platform launch" }),
+    ).toBeNull();
     view.unmount();
     mockUseAuth.mockReturnValue({ user: { id: "owner" }, isLoading: false });
-    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
     renderSidebar();
-    expect(screen.getByRole("region", { name: "Platform launch" })).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Platform launch" }),
+    ).toBeVisible();
   });
 
   it("shows the announcement when the mobile sidebar subtree is unmounted", () => {
     sidebarHidden = true;
     try {
       renderSidebar();
-      expect(screen.getByRole("region", { name: "Platform launch" })).toBeVisible();
-    } finally { sidebarHidden = false; }
+      expect(
+        screen.getByRole("region", { name: "Platform launch" }),
+      ).toBeVisible();
+    } finally {
+      sidebarHidden = false;
+    }
   });
 
   it("keeps guest launch history after signing in", () => {
-    mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
     mockUseAuth.mockReturnValue({ user: null });
     const guest = renderSidebar();
-    fireEvent.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
     guest.unmount();
 
-    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
-    mockUseAuth.mockReturnValue({ user: { id: "owner", email: "owner@example.com" } });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { id: "owner", email: "owner@example.com" },
+    });
     renderSidebar();
-    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
-    expect(localStorage.getItem("mcpjam:platform-launch-2026-09:status")).toBe("seen");
+    expect(
+      screen.getByRole("region", { name: "Platform launch" }),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem("mcpjam:platform-launch-2026-09:status")).toBe(
+      "seen",
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Learn more about the new MCPJam" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    ).toBeInTheDocument();
   });
 
   it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {
@@ -538,19 +585,23 @@ describe("sidebar update pill", () => {
     });
   });
 
-  it("offers an in-app install while a download is genuinely running", () => {
+  it("does not offer installation before a download finishes", () => {
     mockUpdateState.status = { kind: "pending", installRequested: false };
 
     renderSidebar();
 
-    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    fireEvent.click(screen.getByRole("button", { name: "Downloading…" }));
 
-    expect(mockUpdateState.restartAndInstall).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
     expect(mockUpdateState.showUpdateError).not.toHaveBeenCalled();
   });
 
   it("reopens the failure message instead of sending the user to GitHub", () => {
-    mockUpdateState.status = { kind: "failed", version: "3.5.2" };
+    mockUpdateState.status = {
+      kind: "failed",
+      version: "3.5.2",
+      action: "instructions",
+    };
 
     renderSidebar();
 
@@ -570,8 +621,38 @@ describe("sidebar update recovery", () => {
     const button = screen.getByRole("button", {
       name: "Restarting to retry update…",
     });
-    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
+  });
+});
+
+describe("sidebar download actions", () => {
+  it.each([
+    ["retry-download", "Retry download"],
+    ["relaunch-retry", "Relaunch to retry"],
+  ])("offers %s", (action, label) => {
+    vi.clearAllMocks();
+    mockUpdateState.status = { kind: "failed", action };
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect(mockUpdateState.retryUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
+  });
+  it("offers relaunch only when the download is ready", () => {
+    vi.clearAllMocks();
+    mockUpdateState.status = { kind: "downloaded", version: "3.12.0" };
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Relaunch to update" }));
+    expect(mockUpdateState.restartAndInstall).toHaveBeenCalledTimes(1);
+  });
+  it("disables clicks during automatic retry backoff", () => {
+    vi.clearAllMocks();
+    mockUpdateState.status = { kind: "retry-waiting", retry: 1 };
+    renderSidebar();
+    const button = screen.getByRole("button", { name: "Retrying download…" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(mockUpdateState.retryUpdate).not.toHaveBeenCalled();
   });
 });

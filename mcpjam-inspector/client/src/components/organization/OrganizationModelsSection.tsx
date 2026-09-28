@@ -54,14 +54,25 @@ import {
 // Provider catalog -- defines known providers and their configuration fields
 // ---------------------------------------------------------------------------
 
+// "api-key-models": an OpenAI-compatible provider the backend reaches at a
+// fixed base URL (Moonshot, Z.ai, Qwen, MiniMax). The admin supplies a key and
+// the model ids to offer, since no static list covers them.
 type ProviderKind =
-  "api-key-only" | "azure" | "bedrock" | "ollama" | "openrouter" | "custom";
+  | "api-key-only"
+  | "api-key-models"
+  | "azure"
+  | "bedrock"
+  | "ollama"
+  | "openrouter"
+  | "custom";
 
 interface ProviderCatalogEntry {
   key: string;
   name: string;
   kind: ProviderKind;
   logo?: string;
+  /** Example model ids for an "api-key-models" provider's field. */
+  modelIdsPlaceholder?: string;
 }
 
 const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -96,6 +107,34 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     logo: "/mistral_logo.png",
   },
   { key: "xai", name: "xAI", kind: "api-key-only", logo: "/xai_logo.png" },
+  {
+    key: "moonshotai",
+    name: "Moonshot AI",
+    kind: "api-key-models",
+    logo: "/moonshot_light.png",
+    modelIdsPlaceholder: "kimi-k2-0905-preview",
+  },
+  {
+    key: "z-ai",
+    name: "Z.ai",
+    kind: "api-key-models",
+    logo: "/z-ai.png",
+    modelIdsPlaceholder: "glm-4.6",
+  },
+  {
+    key: "qwen",
+    name: "Qwen",
+    kind: "api-key-models",
+    logo: "/qwen_logo.png",
+    modelIdsPlaceholder: "qwen-plus",
+  },
+  {
+    key: "minimax",
+    name: "MiniMax",
+    kind: "api-key-models",
+    logo: "/minimax_logo.svg",
+    modelIdsPlaceholder: "MiniMax-M2",
+  },
   {
     key: "azure",
     name: "Azure OpenAI",
@@ -718,12 +757,16 @@ function KnownProviderConfigDialog({
     secret?: string;
     baseUrl?: string;
     selectedModels?: string[];
+    modelIds?: string[];
   }) => Promise<void>;
   onCancel: () => void;
 }) {
   const [secret, setSecret] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState("");
+  // Azure deployment names, Ollama model names, and the model ids of an
+  // "api-key-models" provider. All stored as the provider's `modelIds`.
+  const [modelIds, setModelIds] = useState("");
 
   // Reset fields when dialog opens
   useEffect(() => {
@@ -735,6 +778,7 @@ function KnownProviderConfigDialog({
           : (existing?.baseUrl ?? ""),
       );
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
+      setModelIds(existing?.modelIds?.join(", ") ?? "");
     }
   }, [open, existing, kind]);
 
@@ -746,11 +790,13 @@ function KnownProviderConfigDialog({
     open &&
       (!!secret ||
         baseUrl !== storedBaseUrl ||
-        selectedModels !== (existing?.selectedModels?.join(", ") ?? "")),
+        selectedModels !== (existing?.selectedModels?.join(", ") ?? "") ||
+        modelIds !== (existing?.modelIds?.join(", ") ?? "")),
     () => {
       setSecret("");
       setBaseUrl(storedBaseUrl);
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
+      setModelIds(existing?.modelIds?.join(", ") ?? "");
       onCancel();
     },
     open && isSaving,
@@ -764,6 +810,12 @@ function KnownProviderConfigDialog({
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const parsedModelIds = modelIds
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const takesModelIds =
+    kind === "azure" || kind === "ollama" || kind === "api-key-models";
 
   const handleSave = () => {
     const args: Parameters<typeof onSave>[0] = { providerKey };
@@ -780,6 +832,9 @@ function KnownProviderConfigDialog({
     ) {
       args.selectedModels = parsedSelectedModels;
     }
+    if (takesModelIds && parsedModelIds.length > 0) {
+      args.modelIds = parsedModelIds;
+    }
     void onSave(args);
   };
 
@@ -787,8 +842,16 @@ function KnownProviderConfigDialog({
     switch (kind) {
       case "api-key-only":
         return !!secret.trim() || existing?.hasSecret;
+      case "api-key-models":
+        return (
+          (!!secret.trim() || existing?.hasSecret) && parsedModelIds.length > 0
+        );
       case "azure":
-        return (!!secret.trim() || existing?.hasSecret) && !!baseUrl.trim();
+        return (
+          (!!secret.trim() || existing?.hasSecret) &&
+          !!baseUrl.trim() &&
+          parsedModelIds.length > 0
+        );
       case "bedrock":
         return (
           (!!secret.trim() || existing?.hasSecret) &&
@@ -796,7 +859,7 @@ function KnownProviderConfigDialog({
           parsedSelectedModels.length > 0
         );
       case "ollama":
-        return !!baseUrl.trim();
+        return !!baseUrl.trim() && parsedModelIds.length > 0;
       case "openrouter":
         return (
           (!!secret.trim() || existing?.hasSecret) &&
@@ -894,6 +957,45 @@ function KnownProviderConfigDialog({
                 Region of the Bedrock runtime endpoint. Paste a full URL instead
                 to use a custom endpoint.
               </p>
+            </div>
+          ) : null}
+
+          {/* Model ids -- azure deployments, ollama models, api-key-models */}
+          {takesModelIds ? (
+            <div>
+              <label
+                htmlFor="org-provider-model-ids"
+                className="text-sm font-medium"
+              >
+                {kind === "azure" ? "Deployment Names" : "Model Names"}{" "}
+                <span className="text-muted-foreground font-normal">
+                  (comma-separated)
+                </span>
+              </label>
+              <Input
+                id="org-provider-model-ids"
+                type="text"
+                value={modelIds}
+                onChange={(e) => setModelIds(e.target.value)}
+                placeholder={
+                  kind === "azure"
+                    ? "prod-gpt-5-1, eval-gpt-5-mini"
+                    : kind === "ollama"
+                      ? "llama3.2:latest, qwen3:8b"
+                      : (catalogEntry?.modelIdsPlaceholder ?? "")
+                }
+                className="mt-1"
+              />
+              {kind === "azure" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  The deployment names you created on this Azure OpenAI
+                  resource. Requests run on the deployment you pick.
+                </p>
+              ) : kind === "api-key-models" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  The model ids to offer, as {name} names them in its API.
+                </p>
+              ) : null}
             </div>
           ) : null}
 

@@ -15,6 +15,7 @@ import {
 } from "../../utils/error-origin-capture.js";
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
+import { internalErrorResponseView } from "./hosted-internal-error.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -99,6 +100,12 @@ export const ErrorCode = {
   // re-authenticating with MCPJam will not change the outcome — the user has
   // to reconnect the upstream server.
   UPSTREAM_AUTH_FAILED: "UPSTREAM_AUTH_FAILED",
+  // The caller's AuthKit session has been revoked (signed out, or ended by the
+  // identity provider) — 401, and signing in again is the only remedy (MJ-011).
+  // Publicly it collapses onto UNAUTHORIZED with `details.reason:
+  // "SESSION_REVOKED"`, the v1 convention for a specific 401; the mapping sits
+  // in `routes/v1/envelope.ts` beside UPSTREAM_AUTH_FAILED's.
+  SESSION_REVOKED: "SESSION_REVOKED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -240,13 +247,21 @@ export function webError(
       ...(hop ? { hop } : {}),
     });
   }
+  // A hosted 500 INTERNAL_ERROR answers with a generic sentence and the
+  // request id (MJ-020, MJ-021). The message stashed above is what the request
+  // log keeps.
+  const view = internalErrorResponseView(c, status, code, {
+    message,
+    details,
+    normalized,
+  });
   return c.json(
     {
       ...restExtras,
       code,
-      message,
-      ...(details ? { details } : {}),
-      ...(normalized ? { normalized } : {}),
+      message: view.message,
+      ...(view.details ? { details: view.details } : {}),
+      ...(view.normalized ? { normalized: view.normalized } : {}),
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
     },
     status,

@@ -733,3 +733,122 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
     expect(config.predicates).toEqual([TOOL_CALLED_WITH]);
   });
 });
+
+describe.each([
+  { type: "toolInputMatches", unit: "call" },
+  { type: "toolResultMatches", unit: "result" },
+] as const)("a negative case and $type", ({ type, unit }) => {
+  const MATCH = {
+    type,
+    toolName: "t",
+    patterns: ["Idea"],
+  };
+
+  it("refuses the default min (1) as a step assertion", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [
+            { id: "s1", kind: "prompt", prompt: "go" },
+            { id: "s2", kind: "assert", assertion: MATCH },
+          ],
+        })
+      )
+    ).toThrow(new RegExp(`negative case.*${type} with min ≥ 1 at step 1`, "s"));
+  });
+
+  it("refuses an explicit min ≥ 1 inherited from the suite", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...MATCH, min: 2 }] }
+      )
+    ).toThrow(
+      new RegExp(
+        `negative case.*${type} check with min ≥ 1.*"no ${unit} matches"`,
+        "s"
+      )
+    );
+  });
+
+  // An advisory check can only warn, so it never contradicts a negative case,
+  // whichever of the three routes it arrives by.
+  const ADVISORY = { ...MATCH, role: "advisory", severity: "warn" };
+
+  it("loads an advisory check as a step assertion", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: ADVISORY },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it("loads an advisory check arriving as a case-level check", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        checks: { mode: "replace", list: [ADVISORY] },
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it("loads an advisory check inherited from the suite", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+      }),
+      { suiteChecks: [ADVISORY] }
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it('still refuses role: "required", the other spelling of gating', () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...MATCH, role: "required" }] }
+      )
+    ).toThrow(new RegExp(`negative case.*${type} check with min ≥ 1`, "s"));
+  });
+
+  it('allows min: 0, max: 0 — "none matches" is compatible', () => {
+    const none = { ...MATCH, min: 0, max: 0 };
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: none },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([none]);
+  });
+
+  it("allows a positive case to carry the default", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: MATCH },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([MATCH]);
+  });
+});

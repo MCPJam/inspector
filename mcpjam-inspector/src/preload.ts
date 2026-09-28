@@ -96,6 +96,8 @@ interface ElectronAPI {
     removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
+    retryDownload: () => void;
+    relaunchToRetry: () => void;
     simulateUpdate?: () => void; // Dev only - for testing
     simulateUpdateDownloaded?: () => void; // Dev only - for testing
     simulateUpdateError?: () => void; // Dev only - for testing
@@ -104,7 +106,9 @@ interface ElectronAPI {
 
 // Expose protected methods that allow the renderer process to use
 const electronAPI: ElectronAPI = {
-  diagnostics: { record: activity => ipcRenderer.send("desktop:diagnostic", activity) },
+  diagnostics: {
+    record: (activity) => ipcRenderer.send("desktop:diagnostic", activity),
+  },
   app: {
     getVersion: () => ipcRenderer.invoke("app:version"),
     getPlatform: () => ipcRenderer.invoke("app:platform"),
@@ -172,6 +176,8 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.removeAllListeners("update-error");
     },
     getUpdateStatus: () => ipcRenderer.invoke("app:get-update-status"),
+    retryDownload: () => ipcRenderer.send("app:retry-update-download"),
+    relaunchToRetry: () => ipcRenderer.send("app:relaunch-update-download"),
     restartAndInstall: () => {
       ipcRenderer.send("app:restart-for-update");
     },

@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
+import { useConvexBlobUpload } from "./use-convex-blob-upload";
 
 /**
  * The query has not run YET — as opposed to having run and found nothing.
@@ -183,15 +184,20 @@ export function useViewMutations() {
   const createMcpView = useMutation("mcpAppViews:create" as any);
   const updateMcpView = useMutation("mcpAppViews:update" as any);
   const removeMcpView = useMutation("mcpAppViews:remove" as any);
-  const generateMcpUploadUrl = useMutation(
-    "mcpAppViews:generateUploadUrl" as any,
+  const upload = useConvexBlobUpload();
+  // A view's cached blobs go through the backend's upload route (MJ-006); the
+  // storage id it returns is what `create`/`update` take.
+  const uploadMcpViewBlob = useCallback(
+    (body: Blob | string, contentType: string) =>
+      upload({ purpose: "mcp-app-view" }, body, contentType),
+    [upload],
   );
 
   return {
     createMcpView,
     updateMcpView,
     removeMcpView,
-    generateMcpUploadUrl,
+    uploadMcpViewBlob,
   };
 }
 

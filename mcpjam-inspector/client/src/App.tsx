@@ -42,7 +42,9 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
   shouldQueryProjectId,
+  useCanManageProjectClients,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -1062,6 +1064,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const { canManage: canCreateHost, isLoading: roleLoading } =
+    useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
   const cursorCliEnabled = useCursorHostEnabledState();
@@ -1148,6 +1152,16 @@ function useTemplateVerifyDeepLink({
       toast.error(`${template.label} is not available yet.`);
       return;
     }
+    // Creating a client is project-admin only. A member or guest following a
+    // caniuse link to a client the project doesn't have yet is told so,
+    // instead of firing a create the backend refuses.
+    if (roleLoading) return;
+    if (!canCreateHost) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE);
+      return;
+    }
 
     handledRef.current = true;
 
@@ -1187,6 +1201,8 @@ function useTemplateVerifyDeepLink({
     codexEnabled,
     cursorCliEnabled,
     flagWaitExpired,
+    roleLoading,
+    canCreateHost,
     themeMode,
     createHost,
     navigate,
@@ -2582,7 +2598,6 @@ export function OrganizationsRoute({
     routeOrganizationSection,
     checkoutIntentForBilling,
     consumeCheckoutIntent,
-    handleCheckoutIntentNavigationStarted,
     handleOrganizationDeleted,
   } = useAppRouteContext();
 
@@ -2598,7 +2613,6 @@ export function OrganizationsRoute({
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
-      onCheckoutIntentNavigationStarted={handleCheckoutIntentNavigationStarted}
       onOrganizationDeleted={handleOrganizationDeleted}
     />
   );
@@ -4687,11 +4701,7 @@ export default function App() {
     billingSignInStartedRef.current = false;
   }, []);
 
-  const handleCheckoutIntentNavigationStarted = useCallback(() => {
-    consumeCheckoutIntent();
-  }, [consumeCheckoutIntent]);
-
-  // `/billing?plan=&interval=` → auth (if needed) → org billing path → auto-checkout when intent is valid.
+  // `/billing?plan=&interval=` → auth (if needed) → org plans path → plan confirmation when intent is valid.
   useEffect(() => {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
@@ -4799,7 +4809,7 @@ export default function App() {
 
     if (
       routeOrganizationId === orgId &&
-      routeOrganizationSection === "billing"
+      routeOrganizationSection === "plans"
     ) {
       return;
     }
@@ -4807,7 +4817,7 @@ export default function App() {
     // The current route is the retry guard. If another redirect wins after
     // this navigation, the changed route reruns the effect and resumes the
     // handoff instead of leaving a lifetime ref latched until reload.
-    navigate(buildOrganizationPath(orgId, "billing"), { replace: true });
+    navigate(buildOrganizationPath(orgId, "plans"), { replace: true });
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
@@ -5282,7 +5292,7 @@ export default function App() {
         !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
-        routeOrganizationSection !== "billing" ||
+        routeOrganizationSection !== "plans" ||
         !pendingCheckoutIntent
       ) {
         return null;
@@ -5602,7 +5612,6 @@ export default function App() {
     evalChatHandoff,
     firstRunPlaygroundPrompt,
     suspendRouteAutoConnect: shouldShowFirstRunOverlay,
-    handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
     handleContinueEvalInChat,

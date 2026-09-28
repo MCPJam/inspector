@@ -3,14 +3,11 @@ import { act, renderHook } from "@testing-library/react";
 import { useSharedChatWidgetCapture } from "../useSharedChatWidgetCapture";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
-const mockGenerateSnapshotUploadUrl = vi.fn();
 const mockCreateWidgetSnapshot = vi.fn();
+const mockGetConvexAccessToken = vi.fn();
 
 vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
-    if (name === "chatSessions:generateSnapshotUploadUrl") {
-      return mockGenerateSnapshotUploadUrl;
-    }
     if (name === "chatSessions:createWidgetSnapshot") {
       return mockCreateWidgetSnapshot;
     }
@@ -18,7 +15,45 @@ vi.mock("convex/react", () => ({
   },
 }));
 
+// Snapshot bytes go to the backend's upload route as the current actor.
+vi.mock("@/lib/convex-site-url", () => ({
+  getConvexSiteUrl: () => "https://demo.convex.site",
+}));
+vi.mock("@/hooks/use-convex-access-token", () => ({
+  useConvexAccessToken: () => mockGetConvexAccessToken,
+}));
+
 const originalFetch = global.fetch;
+
+function refusedUpload(
+  status: number,
+  code: string,
+  extra: Record<string, unknown> = {},
+) {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      code,
+      error: "The upload was refused.",
+      ...extra,
+    }),
+    { status, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+/** How the upload route answers a scenario grant whose version moved. */
+function staleGrantUpload() {
+  return refusedUpload(403, "FORBIDDEN", {
+    reason: "scenario_access_stale",
+    currentAccessVersion: 7,
+  });
+}
+
+function uploadCalls() {
+  return vi.mocked(global.fetch).mock.calls as unknown as Array<
+    [string, RequestInit]
+  >;
+}
 
 async function flushMicrotasks() {
   await act(async () => {
@@ -34,16 +69,13 @@ describe("useSharedChatWidgetCapture", () => {
     useWidgetDebugStore.setState({ widgets: new Map() });
 
     let uploadCounter = 0;
-    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
-      uploadCounter += 1;
-      return `https://upload.example.com/${uploadCounter}`;
-    });
+    mockGetConvexAccessToken.mockResolvedValue("bearer-1");
     mockCreateWidgetSnapshot.mockResolvedValue("snapshot-1");
 
     global.fetch = vi.fn(async () => {
       uploadCounter += 1;
       return new Response(
-        JSON.stringify({ storageId: `blob-${uploadCounter}` }),
+        JSON.stringify({ ok: true, storageId: `blob-${uploadCounter}` }),
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -129,8 +161,25 @@ describe("useSharedChatWidgetCapture", () => {
     await flushMicrotasks();
 
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
     expect(global.fetch).toHaveBeenCalledTimes(3);
+    // Every blob goes to the upload route, scoped to this chat and to the
+    // redeemed scenario access, with the actor's bearer.
+    for (const [url, init] of uploadCalls()) {
+      const parsed = new URL(url);
+      expect(`${parsed.origin}${parsed.pathname}`).toBe(
+        "https://demo.convex.site/web/uploads/blob",
+      );
+      expect(Object.fromEntries(parsed.searchParams)).toEqual({
+        purpose: "widget-snapshot",
+        chatSessionId: "chat-session-1",
+        scenarioId: "cbx_1",
+        accessVersion: "1",
+      });
+      expect(init.method).toBe("POST");
+      expect(init.headers).toMatchObject({
+        Authorization: "Bearer bearer-1",
+      });
+    }
     // Widget HTML is uploaded as text so storage never serves it as a page;
     // the tool payloads stay JSON.
     const uploadedTypes = vi
@@ -239,7 +288,7 @@ describe("useSharedChatWidgetCapture", () => {
 
     await flushMicrotasks();
 
-    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
     expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
 
     rerender({ readyToPersist: true });
@@ -251,7 +300,7 @@ describe("useSharedChatWidgetCapture", () => {
     await flushMicrotasks();
 
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
 
     unmount();
   });
@@ -329,7 +378,6 @@ describe("useSharedChatWidgetCapture", () => {
 
       // Retry reuses cached blobs — no new uploads
       expect(global.fetch).toHaveBeenCalledTimes(uploadsAfterFirstAttempt);
-      expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
 
       // Same blob IDs should be passed on the retry
       const firstCall = mockCreateWidgetSnapshot.mock.calls[0][0];
@@ -523,15 +571,7 @@ describe("useSharedChatWidgetCapture", () => {
 
   it("requests a hosted-access refresh on scenario_access_stale and skips the local retry", async () => {
     const onStaleHostedAccess = vi.fn();
-    class StaleError extends Error {
-      data: { code: string; currentAccessVersion: number };
-      constructor() {
-        super("Scenario access version is stale; client must re-redeem.");
-        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
-      }
-    }
-    mockGenerateSnapshotUploadUrl.mockReset();
-    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+    global.fetch = vi.fn(async () => staleGrantUpload()) as typeof fetch;
 
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({
@@ -585,14 +625,13 @@ describe("useSharedChatWidgetCapture", () => {
     // One initial upload flight (three concurrent uploadBlob calls, one
     // per blob) — Promise.all rejects on the first stale error and
     // suppresses the local snapshot-retry path.
-    const generateCallsAfterFlight =
-      mockGenerateSnapshotUploadUrl.mock.calls.length;
+    const generateCallsAfterFlight = uploadCalls().length;
     expect(generateCallsAfterFlight).toBeGreaterThanOrEqual(1);
     expect(onStaleHostedAccess).toHaveBeenCalled();
     expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
 
-    // No local *snapshot* retry should be scheduled — the
-    // `generateSnapshotUploadUrl` call count must stay flat even as the
+    // No local *snapshot* retry should be scheduled — the upload call
+    // count must stay flat even as the
     // refresh-backoff timer fires repeatedly. (The refresh callback
     // itself is allowed to be re-invoked on a bounded backoff; that
     // behaviour is covered by a dedicated test.)
@@ -602,9 +641,7 @@ describe("useSharedChatWidgetCapture", () => {
 
     await flushMicrotasks();
 
-    expect(mockGenerateSnapshotUploadUrl.mock.calls.length).toBe(
-      generateCallsAfterFlight,
-    );
+    expect(uploadCalls().length).toBe(generateCallsAfterFlight);
 
     unmount();
   });
@@ -615,15 +652,7 @@ describe("useSharedChatWidgetCapture", () => {
     // onStaleHostedAccess on subsequent stale errors instead of latching
     // permanently.
     const onStaleHostedAccess = vi.fn();
-    class StaleError extends Error {
-      data: { code: string; currentAccessVersion: number };
-      constructor() {
-        super("Scenario access version is stale; client must re-redeem.");
-        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
-      }
-    }
-    mockGenerateSnapshotUploadUrl.mockReset();
-    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+    global.fetch = vi.fn(async () => staleGrantUpload()) as typeof fetch;
 
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({
@@ -719,15 +748,7 @@ describe("useSharedChatWidgetCapture", () => {
     // retry the refresh on a bounded backoff so the parent gets another
     // chance.
     const onStaleHostedAccess = vi.fn();
-    class StaleError extends Error {
-      data: { code: string; currentAccessVersion: number };
-      constructor() {
-        super("Scenario access version is stale; client must re-redeem.");
-        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
-      }
-    }
-    mockGenerateSnapshotUploadUrl.mockReset();
-    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+    global.fetch = vi.fn(async () => staleGrantUpload()) as typeof fetch;
 
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({
@@ -916,20 +937,12 @@ describe("useSharedChatWidgetCapture", () => {
 
   it("replays stale-failed snapshots when a fresh accessVersion arrives", async () => {
     const onStaleHostedAccess = vi.fn();
-    class StaleError extends Error {
-      data: { code: string; currentAccessVersion: number };
-      constructor() {
-        super("Scenario access version is stale; client must re-redeem.");
-        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
-      }
-    }
 
     let uploadCounter = 0;
-    mockGenerateSnapshotUploadUrl.mockReset();
-    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
+    global.fetch = vi.fn(async () => {
       uploadCounter += 1;
-      throw new StaleError();
-    });
+      return staleGrantUpload();
+    }) as typeof fetch;
 
     const { rerender, unmount } = renderHook(
       ({ hostedAccessVersion }: { hostedAccessVersion: number }) =>
@@ -981,26 +994,26 @@ describe("useSharedChatWidgetCapture", () => {
     });
 
     await flushMicrotasks();
-    const generateCallsAfterFirstFlight =
-      mockGenerateSnapshotUploadUrl.mock.calls.length;
+    const generateCallsAfterFirstFlight = uploadCalls().length;
     expect(generateCallsAfterFirstFlight).toBeGreaterThanOrEqual(1);
     expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
     expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
 
     // Parent's silent re-redeem hands back a fresh accessVersion. Swap the
     // mock to resolve so the replay actually succeeds end-to-end.
-    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
+    vi.mocked(global.fetch).mockImplementation(async () => {
       uploadCounter += 1;
-      return `https://upload.example.com/${uploadCounter}`;
+      return new Response(
+        JSON.stringify({ ok: true, storageId: `blob-${uploadCounter}` }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
     });
 
     rerender({ hostedAccessVersion: 2 });
 
     await flushMicrotasks();
 
-    expect(mockGenerateSnapshotUploadUrl.mock.calls.length).toBeGreaterThan(
-      generateCallsAfterFirstFlight,
-    );
+    expect(uploadCalls().length).toBeGreaterThan(generateCallsAfterFirstFlight);
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
     expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
       scenarioId: "cbx_1",
@@ -1008,6 +1021,9 @@ describe("useSharedChatWidgetCapture", () => {
       chatSessionId: "chat-session-replay",
       toolCallId: "call-replay",
     });
+    // The replayed uploads carry the fresh access version too.
+    const [replayUrl] = uploadCalls()[uploadCalls().length - 1]!;
+    expect(new URL(replayUrl).searchParams.get("accessVersion")).toBe("2");
 
     unmount();
   });
@@ -1066,9 +1082,185 @@ describe("useSharedChatWidgetCapture", () => {
 
     await flushMicrotasks();
 
-    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
     expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
 
     unmount();
+  });
+  describe("upload route answers", () => {
+    function renderWithOneWidget(options: {
+      hostedScenarioId?: string;
+      onStaleHostedAccess?: () => void;
+    }) {
+      const hook = renderHook(() =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: "chat-direct",
+          ...(options.hostedScenarioId
+            ? {
+                hostedScenarioId: options.hostedScenarioId,
+                hostedAccessVersion: 1,
+              }
+            : {}),
+          onStaleHostedAccess: options.onStaleHostedAccess,
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-1",
+                  input: { q: "hello" },
+                  output: { result: "world", _serverId: "server-1" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      );
+      act(() => {
+        useWidgetDebugStore.setState({
+          widgets: new Map([
+            [
+              "call-1",
+              {
+                toolCallId: "call-1",
+                toolName: "search",
+                protocol: "mcp-apps",
+                widgetState: null,
+                globals: { theme: "dark", displayMode: "inline" },
+                widgetHtml: "<div>Widget</div>",
+                updatedAt: Date.now(),
+              },
+            ],
+          ]),
+        });
+      });
+      return hook;
+    }
+
+    async function settle(ms: number) {
+      act(() => {
+        vi.advanceTimersByTime(ms);
+      });
+      await flushMicrotasks();
+    }
+
+    it("scopes a direct chat's uploads to the chat alone", async () => {
+      const { unmount } = renderWithOneWidget({});
+      await settle(500);
+
+      expect(uploadCalls()).toHaveLength(3);
+      for (const [url] of uploadCalls()) {
+        expect(Object.fromEntries(new URL(url).searchParams)).toEqual({
+          purpose: "widget-snapshot",
+          chatSessionId: "chat-direct",
+        });
+      }
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
+        chatSessionId: "chat-direct",
+        widgetHtmlBlobId: expect.stringMatching(/^blob-/),
+      });
+      expect(mockCreateWidgetSnapshot.mock.calls[0][0]).not.toHaveProperty(
+        "scenarioId",
+      );
+      unmount();
+    });
+
+    it("treats a refused direct-chat upload as final", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const onStaleHostedAccess = vi.fn();
+      global.fetch = vi.fn(async () =>
+        refusedUpload(403, "FORBIDDEN"),
+      ) as typeof fetch;
+
+      const { unmount } = renderWithOneWidget({ onStaleHostedAccess });
+      await settle(500);
+      const uploadsAfterFirstAttempt = uploadCalls().length;
+      await settle(60_000);
+
+      expect(uploadsAfterFirstAttempt).toBeGreaterThanOrEqual(1);
+      expect(uploadCalls()).toHaveLength(uploadsAfterFirstAttempt);
+      expect(onStaleHostedAccess).not.toHaveBeenCalled();
+      expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+      unmount();
+      warn.mockRestore();
+    });
+
+    it.each([
+      [403, "FORBIDDEN"],
+      [413, "PAYLOAD_TOO_LARGE"],
+      [415, "UNSUPPORTED_MEDIA_TYPE"],
+    ])(
+      "gives up on a %i without a refresh or a local retry",
+      async (status, code) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const onStaleHostedAccess = vi.fn();
+        global.fetch = vi.fn(async () =>
+          refusedUpload(status, code),
+        ) as typeof fetch;
+
+        const { unmount } = renderWithOneWidget({
+          hostedScenarioId: "cbx_1",
+          onStaleHostedAccess,
+        });
+        await settle(500);
+        const uploadsAfterFirstAttempt = uploadCalls().length;
+        await settle(60_000);
+
+        expect(uploadCalls()).toHaveLength(uploadsAfterFirstAttempt);
+        expect(onStaleHostedAccess).not.toHaveBeenCalled();
+        expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+        unmount();
+        warn.mockRestore();
+      },
+    );
+
+    it.each([
+      [401, "UNAUTHORIZED"],
+      [429, "RATE_LIMITED"],
+    ])(
+      "retries a %i on the bounded backoff, then gives up",
+      async (status, code) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const onStaleHostedAccess = vi.fn();
+        global.fetch = vi.fn(async () =>
+          refusedUpload(status, code),
+        ) as typeof fetch;
+
+        const { unmount } = renderWithOneWidget({
+          hostedScenarioId: "cbx_1",
+          onStaleHostedAccess,
+        });
+        await settle(500);
+        for (let tick = 0; tick < 12; tick += 1) {
+          await settle(11_000);
+        }
+
+        // One attempt plus five retries, three blobs each, and a bearer
+        // resolved afresh for every upload.
+        expect(uploadCalls()).toHaveLength(18);
+        expect(mockGetConvexAccessToken).toHaveBeenCalledTimes(18);
+        expect(onStaleHostedAccess).not.toHaveBeenCalled();
+        expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+        unmount();
+        warn.mockRestore();
+      },
+    );
+
+    it("uploads nothing when no bearer resolves", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockGetConvexAccessToken.mockResolvedValue(null);
+
+      const { unmount } = renderWithOneWidget({});
+      await settle(500);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+      unmount();
+      warn.mockRestore();
+    });
   });
 });

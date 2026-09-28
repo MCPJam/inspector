@@ -239,6 +239,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
       "bridge.mjs",
+      ".npmrc",
     ],
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },

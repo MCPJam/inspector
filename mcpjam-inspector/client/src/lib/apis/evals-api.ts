@@ -134,8 +134,17 @@ type RunEvalsRequest = EvalRequestWithServers & {
 
 type RunTestCaseRequest = EvalRequestWithServers & {
   testCaseId: string;
-  model: string;
-  provider: string;
+  /**
+   * Environment quick run: the server runs this environment's model, client
+   * and servers, so the request carries no `model`/`provider`, host or
+   * servers of its own (and `serverIds` is `[]`).
+   */
+  environmentId?: string;
+  /** One per target per Run click; a retried request replays. */
+  idempotencyKey?: string;
+  /** Legacy runs only. */
+  model?: string;
+  provider?: string;
   compareRunId?: string;
   skipLastMessageRunUpdate?: boolean;
   modelApiKeys?: Record<string, string>;
@@ -227,6 +236,11 @@ export type GenerationOptions = {
 
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
+  /**
+   * Generate against this environment's eval server set (its server group
+   * plus pinned plugin servers), resolved server-side; `serverIds` is `[]`.
+   */
+  environmentId?: string;
   serverAttachment?: ServerAttachmentInput;
   generationOptions?: GenerationOptions;
 };

@@ -1,0 +1,53 @@
+name: Dependency Audit
+
+on:
+  pull_request:
+    # See the note in lint.yml: `branches` filters on the PR's BASE, so a
+    # stacked PR never matches `main` and is never audited.
+    branches:
+      - main
+  push:
+    branches: [main]
+  schedule:
+    # Dependabot only reacts to new advisories against what we already have.
+    # A weekly run means the audit has a recorded cadence of its own, rather
+    # than only running when somebody happens to open a pull request.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    name: Dependency Audit
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # `npm audit` resolves package-lock.json against the registry, so this job
+      # deliberately skips `npm ci` — installing the workspace would add several
+      # minutes and change nothing about the result.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=critical
+
+      # Runs even when the gate above fails, so a red build still shows what is
+      # outstanding instead of only the advisory that tripped it. Dev-only
+      # advisories are reported here but never fail the build: they do not ship
+      # to users, and gating on them would block every unrelated pull request.
+      - name: Summarize advisories
+        if: always()
+        run: |
+          npm audit --omit=dev --json > audit-prod.json || true
+          npm audit --json > audit-all.json || true
+          node scripts/summarize-npm-audit.mjs audit-prod.json audit-all.json >> "$GITHUB_STEP_SUMMARY"

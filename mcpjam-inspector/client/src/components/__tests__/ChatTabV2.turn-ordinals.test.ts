@@ -62,13 +62,12 @@ describe("assistant prompt ordinals", () => {
     // `getPromptIndex` is what stamps `chatSessionTurnTraces.promptIndex`, and
     // `turnIdByPromptIndex` looks turns up by that number. It counts EVERY
     // user-role message with no internal-message filtering — so the client must
-    // not filter either. Injected `widget-state-*` messages are `role:
-    // "assistant"` (see `applyWidgetStateUpdates`), so they are outside this
-    // count on both sides.
+    // not filter either. A widget's state is a user-role message (see
+    // `applyWidgetStateUpdates`), so both sides count it.
     const history = [
       { role: "user", content: "first" },
       { role: "assistant", content: "a" },
-      { role: "assistant", content: "widget state" },
+      { role: "user", content: "widget state" },
       { role: "user", content: "second" },
     ] as unknown as ModelMessage[];
 
@@ -76,16 +75,15 @@ describe("assistant prompt ordinals", () => {
     const clientMap = assistantPromptIndexById([
       { id: "u1", role: "user" },
       { id: "a1", role: "assistant" },
-      { id: "widget-state-tool-1", role: "assistant" },
+      { id: "widget-state-tool-1", role: "user" },
       { id: "u2", role: "user" },
       { id: "a2", role: "assistant" },
     ]);
 
-    // The server is mid-turn-2 (ordinal 1); the response to that prompt maps to
-    // the same number on the client.
-    expect(serverOrdinal).toBe(1);
-    expect(clientMap.get("a2")).toBe(1);
-    // The injected assistant message never shifted anything.
+    // The server is on its third user message (ordinal 2); the response to
+    // that prompt maps to the same number on the client.
+    expect(serverOrdinal).toBe(2);
+    expect(clientMap.get("a2")).toBe(2);
     expect(clientMap.get("a1")).toBe(0);
   });
 });

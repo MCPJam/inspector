@@ -208,6 +208,21 @@ export class UnexpectedProbeStatusError extends Error {
   }
 }
 
+const UNEXPECTED_PROBE_STATUS_PREFIX = "MCP server returned HTTP ";
+
+/**
+ * Whether a debugger step error is the server under test answering the
+ * unauthenticated probe with a status the flow cannot continue from.
+ *
+ * The debug proxy reports its own failures separately ("Backend debug proxy
+ * error"). This prefix is only produced after that proxy successfully returns
+ * the target server's HTTP response, so consumers can keep the failure visible
+ * without filing it as an MCPJam defect.
+ */
+export function isUnexpectedProbeStatus(error: string): boolean {
+  return error.startsWith(UNEXPECTED_PROBE_STATUS_PREFIX);
+}
+
 /**
  * What the unauthenticated `initialize` probe's status means for the flow:
  * - `challenged`: treat as an auth challenge and continue discovery.
@@ -247,7 +262,9 @@ export function classifyUnauthenticatedProbe(input: {
   }
 
   const reason = input.serverMessage || input.statusText;
-  const observed = `HTTP ${input.status}${reason ? ` ${reason}` : ""}`;
+  const returned = `${UNEXPECTED_PROBE_STATUS_PREFIX}${input.status}${
+    reason ? ` ${reason}` : ""
+  }`;
   if (input.status === 403) {
     // Naming the absent header is only accurate when none arrived. A 403 that
     // does carry a challenge, for a scheme OAuth cannot use, would otherwise
@@ -256,7 +273,7 @@ export function classifyUnauthenticatedProbe(input: {
       return {
         kind: "unexpected",
         message:
-          `MCP server returned ${observed}, and its WWW-Authenticate header ` +
+          `${returned}, and its WWW-Authenticate header ` +
           "offers no Bearer challenge. MCP OAuth has nothing to discover from " +
           "without one, so the flow cannot continue against this server.",
       };
@@ -264,7 +281,7 @@ export function classifyUnauthenticatedProbe(input: {
     return {
       kind: "unexpected",
       message:
-        `MCP server returned ${observed} with no WWW-Authenticate challenge. ` +
+        `${returned} with no WWW-Authenticate challenge. ` +
         "MCP requires 401 with a WWW-Authenticate header to begin OAuth, so " +
         "there is nothing to discover from. A bare 403 usually means a proxy, " +
         "WAF, or IP allowlist rejected the request before the MCP server saw it.",
@@ -273,7 +290,7 @@ export function classifyUnauthenticatedProbe(input: {
   return {
     kind: "unexpected",
     message:
-      `MCP server returned ${observed} where MCP requires 401 Unauthorized ` +
+      `${returned} where MCP requires 401 Unauthorized ` +
       "(or 200, if the server allows anonymous access).",
   };
 }

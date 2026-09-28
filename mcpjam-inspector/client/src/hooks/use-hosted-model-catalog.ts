@@ -4,6 +4,9 @@ import {
   hostedModelDefinitionsFromSnapshot,
   hostedProviderFromCanonicalId,
   type ModelDefinition,
+  type ModelObservationKey,
+  type ModelObservations,
+  type ModelObservationStatus,
 } from "@/shared/types";
 import type { OpenRouterModel } from "@/types/model-metadata";
 
@@ -24,13 +27,15 @@ import type { OpenRouterModel } from "@/types/model-metadata";
  * models.
  */
 
-// v2 invalidates pre-un-gating caches: v1 entries persisted explicit
+// v2 invalidated pre-un-gating caches: v1 entries persisted explicit
 // `guestAllowed: false` for then-premium models, and applyGuestModelLocks reads
 // that explicit `false` as authoritative (the `?? isMCPJamGuestAllowedModel`
 // fallback only fires on null/undefined), so a stale v1 cache would keep those
-// models locked for guests despite the new un-gating. Bumping the key drops the
-// stale cache; fresh fetches and the static snapshot are both already un-gated.
-const STORAGE_KEY = "mcpjam.hostedModelCatalog.v2";
+// models locked for guests despite the new un-gating.
+// v3 drops caches written before rows carried catalog observations, release
+// dates and `supportedParametersComplete`, so the offline fallback never mixes
+// the two shapes.
+const STORAGE_KEY = "mcpjam.hostedModelCatalog.v3";
 
 export type HostedCatalogStatus = "loading" | "live" | "fallback";
 
@@ -46,7 +51,70 @@ export interface HostedModelCatalogState {
  */
 export const providerFromCanonicalId = hostedProviderFromCanonicalId;
 
-function catalogDtoToModelDefinition(dto: OpenRouterModel): ModelDefinition {
+const OBSERVATION_KEYS: readonly ModelObservationKey[] = [
+  "tools",
+  "vision",
+  "temperature",
+  "openRouterZdr",
+  "gatewayZdr",
+  "gatewayNoTraining",
+];
+
+const OBSERVATION_STATUSES: ReadonlySet<string> = new Set<ModelObservationStatus>(
+  ["supported", "unsupported", "unknown", "all", "some", "none"]
+);
+
+/**
+ * Epoch ms from a catalog timestamp. The DTO mixes seconds (`created`,
+ * `released`) and ms (`deprecated_at`), so a value below 1e11 is read as
+ * seconds (1e11 ms is 1973; 1e11 s is year 5138). Zero, negative and
+ * non-numeric values are "not reported": the legacy DTO hard-codes
+ * `created: 0`.
+ */
+export function catalogTimestampToMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value < 1e11 ? value * 1000 : value;
+}
+
+function catalogObservations(
+  raw: OpenRouterModel["observations"]
+): ModelObservations | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const observations: ModelObservations = {};
+  for (const key of OBSERVATION_KEYS) {
+    const entry = raw[key];
+    if (!entry || typeof entry !== "object") continue;
+    // An unrecognized status is not evidence of anything; leave the key
+    // absent so it reads as unknown.
+    if (typeof entry.status !== "string") continue;
+    if (!OBSERVATION_STATUSES.has(entry.status)) continue;
+    const observedAt = catalogTimestampToMs(entry.observedAt);
+    observations[key] = {
+      status: entry.status as ModelObservationStatus,
+      ...(typeof entry.source === "string" ? { source: entry.source } : {}),
+      ...(observedAt !== undefined ? { observedAt } : {}),
+    };
+  }
+  return Object.keys(observations).length > 0 ? observations : undefined;
+}
+
+/**
+ * Map one backend catalog row to a picker row. Every observation field is
+ * optional and copied only when present, so a response from a backend that
+ * predates them yields exactly the rows it did before.
+ */
+export function catalogDtoToModelDefinition(
+  dto: OpenRouterModel,
+  envelopeObservedAt?: number
+): ModelDefinition {
+  const releasedAt =
+    catalogTimestampToMs(dto.released) ?? catalogTimestampToMs(dto.created);
+  const deprecatedAt = catalogTimestampToMs(dto.deprecated_at);
+  const observations = catalogObservations(dto.observations);
+  const catalogObservedAt =
+    catalogTimestampToMs(dto.catalog_observed_at) ?? envelopeObservedAt;
   return {
     id: dto.id,
     name: dto.name || dto.id,
@@ -59,6 +127,19 @@ function catalogDtoToModelDefinition(dto: OpenRouterModel): ModelDefinition {
     ...(dto.supported_parameters?.length
       ? { supportedParameters: dto.supported_parameters }
       : {}),
+    ...(dto.supported_parameters_complete === true
+      ? { supportedParametersComplete: true }
+      : {}),
+    ...(releasedAt !== undefined ? { releasedAt } : {}),
+    ...(deprecatedAt !== undefined ? { deprecatedAt } : {}),
+    ...(observations ? { observations } : {}),
+    ...(typeof dto.free_tier_eligible === "boolean"
+      ? { freeTierEligible: dto.free_tier_eligible }
+      : {}),
+    ...(typeof dto.judge_eligible === "boolean"
+      ? { judgeEligible: dto.judge_eligible }
+      : {}),
+    ...(catalogObservedAt !== undefined ? { catalogObservedAt } : {}),
   };
 }
 
@@ -138,6 +219,7 @@ async function fetchCatalogModels(): Promise<ModelDefinition[] | null> {
     const data = (await response.json()) as {
       ok?: boolean;
       data?: OpenRouterModel[];
+      catalog_observed_at?: number | null;
     };
     // The catalog always lists every allowed model, so `ok:false` or an empty
     // array is an implausible/failed fetch, not an authoritative empty catalog.
@@ -145,7 +227,11 @@ async function fetchCatalogModels(): Promise<ModelDefinition[] | null> {
       reportDegradation("empty_or_error_payload");
       return null;
     }
-    return data.data.map(catalogDtoToModelDefinition);
+    // The observation time may ride on the envelope instead of every row.
+    const envelopeObservedAt = catalogTimestampToMs(data.catalog_observed_at);
+    return data.data.map((dto) =>
+      catalogDtoToModelDefinition(dto, envelopeObservedAt)
+    );
   } catch (error) {
     reportDegradation(
       error instanceof Error ? `threw_${error.name}` : "threw_unknown"

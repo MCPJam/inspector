@@ -259,6 +259,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "CONNECT_CANCELLED": {
+      const server = state.servers[action.name];
+      if (!server) return state;
+      return { ...state, servers: { ...state.servers, [action.name]: setStatus(server, action.wasConnected ? "connected" : "disconnected") } };
+    }
+
     case "RECONNECT_REQUEST": {
       // Check state.servers first, then fallback to project servers (for cloud-synced servers)
       // If server doesn't exist anywhere, create it (for servers from Convex remote projects)
@@ -274,7 +280,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         retryCount: 0,
         enabled: true,
       };
-      const nextServer = setStatus(baseServer, "connecting", { enabled: true });
+      const nextServer = setStatus(baseServer, action.preserveConnected && baseServer.connectionStatus === "connected" ? "connected" : "connecting", { enabled: true });
       return {
         ...state,
         servers: {

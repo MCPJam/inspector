@@ -77,6 +77,7 @@ export function ActiveHostServerReconciler({
       ? (activeHostId ?? activeHost?.id ?? null)
       : null,
     serverNames,
+    catalogLoaded: projectServersList !== undefined,
     suspendAutoConnect,
   });
 

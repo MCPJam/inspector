@@ -14,6 +14,7 @@ import { guestIpForwardHeaders } from "./guest-spend-ip.js";
  */
 
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -149,10 +150,12 @@ export async function redeemScenarioToken(args: {
     return {
       ok: false,
       status: response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Scenario redeem failed (${response.status})`,
+      error: backendFailureText({
+        source: "scenario-redeem",
+        status: response.status,
+        detail: payload?.error,
+        fallback: `Scenario redeem failed (${response.status})`,
+      }),
       ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
@@ -163,10 +166,12 @@ export async function redeemScenarioToken(args: {
     return {
       ok: false,
       status: 502,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : "Scenario redeem response was missing ok=true",
+      error: backendFailureText({
+        source: "scenario-redeem",
+        status: 502,
+        detail: payload?.error,
+        fallback: "Scenario redeem response was missing ok=true",
+      }),
     };
   }
 

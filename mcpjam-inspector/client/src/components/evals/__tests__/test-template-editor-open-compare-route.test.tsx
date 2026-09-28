@@ -64,6 +64,12 @@ const projectServersMock = vi.hoisted(() => ({
   isLoading: false,
 }));
 
+// The harness × model picker locks read each host's config; these tests have
+// no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
 }));

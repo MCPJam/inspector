@@ -41,6 +41,8 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 vi.mock("@/hooks/useProjects", () => ({
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE: "Only project admins can create clients.",
+  useCanManageProjectClients: () => ({ canManage: true, isLoading: false }),
   useProjectServers: vi.fn(() => ({
     servers: [],
     serversRecord: {},

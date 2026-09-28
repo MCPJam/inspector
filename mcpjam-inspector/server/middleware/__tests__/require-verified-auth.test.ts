@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { requireVerifiedAuth } from "../require-verified-auth.js";
 import {
   AuthKitConfigError,
   AuthKitVerificationError,
 } from "../../services/authkit-jwt.js";
+import {
+  REVOKED_SESSION_MAX_STALENESS_MS,
+  RevokedSessionCache,
+  setRevokedSessionCacheForTests,
+} from "../../services/revoked-session-cache.js";
 
 /**
  * The gate for v1 routes that never call Convex.
@@ -154,5 +159,175 @@ describe("requireVerifiedAuth", () => {
     );
 
     expect((await get(app)).status).toBe(401);
+  });
+});
+
+/**
+ * MJ-011. These routes decide on the gateway's word alone, so the session
+ * behind a verified token must be one the revoked-session list can vouch for.
+ */
+describe("requireVerifiedAuth — session revocation", () => {
+  afterEach(() => {
+    setRevokedSessionCacheForTests(undefined);
+    vi.useRealTimers();
+  });
+
+  /** A list whose scans answer `pages()` — by default, an empty final page. */
+  function listWith(
+    fetchPage: ConstructorParameters<
+      typeof RevokedSessionCache
+    >[0]["fetchPage"] = async () => ({
+      sessions: [],
+      cursor: null,
+      isDone: true,
+      watermark: 0,
+    }),
+  ) {
+    const list = new RevokedSessionCache({ fetchPage });
+    setRevokedSessionCacheForTests(list);
+    return list;
+  }
+
+  const gatewayVerified =
+    (sid?: string) => (c: { set: (k: string, v: unknown) => void }) => {
+      c.set("authMethod", "authkit_jwt");
+      c.set("workosUserId", "workos|alice");
+      if (sid) c.set("workosSessionId", sid);
+    };
+
+  it("refuses a revoked session the gateway verified, with SESSION_REVOKED", async () => {
+    const list = listWith();
+    await list.scan();
+    list.markRevokedLocally("session_1");
+    const verify = vi.fn();
+
+    const res = await get(appWith(verify, gatewayVerified("session_1")));
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ code: "SESSION_REVOKED" });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("refuses a revoked session it verified itself", async () => {
+    const list = listWith();
+    await list.scan();
+    list.markRevokedLocally("session_2");
+    const verify = vi
+      .fn()
+      .mockResolvedValue({ sub: "workos|alice", sid: "session_2" });
+
+    const res = await get(
+      appWith(verify, (c) => c.set("authMethod", "unverified_passthrough")),
+    );
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ code: "SESSION_REVOKED" });
+  });
+
+  it("uses the v1 envelope on /api/v1", async () => {
+    const list = listWith();
+    await list.scan();
+    list.markRevokedLocally("session_1");
+
+    const res = await appWith(vi.fn(), gatewayVerified("session_1")).request(
+      "/api/v1/agent-ops",
+      { headers: { Authorization: "Bearer some-jwt" } },
+    );
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "SESSION_REVOKED" },
+    });
+  });
+
+  it("answers a retryable 503 until the list has loaded", async () => {
+    listWith(() => new Promise(() => {}));
+
+    const res = await get(appWith(vi.fn(), gatewayVerified("session_3")));
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("5");
+    expect(await res.json()).toMatchObject({
+      code: "SERVER_UNREACHABLE",
+      details: { reason: "SESSION_CHECK_UNAVAILABLE" },
+    });
+  });
+
+  it("answers v1 with the status its contract gives SERVER_UNREACHABLE", async () => {
+    listWith(() => new Promise(() => {}));
+
+    const res = await appWith(vi.fn(), gatewayVerified("session_3")).request(
+      "/api/v1/agent-ops",
+      { headers: { Authorization: "Bearer some-jwt" } },
+    );
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("Retry-After")).toBe("5");
+    expect(await res.json()).toMatchObject({
+      code: "SERVER_UNREACHABLE",
+      details: { reason: "SESSION_CHECK_UNAVAILABLE" },
+    });
+  });
+
+  it("answers 503 once the list is stale, and still 401 for a known revoked session", async () => {
+    vi.useFakeTimers();
+    const list = listWith();
+    await list.scan();
+    list.markRevokedLocally("session_revoked");
+    vi.setSystemTime(Date.now() + REVOKED_SESSION_MAX_STALENESS_MS + 1);
+
+    const unknown = await get(appWith(vi.fn(), gatewayVerified("session_4")));
+    const known = await get(
+      appWith(vi.fn(), gatewayVerified("session_revoked")),
+    );
+
+    expect(unknown.status).toBe(503);
+    expect(known.status).toBe(401);
+  });
+
+  it("serves a session the current list has not seen revoked", async () => {
+    const list = listWith();
+    await list.scan();
+
+    const res = await get(appWith(vi.fn(), gatewayVerified("session_5")));
+
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a verified token that names no session", async () => {
+    const list = listWith();
+    await list.scan();
+    const verify = vi.fn().mockResolvedValue({ sub: "workos|alice" });
+
+    const viaGateway = await get(appWith(vi.fn(), gatewayVerified()));
+    const verifiedHere = await get(
+      appWith(verify, (c) => c.set("authMethod", "unverified_passthrough")),
+    );
+
+    for (const res of [viaGateway, verifiedHere]) {
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    }
+  });
+
+  it("does not hold other established credentials to the list", async () => {
+    listWith(() => new Promise(() => {}));
+
+    const res = await get(
+      appWith(vi.fn(), (c) => c.set("authMethod", "workos_api_key")),
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it("changes nothing where no revoked-session list runs", async () => {
+    setRevokedSessionCacheForTests(null);
+
+    const res = await get(appWith(vi.fn(), gatewayVerified("session_6")));
+    const noSession = await get(appWith(vi.fn(), gatewayVerified()));
+
+    expect(res.status).toBe(200);
+    expect(noSession.status).toBe(200);
   });
 });

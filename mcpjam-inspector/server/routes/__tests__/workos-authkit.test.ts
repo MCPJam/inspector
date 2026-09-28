@@ -96,7 +96,7 @@ describe("workos authkit local session bridge", () => {
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie).toContain("mcpjam_workos_sessions=");
     expect(setCookie).toContain("HttpOnly");
-    expect(setCookie).toContain("workos-has-session=true");
+    expect(setCookie).toContain("workos-has-session=1");
   });
 
   it("redirects authorize requests to WorkOS", async () => {
@@ -174,7 +174,7 @@ describe("workos authkit local session bridge", () => {
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:5173",
-          Cookie: `${sessionCookie}; workos-has-session=true`,
+          Cookie: `${sessionCookie}; workos-has-session=1`,
         },
         body: JSON.stringify({
           client_id: "client_123",
@@ -234,7 +234,7 @@ describe("workos authkit local session bridge", () => {
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:5174",
-          Cookie: `${sessionCookie}; workos-has-session=true`,
+          Cookie: `${sessionCookie}; workos-has-session=1`,
         },
         body: JSON.stringify({
           client_id: "client_123",
@@ -320,7 +320,7 @@ describe("workos authkit local session bridge", () => {
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:6274",
-          Cookie: `${sessionCookie}; workos-has-session=true`,
+          Cookie: `${sessionCookie}; workos-has-session=1`,
         },
         body: JSON.stringify({
           client_id: "client_123",
@@ -516,7 +516,7 @@ describe("workos authkit local session bridge", () => {
       );
 
       const hasSessionCookie = setCookieFor(res, "workos-has-session");
-      expect(hasSessionCookie).toContain("workos-has-session=true");
+      expect(hasSessionCookie).toContain("workos-has-session=1");
       // Secure asserted on THIS cookie specifically: a deployed browser drops
       // an insecure cookie on an https origin, and AuthKit would then skip its
       // refresh and demote the user to a guest.

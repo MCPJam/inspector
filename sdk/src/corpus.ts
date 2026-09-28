@@ -168,6 +168,26 @@ function isWidgetAssertion(assertion: unknown): boolean {
   );
 }
 
+/**
+ * A `toolInputMatches` or `toolResultMatches` that needs at least one matching
+ * call or result (`min` defaults to 1). Contradicts a negative case, which
+ * passes only when no tool is called — so there is neither a call nor a
+ * result to match; `min: 0` ("none matches", with its required `max`) does
+ * not.
+ *
+ * An advisory check never contradicts: it can only warn, never fail the
+ * iteration, so a negative case that passes with no calls stays a pass with a
+ * warning beside it. Refusing to load it would turn a warning into an error.
+ */
+function demandsMatchingUnit(predicate: Predicate): boolean {
+  return (
+    (predicate.type === "toolInputMatches" ||
+      predicate.type === "toolResultMatches") &&
+    (predicate.min ?? 1) >= 1 &&
+    checkRole(predicate) !== "advisory"
+  );
+}
+
 function hostedOnlyStep(
   step: PlatformEvalStep,
   index: number,
@@ -333,6 +353,18 @@ export function evalTestFromPlatformCase(
           );
         }
         const predicate = parsed.data as Predicate;
+        // A negative case passes only when NO tool is called, and a
+        // `toolInputMatches` / `toolResultMatches` with `min ≥ 1` (the
+        // default) demands a matching call or result. `min: 0, max: 0` —
+        // "none matches" — is the one spelling that can hold beside it.
+        if (evalCase.isNegative && demandsMatchingUnit(predicate)) {
+          throw new Error(
+            `Eval case "${evalCase.title}" (${evalCase.id}) is a negative ` +
+              `case (passes only when NO tool is called) but asserts ` +
+              `${predicate.type} with min ≥ 1 at step ${index}. Those cannot ` +
+              `both hold. Fix the case in the dashboard, or run it hosted.`
+          );
+        }
         // A gating `toolCalledWith` becomes an expectation rather than a
         // predicate, so it grades through the tool matcher exactly as the
         // hosted `deriveExpectedToolCalls` does. An advisory one stays a
@@ -441,6 +473,19 @@ export function evalTestFromPlatformCase(
         `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
           `(passes only when NO tool is called) but declares expected tool ` +
           `calls. Fix the case in the dashboard, or run it hosted.`
+      );
+    }
+    // Same reasoning for a `toolInputMatches` / `toolResultMatches` that
+    // needs a matching call or result, reached through case or suite checks.
+    const demanding = predicates.find(demandsMatchingUnit);
+    if (demanding) {
+      const unit = demanding.type === "toolResultMatches" ? "result" : "call";
+      throw new Error(
+        `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
+          `(passes only when NO tool is called) but a ${demanding.type} ` +
+          `check with min ≥ 1 applies to it — from the case, or inherited ` +
+          `from the suite. Those cannot both hold. Use min: 0, max: 0 for ` +
+          `"no ${unit} matches", or fix the check in the dashboard.`
       );
     }
   }

@@ -12,12 +12,19 @@
  * writer carries the non-goal slots forward (`RESERVED_JUDGE_SLOTS`), so an
  * edit to one slot never erases another.
  */
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 
 /** Authored goal-completion fields the settings draft may write. */
 export type GoalCompletionJudgeSlot = {
   enabled?: boolean;
   judgeModel?: string;
+  /**
+   * The saved selection behind `judgeModel` (whose credentials grade). Written
+   * together with `judgeModel` and always naming exactly it — the backend
+   * refuses a disagreeing pair; cleared whenever `judgeModel` is.
+   */
+  judgeSelection?: ModelSelection;
   threshold?: number;
   /**
    * When true, the judge fires automatically as each run completes. Default
