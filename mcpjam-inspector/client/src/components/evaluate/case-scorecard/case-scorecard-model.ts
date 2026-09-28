@@ -53,7 +53,7 @@ import {
   USER_VALUE_STAGES,
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
-import type { PredicateScope } from "@mcpjam/sdk/predicates";
+import { checkRole, type PredicateScope } from "@mcpjam/sdk/predicates";
 import {
   hostedCriterionId,
   HOSTED_JUDGE_SCORER_ID,
@@ -405,14 +405,15 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
  * The two pattern checks decide by their count, not their kind: `min`
  * (default 1) counts MATCHING calls or results, and a result needs a call, so
  * `min: 0, max: 0` — "none matches" — holds on a transcript with no calls at
- * all. The SDK refuses the same pairing on the same rule.
+ * all. An advisory one only warns, so it cannot contradict either. The SDK
+ * refuses the same pairing on the same rule.
  */
 function contradictsNegativeCase(predicate: Predicate): boolean {
   if (
     predicate.type === "toolInputMatches" ||
     predicate.type === "toolResultMatches"
   ) {
-    return (predicate.min ?? 1) >= 1;
+    return (predicate.min ?? 1) >= 1 && checkRole(predicate) !== "advisory";
   }
   return NEGATIVE_CONTRADICTING_KINDS.has(predicate.type as PredicateKind);
 }

@@ -547,6 +547,9 @@ describe("buildCaseScorecard — the route question", () => {
     expect(withCheck({ min: 2 })).toBe(true);
     // "None matches" holds on a transcript with no calls at all.
     expect(withCheck({ min: 0, max: 0 })).toBe(false);
+    // An advisory check only warns, so it never contradicts.
+    expect(withCheck({ role: "advisory", severity: "warn" })).toBe(false);
+    expect(withCheck({ role: "required" })).toBe(true);
   });
 
   it("locks the route on a case with no model turn to route", () => {
