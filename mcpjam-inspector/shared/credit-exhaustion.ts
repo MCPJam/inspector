@@ -16,18 +16,14 @@ export function isCreditExhaustion(value: unknown): boolean {
   let excluded = false;
   // The refusal's own sentence counts only where the refusal itself states
   // it: the top-level message fields, and the top-level `details` when it is
-  // a string or an object of strings. A sentence quoted deeper (a nested
+  // a string. A sentence quoted deeper (a value under `details`, a nested
   // object's own `message`, a history entry) is someone else's words, and
   // letting it veto would hide a real exhaustion.
   if (value && typeof value === "object") {
     const top = value as Record<string, unknown>;
-    const details = top.details;
     const ownStrings = [
       ...OWN_MESSAGE_KEYS.map((key) => top[key]),
-      details,
-      ...(details && typeof details === "object" && !Array.isArray(details)
-        ? Object.values(details as Record<string, unknown>)
-        : []),
+      top.details,
     ];
     if (
       ownStrings.some(

@@ -514,20 +514,21 @@ describe("isTransientSpendRefusal", () => {
         }),
       ).toBe(true);
     }
-    // The refusal's own words still count: the top-level message, a string
-    // `details`, and a string value directly under `details`.
-    expect(
-      isCreditExhaustion({
-        code: "user_rate_limit",
-        message: "Daily MCPJam model limit reached.",
-        details: STORED_HOLDS_SENTENCE,
-      }),
-    ).toBe(false);
+    // A string value under `details` is quoted too.
     expect(
       isCreditExhaustion({
         code: "user_rate_limit",
         message: "Daily MCPJam model limit reached.",
         details: { reason: STORED_HOLDS_SENTENCE },
+      }),
+    ).toBe(true);
+    // The refusal's own words still count: the top-level message fields and
+    // a string `details`.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: STORED_HOLDS_SENTENCE,
       }),
     ).toBe(false);
     expect(
