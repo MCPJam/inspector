@@ -109,6 +109,8 @@ Set `mcpjam.enabled: false` to run without uploading results.
 that project. It requires a backend that returns saved client versions. The
 optional `baseUrl` is the MCPJam app origin for a custom deployment.
 
+`runWithClient` only runs hosted MCPJam models. If the saved client's `modelSelection` uses an organization or local provider, the call throws `UnsupportedModelSelectionError` (exported from `@mcpjam/sdk`, with `source` and `modelId` fields) before any tests execute. Clients with a hosted selection, or with no `modelSelection`, run exactly as before.
+
 Your code owns server connections, credentials, and MCP connection settings;
 the client's saved server IDs and connection overrides are not applied to those
 connections. The first release does not launch cloud computers, browsers, saved
