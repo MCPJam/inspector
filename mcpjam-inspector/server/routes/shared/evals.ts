@@ -620,6 +620,7 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  runtimeVenue?: "local" | "hosted";
   /** Already resolved by the public inline-suite boundary. */
   hostAttachments?: Array<{
     namedHostId: string;
@@ -868,6 +869,7 @@ export const RunTestCaseRequestSchema = z.object({
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
 type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
+  runtimeVenue?: "local" | "hosted";
   orgModelConfig?: ResolvedOrgModelConfig;
 };
 
@@ -2539,6 +2541,9 @@ export async function prepareEvalRun(
         ? resolvedEnvironment
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+            ...(request.runtimeVenue
+              ? { runtimeVenue: request.runtimeVenue }
+              : {}),
             projectId,
             environmentId,
           }).catch((error) => {
@@ -2656,6 +2661,9 @@ export async function prepareEvalRun(
     // environment resolves to at an unchanged revision. Echoing all three lets
     // the mutation reject that drift instead of starting a run whose tool
     // snapshot describes a different configuration than it executes.
+    ...(environmentLaunch?.runtimeVenue === "local"
+      ? { runtimeVenue: "local" as const }
+      : {}),
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,
     expectedEnvironmentHostConfigId: environmentLaunch?.hostConfigId,
     expectedEnvironmentServerIds: environmentLaunch
@@ -3228,7 +3236,8 @@ function buildSingleCaseRuntimeTest(args: {
     matchOptions: resolveMatchOptions(
       args.suiteDefaultMatchOptions,
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        MatchOptionsDTO | undefined,
+        | MatchOptionsDTO
+        | undefined,
       args.matchOptionsOverride,
     ),
     // Thread the predicate gate into the runtime case so the runner
@@ -3238,17 +3247,20 @@ function buildSingleCaseRuntimeTest(args: {
     successPredicates: resolveCaseSuccessPredicates({
       suiteDefaults: args.suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
       suppressedSuiteStandardCheckIds:
         testCaseOverrides?.suppressedSuiteStandardCheckIds ??
         (testCase as { suppressedSuiteStandardCheckIds?: string[] })
           .suppressedSuiteStandardCheckIds,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
-        import("@/shared/eval-matching").CasePredicates | undefined,
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
       legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
     }),
     hostConfigOverride: args.hostConfigOverride,
     testCaseId: testCase._id,
@@ -3362,6 +3374,9 @@ export async function prepareSingleCaseExecution(
         ? request.resolvedEnvironment
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+            ...(request.runtimeVenue
+              ? { runtimeVenue: request.runtimeVenue }
+              : {}),
             projectId: projectId!,
             environmentId,
           }).catch((error) => {
@@ -3496,7 +3511,7 @@ export async function prepareSingleCaseExecution(
     // model and provider the backend projected, and those are what execute.
     model: environmentLaunch ? environmentLaunch.effectiveModelId! : model!,
     provider: environmentLaunch
-      ? (providerForModelId(environmentLaunch.effectiveModelId!) ?? "")
+      ? providerForModelId(environmentLaunch.effectiveModelId!) ?? ""
       : provider!,
     suiteDefaultMatchOptions,
     suiteDefaultPredicates,
@@ -3835,6 +3850,7 @@ async function resolveGenerationServers(
     projectId?: string;
     environmentId?: string;
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    runtimeVenue?: "local" | "hosted";
   },
 ): Promise<{
   resolvedServerIds: string[];
@@ -3857,6 +3873,9 @@ async function resolveGenerationServers(
             createConvexClients(request.convexAuthToken).convexClient,
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+              ...(request.runtimeVenue
+                ? { runtimeVenue: request.runtimeVenue }
+                : {}),
               projectId: request.projectId,
               environmentId: request.environmentId,
             },
@@ -3901,6 +3920,7 @@ async function resolveGenerationServers(
 export async function generateEvalTestsWithManager(
   clientManager: MCPClientManager,
   request: GenerateTestsRequest & {
+    runtimeVenue?: "local" | "hosted";
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
   },
 ) {
@@ -3955,6 +3975,7 @@ export async function generateEvalTestsWithManager(
 export async function generateNegativeEvalTestsWithManager(
   clientManager: MCPClientManager,
   request: GenerateNegativeTestsRequest & {
+    runtimeVenue?: "local" | "hosted";
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
   },
 ) {
@@ -4153,7 +4174,8 @@ export async function streamEvalTestCaseWithManager(
     throw error;
   }
   let streamToolSignals:
-    ReturnType<typeof applyVisibilityPolicyAndCountSignals> | undefined;
+    | ReturnType<typeof applyVisibilityPolicyAndCountSignals>
+    | undefined;
   try {
     streamToolSignals = suiteHostPolicy
       ? applyVisibilityPolicyAndCountSignals(
