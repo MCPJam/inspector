@@ -230,6 +230,74 @@ export interface CreateJourneyRunResult {
    * the owner and can kill attempts the owner is still executing.
    */
   deduped: boolean;
+  /**
+   * Who pays for each session, as the backend's launch admission recorded it
+   * (`swarm-admission-v1`). Absent from a backend or a launch without
+   * admission, where every session is billed to the org exactly as before.
+   */
+  sessions?: SwarmSessionFunding[];
+}
+
+/**
+ * `starter` sessions are MCPJam's: their host and setup steps ride the
+ * platform rail (`billingFeature: "swarm_starter"`). `credits` sessions spend
+ * the organization's credits.
+ */
+export type SwarmFunding = "starter" | "credits";
+
+export interface SwarmSessionFunding {
+  hostId: string;
+  targetId?: string;
+  sessionIdx: number;
+  funding: SwarmFunding;
+  /** Why a session is on credits, when admission said (first response only). */
+  fundingReason?: string;
+}
+
+/**
+ * The runner capability that switches on server-side launch admission and
+ * starter funding. Declared only when this server can honor it: a starter
+ * session's steps are attested with `INSPECTOR_SERVICE_TOKEN`, so a server
+ * without the token would be handed sessions it cannot run. Without it the
+ * backend admits and bills exactly as it always has.
+ */
+export const SWARM_ADMISSION_CAPABILITY = "swarm-admission-v1";
+
+export function swarmRunnerCapabilities(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  return [
+    ...runnerCapabilities(env),
+    "swarm-standard-checks-v1",
+    ...(env.INSPECTOR_SERVICE_TOKEN?.trim()
+      ? [SWARM_ADMISSION_CAPABILITY]
+      : []),
+  ];
+}
+
+function readSessionFunding(raw: unknown): SwarmSessionFunding[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const sessions: SwarmSessionFunding[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    if (
+      typeof row.hostId !== "string" ||
+      typeof row.sessionIdx !== "number" ||
+      (row.funding !== "starter" && row.funding !== "credits")
+    )
+      continue;
+    sessions.push({
+      hostId: row.hostId,
+      ...(typeof row.targetId === "string" ? { targetId: row.targetId } : {}),
+      sessionIdx: row.sessionIdx,
+      funding: row.funding,
+      ...(typeof row.fundingReason === "string"
+        ? { fundingReason: row.fundingReason }
+        : {}),
+    });
+  }
+  return sessions;
 }
 
 export type SwarmAttemptStatus =
@@ -470,6 +538,7 @@ export async function createJourneyRun(
     journeyRefId?: string;
     snapshot?: JourneySnapshot;
     deduped?: boolean;
+    sessions?: unknown;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/create`,
@@ -493,7 +562,7 @@ export async function createJourneyRun(
         : {}),
       // Asserted by this process, never a caller: the runner is the only
       // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
+      runnerCapabilities: swarmRunnerCapabilities(),
     },
     NON_LLM_TIMEOUT_MS,
   );
@@ -518,6 +587,10 @@ export async function createJourneyRun(
     // Strict `=== true`: an absent field means a fresh run (never wrongly skip
     // starting the runner for a genuinely new launch).
     deduped: data.deduped === true,
+    ...(() => {
+      const sessions = readSessionFunding(data.sessions);
+      return sessions ? { sessions } : {};
+    })(),
   };
 }
 
@@ -561,10 +634,11 @@ export async function reportAttempt(
     errorCode?: string;
     errorMessage?: string;
   },
-): Promise<{ ok: true; applied: boolean }> {
+): Promise<{ ok: true; applied: boolean; funding?: SwarmFunding }> {
   const data = await postJson<{
     ok?: boolean;
     applied?: boolean;
+    funding?: unknown;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/attempt`,
@@ -593,7 +667,15 @@ export async function reportAttempt(
   // an explicit `applied` boolean on a 200. Treat only an explicit `false` as a
   // no-op replay; anything else (incl. a defensively-absent field) is "applied"
   // so a missing field can never wrongly suppress a fresh claim's execution.
-  return { ok: true, applied: data.applied !== false };
+  return {
+    ok: true,
+    applied: data.applied !== false,
+    // Who pays for this session, as admission recorded it. Only the two known
+    // values count: anything else reads as "not starter", the safe default.
+    ...(data.funding === "starter" || data.funding === "credits"
+      ? { funding: data.funding }
+      : {}),
+  };
 }
 
 /**

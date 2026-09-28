@@ -5,6 +5,7 @@ import {
   PinnedSkillIntegrityError,
   reportAttempt,
   heartbeatJourneyRun,
+  swarmRunnerCapabilities,
 } from "../swarm-agent.js";
 import { runnerCapabilities } from "../evals/runner-capabilities.js";
 
@@ -124,8 +125,9 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       // execute. The backend reads it to decide whether an environment's
       // materialized secrets make this wave unrunnable.
       // The swarm path appends its own: the backend reads it to know this
-      // runner grades standard checks itself.
-      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
+      // runner grades standard checks itself (and, with a service token,
+      // that it can honor launch admission — see below).
+      runnerCapabilities: swarmRunnerCapabilities(),
     });
     // projectId is the field whose omission would produce the guaranteed 400.
     expect(body.projectId).toBe("proj-1");
@@ -147,6 +149,66 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).kind).toBe(
       "user_testing",
     );
+  });
+  it("advertises swarm admission only when this server can attest starter steps", () => {
+    // A starter session's steps are attested with the service token, so a
+    // server without one must not be handed sessions it cannot run.
+    expect(swarmRunnerCapabilities({})).toEqual([
+      ...runnerCapabilities({}),
+      "swarm-standard-checks-v1",
+    ]);
+    expect(
+      swarmRunnerCapabilities({ INSPECTOR_SERVICE_TOKEN: "secret" }),
+    ).toContain("swarm-admission-v1");
+    expect(
+      swarmRunnerCapabilities({ INSPECTOR_SERVICE_TOKEN: "  " }),
+    ).not.toContain("swarm-admission-v1");
+  });
+  it("reads each session's funding off the create response", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...okCreateResponse(),
+          sessions: [
+            { hostId: "h", targetId: "t", sessionIdx: 0, funding: "starter" },
+            {
+              hostId: "h",
+              targetId: "t",
+              sessionIdx: 1,
+              funding: "credits",
+              fundingReason: "starter_capacity_unavailable",
+            },
+            { hostId: "h", sessionIdx: 2, funding: "free" },
+          ],
+        }),
+      ),
+    );
+    const created = await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-4",
+    });
+    expect(created.sessions).toEqual([
+      { hostId: "h", targetId: "t", sessionIdx: 0, funding: "starter" },
+      {
+        hostId: "h",
+        targetId: "t",
+        sessionIdx: 1,
+        funding: "credits",
+        fundingReason: "starter_capacity_unavailable",
+      },
+    ]);
+  });
+  it("reports no funding for a backend that sent none", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okCreateResponse())),
+    );
+    const created = await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-5",
+    });
+    expect("sessions" in created).toBe(false);
   });
   it("serializes a per-run iterations override", async () => {
     fetchMock.mockResolvedValue(
@@ -299,5 +361,33 @@ describe("swarm-agent reportAttempt — targetId echo", () => {
       (fetchMock.mock.calls[1]![1] as RequestInit).body as string
     );
     expect("targetId" in withoutTarget).toBe(false);
+  });
+
+  it("hands back the claim's funding, and nothing for an unknown value", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({ ok: true, applied: true, funding: "starter" }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ ok: true, applied: true, funding: "free" }),
+      );
+    const args = {
+      projectId: "p",
+      runId: "r",
+      hostId: "h",
+      targetId: "t",
+      sessionIdx: 0,
+      status: "running" as const,
+      chatSessionId: "c",
+    };
+    expect(await reportAttempt(CONVEX_HTTP_URL, "b", args)).toEqual({
+      ok: true,
+      applied: true,
+      funding: "starter",
+    });
+    expect(await reportAttempt(CONVEX_HTTP_URL, "b", args)).toEqual({
+      ok: true,
+      applied: true,
+    });
   });
 });

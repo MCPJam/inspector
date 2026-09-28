@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   accountLimitCode,
+  BUDGET_TRUNCATED_ERROR_CODE,
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isStarterBudgetReached,
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
@@ -500,5 +502,59 @@ describe("isTransientSpendRefusal", () => {
         details: { history: [STORED_HOLDS_SENTENCE] },
       }),
     ).toBe(true);
+  });
+});
+
+describe("a starter session that reached its included limit", () => {
+  const PERSONA_REFUSAL =
+    'swarm-agent https://backend.test/journey-execution/persona-next-turn failed (403): {"ok":false,"code":"starter_session_budget_reached","error":"This free starter conversation reached its included limit.","isRetryable":false,"canTopUp":false}';
+
+  it("is read off the refusal code or a message that carries it", () => {
+    expect(isStarterBudgetReached("starter_session_budget_reached")).toBe(true);
+    expect(isStarterBudgetReached(undefined, PERSONA_REFUSAL)).toBe(true);
+    expect(
+      isStarterBudgetReached(
+        undefined,
+        "This free starter conversation reached its included limit. (starter_session_budget_reached, HTTP 403)",
+      ),
+    ).toBe(true);
+    expect(
+      isStarterBudgetReached("user_rate_limit", "Daily credit limit reached."),
+    ).toBe(false);
+    expect(isStarterBudgetReached(undefined, undefined)).toBe(false);
+  });
+
+  it("reads as its own outcome, graded, whatever the refusal said", () => {
+    const info = humanizeSwarmAttemptError(
+      PERSONA_REFUSAL,
+      BUDGET_TRUNCATED_ERROR_CODE,
+    );
+    expect(info.code).toBe("budget_truncated");
+    expect(info.message).toContain("included limit");
+    expect(info.message).toContain("still graded");
+    expect(info.canTopUp).toBeUndefined();
+  });
+
+  it("is neither an account limit nor a credits signal", () => {
+    for (const [message, code] of [
+      [PERSONA_REFUSAL, undefined],
+      [PERSONA_REFUSAL, "budget_truncated"],
+      [
+        "This starter conversation step could not be authorized.",
+        "swarm_starter_rejected",
+      ],
+    ] as const) {
+      expect(isAccountLimit(message, code)).toBe(false);
+      expect(isCreditExhaustion({ message, code })).toBe(false);
+    }
+  });
+
+  it("never sells credits against it, even beside credit wording", () => {
+    expect(
+      isCreditExhaustion({
+        code: "budget_truncated",
+        message: "Daily credit limit reached.",
+      }),
+    ).toBe(false);
   });
 });

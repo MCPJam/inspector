@@ -5,6 +5,10 @@ import {
   type SpendRefusal,
 } from "./admission-retry.js";
 import {
+  BUDGET_TRUNCATED_ERROR_CODE,
+  isStarterBudgetReached,
+} from "../../../shared/swarm-attempt-error.js";
+import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
 } from "../browserd/page-tools-peek.js";
@@ -326,6 +330,13 @@ export interface SyntheticHostRuntime {
    * (`SWARM_HOST_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
    */
   maxOutputTokens?: number;
+  /**
+   * Set when MCPJam funds this session (a starter swarm conversation): every
+   * host step claims `billingFeature: "swarm_starter"` with this identity,
+   * and `resolveTurnRuntime` adds the claim on the MCPJam-hosted rail only.
+   * The backend decided the funding at launch; the runner only routes by it.
+   */
+  swarmStarterStep?: { targetId: string; sessionIdx: number };
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -530,6 +541,7 @@ export async function runSyntheticHostSession(
     temperature,
     maxSteps,
     maxOutputTokens,
+    swarmStarterStep,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -1160,6 +1172,7 @@ export async function runSyntheticHostSession(
             temperature: prepared.resolvedTemperature,
             ...(maxSteps !== undefined ? { maxSteps } : {}),
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+            ...(swarmStarterStep ? { swarmStarterStep } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
@@ -1512,6 +1525,22 @@ export async function runSyntheticHostSession(
       error instanceof RecordedAssistantTurnError
         ? error.errorRefusal
         : spendRefusalOf(error);
+    // A free starter session that reached its included budget ends as its own
+    // outcome — not a host failure and not an account limit. Decided BEFORE
+    // the prose fold below, which would read the refusal's wording as an org
+    // spend cap and stop the whole run over one session's allowance.
+    if (isStarterBudgetReached(errorRefusal?.code, message)) {
+      emit?.({
+        type: "session_complete",
+        status: "failed",
+        errorMessage: message,
+      });
+      return {
+        outcome: "failed",
+        errorMessage: message,
+        errorReason: BUDGET_TRUNCATED_ERROR_CODE,
+      };
+    }
     // Single source of truth for the spend-cap / rate-limit fold — shared with
     // the per-runtime `classifyFailure` so the regex can't drift. Return the
     // message on the rate-limited branch too: the swarm fan-out runner inspects
@@ -1924,6 +1953,11 @@ export async function drainAssistantTurn(
      * `extraBodyFields`, which the hosted engines post verbatim.
      */
     maxOutputTokens?: number;
+    /**
+     * A starter-funded swarm step (see `SyntheticHostRuntime`), claimed on
+     * the MCPJam-hosted rail only.
+     */
+    swarmStarterStep?: { targetId: string; sessionIdx?: number };
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   },
@@ -1953,6 +1987,7 @@ export async function drainAssistantTurn(
     modelSelection,
     reasoningEffort,
     maxOutputTokens,
+    swarmStarterStep,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -2018,6 +2053,7 @@ export async function drainAssistantTurn(
       : {}),
     ...(attribution ? { attribution } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(swarmStarterStep ? { swarmStarterStep } : {}),
     // What the engine is handed below, so the rail applies the effort and
     // the local execution record states the settings actually sent.
     ...(args.temperature !== undefined || reasoningEffort !== undefined

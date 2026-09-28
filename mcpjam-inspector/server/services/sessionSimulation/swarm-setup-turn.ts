@@ -98,6 +98,11 @@ export async function runSwarmSetupTurn(args: {
   authHeader: string;
   signal?: AbortSignal;
   retried?: boolean;
+  /**
+   * The target has a starter-funded session, so MCPJam pays for its setup:
+   * the steps claim `swarm_starter` against the target's starter row.
+   */
+  starterFunded?: boolean;
 }): Promise<SetupRecord> {
   const deadline = withDeadline(args.signal, GROUNDING_LIMITS.setupMs, "setup");
   const setup: SetupRecord = {
@@ -212,6 +217,11 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
         tools,
         maxSteps: GROUNDING_LIMITS.setupSteps,
         maxOutputTokens: SWARM_HOST_MAX_OUTPUT_TOKENS,
+        // A setup step names its target and no session: the backend bills it
+        // to the target's starter row.
+        ...(args.starterFunded && args.target.targetId
+          ? { swarmStarterStep: { targetId: args.target.targetId } }
+          : {}),
         abortSignal: deadline.signal,
       }),
       deadline.signal,

@@ -1666,3 +1666,276 @@ describe("target setup before claims", () => {
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
   });
 });
+
+describe("swarm fan-out runner — starter funding (swarm-admission-v1)", () => {
+  const STARTER_TARGET = { ...HOST, targetId: "t-starter" };
+  const CREDIT_TARGET = { ...HOST_2, targetId: "t-credit" };
+  type Funding = "starter" | "credits";
+  const planFor = (
+    target: { hostId: string; targetId: string },
+    sessions: Funding[],
+  ) =>
+    sessions.map((funding, sessionIdx) => ({
+      hostId: target.hostId,
+      targetId: target.targetId,
+      sessionIdx,
+      funding,
+    }));
+  // The claim answers with the funding the backend recorded for the session.
+  const claimsAnswer = (
+    recorded: Array<{ targetId: string; sessionIdx: number; funding: Funding }>,
+  ) =>
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => ({
+      ok: true,
+      applied: true,
+      ...(args.status === "running"
+        ? {
+            funding: recorded.find(
+              (s) =>
+                s.targetId === args.targetId &&
+                s.sessionIdx === args.sessionIdx,
+            )?.funding,
+          }
+        : {}),
+    }));
+  const starterSteps = () =>
+    runSyntheticHostSessionMock.mock.calls.map(
+      (c) => (c[0] as any).runtime.swarmStarterStep,
+    );
+  const terminals = () =>
+    reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+
+  it("claims the platform rail for a starter session's host steps only", async () => {
+    const plan = planFor(STARTER_TARGET, ["starter", "credits"]);
+    claimsAnswer(plan);
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: plan,
+      }),
+    );
+
+    expect(starterSteps()).toEqual([
+      { targetId: "t-starter", sessionIdx: 0 },
+      undefined,
+    ]);
+  });
+
+  it("takes each session's funding from its claim over the create response", async () => {
+    claimsAnswer(planFor(STARTER_TARGET, ["starter", "credits"]));
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: planFor(STARTER_TARGET, ["starter", "starter"]),
+      }),
+    );
+
+    expect(starterSteps()).toEqual([
+      { targetId: "t-starter", sessionIdx: 0 },
+      undefined,
+    ]);
+  });
+
+  it("routes nothing to the platform rail without a funding record", async () => {
+    await startJourneyRun(
+      baseOpts({ hosts: [STARTER_TARGET], sessionsPerTarget: 2 }),
+    );
+
+    expect(starterSteps()).toEqual([undefined, undefined]);
+  });
+
+  it("ends a starter session at its included limit as budget_truncated, with its transcript, and keeps the run going", async () => {
+    const plan = planFor(STARTER_TARGET, ["starter", "starter"]);
+    claimsAnswer(plan);
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.runtime.swarmStarterStep?.sessionIdx === 0
+        ? {
+            outcome: "failed",
+            errorMessage:
+              "This free starter conversation reached its included limit. (starter_session_budget_reached, HTTP 403)",
+            errorReason: "budget_truncated",
+          }
+        : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: plan,
+      }),
+    );
+
+    expect(terminals()).toEqual([
+      expect.objectContaining({
+        sessionIdx: 0,
+        status: "failed",
+        errorCode: "budget_truncated",
+        errorMessage: expect.stringContaining("still graded"),
+        // The transcript is reported, so the session is graded for findings.
+        chatSessionId: expect.stringMatching(/_0$/),
+      }),
+      expect.objectContaining({ sessionIdx: 1, status: "succeeded" }),
+    ]);
+    // Not an account limit: nothing stops the rest of the run.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
+  it("stops only the credit sessions when a credit session hits the spend cap", async () => {
+    const plan = [
+      ...planFor(CREDIT_TARGET, ["credits", "credits"]),
+      ...planFor(STARTER_TARGET, ["starter", "starter"]),
+    ];
+    let releaseStarter!: () => void;
+    const creditCapReported = new Promise<void>((resolve) => {
+      releaseStarter = resolve;
+    });
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => {
+      if (args.targetId === "t-credit" && args.status === "rate_limited")
+        // A macrotask later: the runner's own continuation (the cap stop)
+        // has run by then.
+        setTimeout(releaseStarter, 0);
+      return {
+        ok: true,
+        applied: true,
+        ...(args.status === "running"
+          ? {
+              funding: plan.find(
+                (s) =>
+                  s.targetId === args.targetId &&
+                  s.sessionIdx === args.sessionIdx,
+              )?.funding,
+            }
+          : {}),
+      };
+    });
+    const starterAbortedMidSession: boolean[] = [];
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.targetId === "t-credit")
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      // A starter session in flight while the credit session trips the cap.
+      await Promise.race([
+        creditCapReported,
+        new Promise<void>((resolve) =>
+          adapter.abortSignal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
+        ),
+      ]);
+      starterAbortedMidSession.push(adapter.abortSignal?.aborted === true);
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [CREDIT_TARGET, STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: plan,
+      }),
+    );
+
+    // Both starter sessions ran to completion, never aborted.
+    expect(starterAbortedMidSession).toEqual([false, false]);
+    expect(
+      terminals()
+        .filter((t) => t.targetId === "t-starter")
+        .map((t) => t.status),
+    ).toEqual(["succeeded", "succeeded"]);
+    // The second credit session never ran; the run-level finalize records
+    // the cap on it.
+    expect(
+      runSyntheticHostSessionMock.mock.calls.filter(
+        (c) => (c[0] as any).persist.targetId === "t-credit",
+      ),
+    ).toHaveLength(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+  });
+
+  it("keeps the whole-run stop when a starter session is the one stopped by an account limit", async () => {
+    const plan = planFor(STARTER_TARGET, ["starter", "starter"]);
+    claimsAnswer(plan);
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.targetId === "t-starter"
+        ? {
+            outcome: "rate_limited",
+            errorMessage: "Org daily spend cap exceeded",
+          }
+        : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      baseOpts({
+        hosts: [STARTER_TARGET],
+        sessionsPerTarget: 2,
+        sessionFunding: plan,
+      }),
+    );
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe("target setup", () => {
+    const record = {
+      status: "completed",
+      readiness: "not_needed",
+      prefix: "swarm-test-",
+      createdEntities: [],
+      observedCreatedEntityCount: 0,
+      unsupportedClaims: 0,
+      missing: [],
+      toolCalls: [],
+      writeCallsDispatched: 0,
+      retried: false,
+      admittedWriteTools: [],
+      excludedToolCount: 0,
+      startedAt: 0,
+      durationMs: 0,
+      chatSessionId: "setup",
+    };
+
+    it("sets up a target with any starter session on MCPJam's money, and a credits-only target as before", async () => {
+      setupTurnMock.mockResolvedValue(record);
+      const plan = [
+        ...planFor(STARTER_TARGET, ["credits", "starter"]),
+        ...planFor(CREDIT_TARGET, ["credits", "credits"]),
+      ];
+      claimsAnswer(plan);
+
+      await startJourneyRun(
+        baseOpts({
+          hosts: [STARTER_TARGET, CREDIT_TARGET],
+          setupWrites: true,
+          sessionsPerTarget: 2,
+          sessionFunding: plan,
+        }),
+      );
+
+      const funded = new Map(
+        setupTurnMock.mock.calls.map((c) => [
+          (c[0] as any).target.targetId,
+          (c[0] as any).starterFunded,
+        ]),
+      );
+      expect(funded).toEqual(
+        new Map([
+          ["t-starter", true],
+          ["t-credit", false],
+        ]),
+      );
+    });
+  });
+});

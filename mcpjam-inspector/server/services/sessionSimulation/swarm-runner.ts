@@ -1,4 +1,5 @@
 import {
+  BUDGET_TRUNCATED_ERROR_CODE,
   isTransientSpendRefusal,
   humanizeSwarmAttemptError,
 } from "../../../shared/swarm-attempt-error.js";
@@ -42,6 +43,8 @@ import {
   type PinnedHostExecutionSpec,
   type PinnedSkillMeta,
   type SwarmAttemptStatus,
+  type SwarmFunding,
+  type SwarmSessionFunding,
 } from "../swarm-agent.js";
 import { runSwarmChecks } from "../checks/run-swarm-checks.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
@@ -350,6 +353,13 @@ export interface StartJourneyRunOptions {
    * run and a frozen one take the same code path.
    */
   budgets?: ResolvedExecutionBudgets;
+  /**
+   * Who pays for each session, from the create response (`swarm-admission-v1`).
+   * Starter sessions' host and setup steps ride the platform rail. Absent ⇒
+   * every session is the organization's, exactly as before. Each claim
+   * re-reads its own session's funding, which is the authority for its steps.
+   */
+  sessionFunding?: SwarmSessionFunding[];
 }
 
 interface RunningJourneyHandle {
@@ -449,6 +459,16 @@ function terminalForOutcome(
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
+  }
+  // A starter session that reached its included limit reads as that, not as
+  // whatever the refusal envelope said.
+  if (errorReason === BUDGET_TRUNCATED_ERROR_CODE) {
+    return {
+      status: "failed",
+      errorCode: errorReason,
+      errorMessage: humanizeSwarmAttemptError(errorMessage, errorReason)
+        .message,
+    };
   }
   // The thrown message is a `SwarmAgentError` envelope wrapping the provider's
   // JSON body — unreadable, and it embeds the deployment URL. The stored field
@@ -596,6 +616,7 @@ async function runJourneyFanOut(
     managerFactory,
     abortSignal,
     hub,
+    sessionFunding,
   } = opts;
 
   const runStartedAt = Date.now();
@@ -619,7 +640,34 @@ async function runJourneyFanOut(
     runStop.signal,
   ]);
   const sessionSignal = sessionSignals.signal;
-  // Set on an org spend-cap breach — halts scheduling across ALL hosts.
+  // The spend-cap stop for CREDIT-funded sessions only. A cap one credit
+  // session hits stops every other credit session — they pay from the same
+  // wallet — but not a starter session, which MCPJam funds and the wallet
+  // never touches. Composed under the run's own signal, so a shutdown, a
+  // cancel or the run clock still stops everything.
+  const creditStop = new AbortController();
+  const creditSessionSignals = composeAbortSignals([
+    sessionSignal,
+    creditStop.signal,
+  ]);
+  const creditSessionSignal = creditSessionSignals.signal;
+  const runHasStarterSessions =
+    sessionFunding?.some((s) => s.funding === "starter") ?? false;
+  /** The funding the create response recorded for one session. */
+  const plannedFunding = (
+    target: PinnedHostExecutionSpec,
+    sessionIdx: number,
+  ): SwarmFunding | undefined =>
+    sessionFunding?.find(
+      (s) =>
+        s.sessionIdx === sessionIdx &&
+        (target.targetId
+          ? s.targetId === target.targetId
+          : s.hostId === target.hostId),
+    )?.funding;
+  // Set on an org spend-cap breach — halts scheduling across ALL hosts, or
+  // across the credit-funded sessions only when a credit session tripped it
+  // in a run that also has starter sessions.
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
   let stoppedByBackend = false;
@@ -925,7 +973,17 @@ async function runJourneyFanOut(
         signal: sessionSignal,
       });
 
-      if (!harnessTargetBlockedReason && !stopScheduling()) {
+      // A target with a starter session sets up on MCPJam's money, so a credit
+      // session's spend cap neither skips nor cancels that setup.
+      const targetHasStarter = Array.from(
+        { length: sessionsPerTarget },
+        (_, idx) => plannedFunding(target, idx),
+      ).includes("starter");
+      if (
+        !harnessTargetBlockedReason &&
+        !stopScheduling() &&
+        (targetHasStarter || !creditStop.signal.aborted)
+      ) {
         await prepareTargetGrounding({
           runId,
           projectId,
@@ -937,13 +995,21 @@ async function runJourneyFanOut(
           managerFactory,
           convexHttpUrl,
           bearer,
-          signal: sessionSignal,
+          signal: targetHasStarter ? sessionSignal : creditSessionSignal,
+          starterFunded: targetHasStarter,
         });
       }
 
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
+        // A credit-only spend-cap stop halts this session unless MCPJam funds
+        // it. Left `pending`: the run-level finalize records the cap on it.
+        if (
+          creditStop.signal.aborted &&
+          plannedFunding(target, sessionIdx) !== "starter"
+        )
+          continue;
 
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
@@ -996,7 +1062,7 @@ async function runJourneyFanOut(
         // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
         // and requires the chatSessionId to match this claim, so it MUST come
         // after. A claim failure skips the session (we can't run without it).
-        let claim: { ok: true; applied: boolean };
+        let claim: { ok: true; applied: boolean; funding?: SwarmFunding };
         try {
           claim = await reportAttempt(convexHttpUrl, bearer, {
             projectId,
@@ -1041,6 +1107,17 @@ async function runJourneyFanOut(
           continue;
         }
 
+        // Who pays for THIS session: the claim's answer, which is the
+        // backend's record, else the create response's. A starter session's
+        // steps claim the platform rail; everything else bills as before.
+        const attemptFunding: SwarmFunding =
+          claim.funding ?? plannedFunding(target, sessionIdx) ?? "credits";
+        const starterFunded = attemptFunding === "starter" && !!targetId;
+        // A starter session is not stopped by a credit session's spend cap.
+        const attemptSignal = starterFunded
+          ? sessionSignal
+          : creditSessionSignal;
+
         const attemptStartedAt = Date.now();
         logEvent("attempt.start", {
           runId,
@@ -1048,6 +1125,7 @@ async function runJourneyFanOut(
           targetId,
           sessionIdx,
           modelId,
+          funding: attemptFunding,
         });
 
         const envelope: SwarmStreamEnvelope = {
@@ -1170,7 +1248,7 @@ async function runJourneyFanOut(
               ...(intent.runtimeKind === "desktop-browser"
                 ? { runtimeKind: "desktop-browser" as const }
                 : {}),
-              signal: sessionSignal,
+              signal: attemptSignal,
             });
             if (provisioned.ok) {
               attemptSandbox = provisioned.sandbox;
@@ -1185,7 +1263,7 @@ async function runJourneyFanOut(
               // correctly (`rate_limited`/`spend_cap_exceeded` on a cap breach,
               // `runner_shutdown` on a cancel). Any terminal written here would
               // out-race that and record a misleading cause.
-              if (provisioned.code === "aborted" || sessionSignal.aborted) {
+              if (provisioned.code === "aborted" || attemptSignal.aborted) {
                 logEvent("attempt.provision_aborted", {
                   runId,
                   hostId,
@@ -1300,6 +1378,16 @@ async function runJourneyFanOut(
                 : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               maxOutputTokens: SWARM_HOST_MAX_OUTPUT_TOKENS,
+              // MCPJam funds this session: its host steps claim the platform
+              // rail under this identity (MCPJam-hosted rail only).
+              ...(starterFunded && targetId
+                ? {
+                    swarmStarterStep: {
+                      targetId,
+                      sessionIdx: attemptSessionIdx,
+                    },
+                  }
+                : {}),
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
@@ -1365,7 +1453,7 @@ async function runJourneyFanOut(
             managerFactory: () => managerFactory(target),
             // Thread the run-level stop signal (composed with shutdown/cancel) so a
             // spend-cap short-circuit cancels this host's in-flight turns.
-            abortSignal: sessionSignal,
+            abortSignal: attemptSignal,
             budgets,
             nextPersonaTurn: (transcriptSoFar) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
@@ -1379,7 +1467,7 @@ async function runJourneyFanOut(
                 // runStop) so a short-circuit aborts a parked persona fetch
                 // immediately and the session unwinds (instead of lingering up to
                 // 120s in the persona call).
-                signal: sessionSignal,
+                signal: attemptSignal,
               }),
             persist: {
               sourceType: "swarm",
@@ -1437,7 +1525,7 @@ async function runJourneyFanOut(
           // reclassify a `failed` outcome whose turns were actually cancelled by the
           // run-stop (`sessionSignal.aborted`).
           const abortedBySpendCap =
-            spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+            spendCapTripped && outcome === "failed" && attemptSignal.aborted;
           // The run clock is the same kind of abort artifact as the spend cap,
           // and needs the same reclassification here rather than only at the
           // run-level finalize.
@@ -1597,8 +1685,6 @@ async function runJourneyFanOut(
           if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage, errorRefusal);
             if (cause === "org_spend_cap") {
-              // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
-              // finalize sweep runs once the pool drains.
               spendCapTripped = true;
               // Humanized at assignment: this string reaches BOTH the
               // per-attempt terminal and the whole-run finalize sweep, and
@@ -1606,9 +1692,18 @@ async function runJourneyFanOut(
               spendCapMessage = errorMessage
                 ? humanizeSwarmAttemptErrorMessage(errorMessage)
                 : undefined;
-              runStop.abort();
+              // A CREDIT session's cap stops the credit sessions — they pay
+              // from the wallet that just ran out — and leaves the starter
+              // sessions MCPJam funds running. Otherwise (a starter session
+              // stopped by an account-wide hold, or a run with no starter
+              // sessions) it is the WHOLE-RUN stop: halt all hosts + cancel
+              // in-flight turns. The finalize sweep runs once the pool drains.
+              const creditOnly = !starterFunded && runHasStarterSessions;
+              if (creditOnly) creditStop.abort();
+              else runStop.abort();
               logEvent("run.spend_cap_short_circuit", {
                 stopReason: isCreditExhaustion({ message: errorMessage, code: errorReason }) ? "credits_exhausted" : "organization_usage_limit",
+                scope: creditOnly ? "credit_sessions" : "run",
                 runId,
                 hostId,
                 targetId,
@@ -1852,6 +1947,7 @@ async function runJourneyFanOut(
   } finally {
     heartbeatActive = false;
     clearInterval(heartbeat);
+    creditSessionSignals.dispose();
     sessionSignals.dispose();
     // `sessionSignals.dispose()` releases the COMPOSITION; the deadline owns
     // its own timer and its own listener on the caller's signal, and those

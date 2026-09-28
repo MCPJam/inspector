@@ -405,6 +405,9 @@ export async function launchJourneyRun(
       maxTurns: snapshot.maxTurns,
       setupWrites: snapshot.setupWrites,
       goal: snapshot.goal,
+      // Who pays for each session, as launch admission recorded it. Starter
+      // sessions' host and setup steps ride the platform rail.
+      ...(created.sessions ? { sessionFunding: created.sessions } : {}),
       // Whether this run is rubric-graded at all. The runner only needs
       // the yes/no — the criteria themselves come back from the claim, so
       // the authoritative list is always the backend's pinned copy and

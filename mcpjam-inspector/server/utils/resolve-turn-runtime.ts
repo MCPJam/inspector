@@ -110,6 +110,14 @@ export interface ResolveTurnRuntimeArgs {
    */
   modelSelection?: ModelSelection;
   /**
+   * A step of a STARTER-funded swarm session (or its target's setup), which
+   * MCPJam pays for. Claimed as `billingFeature: "swarm_starter"` with the
+   * step's run identity — on the MCPJam-hosted branch ONLY. A BYOK or harness
+   * turn is never MCPJam's to pay for, so the claim is dropped there rather
+   * than sent to a rail that would bill the customer for it anyway.
+   */
+  swarmStarterStep?: { targetId: string; sessionIdx?: number };
+  /**
    * The settings this turn runs with, already resolved once by
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
    * host defaults). `temperature` is what the caller hands the engine; a
@@ -398,11 +406,25 @@ export async function resolveTurnRuntime(
         },
       ]);
     }
+    // A starter step claims platform billing, and names the run, target and
+    // session the backend verifies that claim against. `billingFeature` is
+    // what routes the step to `/stream/platform` with the service token.
+    const starterClaim =
+      args.swarmStarterStep && !args.harness
+        ? {
+            billingFeature: "swarm_starter",
+            targetId: args.swarmStarterStep.targetId,
+            ...(args.swarmStarterStep.sessionIdx !== undefined
+              ? { sessionIdx: args.swarmStarterStep.sessionIdx }
+              : {}),
+          }
+        : undefined;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection
+      args.extraBodyFields || hostedSelection || starterClaim
         ? {
             ...(args.extraBodyFields ?? {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+            ...(starterClaim ?? {}),
           }
         : undefined;
     return {

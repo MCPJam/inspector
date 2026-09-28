@@ -341,6 +341,44 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
+  it("claims the platform rail for a starter-funded swarm step", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        swarmStarterStep: { targetId: "environment:e1", sessionIdx: 1 },
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).extraBodyFields).toMatchObject({
+      journeyRunId: "journey-run-1",
+      billingFeature: "swarm_starter",
+      targetId: "environment:e1",
+      sessionIdx: 1,
+    });
+  });
+
+  it("claims nothing for a credit-funded swarm step", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).extraBodyFields?.billingFeature).toBeUndefined();
+  });
+
   it("sends no output ceiling for a scenario turn", async () => {
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));

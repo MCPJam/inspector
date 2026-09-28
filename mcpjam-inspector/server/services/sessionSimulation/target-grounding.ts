@@ -26,6 +26,8 @@ export async function prepareTargetGrounding(args: {
   convexHttpUrl: string;
   bearer: string;
   signal: AbortSignal;
+  /** The target has a starter-funded session; see `runSwarmSetupTurn`. */
+  starterFunded?: boolean;
 }) {
   if (!args.target.targetId || args.signal.aborted) return;
   const identity = {

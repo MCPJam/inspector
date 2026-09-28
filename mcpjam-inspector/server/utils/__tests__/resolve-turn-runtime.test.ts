@@ -316,6 +316,67 @@ describe("resolveTurnRuntime — runtime shape", () => {
   });
 });
 
+describe("resolveTurnRuntime — starter swarm steps", () => {
+  const STARTER = { targetId: "environment:e1", sessionIdx: 2 };
+
+  it("claims swarm_starter with the step's identity on the MCPJam-hosted rail", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        swarmStarterStep: STARTER,
+        extraBodyFields: { journeyRunId: "run-xyz" },
+      }),
+    );
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      extraBodyFields: {
+        journeyRunId: "run-xyz",
+        billingFeature: "swarm_starter",
+        targetId: "environment:e1",
+        sessionIdx: 2,
+      },
+    });
+  });
+
+  it("names no session for a setup step", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const rt = await resolveTurnRuntime(
+      baseArgs({ swarmStarterStep: { targetId: "environment:e1" } }),
+    );
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).toEqual({ billingFeature: "swarm_starter", targetId: "environment:e1" });
+  });
+
+  it("never claims it for a harness, whatever the funding says", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const rt = await resolveTurnRuntime(
+      baseArgs({ swarmStarterStep: STARTER, harness: "claude-code" }),
+    );
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields?.billingFeature,
+    ).toBeUndefined();
+  });
+
+  it("never claims it for a BYOK model", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: BYOK_MODEL, swarmStarterStep: STARTER }),
+    );
+    expect(rt.runtime).toMatchObject({ endpointPath: "/stream/org" });
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields?.billingFeature,
+    ).toBeUndefined();
+  });
+});
+
 describe("resolveTurnRuntime: saved selection forwarding", () => {
   const none = { provider: "none", model: "none" } as const;
   const HOSTED_SELECTION = {

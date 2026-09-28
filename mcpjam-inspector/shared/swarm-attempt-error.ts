@@ -96,6 +96,34 @@ export function isTransientSpendRefusal(
   return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
 }
 
+/** The backend's code for a starter session out of its included budget. */
+export const STARTER_BUDGET_REACHED_CODE = "starter_session_budget_reached";
+
+/**
+ * The attempt `errorCode` a starter session that reached its included limit
+ * ends with. A DISTINCT outcome: not a success (the completion metric and the
+ * release gate count it on its own), not a host failure, and not an account
+ * limit — nothing a top-up lifts, so it never opens a credits dialog. The
+ * attempt is `failed`, so its transcript is still graded and feeds findings.
+ */
+export const BUDGET_TRUNCATED_ERROR_CODE = "budget_truncated";
+
+const BUDGET_TRUNCATED_MESSAGE =
+  "This free starter conversation reached its included limit and ended early. Its transcript is still graded and counted in findings.";
+
+/**
+ * A starter session's call refused for its budget — read off the refusal's
+ * code, or off a failure message that carries it (a persona call's error
+ * envelope quotes the backend's JSON body).
+ */
+export function isStarterBudgetReached(
+  code?: string | null,
+  message?: string | null,
+): boolean {
+  if (code === STARTER_BUDGET_REACHED_CODE) return true;
+  return !!message && /\bstarter_session_budget_reached\b/.test(message);
+}
+
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
 
 export type SwarmAttemptErrorInfo = {
@@ -224,6 +252,9 @@ export function humanizeSwarmAttemptError(
       message:
         "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
     };
+  }
+  if (errorCode === BUDGET_TRUNCATED_ERROR_CODE) {
+    return { code: errorCode, message: BUDGET_TRUNCATED_MESSAGE };
   }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]

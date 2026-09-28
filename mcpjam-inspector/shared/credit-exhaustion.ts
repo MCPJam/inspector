@@ -24,8 +24,9 @@ export function isCreditExhaustion(value: unknown): boolean {
         // and a billing claim that did not hold. Like the others here, none is
         // a wallet anyone can top up — and they arrive on a surface the
         // product calls free, so selling credits against one would be wrong
-        // twice over.
-        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked|platform_capacity|agent_turn_limit|agent_billing_rejected)\b/i.test(
+        // twice over. The `starter`/`budget_truncated` codes are the same
+        // thing for a free starter swarm conversation.
+        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked|platform_capacity|agent_turn_limit|agent_billing_rejected|starter_session_budget_reached|swarm_starter_rejected|budget_truncated)\b/i.test(
           item,
         )
       ) {

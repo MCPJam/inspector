@@ -343,6 +343,18 @@ import {
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 
+/**
+ * What a platform-paid claim was for, in a refusal's words: Ask MCPJam turns,
+ * or the steps of a free starter swarm conversation (`swarm_starter`).
+ */
+function platformPaidSubject(billingFeature: unknown, short = false): string {
+  if (billingFeature === "swarm_starter")
+    return short
+      ? "the free starter conversation"
+      : "free starter conversation steps";
+  return short ? "Ask MCPJam" : "Ask MCPJam turns";
+}
+
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 const STEP_LOG_THRESHOLD = 20;
@@ -3597,13 +3609,14 @@ async function processOneStep(
     } catch {
       // Nothing to release.
     }
+    const subject = platformPaidSubject(billingFeature);
     res = new Response(
       JSON.stringify({
         ok: false,
         code: "agent_billing_rejected",
         error:
-          "This MCPJam deployment does not support MCPJam-paid Ask MCPJam " +
-          "turns yet, so the request was refused before it reached a model " +
+          `This MCPJam deployment does not support MCPJam-paid ${subject} ` +
+          "yet, so the request was refused before it reached a model " +
           "and nothing was charged to your organization. This usually means " +
           "the backend is still rolling out.",
       }),
@@ -3636,13 +3649,14 @@ async function processOneStep(
     } catch {
       // Already closed or never a real stream; nothing to release.
     }
+    const subject = platformPaidSubject(billingFeature, true);
     res = new Response(
       JSON.stringify({
         ok: false,
         code: "agent_billing_rejected",
         error:
           "This MCPJam deployment did not confirm that the turn was billed " +
-          "to MCPJam, so Ask MCPJam stopped. If your organization was " +
+          `to MCPJam, so ${subject} stopped. If your organization was ` +
           "charged for it, contact support — this should not happen and we " +
           "want to know about it.",
       }),
