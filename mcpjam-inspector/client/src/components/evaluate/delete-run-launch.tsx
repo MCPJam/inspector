@@ -36,9 +36,15 @@ export function useDeleteRunLaunch(
   const confirm = async () => {
     if (!target || !deleteRun) return;
     setDeleting(true);
+    const pending = [...target.runIds];
     try {
-      for (const runId of target.runIds) {
-        await deleteRun(runId);
+      while (pending.length > 0) {
+        await deleteRun(pending[0]);
+        pending.shift();
+        // Drop each deleted run from the target as it goes, so a retry
+        // after a later failure only asks for the runs still left — a
+        // deleted run would fail again and block the retry for good.
+        setTarget({ ...target, runIds: [...pending] });
       }
       toast.success(
         target.runIds.length > 1
