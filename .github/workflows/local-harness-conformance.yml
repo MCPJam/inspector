@@ -77,8 +77,8 @@ jobs:
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
-      - name: Build shared evaluator contracts
-        run: npm run build -w @mcpjam/evaluators
+      - name: Build shared contracts and adapter fixtures
+        run: npm run pretest -w @mcpjam/inspector
 
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
