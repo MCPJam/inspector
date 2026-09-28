@@ -110,7 +110,8 @@ export function predicateScorer(
       // throwing routes it to the runner's error result instead.
       if (
         (predicate.type === "responseCloseTo" ||
-          predicate.type === "toolArgumentsMatch") &&
+          predicate.type === "toolInputMatches" ||
+          predicate.type === "toolResultMatches") &&
         result.status === "error"
       )
         throw new Error(result.reason);

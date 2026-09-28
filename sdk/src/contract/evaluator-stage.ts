@@ -107,7 +107,7 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   // What went INTO the call, so a wrong argument files as `argumentMismatch`.
   // A never-called tool on its own also files here; pair it with a
   // `toolCalledWith` (which files at `selection`, earlier) to attribute that.
-  toolArgumentsMatch: "call",
+  toolInputMatches: "call",
   // ── Response: what the server answered with ─────────────────────────────
   //
   // `noToolErrors` MOVED HERE in analyzer 11, from `userValue` where it had
@@ -121,6 +121,8 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   noToolErrors: "response",
   toolLatencyUnder: "response",
   toolResultContains: "response",
+  // What came OUT of the call, like the other `toolResult*` checks.
+  toolResultMatches: "response",
   toolResultMatchesSchema: "response",
   toolResultSizeUnder: "response",
   toolErrorNamesInput: "response",

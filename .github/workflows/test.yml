@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: MCPJam/mcpjam-backend
-          ref: c56e0209e80e56601c990294b4e04b4d30d3a893
+          ref: 86369ce132b76b4dd06b856608eb7f519f32811e
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false

@@ -21,19 +21,19 @@ import { predicateScoreDefinition } from "../src/contract/adapters";
 import { stripCheckPolicy } from "../src/predicates/policy";
 import {
   encodeCallSubject,
-  MAX_TOOL_ARGUMENT_SUBJECT_CHARS,
-  TOOL_ARGUMENTS_MATCH_IMPLEMENTATION,
-  toolArgumentsMatchVerdict,
-} from "../src/predicates/tool-arguments-match";
+  matchVerdict,
+  MAX_MATCH_SUBJECT_CHARS,
+  TOOL_INPUT_MATCHES_IMPLEMENTATION,
+} from "../src/predicates/pattern-match";
 
-type Rule = Extract<Predicate, { type: "toolArgumentsMatch" }>;
+type Rule = Extract<Predicate, { type: "toolInputMatches" }>;
 
 const rule = (over: Partial<Rule> = {}): Rule => ({
-  type: "toolArgumentsMatch",
+  type: "toolInputMatches",
   toolName: "create_view",
   patterns: ["Idea", "Build", "Ship"],
   flags: "i",
-  argument: "elements",
+  path: "/elements",
   ...over,
 });
 
@@ -83,7 +83,7 @@ describe("one call, all patterns", () => {
   });
 
   it("treats alternation inside one pattern as 'either'", () => {
-    const either = rule({ patterns: ["SVG|Excalidraw"], argument: undefined });
+    const either = rule({ patterns: ["SVG|Excalidraw"], path: undefined });
     for (const word of ["svg", "excalidraw"]) {
       expect(
         evaluatePredicate(transcript(call({ format: word })), either).passed
@@ -94,11 +94,11 @@ describe("one call, all patterns", () => {
     ).toBe(false);
   });
 
-  it("matches the whole arguments object as canonical JSON when argument is unset", () => {
+  it("matches the whole arguments object as canonical JSON when path is unset", () => {
     // Sorted keys, no whitespace: the author can rely on `"a":1,"b":2`.
     const result = evaluatePredicate(
       transcript(call({ b: 2, a: 1 })),
-      rule({ patterns: ['^\\{"a":1,"b":2\\}$'], argument: undefined })
+      rule({ patterns: ['^\\{"a":1,"b":2\\}$'], path: undefined })
     );
     expect(result.passed).toBe(true);
   });
@@ -132,7 +132,7 @@ describe("one call, all patterns", () => {
     const dotAll = rule({
       patterns: ["start.end"],
       flags: "s",
-      argument: "text",
+      path: "/text",
     });
     expect(
       evaluatePredicate(transcript(call({ text: "start\nend" })), dotAll).passed
@@ -140,7 +140,7 @@ describe("one call, all patterns", () => {
     const multiline = rule({
       patterns: ["^second$"],
       flags: "m",
-      argument: "text",
+      path: "/text",
     });
     expect(
       evaluatePredicate(transcript(call({ text: "first\nsecond" })), multiline)
@@ -238,7 +238,7 @@ describe("counting — min and max count MATCHING calls", () => {
     [{ matched: 2, unreadable: 2 }, { min: 2, max: 3 }, "unscored"],
     [{ matched: 1, unreadable: 0 }, { min: 2, max: 3 }, "fail"],
   ] as const)("verdict for %j under %j is %s", (tally, bounds, verdict) => {
-    expect(toolArgumentsMatchVerdict(tally, bounds)).toBe(verdict);
+    expect(matchVerdict(tally, bounds)).toBe(verdict);
   });
 });
 
@@ -403,7 +403,7 @@ describe("bounded canonical encoding", () => {
   });
 
   it("makes an over-budget call unreadable, never a match", () => {
-    const text = `Idea Build Ship ${"x".repeat(MAX_TOOL_ARGUMENT_SUBJECT_CHARS)}`;
+    const text = `Idea Build Ship ${"x".repeat(MAX_MATCH_SUBJECT_CHARS)}`;
     expect(encodeCallSubject({ text }, "text")).toEqual({
       kind: "unreadable",
       reason: "overBudget",
@@ -414,7 +414,7 @@ describe("bounded canonical encoding", () => {
     });
     const result = evaluatePredicate(
       transcript(call({ text })),
-      rule({ argument: "text" })
+      rule({ path: "/text" })
     );
     // One unreadable call could be the match `min: 1` needs, or not: neither
     // a pass nor a fail can rest on it.
@@ -423,7 +423,7 @@ describe("bounded canonical encoding", () => {
   });
 
   it("keeps a string argument at exactly the budget readable", () => {
-    const text = "a".repeat(MAX_TOOL_ARGUMENT_SUBJECT_CHARS);
+    const text = "a".repeat(MAX_MATCH_SUBJECT_CHARS);
     expect(encodeCallSubject({ text }, "text")).toEqual({
       kind: "subject",
       text,
@@ -431,7 +431,7 @@ describe("bounded canonical encoding", () => {
   });
 
   it("an unreadable call does not block a verdict it cannot change", () => {
-    const huge = { elements: "x".repeat(MAX_TOOL_ARGUMENT_SUBJECT_CHARS + 1) };
+    const huge = { elements: "x".repeat(MAX_MATCH_SUBJECT_CHARS + 1) };
     const result = evaluatePredicate(
       transcript(call(diagram("Idea", "Build", "Ship")), call(huge)),
       rule()
@@ -447,11 +447,11 @@ describe("bounded canonical encoding", () => {
 });
 
 describe("redaction", () => {
-  it('never prints the value of argument "apiKey"', () => {
+  it('never prints the value of path "/apiKey"', () => {
     const secret = "hunter2-correct-horse-battery";
     const result = evaluatePredicate(
       transcript(call({ apiKey: secret })),
-      rule({ argument: "apiKey", patterns: ["^expected$"], flags: undefined })
+      rule({ path: "/apiKey", patterns: ["^expected$"], flags: undefined })
     );
     expect(result.passed).toBe(false);
     expect(result.reason).not.toContain(secret);
@@ -462,7 +462,7 @@ describe("redaction", () => {
     const secret = "hunter2-correct-horse-battery";
     const result = evaluatePredicate(
       transcript(call({ query: "x", password: secret })),
-      rule({ argument: undefined, patterns: ["never-present"] })
+      rule({ path: undefined, patterns: ["never-present"] })
     );
     expect(result.passed).toBe(false);
     expect(result.reason).not.toContain(secret);
@@ -473,7 +473,7 @@ describe("redaction", () => {
     const token = "sk-live-abcdefghijklmnop";
     const result = evaluatePredicate(
       transcript(call({ auth: "nothing" })),
-      rule({ argument: undefined, patterns: [token] })
+      rule({ path: undefined, patterns: [token] })
     );
     expect(result.passed).toBe(false);
     expect(result.reason).not.toContain(token);
@@ -486,7 +486,7 @@ describe("redaction", () => {
     const long = "a".repeat(400);
     const result = evaluatePredicate(
       transcript(call({ text: "b" })),
-      rule({ argument: "text", patterns: [long] })
+      rule({ path: "/text", patterns: [long] })
     );
     expect(result.reason).not.toContain(long);
     expect(result.reason).toContain("…(+280 chars)");
@@ -495,10 +495,10 @@ describe("redaction", () => {
 
 describe("a pathological pattern stays linear", () => {
   it("(a|a)*b over a 100k-character subject returns a result", () => {
-    const text = "a".repeat(MAX_TOOL_ARGUMENT_SUBJECT_CHARS);
+    const text = "a".repeat(MAX_MATCH_SUBJECT_CHARS);
     const result = evaluatePredicate(
       transcript(call({ text })),
-      rule({ argument: "text", patterns: ["(a|a)*b"], flags: undefined })
+      rule({ path: "/text", patterns: ["(a|a)*b"], flags: undefined })
     );
     expect(result).toMatchObject({ passed: false });
     expect(result.status).toBeUndefined();
@@ -509,13 +509,13 @@ describe("a pathological pattern stays linear", () => {
     expect(
       evaluatePredicate(
         transcript(call({ text })),
-        rule({ argument: "text", patterns: ["(a|a)*$"], flags: undefined })
+        rule({ path: "/text", patterns: ["(a|a)*$"], flags: undefined })
       ).passed
     ).toBe(true);
     expect(
       evaluatePredicate(
         transcript(call({ text })),
-        rule({ argument: "text", patterns: [".*.*.*="], flags: undefined })
+        rule({ path: "/text", patterns: [".*.*.*="], flags: undefined })
       ).passed
     ).toBe(false);
   });
@@ -542,7 +542,12 @@ describe("schema", () => {
     ["max 0 alone", { max: 0 }],
     ["max below min", { min: 2, max: 1 }],
     ["a fractional min", { min: 1.5 }],
-    ["an empty argument", { argument: "" }],
+    ["an empty path (the root)", { path: "" }],
+    ["a path without a leading slash", { path: "elements" }],
+    ["a two-key path", { path: "/a/b" }],
+    ["a path to the empty key", { path: "/" }],
+    ["a bad escape in a path", { path: "/a~2" }],
+    ["no toolName", { toolName: undefined }],
   ])("rejects %s", (_label, over) => {
     expect(predicateSchema.safeParse(rule(over as Partial<Rule>)).success).toBe(
       false
@@ -566,8 +571,8 @@ describe("schema", () => {
 
 describe("turn scope", () => {
   it("is turn-scopable and grades each turn's own calls", () => {
-    expect(isTurnScopablePredicateKind("toolArgumentsMatch")).toBe(true);
-    expect(TURN_SCOPABLE_PREDICATE_KINDS).toContain("toolArgumentsMatch");
+    expect(isTurnScopablePredicateKind("toolInputMatches")).toBe(true);
+    expect(TURN_SCOPABLE_PREDICATE_KINDS).toContain("toolInputMatches");
     const results = evaluateTurnChecks([
       {
         promptIndex: 0,
@@ -593,23 +598,23 @@ describe("scoring", () => {
     const definition = predicateScoreDefinition(authored, { ordinal: 0 });
     expect(definition.implementationHash).toBe(
       canonicalDigest({
-        ...TOOL_ARGUMENTS_MATCH_IMPLEMENTATION,
+        ...TOOL_INPUT_MATCHES_IMPLEMENTATION,
         rule: stripCheckPolicy(authored),
       })
     );
     expect(definition.implementationHash).not.toBe(
       canonicalDigest(stripCheckPolicy(authored))
     );
-    expect(definition.scorerId).toBe("predicate:toolArgumentsMatch#0");
+    expect(definition.scorerId).toBe("predicate:toolInputMatches#0");
   });
 
   it("projects an unreadable-decided verdict as an error, not a 0", async () => {
     const result = await runEvaluatorsProjected(
-      [assertion(rule({ argument: "text" }))],
+      [assertion(rule({ path: "/text" }))],
       {
         ...context,
         transcript: transcript(
-          call({ text: "x".repeat(MAX_TOOL_ARGUMENT_SUBJECT_CHARS + 1) })
+          call({ text: "x".repeat(MAX_MATCH_SUBJECT_CHARS + 1) })
         ),
       }
     );
