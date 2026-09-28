@@ -494,6 +494,8 @@ The stored token could not be refreshed because the authorization server was unr
 - Retry in a minute; if it persists, check the authorization server's status.
 - Reconnect the server to obtain a fresh token once the authorization server is reachable.
 
+When the token endpoint itself answered with an error, the toast reads **Token refresh failed** and includes the HTTP status and the server's response body — for example, `HTTP 502: "Bad gateway"`. When nothing answered at all, the toast includes the reason: `timed out`, `ECONNREFUSED`, or `no response`. Failures during metadata discovery (`.well-known` lookup) keep the existing **Could not reach {host}** copy instead.
+
 ### Proxy rejected
 
 `auth/proxy_rejected`
