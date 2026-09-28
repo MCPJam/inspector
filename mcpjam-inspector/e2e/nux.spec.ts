@@ -18,22 +18,26 @@ test.describe("NUX first-run redirect", () => {
     !!process.env.PLAYWRIGHT_BASE_URL,
     "NUX tests require local non-hosted build; skip when PLAYWRIGHT_BASE_URL is set",
   );
-  // Temporarily skipped. This build is on main, but prod still serves the
-  // previous release, and this job builds production mode and talks to prod
-  // Convex. `useOrganizationBilling` now calls
-  // `billing:getOrganizationBillingBundle`, which prod does not have until the
-  // next release promote, so the query throws, the redirect never fires and
-  // every branch cut from main goes red here.
-  //
-  // A release promotes the inspector and the backend together (release.yml
-  // dispatches `inspector_release_promote`), so this fixes itself on the next
-  // one. Nothing is broken for real users: prod serves the old client.
-  //
-  // Re-enable right after that release. If it still fails then, the cause is
-  // NOT this — look at guest project provisioning.
-  test.skip("fresh user landing on / sees onboarding on Home", async ({
-    page,
-  }) => {
+  test("fresh user landing on / sees onboarding on Home", async ({ page }) => {
+    // Skipped in CI only, and only until the next release.
+    //
+    // CI builds this in production mode, so it talks to the production Convex
+    // deployment. Main's client calls `billing:getOrganizationBillingBundle`,
+    // which production does not have until the next release promote: the query
+    // throws, the redirect never fires, and every branch cut from main goes red
+    // here. A release ships the inspector and the backend together (release.yml
+    // dispatches `inspector_release_promote`), so this clears itself. Real
+    // users are unaffected, because production still serves the old client.
+    //
+    // A local run points at a deployment that has the query, so the assertions
+    // below still guard the redirect there. Drop this skip after that release;
+    // if it fails then, the cause is NOT this — look at guest project
+    // provisioning.
+    test.skip(
+      !!process.env.CI,
+      "CI builds against prod Convex, which lacks billing:getOrganizationBillingBundle until the next release",
+    );
+
     // Ensure no prior onboarding state (fresh context already has empty
     // localStorage, but be explicit so the intent is clear in CI logs).
     await page.addInitScript(
