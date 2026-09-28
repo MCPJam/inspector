@@ -301,10 +301,21 @@ jobs:
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
     container: mcr.microsoft.com/playwright:v1.62.1-noble
-    # This job builds the PR's code and runs it against prod Convex. Keep its
-    # errors out of prod Sentry, which pages us: the build flag turns off the
-    # browser SDK, DO_NOT_TRACK turns off the server's.
+    # This job builds the PR's code and runs it. Point it at staging, not prod.
+    #
+    # `npm run build` is a production build, so without these it picks up
+    # `.env.production` and a PR's client talks to the production backend. That
+    # bit us: #4939 merged a client calling a Convex query that only existed on
+    # staging, and every branch's E2E went red on a query prod did not have —
+    # main included, for hours. Staging tracks the backend's main, so a client
+    # and the backend it was written against land there together.
+    #
+    # Sentry stays off for the same reason it was turned off here: the build
+    # flag silences the browser SDK, DO_NOT_TRACK the server's.
     env:
+      VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
+      CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
+      CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
       VITE_DISABLE_SENTRY: "true"
       DO_NOT_TRACK: "1"
 
