@@ -1,3 +1,4 @@
+import { toAdapterPath } from "../adapter-path.js";
 import { resetLocalHarnessRegistryForTests } from "../session-registry.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -390,6 +391,35 @@ describe("a runtime this Inspector cannot reserve", () => {
 
 
 describe("local lane state lifetime", () => {
+  it("refuses unsafe secret names before starting a model lease", async () => {
+    await expect(prepareLocalHarnessTurn({ ...turnArgs(), scopedEnv: { HOME: "/elsewhere" } }))
+      .rejects.toThrow("not allowed");
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+  });
+
+  it.each(["ANTHROPIC_API_KEY", "anthropic_auth_token", "BRIDGE_WS_PORT", "CLAUDE_CODE_SETTINGS_FILE"])(
+    "refuses project secrets overriding runtime-owned %s", async (name) => {
+      await expect(prepareLocalHarnessTurn({ ...turnArgs(), scopedEnv: { [name]: "test" } }))
+        .rejects.toThrow("conflicts");
+      expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+    },
+  );
+
+  it("delivers scoped secrets and reports delivery only after bridge startup", async () => {
+    const delivered = vi.fn();
+    const result = await prepareLocalHarnessTurn({
+      ...turnArgs(), scopedEnv: { SERVICE_KEY: "test-value" }, onSecretEnvDelivered: delivered,
+    });
+    if (!result.ok) throw new Error(result.message);
+    expect(result.prepared.skillsBaseDir).toBe(toAdapterPath(join(stateRoot, "sessions", turnArgs().sessionId, "home", ".claude", "skills")));
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
+    expect(providerArgs.scopedEnv).toEqual({ SERVICE_KEY: "test-value" });
+    expect(delivered).not.toHaveBeenCalled();
+    await providerArgs.onBridgeStarted({ pid: 1, port: 1 });
+    expect(delivered).toHaveBeenCalledOnce();
+    await result.prepared.discardState();
+  });
+
   it("reports missing state before mkdir, including after a previous turn discarded it", async () => {
     const args = turnArgs();
     const first = await prepareLocalHarnessTurn(args);

@@ -36,7 +36,6 @@ import {
 import {
   attributeCursorToolCall,
   parseHarnessToolName,
-  serializeHarnessMcpJson,
   toAcpMcpServers,
   type HarnessMcpJson,
 } from "./mcp-config.js";
@@ -353,14 +352,14 @@ type HarnessRuntimeAdapterBase = {
   prepareSkills(skills: RuntimeSkill[]): PreparedHarnessSkills;
   /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
    *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
-   *  the bundle's components into per-kind channels (skills param, `.mcp.json`)?
+   *  the bundle's components into per-kind channels (skills, native MCP config)?
    *
    *  FALSE for both adapters today, and deliberately so (INS-8):
    *   - Codex's installed harness (`@ai-sdk/harness-codex`) exposes no
    *     plugin-install hook, and its bridge documents that MCP tools are not
    *     model-callable through `codex exec --experimental-json` at all
    *     (openai/codex#19425) — half a bundle is not an installed bundle.
-   *   - Claude Code's adapter delivers skills + `.mcp.json`, not a plugin unit.
+   *   - Claude Code's adapter delivers skills + MCP config, not a plugin unit.
    *  Advertising it means enforcing it: `runHarnessTurn` throws if an adapter
    *  sets this without `deliverPluginBundles`. */
   supportsPluginBundles: boolean;
@@ -509,7 +508,7 @@ export type HarnessExternalAccountBrokerBinding = {
 };
 
 /** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
- *  into the box before the process starts (Claude Code's `.mcp.json`). */
+ *  into the box before the process starts. */
 type NativeSandboxFilesArm = {
   mcpDelivery: "native";
   mcpNativeDelivery: "sandbox-files";
@@ -521,7 +520,7 @@ type NativeSandboxFilesArm = {
 
 /** NATIVE delivery, `session-config` mechanism: there is no file to write —
  *  the servers are a CONSTRUCTOR setting the adapter forwards into its session
- *  handshake (Cursor's ACP `session/new`). */
+ *  handshake (Claude Code's start message or Cursor's ACP `session/new`). */
 type NativeSessionConfigArm = {
   mcpDelivery: "native";
   mcpNativeDelivery: "session-config";
@@ -792,19 +791,19 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // tool-approval-request and resumes with the decision), same path as native.
   supportsHostExecutedToolApproval: true,
   // The CLI's own MCP client connects to the servers from inside the sandbox,
-  // via the `.mcp.json` written below — real native function calling. Read from
+  // via its session MCP configuration — real native function calling. Read from
   // the shared declaration so the host editor's promises about which knobs bite
   // move with this, instead of being re-asserted by hand on the client.
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
-  // …by writing `.mcp.json` into the session workdir (see deliverMcpServers).
-  mcpNativeDelivery: "sandbox-files",
+  // …through the SDK session configuration, without writing into the workspace.
+  mcpNativeDelivery: "session-config",
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
   skillsWriteOptions: { trailingNewline: true },
   prepareSkills: prepareClaudeCodeSkills,
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
-  // (skills param + `.mcp.json`), which is not the same contract.
+  // (skills param + MCP configuration), which is not the same contract.
   supportsPluginBundles: false,
   // Claude Code does not emit file-change stream parts.
   fileChangeToolName: undefined,
@@ -817,17 +816,10 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("claude-code"),
   supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
-  async deliverMcpServers({ writeTextFile, sessionWorkDir, mcpJson }) {
-    // Write the host's MCP servers into the session workdir before Claude Code
-    // starts, so it connects to them on launch.
-    await writeTextFile({
-      path: `${sessionWorkDir}/.mcp.json`,
-      content: serializeHarnessMcpJson(mcpJson),
-    });
-  },
-  createHarness({ modelId, auth }) {
+  createHarness({ modelId, auth, mcpJson }) {
     const nativeModel = toClaudeCodeModel(modelId);
     return createClaudeCodeHarness({
+      mcpServers: mcpJson.mcpServers,
       ...(nativeModel ? { model: nativeModel } : {}),
       auth,
       // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party

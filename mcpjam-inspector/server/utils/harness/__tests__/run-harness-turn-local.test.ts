@@ -5,6 +5,10 @@ const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "Done",
   stateExists: true,
+  invokeSandboxCallback: false,
+  supportsSkills: false,
+  agentOptions: {} as any,
+  createRuntime: vi.fn(() => ({ harnessId: "claude-code" })),
   streamError: null as Error | null,
   create: vi.fn(),
   continuations: [] as unknown[],
@@ -21,9 +25,15 @@ const harnessState = vi.hoisted(() => ({
 
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
+    constructor(options: any) { harnessState.agentOptions = options; }
     createSession = async (options: any) => {
       harnessState.create(options);
       harnessState.session.sessionId = options.sessionId;
+      if (harnessState.invokeSandboxCallback) {
+        await harnessState.agentOptions.onSandboxSession({
+          session: { writeTextFile: vi.fn() }, sessionWorkDir: "/private/local/work/project",
+        });
+      }
       return harnessState.session;
     };
     continueStream = async () => this.stream();
@@ -55,10 +65,14 @@ vi.mock("../registry.js", () => ({
     id: "claude-code",
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
-    supportsSkills: false,
-    mcpDelivery: "host-executed",
+    supportsSkills: harnessState.supportsSkills,
+    skillsBaseDir: "/home/user/.claude/skills",
+    skillsWriteOptions: { trailingNewline: true },
+    prepareSkills: (skills: any[]) => ({ delivered: skills, payload: skills }),
+    mcpDelivery: "native",
+    mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
-    createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
+    createHarness: harnessState.createRuntime,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
 }));
@@ -79,11 +93,13 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 vi.mock("../runtime-skills.js", () => ({
   frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
+  fetchRuntimeSkillFiles: vi.fn(async () => ({ ok: true, files: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
 
 vi.mock("../reconcile-skill-dirs.js", () => ({
   reconcileSkillDirs: vi.fn(async () => {}),
+  appendManagedSkills: vi.fn(async () => {}),
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => {
@@ -139,6 +155,7 @@ vi.mock("../local/local-turn.js", () => ({
     prepared: {
       plan: { runtime: { runtimeId: "runtime-1" } },
       sandbox: {}, auth: {}, sandboxWorkDir: "project",
+      skillsBaseDir: "/private/local/home/.claude/skills",
       permissionMode: "allow-edits",
       sessionStateExists: harnessState.stateExists,
       teardown: harnessState.teardown,
@@ -146,6 +163,27 @@ vi.mock("../local/local-turn.js", () => ({
     },
   })),
 }));
+
+vi.mock("../preseed-adapter-skills.js", () => ({
+  handOffLegacySkillDirs: vi.fn(async () => {}),
+  preseedAdapterSkills: vi.fn(async () => {}),
+}));
+vi.mock("../materialize-skill-files.js", () => ({ materializeSkillFiles: vi.fn(async () => {}) }));
+vi.mock("../materialize-skill-frontmatter.js", () => ({ materializeSkillFrontmatter: vi.fn(async () => {}) }));
+vi.mock("../pinned-harness-skills.js", async (original) => ({
+  ...await original<typeof import("../pinned-harness-skills.js")>(),
+  materializePinnedSkillFiles: vi.fn(async () => {}),
+}));
+vi.mock("../adopt-sandbox-skills.js", async (original) => ({
+  ...await original<typeof import("../adopt-sandbox-skills.js")>(),
+  adoptSandboxSkills: vi.fn(async () => ({ adopted: [{ skillId: "new", name: "new" }] })),
+}));
+import { handOffLegacySkillDirs, preseedAdapterSkills } from "../preseed-adapter-skills.js";
+import { materializeSkillFiles } from "../materialize-skill-files.js";
+import { materializeSkillFrontmatter } from "../materialize-skill-frontmatter.js";
+import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
+import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
+import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -186,6 +224,8 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
     harnessState.continuations = [];
     harnessState.stateExists = true;
+    harnessState.invokeSandboxCallback = false;
+    harnessState.supportsSkills = false;
     harnessState.streamError = null;
     harnessState.discardState.mockImplementation(async () => {
       harnessState.stateExists = false;
@@ -213,6 +253,39 @@ describe("runHarnessTurn local continuity", () => {
       },
     } as any);
   }
+
+  it("wires the granted workspace and materialized secrets into local preparation", async () => {
+    const delivered = vi.fn();
+    await runHarnessTurn(baseOptions({
+      runtimeSecrets: [{ name: "SERVICE_KEY", value: "test-value", secretId: "secret-1" }],
+      onSecretEnvDelivered: delivered,
+    }) as any, "none");
+    expect(harnessState.agentOptions.sandboxConfig).toEqual({ workDir: "project" });
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({
+      scopedEnv: { SERVICE_KEY: "test-value" }, onSecretEnvDelivered: delivered,
+    }));
+    expect(harnessState.createRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      mcpJson: { mcpServers: {} },
+    }));
+  });
+
+  it.each(["environment", "pinned"])("uses the local skill root for every %s skill pass", async (mode) => {
+    harnessState.invokeSandboxCallback = true;
+    harnessState.supportsSkills = true;
+    const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
+    await runHarnessTurn(baseOptions(mode === "pinned"
+      ? { pinnedHarnessSkills: [skill] }
+      : { runtimeSkillsOverride: [skill] }) as any, "none");
+    const common = [reconcileSkillDirs, handOffLegacySkillDirs, preseedAdapterSkills, materializeSkillFrontmatter];
+    const passes = mode === "pinned"
+      ? [...common, materializePinnedSkillFiles]
+      : [...common, materializeSkillFiles, adoptSandboxSkills, appendManagedSkills];
+    for (const pass of passes) {
+      expect(pass).toHaveBeenCalledWith(expect.objectContaining({
+        skillsBase: "/private/local/home/.claude/skills",
+      }));
+    }
+  });
 
   it("binds preparation and first SDK session to one id without any cloud reservation", async () => {
     await runHarnessTurn(baseOptions() as any, "none");
