@@ -2,7 +2,10 @@
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
-import type { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
+import type {
+  McpjamAuthContext,
+  McpjamModelLeaseScope,
+} from "./mcpjam-model-lease.js";
 import {
   generateText,
   asSchema,
@@ -87,6 +90,12 @@ interface HostRunnerBaseConfig {
   /** @internal Lease ownership inherited by iteration clones. */
   mcpjamLeaseScope?: McpjamModelLeaseScope;
   mcpjamProject?: string;
+  /**
+   * For `mcpjam/…` models: mint as a caller whose credential refreshes (a CLI
+   * login) instead of with a fixed `sk_` `apiKey` — leave `apiKey` empty.
+   * Inherited by every clone. See `CreateModelOptions.mcpjamAuth`.
+   */
+  mcpjamAuth?: McpjamAuthContext;
   baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
@@ -274,6 +283,7 @@ export class HostRunner implements HostExecutor {
   private readonly apiKey: string;
   private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
   private readonly mcpjamProject?: string;
+  private readonly mcpjamAuth?: McpjamAuthContext;
   private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
@@ -395,6 +405,7 @@ export class HostRunner implements HostExecutor {
     this.apiKey = config.apiKey;
     this.mcpjamLeaseScope = config.mcpjamLeaseScope;
     this.mcpjamProject = config.mcpjamProject;
+    this.mcpjamAuth = config.mcpjamAuth;
     this.baseUrls = config.baseUrls;
     // An EMPTY system prompt is treated as "none given", the same as the
     // snapshot branch below already does. Anthropic refuses an empty system
@@ -822,6 +833,7 @@ export class HostRunner implements HostExecutor {
         apiKey: this.apiKey,
         mcpjamLeaseScope: this.mcpjamLeaseScope,
         mcpjamProject: this.mcpjamProject,
+        ...(this.mcpjamAuth ? { mcpjamAuth: this.mcpjamAuth } : {}),
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
@@ -1071,6 +1083,7 @@ export class HostRunner implements HostExecutor {
       apiKey: options.apiKey ?? this.apiKey,
       mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
       mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
+      mcpjamAuth: options.mcpjamAuth ?? this.mcpjamAuth,
       baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,

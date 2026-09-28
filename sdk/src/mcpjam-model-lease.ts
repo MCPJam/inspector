@@ -43,10 +43,24 @@ export class McpjamLeaseError extends Error {
   readonly code: string;
   readonly status: number;
   readonly retryAfterSeconds?: number;
+  /**
+   * The refusal's structured `details`, when the API sent an object there.
+   *
+   * Kept because a status alone cannot say what was refused: the v1 envelope
+   * files a free-tier model restriction under `FORBIDDEN`, and only the nested
+   * code tells it apart from a key that may not use the project. See
+   * {@link classifyMcpjamLeaseError}.
+   */
+  readonly details?: Readonly<Record<string, unknown>>;
 
   constructor(
     message: string,
-    options: { code?: string; status: number; retryAfterSeconds?: number }
+    options: {
+      code?: string;
+      status: number;
+      retryAfterSeconds?: number;
+      details?: Record<string, unknown>;
+    }
   ) {
     super(message);
     this.name = "McpjamLeaseError";
@@ -55,19 +69,159 @@ export class McpjamLeaseError extends Error {
     if (options.retryAfterSeconds !== undefined) {
       this.retryAfterSeconds = options.retryAfterSeconds;
     }
+    if (options.details !== undefined) {
+      this.details = Object.freeze({ ...options.details });
+    }
   }
 }
+
+/**
+ * What a lease refusal was ABOUT, for a caller deciding whose problem it is.
+ *
+ *   - `billing`: the organization cannot spend right now — credits, the free
+ *     allowance, a spend budget, a locked wallet. Not a credential problem, and
+ *     retrying does not help.
+ *   - `auth`: the credentials were missing or rejected, or are not entitled to
+ *     this project — including a 403 that carries NO billing detail.
+ *   - `rateLimited`: a throttle that clears by waiting.
+ *   - `unavailable`: MCPJam could not answer (5xx, timeout, an unrecognized
+ *     lease body).
+ *   - `other`: anything else, e.g. a request the API refused as malformed.
+ */
+export type McpjamLeaseRefusalKind =
+  "billing" | "auth" | "rateLimited" | "unavailable" | "other";
+
+/**
+ * The account-limit codes MCPJam's spend gates refuse with — the same
+ * vocabulary the Inspector's swarm retry policy recognizes as an account
+ * limit rather than a provider's own throttle.
+ */
+const BILLING_REFUSAL_CODE =
+  /^(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|organization_spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|spending_admission_invalid|insufficient_credits)$/i;
+
+const AUTH_REFUSAL_CODE =
+  /^(?:unauthorized|oauth_required|invalid_api_key|auth_unavailable|account_suspended)$/i;
+
+/** Every code-shaped string a refusal carries, top level and nested. */
+function refusalCodes(error: McpjamLeaseError): string[] {
+  const codes = [error.code];
+  const details = error.details;
+  if (details) {
+    for (const key of ["code", "reason", "refusalReason", "billingCode"]) {
+      const value = details[key];
+      if (typeof value === "string" && value.length > 0) codes.push(value);
+    }
+  }
+  return codes;
+}
+
+/**
+ * Classify a lease refusal. Reads the codes BEFORE the status: a billing code
+ * wins wherever it appears, because an auth-shaped envelope (`FORBIDDEN`,
+ * 403) wrapping a free-tier or spend refusal is still a billing refusal, and
+ * reporting it as bad credentials would send someone to rotate a key that
+ * works.
+ */
+export function classifyMcpjamLeaseError(
+  error: McpjamLeaseError
+): McpjamLeaseRefusalKind {
+  const codes = refusalCodes(error);
+  if (codes.some((code) => BILLING_REFUSAL_CODE.test(code))) return "billing";
+  if (
+    error.status === 401 ||
+    error.status === 403 ||
+    codes.some((code) => AUTH_REFUSAL_CODE.test(code) || code === "FORBIDDEN")
+  ) {
+    return "auth";
+  }
+  if (error.status === 429 || codes.includes("RATE_LIMITED")) {
+    return "rateLimited";
+  }
+  if (
+    error.status === 0 ||
+    error.status >= 500 ||
+    codes.some((code) =>
+      [
+        "SERVER_UNREACHABLE",
+        "TIMEOUT",
+        "INTERNAL_ERROR",
+        "UNSUPPORTED",
+      ].includes(code)
+    )
+  ) {
+    return "unavailable";
+  }
+  return "other";
+}
+
+/**
+ * Returns the bearer token for MCPJam's API, read fresh for every request.
+ *
+ * For credentials that refresh — a CLI login's session token — where a value
+ * captured once would expire mid-run. The client calls it before each mint,
+ * each mint retry and each revoke, never caches what it returns, and never
+ * sends it anywhere but MCPJam's own API.
+ */
+export type McpjamGetAuth = () => Promise<string>;
+
+/**
+ * An explicit MCPJam auth context: where the bearer comes from, and the extra
+ * headers MCPJam's API requests carry. Bound to a lease scope (see
+ * {@link McpjamModelLeaseScope}), so every lease minted in that scope is
+ * minted as exactly this caller.
+ */
+export type McpjamAuthContext = {
+  getAuth: McpjamGetAuth;
+  /**
+   * Extra headers for MCPJam API requests ONLY — mint and revoke, never the
+   * model proxy, a model provider or an MCP server. `authorization` and
+   * `content-type` are the client's and cannot be overridden here.
+   */
+  headers?: Readonly<Record<string, string>>;
+};
 
 export interface McpjamLeaseClientOptions {
   /** MCPJam app origin, e.g. `https://app.mcpjam.com`. */
   baseUrl: string;
-  /** An `sk_` organization API key. */
-  apiKey: string;
+  /**
+   * An `sk_` organization API key, sent as-is on every platform request.
+   * Exactly one of `apiKey` and `getAuth` is required.
+   */
+  apiKey?: string;
+  /** A refreshed bearer, read per request — see {@link McpjamGetAuth}. */
+  getAuth?: McpjamGetAuth;
+  /** Extra MCPJam API headers — see {@link McpjamAuthContext.headers}. */
+  headers?: Readonly<Record<string, string>>;
   /** Project id, or the `default` sentinel for the key org's Default project. */
   project: string;
   /** Canonical model id, e.g. `anthropic/claude-sonnet-4.5`. */
   model: string;
   fetchImpl?: typeof fetch;
+}
+
+/** Headers the client owns on a platform request; custom ones cannot replace them. */
+const CLIENT_OWNED_HEADERS = new Set(["authorization", "content-type"]);
+
+/**
+ * Refuse an ambiguous credential. Two sources would make which identity a
+ * lease is minted — and billed — as depend on precedence nobody wrote down.
+ */
+function assertOneCredentialSource(options: {
+  apiKey?: string;
+  getAuth?: McpjamGetAuth;
+}): void {
+  const hasKey = typeof options.apiKey === "string" && options.apiKey !== "";
+  const hasCallback = typeof options.getAuth === "function";
+  if (hasKey && hasCallback) {
+    throw new Error(
+      "MCPJam lease options carry both an API key and an auth callback; supply exactly one."
+    );
+  }
+  if (!hasKey && !hasCallback) {
+    throw new Error(
+      "MCPJam lease options need an API key or an auth callback to mint with."
+    );
+  }
 }
 
 /**
@@ -200,7 +354,9 @@ async function readRetryAfterSeconds(
  */
 export class McpjamLeaseClient {
   private readonly baseUrl: string;
-  private readonly apiKey: string;
+  private readonly apiKey: string | undefined;
+  private readonly getAuth: McpjamGetAuth | undefined;
+  private readonly extraHeaders: Readonly<Record<string, string>>;
   private readonly project: string;
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
@@ -218,12 +374,55 @@ export class McpjamLeaseClient {
   private minting: Promise<McpjamModelLease> | null = null;
 
   constructor(options: McpjamLeaseClientOptions) {
+    assertOneCredentialSource(options);
     this.baseUrl = trimTrailingSlashes(options.baseUrl);
-    this.apiKey = options.apiKey;
+    this.apiKey = options.getAuth ? undefined : options.apiKey;
+    this.getAuth = options.getAuth;
+    this.extraHeaders = { ...(options.headers ?? {}) };
     this.project = options.project;
     this.model = options.model;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.proxyFetch = this.proxyFetch.bind(this);
+  }
+
+  /**
+   * The headers for ONE request to MCPJam's own API, credential read now.
+   *
+   * Custom headers first, minus any spelling of the two the client owns,
+   * then those two — so a custom `Authorization` can never survive. A plain
+   * record, as the requests have always sent. A callback that fails is a
+   * credential failure, reported as one.
+   */
+  private async platformHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(this.extraHeaders)) {
+      if (CLIENT_OWNED_HEADERS.has(name.toLowerCase())) continue;
+      headers[name] = value;
+    }
+    let token: string;
+    if (this.getAuth) {
+      try {
+        token = await this.getAuth();
+      } catch (error) {
+        throw new McpjamLeaseError(
+          `Could not read MCPJam credentials: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { code: "AUTH_UNAVAILABLE", status: 0 }
+        );
+      }
+      if (typeof token !== "string" || token.trim() === "") {
+        throw new McpjamLeaseError(
+          "MCPJam credentials resolved to an empty token",
+          { code: "AUTH_UNAVAILABLE", status: 0 }
+        );
+      }
+    } else {
+      token = this.apiKey ?? "";
+    }
+    headers["content-type"] = "application/json";
+    headers.authorization = `Bearer ${token}`;
+    return headers;
   }
 
   /** The live lease, minting or renewing if needed. */
@@ -274,10 +473,7 @@ export class McpjamLeaseClient {
         `${this.baseUrl}/api/v1/projects/${encodeURIComponent(this.project)}/model-leases/revoke`,
         {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${this.apiKey}`,
-          },
+          headers: await this.platformHeaders(),
           body: JSON.stringify({ runId: lease.runId }),
           signal,
         }
@@ -302,13 +498,12 @@ export class McpjamLeaseClient {
 
   private async mint(signal: AbortSignal): Promise<McpjamModelLease> {
     const url = `${this.baseUrl}/api/v1/projects/${encodeURIComponent(this.project)}/model-leases`;
-    const send = () =>
+    // Headers are rebuilt per send: a refreshed credential is read again for
+    // the retry rather than reusing one that may have just expired.
+    const send = async () =>
       this.fetchImpl(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.apiKey}`,
-        },
+        headers: await this.platformHeaders(),
         body: JSON.stringify({ model: this.model }),
         signal,
       });
@@ -329,14 +524,23 @@ export class McpjamLeaseClient {
     > | null;
     if (!response.ok) {
       const retryAfterSeconds = await readRetryAfterSeconds(response);
+      const details =
+        body?.details &&
+        typeof body.details === "object" &&
+        !Array.isArray(body.details)
+          ? (body.details as Record<string, unknown>)
+          : undefined;
       throw new McpjamLeaseError(
         typeof body?.message === "string"
           ? body.message
-          : `MCPJam refused a model lease for ${this.model}`,
+          : typeof body?.error === "string"
+            ? body.error
+            : `MCPJam refused a model lease for ${this.model}`,
         {
           ...(typeof body?.code === "string" ? { code: body.code } : {}),
           status: response.status,
           ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+          ...(details ? { details } : {}),
         }
       );
     }
@@ -483,33 +687,110 @@ async function peekLeaseRefusal(
 }
 
 /**
- * One client per (deployment, project, model, key), so every iteration of a run
- * shares a lease.
+ * One client per (deployment, project, model, credential), so every iteration
+ * of a run shares a lease.
  *
  * A suite shares this scope across its iteration clones and releases only
  * these clients at teardown. Standalone runners share the default scope.
+ *
+ * A scope may be BOUND to one explicit {@link McpjamAuthContext}: a run that
+ * mints as a logged-in user binds its scope to that user's auth context, every
+ * `mcpjam/…` model built against the scope mints through it, and releasing the
+ * scope revokes exactly those leases — never another caller's. Clients are
+ * keyed by deployment, project and model within that context; an auth
+ * callback is an identity, never serialized into a key, so two contexts can
+ * never collapse onto one client.
  */
 export class McpjamModelLeaseScope {
   private readonly clients = new Map<string, McpjamLeaseClient>();
+  /** Clients minted with a callback, per callback identity. */
+  private authClients = new WeakMap<
+    McpjamGetAuth,
+    Map<string, McpjamLeaseClient>
+  >();
+  /** Every client this scope created, so `release` can reach all of them. */
+  private readonly all = new Set<McpjamLeaseClient>();
+  /** The auth context this scope is bound to, if any. */
+  readonly auth?: McpjamAuthContext;
+
+  constructor(options: { auth?: McpjamAuthContext } = {}) {
+    if (options.auth) {
+      if (typeof options.auth.getAuth !== "function") {
+        throw new Error(
+          "A lease scope's auth context needs a getAuth callback."
+        );
+      }
+      this.auth = {
+        getAuth: options.auth.getAuth,
+        ...(options.auth.headers
+          ? { headers: Object.freeze({ ...options.auth.headers }) }
+          : {}),
+      };
+    }
+  }
 
   getClient(options: McpjamLeaseClientOptions): McpjamLeaseClient {
+    assertOneCredentialSource(options);
+    const headersKey = options.headers
+      ? Object.entries(options.headers).sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0
+        )
+      : [];
+
+    if (options.getAuth) {
+      if (this.auth && options.getAuth !== this.auth.getAuth) {
+        throw new Error(
+          "This lease scope is bound to a different MCPJam auth context."
+        );
+      }
+      let byKey = this.authClients.get(options.getAuth);
+      if (!byKey) {
+        byKey = new Map();
+        this.authClients.set(options.getAuth, byKey);
+      }
+      const key = JSON.stringify([
+        options.baseUrl,
+        options.project,
+        options.model,
+        headersKey,
+      ]);
+      let client = byKey.get(key);
+      if (!client) {
+        client = new McpjamLeaseClient(options);
+        byKey.set(key, client);
+        this.all.add(client);
+      }
+      return client;
+    }
+
+    if (this.auth) {
+      throw new Error(
+        "This lease scope is bound to an MCPJam auth context and does not mint with a fixed API key."
+      );
+    }
     const key = JSON.stringify([
       options.baseUrl,
       options.project,
       options.model,
       options.apiKey,
+      ...(headersKey.length > 0 ? [headersKey] : []),
     ]);
     let client = this.clients.get(key);
     if (!client) {
       client = new McpjamLeaseClient(options);
       this.clients.set(key, client);
+      this.all.add(client);
     }
     return client;
   }
 
   async release(): Promise<void> {
-    const held = [...this.clients.values()];
+    const held = [...this.all];
+    this.all.clear();
     this.clients.clear();
+    // A WeakMap cannot be cleared; a fresh one forgets every callback's
+    // clients, so the next `getClient` after a release mints anew.
+    this.authClients = new WeakMap();
     await Promise.all(held.map((client) => client.revoke()));
   }
 }

@@ -1833,10 +1833,15 @@ export {
   releaseMcpjamModelLeases,
   McpjamLeaseClient,
   McpjamLeaseError,
+  McpjamModelLeaseScope,
+  classifyMcpjamLeaseError,
 } from "./mcpjam-model-lease.js";
 export type {
   McpjamModelLease,
   McpjamLeaseClientOptions,
+  McpjamAuthContext,
+  McpjamGetAuth,
+  McpjamLeaseRefusalKind,
 } from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {
