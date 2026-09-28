@@ -372,6 +372,75 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
+  it("keeps the output ceiling off the org-BYOK rail (/stream/org)", async () => {
+    // Only the MCPJam-hosted rail holds credits against it; nothing shows
+    // /stream/org reading it, so a BYOK step keeps its own limits.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+        modelId: "claude-3-5-sonnet-latest",
+        modelDefinition: {
+          id: "claude-3-5-sonnet-latest",
+          name: "Claude",
+          provider: "anthropic",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream/org");
+    expect(opts.extraBodyFields).toMatchObject({
+      journeyRunId: "journey-run-1",
+      providerKey: "anthropic",
+    });
+    expect(opts.extraBodyFields.maxOutputTokens).toBeUndefined();
+  });
+
+  it("keeps the output ceiling off the local BYOK engine", async () => {
+    const calls: unknown[] = [];
+    stubDirectEngine(calls);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(runDirectChatTurnMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(calls[0])).not.toContain("maxOutputTokens");
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      { body: string },
+    ];
+    expect(JSON.parse(init.body).maxOutputTokens).toBeUndefined();
+  });
+
   it("sends no output ceiling for a scenario turn", async () => {
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
