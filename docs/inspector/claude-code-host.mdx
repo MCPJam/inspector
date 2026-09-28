@@ -81,10 +81,9 @@ everything immediately.
 
 **Project secrets on local runs.** Local Claude Code turns support **materialized** project secrets only. Brokered secrets require cloud execution (the egress proxy that injects them is not present on your machine) and are refused before the turn starts. If your environment selects a brokered secret, switch to a cloud run or change the secret's delivery to materialized.
 
-**When it is not offered.** Your platform is not supported,
-the runtime is not installed, you are signed in as a guest, the session is a
-shared scenario or swarm run, or the feature is not enabled for your account.
-The selector says which.
+**Evals and swarms.** When a project has local authorization, eval suite runs and swarm runs use local execution. The run detail shows a **Ran locally** badge; swarm runs that mix local and cloud sessions show **Local + cloud**. Local credential failures never fall back to paid cloud — the run is refused instead.
+
+**When it is not offered.** Your platform is not supported, the feature is not enabled for your account, you are signed in as a guest, or the session is a shared scenario. The composer notice says which.
 
 ## Host settings
 
