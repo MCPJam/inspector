@@ -108,6 +108,7 @@ const note = (s: string) => {
  */
 const helpers: ChildProcess[] = [];
 let deliveryMcp: Awaited<ReturnType<typeof startDeliveryMcp>> | undefined;
+let workspaceMcp: Awaited<ReturnType<typeof startDeliveryMcp>> | undefined;
 
 /**
  * The supervised tree this run owns, so a FAILURE can stop it.
@@ -438,8 +439,12 @@ async function main() {
 
   await mkdir(WORKSPACE, { recursive: true });
   await writeFile(join(WORKSPACE, "hello.txt"), "hello from the conformance workspace\n");
-  const existingMcpConfig = '{"mcpServers":{}}\n';
+  let existingMcpConfig = "";
   if (MODE === "delivery") {
+    workspaceMcp = await startDeliveryMcp();
+    existingMcpConfig = JSON.stringify({ mcpServers: {
+      workspace_only: { type: "http", url: workspaceMcp.url },
+    } });
     await writeFile(join(WORKSPACE, ".mcp.json"), existingMcpConfig);
     deliveryMcp = await startDeliveryMcp();
   }
@@ -649,6 +654,11 @@ async function main() {
     const skill = await readFile(join(sessionStateDir, "home", ".claude", "skills", "delivery-probe", "SKILL.md"), "utf8");
     if (!skill.includes("delivery skill")) throw new Error("Skill was not written under synthetic HOME");
     note("delivery: MCP tool, workspace write, scoped secret, synthetic-home skill and preserved .mcp.json verified");
+    if (workspaceMcp!.connections() !== 0) {
+      throw new Error("Claude Code connected to an MCP server not selected in MCPJam");
+    }
+    note("workspace MCP server received zero connections; MCPJam-selected MCP server executed successfully");
+    await workspaceMcp!.close();
     await deliveryMcp.close();
   }
 
@@ -762,6 +772,7 @@ main().catch(async (e) => {
   await stopOwnedTree();
   await stopHelpers();
   await deliveryMcp?.close();
+  await workspaceMcp?.close();
   await revokeLocalHarnessGrants().catch(() => {});
   console.error("[conformance] FAILED:", e?.stack ?? e);
   console.error("[conformance] marks:", JSON.stringify(marks));

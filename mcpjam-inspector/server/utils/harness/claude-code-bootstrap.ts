@@ -278,6 +278,23 @@ function patchModernClaudeCodeBridgeContent(content: string): string {
   return patched;
 }
 
+/**
+ * Keep the product's MCP selection authoritative even in a user's workspace.
+ * Apply independently of the other patches so already-patched recipes upgrade.
+ */
+function enforceStrictMcpConfig(content: string): string {
+  const needle = "      mcpServers,\n      cwd: workdir,";
+  const replacement =
+    "      mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,";
+  if (content.includes(replacement)) return content;
+  if (!content.includes(needle)) {
+    throw new Error(
+      "Unable to patch Claude Code bridge bootstrap: MCP query options shape changed",
+    );
+  }
+  return content.replace(needle, replacement);
+}
+
 function patchClaudeCodeBridgeContent(content: string): string {
   let patched = content;
 
@@ -470,7 +487,12 @@ export function patchClaudeCodeHarnessBootstrap(
         files: [
           ...bootstrap.files.map((file) =>
             file.path.endsWith("/bridge.mjs")
-              ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
+              ? {
+                  ...file,
+                  content: enforceStrictMcpConfig(
+                    patchClaudeCodeBridgeContent(file.content),
+                  ),
+                }
               : file,
           ),
           {

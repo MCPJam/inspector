@@ -438,6 +438,7 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("anthropic/claude-");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     // The overrides MERGE over `permissionOptions.settings` (the adapter's own
@@ -514,6 +515,7 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     expect(bridge?.content).toContain(
       "settings: { ...(permissionOptions.settings ?? {})",
@@ -522,6 +524,41 @@ const toUserMessage = (options) => ({
     // now, not a bridge-source rewrite (the installed bridge has no reference
     // at all, so a reappearing one means the patch regressed to the old form).
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+  });
+
+  it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
+    const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
+      model: "haiku",
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }) as any);
+    const bootstrap = (await original.getBootstrap?.())!;
+    const legacy = {
+      ...bootstrap,
+      files: bootstrap.files.map((file) => ({
+        ...file,
+        content: file.content.replace("      strictMcpConfig: true,\n", ""),
+      })),
+    };
+    for (const recipe of [legacy, bootstrap]) {
+      const patched = patchClaudeCodeHarnessBootstrap({
+        ...original,
+        getBootstrap: async () => recipe,
+      });
+      const result = await patched.getBootstrap?.();
+      const bridge = result?.files.find((file) => file.path.endsWith("/bridge.mjs"));
+      expect(bridge?.content.match(/strictMcpConfig: true/g)).toHaveLength(1);
+    }
+    const malformed = patchClaudeCodeHarnessBootstrap({
+      ...original,
+      getBootstrap: async () => ({
+        ...legacy,
+        files: legacy.files.map((file) => ({
+          ...file,
+          content: file.content.replace("      mcpServers,\n      cwd: workdir,", "      cwd: workdir,"),
+        })),
+      }),
+    });
+    await expect(malformed.getBootstrap?.()).rejects.toThrow("MCP query options shape changed");
   });
 
   it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {

@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 
 export async function startDeliveryMcp() {
   let calls = 0;
+  let connections = 0;
   const server = createServer(async (request, response) => {
     if (request.url !== "/mcp?k=delivery-capability-canary") {
       response.writeHead(403).end();
@@ -39,12 +40,14 @@ export async function startDeliveryMcp() {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
   });
+  server.on("connection", () => { connections++; });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No MCP test listener");
   return {
     url: `http://127.0.0.1:${address.port}/mcp?k=delivery-capability-canary`,
     calls: () => calls,
+    connections: () => connections,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

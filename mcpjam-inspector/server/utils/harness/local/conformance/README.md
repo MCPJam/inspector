@@ -106,6 +106,8 @@ above, run `run-native-turn.ts delivery`. This uses the product Claude Code
 adapter with session-config MCP delivery. It verifies a real MCP tool call,
 a write in the granted workspace, a materialized test secret in Bash, a skill
 under the synthetic home, and that an existing workspace `.mcp.json` remains
-unchanged. It also runs the usual approval, resume, and teardown checks.
+unchanged. That file names a live workspace-only MCP server, which must receive
+zero TCP connections while the MCPJam-selected server executes its tool. The
+bridge enforces `strictMcpConfig: true` for local and cloud sessions. It also runs the usual approval, resume, and teardown checks.
 The upstream model and model gateway are deterministic local test servers;
 this is not the signed-in Playground/broker billing check.
