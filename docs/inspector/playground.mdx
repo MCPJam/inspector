@@ -159,6 +159,14 @@ This is the fastest way to verify that a widget renders correctly across the hos
   session back to private to use multi-host compare.
 </Note>
 
+## Context notice
+
+When you reopen an older conversation or continue a chat where some earlier assistant replies could not be verified as originating from this service, the thread shows a small inline notice above your latest message:
+
+> Earlier replies in this chat aren't sent to the model.
+
+This means the model is answering without those earlier replies in its context. The replies remain visible in the transcript — nothing is deleted — but the model will not "remember" them for this turn. This can happen when a conversation was started before the current session-binding was in place, or when a reply was interrupted mid-stream and never completed.
+
 ## Sessions
 
 The **Sessions** tab in the left rail lists every saved conversation in the current project, grouped by recency. From here you can:
