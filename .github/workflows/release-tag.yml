@@ -1,0 +1,69 @@
+name: Release tag
+
+# The last step of a release, run when its version PR merges.
+#
+# release.yml cannot push to `main`: the SOC 2 rulesets take changes only
+# through a reviewed pull request, with no bypass. So its `finalize` job opens
+# the version commit as a PR and leaves the GitHub release as a draft. This
+# workflow finishes the release once that PR lands: it tags the merge commit
+# and publishes the draft.
+#
+# It keys on the Inspector's version changing, not on the PR's title, so a
+# retitled merge still finishes the release. A packages-only release leaves
+# the version alone and has no tag or GitHub release, so it never gets here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - mcpjam-inspector/package.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Tag the version commit and publish its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(git show HEAD:mcpjam-inspector/package.json | jq -r .version)
+          previous=$(git show HEAD^:mcpjam-inspector/package.json | jq -r .version)
+          if [ "$version" = "$previous" ]; then
+            echo "The Inspector version is still $version; nothing to release."
+            exit 0
+          fi
+          tag="v$version"
+
+          # `gh release view` finds drafts, which the tag endpoints do not.
+          if ! is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            echo "::error::No GitHub release named $tag, not even a draft. finalize creates the draft only after every gate passes, so the release run that published $version stopped before that. Finish it by hand: tag this commit and create the release from that run's desktop artifacts."
+            exit 1
+          fi
+
+          # A tag that already exists was placed by hand; leave it where it is.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists."
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+
+          if [ "$is_draft" = "true" ]; then
+            gh release edit "$tag" --draft=false --latest
+            echo "Published release $tag at $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$tag is already published."
+          fi

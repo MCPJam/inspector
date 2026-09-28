@@ -318,6 +318,64 @@ jobs:
           }
           NODE
 
+      # The previous release's version PR (see finalize) has to merge before
+      # the next release starts. Until it does, `main` still holds the
+      # changesets that release consumed, so this plan computes the versions it
+      # already published, and a second run would deploy newer code under a
+      # number npm already gives to older code. Nothing later catches it:
+      # `changeset publish` skips a version that is already on npm instead of
+      # failing.
+      - name: Refuse versions that are already published
+        env:
+          PUBLISH_EVALUATORS: ${{ steps.plan.outputs.publish_evaluators }}
+          PUBLISH_SDK: ${{ steps.plan.outputs.publish_sdk }}
+          PUBLISH_CLI: ${{ steps.plan.outputs.publish_cli }}
+          PUBLISH_INSPECTOR: ${{ steps.plan.outputs.publish_inspector }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const selected = {
+            "@mcpjam/evaluators": process.env.PUBLISH_EVALUATORS === "true",
+            "@mcpjam/sdk": process.env.PUBLISH_SDK === "true",
+            "@mcpjam/cli": process.env.PUBLISH_CLI === "true",
+            "@mcpjam/inspector": process.env.PUBLISH_INSPECTOR === "true",
+          };
+          const status = JSON.parse(fs.readFileSync(".changeset/status.json", "utf8"));
+
+          (async () => {
+            const published = [];
+            for (const { name, newVersion } of status.releases || []) {
+              if (!selected[name]) continue;
+              const url = `https://registry.npmjs.org/${name.replace("/", "%2f")}/${newVersion}`;
+              // Fails open: the check is a guard for a human mistake, and a
+              // registry hiccup should not block an otherwise good release.
+              let res;
+              try {
+                res = await fetch(url);
+              } catch (err) {
+                console.log(`::warning::Could not check ${name}@${newVersion} on npm: ${err.message}`);
+                continue;
+              }
+              if (res.status === 200) {
+                published.push(`${name}@${newVersion}`);
+              } else if (res.status !== 404) {
+                console.log(`::warning::Could not check ${name}@${newVersion} on npm (HTTP ${res.status}).`);
+              }
+            }
+
+            if (published.length > 0) {
+              console.log(
+                `::error::Already on npm: ${published.join(", ")}. The release that published ` +
+                  `them has not landed its version PR yet (a "chore(release): version packages" ` +
+                  `PR from finalize). Merge it, then release again. If that release failed ` +
+                  `before finalize opened the PR, re-run its failed jobs instead.`
+              );
+              process.exit(1);
+            }
+          })();
+          NODE
+
       # The local-execution release gate. It refuses a build whose derived
       # OFFER is inconsistent with what it can serve — a platform advertised
       # with no pack digest, or a digest table stamped at a version whose
@@ -939,9 +997,10 @@ jobs:
   # deploy jobs, and with `always()` this runs even when they fail. They are
   # NOT dead weight, and removing them breaks the satellite ordering invariant:
   #
-  # This job pushes the version commit, which touches `package-lock.json` — a
-  # path in BOTH satellite workflows' `push:` triggers (soundcheck's included,
-  # even though it no longer has a job here). If the push lands while
+  # This job opens the version PR, and merging it pushes the version commit,
+  # which touches `package-lock.json` — a path in BOTH satellite workflows'
+  # `push:` triggers (soundcheck's included, even though it no longer has a
+  # job here). A PR that exists early can merge early, and if the push lands while
   # deploy-webapp is still running, those push-triggered runs find the
   # `slack-app` / `soundcheck` concurrency groups free and deploy AHEAD of the
   # server whose contract they render.
@@ -974,14 +1033,17 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
+      # Outside the checkout, unlike the other jobs: this one commits the tree,
+      # and a plan downloaded into it went into the version commit with
+      # everything else.
       - name: Download release patch
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-plan
-          path: .release-plan
+          path: ${{ runner.temp }}/release-plan
 
       - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
+        run: git apply --binary "$RUNNER_TEMP/release-plan/release.patch"
 
       - name: Setup Node.js for catalog parity heads-up
         if: fromJSON(needs.preflight.outputs.publish_sdk)
@@ -1023,23 +1085,66 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit version changes
+        id: commit
+        env:
+          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
         run: |
+          if [ -n "$INSPECTOR_VERSION" ]; then
+            label="$INSPECTOR_VERSION"
+            branch="release/v$INSPECTOR_VERSION-version-packages"
+          else
+            label=$(jq -r '[.releases[] | select(.type != "none") | "\(.name) \(.newVersion)"] | join(", ")' \
+              "$RUNNER_TEMP/release-plan/.changeset/status.json")
+            branch="release/run-$GITHUB_RUN_ID-version-packages"
+          fi
+          title="chore(release): version packages ($label)"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git status --short
-          git commit -m "chore(release): version packages"
+          git commit -m "$title"
 
-      - name: Push release commit
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      # `main` takes changes only through a reviewed pull request (the SOC 2
+      # rulesets, with no bypass), so the version commit goes up as a PR rather
+      # than a push. The packages are already on npm by now; merging the PR is
+      # the step that finishes the release, and release-tag.yml takes it from
+      # there: it tags the merge commit and publishes the draft release below.
+      #
+      # Opened with RELEASE_PUSH_TOKEN, not GITHUB_TOKEN: GitHub runs no
+      # workflows for a PR that GITHUB_TOKEN opens, so its required checks
+      # would never report and it could never merge.
+      - name: Open the version PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          TITLE: ${{ steps.commit.outputs.title }}
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           git pull --rebase origin main
-          git push origin HEAD:main
+          git push --force origin "HEAD:refs/heads/$BRANCH"
 
-      - name: Create and push release tag
-        if: needs.preflight.outputs.release_tag != ''
-        run: |
-          git tag "${{ needs.preflight.outputs.release_tag }}"
-          git push origin "${{ needs.preflight.outputs.release_tag }}"
+          existing=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""')
+          if [ -n "$existing" ]; then
+            echo "Updated the branch of the open version PR $existing."
+            pr_url="$existing"
+          else
+            if [ -n "$RELEASE_TAG" ]; then
+              finish="Merging it finishes the release: \`release-tag.yml\` tags the merge commit \`$RELEASE_TAG\` and publishes the draft GitHub release this run created."
+            else
+              finish="This release does not include the Inspector, so there is no tag or GitHub release to follow."
+            fi
+            body=$(printf '%s\n\n%s\n\n%s\n' \
+              "Lands the version commit for [this release run]($RUN_URL). The packages are already on npm; this brings \`main\` in line with them." \
+              "$finish" \
+              "Until it merges, the next Release run refuses to start, because \`main\` still holds the changesets this one consumed. Only versions, changelogs, the consumed \`.changeset\` files and \`package-lock.json\` change.")
+            pr_url=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$body")
+          fi
+          echo "Version PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download macOS artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
@@ -1065,27 +1170,8 @@ jobs:
           path: .release-assets/runtime
           merge-multiple: true
 
-      # Created as a DRAFT, and promoted below only once the published assets
-      # have been proven installable. Failing a gate that runs after a public
-      # release cannot unpublish it: the tag, the assets and the release notes
-      # are already there for anyone watching the repo, and a broken pack is
-      # exactly what this release must never leave reachable.
-      - name: Create GitHub release (draft)
-        if: needs.preflight.outputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.preflight.outputs.release_tag }}
-          name: Release ${{ needs.preflight.outputs.release_tag }}
-          draft: true
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            .release-assets/macos/**
-            .release-assets/windows/**
-            .release-assets/runtime/**
-
-      # The gate that proves the PUBLISHED assets are usable by the shipped
-      # Inspector, without any development override.
+      # The gate that proves the assets this release publishes are usable by
+      # the shipped Inspector, without any development override.
       #
       # The pack workflow's own verification installs from a local file through
       # `MCPJAM_LOCAL_HARNESS_PACK_SOURCE`. That override is a development
@@ -1103,21 +1189,31 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
-          # The artifacts as downloaded, rather than the release URL: the assets
-          # are byte-identical, and reading them locally does not depend on the
-          # CDN having caught up with a release created seconds earlier.
+          # The artifacts as downloaded, since the draft release that will
+          # carry them (byte-identical) is created only once this passes.
           ASSET_DIR: ${{ github.workspace }}/.release-assets/runtime
         run: |
           node scripts/check-local-harness-release.mjs \
             --version "$INSPECTOR_VERSION" \
             --base-url "file://$ASSET_DIR/"
 
-      # Everything above has passed, so the draft becomes the release. Same
-      # action and same tag: `action-gh-release` updates the existing release
-      # rather than creating a second one.
-      - name: Publish the GitHub release
+      # Created only after the gate above, and only as a DRAFT: merging the
+      # version PR is what publishes it (release-tag.yml). A draft that exists
+      # is therefore a release that passed every gate, and a failed gate leaves
+      # nothing for the merge to publish. It names a tag that does not exist
+      # yet; `target_commitish` bounds the generated notes at the commit this
+      # run released, since the merge commit the tag lands on comes later.
+      - name: Create GitHub release (draft)
         if: needs.preflight.outputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
-          draft: false
+          target_commitish: ${{ github.sha }}
+          name: Release ${{ needs.preflight.outputs.release_tag }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            .release-assets/macos/**
+            .release-assets/windows/**
+            .release-assets/runtime/**
