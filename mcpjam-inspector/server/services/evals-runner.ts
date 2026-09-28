@@ -1813,6 +1813,8 @@ export function buildQuickRunCommitSnapshot(
 async function createIterationDirectly(
   convexClient: ConvexHttpClient,
   params: {
+    namedHostId?: string;
+    runtimeVenue?: "hosted" | "local";
     testCaseId?: string;
     testCaseSnapshot: {
       title: string;
@@ -1842,6 +1844,8 @@ async function createIterationDirectly(
     const result = await convexClient.action(
       "testSuites:startQuickRunIteration" as any,
       {
+        ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
+        ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
           snapshotWithStepsForConvex(params.testCaseSnapshot),
@@ -3475,7 +3479,9 @@ const executeTestCase = async (params: {
     for (let runIndex = 0; runIndex < test.runs; runIndex++) {
       try {
         const iterationParams = {
-          testCaseId: test.testCaseId ?? testCaseId,
+          namedHostId: hostPolicy?.namedHostId,
+    ...(isLocalHarnessVenue(harnessOfHostConfig(suiteHostConfig)) ? { runtimeVenue: "local" as const } : {}),
+    testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
             query: resolvedTestForPrecreate.query,
@@ -4786,6 +4792,8 @@ const runLocalIteration = async ({
     hostConfigOverride: test.hostConfigOverride,
   };
   const iterationParamsBase = {
+    namedHostId: hostPolicy?.namedHostId,
+    ...(isLocalHarnessVenue(harnessOfHostConfig(suiteHostConfig)) ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -6117,6 +6125,8 @@ const runHostedIterationWithBrowser = async (
   const resolvedSteps = resolveSteps(test);
 
   const iterationParams = {
+    namedHostId: hostPolicy?.namedHostId,
+    ...(isLocalHarnessVenue(harnessOfHostConfig(suiteHostConfig)) ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,

@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "../../config.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
 import {
@@ -111,6 +112,7 @@ export async function prepareSuiteReplayFromRun(
       config,
       hostConfig: runHostConfigSnapshot,
       gradingEngine: runGradingEngine,
+      environmentRef,
     } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
@@ -118,6 +120,7 @@ export async function prepareSuiteReplayFromRun(
       passCriteria,
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
+      runtimeVenue: HOSTED_MODE ? "hosted" : "local",
       useCurrentSuiteConfig,
       environmentOverride:
         useCurrentSuiteConfig === true
@@ -196,6 +199,7 @@ export async function prepareSuiteReplayFromRun(
           mcpClientManager: replayManager,
           recorder,
           suiteInjectOpenAiCompat,
+          suiteHostConfig: replayHostConfig,
           // B3b: a replay is a RUN, and it grades under its own frozen
           // position like any other. Omitting this let the runner fall back to
           // the env-only resolver in `buildIterationFinishParams`, so a replay
@@ -204,27 +208,12 @@ export async function prepareSuiteReplayFromRun(
           // it replays. An absent stamp is the backend's `off`, not an absent
           // opinion; see the same translation in `routes/shared/evals.ts`.
           gradingMode: resolveFrozenRunGradingMode(runGradingEngine),
-          // NO `projectEnvironmentId`, and that absence is not the usual one.
-          //
-          // A replay run DOES have a Project Environment: `startTestSuiteRun`
-          // copies the source run's `configSnapshot.environmentRef` forward
-          // verbatim on a snapshot replay (and re-resolves one under
-          // `useCurrentSuiteConfig`), and `resolveGrantForSandbox` follows that
-          // id — so this run's boxes may genuinely carry a brokered secret's
-          // egress transform. This process just cannot NAME it: the run-start
-          // mutation's return projects `configSnapshot.environment` (the
-          // servers snapshot) but not `environmentRef`, and neither
-          // `getRunReplayMetadata` nor the sandbox reservation projects it
-          // either. Closing that needs a backend read this repo cannot add.
-          //
-          // So say what is true instead of letting the harness infer "no
-          // environment, therefore nothing granted" and tell the reader to fix
-          // a selection they never made. This changes no decision — an
-          // environment we cannot name is one whose grant we cannot verify, and
-          // an external-account harness is refused either way — only the copy.
-          projectEnvironmentUnresolvedReason:
-            "replaying a run does not carry the original run's Project " +
-            "Environment through to the runner.",
+          // Current backends return the frozen environment. Older deployments
+          // still refuse an uncheckable grant instead of guessing an environment.
+          ...(environmentRef?.environmentId
+            ? { projectEnvironmentId: environmentRef.environmentId }
+            : { projectEnvironmentUnresolvedReason:
+                "Replaying this run does not carry its Project Environment through to the runner. Update the backend and retry." }),
           ...(replayToolPolicy ? { toolPolicy: replayToolPolicy } : {}),
         });
       },

@@ -924,6 +924,19 @@ describe("PlaygroundMain — local Claude Code", () => {
   });
 
   describe("automatic readiness", () => {
+    it("recovers an existing client inline without sending its draft", async () => {
+      let finish!: () => void;
+      ensureReadyMock.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({}); }));
+      render(<PlaygroundMain {...defaultProps} />);
+      type("keep my draft");
+      fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true);
+      expect(screen.getByText("Preparing Claude Code on this machine…")).toBeInTheDocument();
+      await act(async () => { finish(); });
+      expect(mockLocalHarness.state.refresh).toHaveBeenCalled();
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue("keep my draft");
+    });
     it("renews readiness and sends without another setup dialog", async () => {
       render(<PlaygroundMain {...defaultProps} />);
       type("pwd"); await submit();

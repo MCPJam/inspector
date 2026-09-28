@@ -1,26 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-/**
- * What a REPLAY tells the runner about its Project Environment — and why the
- * honest answer is neither an id nor silence.
- *
- * A replay run genuinely HAS an environment: `startTestSuiteRun` copies the
- * source run's `configSnapshot.environmentRef` forward verbatim, and
- * `resolveGrantForSandbox` follows that id, so the replay's boxes really can
- * carry a brokered secret's egress transform. But nothing projects that ref
- * back out — not the run-start return (it carries `configSnapshot.environment`,
- * the servers snapshot, and no `environmentRef`), not `getRunReplayMetadata`,
- * not the sandbox reservation — so this process cannot name it.
- *
- * Staying silent would make the harness read the absence as "no environment,
- * therefore nothing granted" and tell the reader to fix a selection they never
- * made. These cases pin the alternative: an explicit reason, and no invented id.
- */
+// Replays use the frozen client and environment; old backends fail closed
+// when they cannot identify the environment whose secrets would be delivered.
 
-const runEvalSuiteWithAiSdkMock = vi.fn(async () => undefined);
+const runEvalSuiteWithAiSdkMock = vi.fn(async (_options: Record<string, unknown>) => undefined);
 vi.mock("../../evals-runner.js", () => ({
   runEvalSuiteWithAiSdk: (...args: unknown[]) =>
-    runEvalSuiteWithAiSdkMock(...(args as [])),
+    runEvalSuiteWithAiSdkMock(args[0] as Record<string, unknown>),
 }));
 
 const startSuiteRunWithRecorderMock = vi.fn(async () => ({
@@ -120,4 +106,22 @@ describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
       /Project Environment/,
     );
   });
+});
+
+it("passes the saved Claude client and frozen environment to the shared executor", async () => {
+  startSuiteRunWithRecorderMock.mockResolvedValueOnce({
+    runId: "local-replay", recorder: { id: "recorder" },
+    config: { tests: [], environment: { servers: ["srv"] } },
+    hostConfig: { harness: "claude-code" }, gradingEngine: undefined,
+    environmentRef: { environmentId: "frozen-environment" },
+  } as any);
+  const prepared = await prepareSuiteReplayFromRun({
+    convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "source",
+  });
+  await prepared.execute();
+  expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledWith(expect.objectContaining({
+    suiteHostConfig: { harness: "claude-code" },
+    projectEnvironmentId: "frozen-environment",
+  }));
+  expect(runEvalSuiteWithAiSdkMock.mock.calls[0]?.[0]).not.toHaveProperty("projectEnvironmentUnresolvedReason");
 });

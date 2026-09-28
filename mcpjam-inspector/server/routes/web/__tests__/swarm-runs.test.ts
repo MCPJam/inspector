@@ -394,6 +394,7 @@ describe("web routes — swarm single-host launch", () => {
       unknown
     >;
     expect(createArgs).toEqual({
+      runtimeVenue: "local",
       projectId: "proj-1",
       journeyRefId: "journey-env",
       kind: "user_testing",

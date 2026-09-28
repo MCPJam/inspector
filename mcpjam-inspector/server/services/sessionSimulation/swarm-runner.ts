@@ -1,5 +1,5 @@
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
-import { isLocalHarnessVenue, prepareLocalHarnessRun, withLocalHarnessSlot, assertLocalHarnessCapabilities } from "../../utils/harness/local/run-resources.js";
+import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities } from "../../utils/harness/local/run-resources.js";
 import {
   isTransientSpendRefusal,
   humanizeSwarmAttemptError,
@@ -13,6 +13,7 @@ import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
 import {
   resolveExecutionBudgetsForSurface,
+  platformExecutionBudgetCeilings,
   type ResolvedExecutionBudgets,
 } from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
@@ -605,6 +606,14 @@ async function runJourneyFanOut(
   // Run-level stop controller. Aborting it cancels every in-flight session's
   // turns; composed with the incoming abort so a shutdown/cancel does the same.
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
+  if (!opts.budgets) {
+    // Only size a platform default. Explicit/frozen limits remain authoritative.
+    const localSessions = hosts.filter(host => isLocalHarnessVenue(host.harness)).length * sessionsPerTarget;
+    budgets.runTimeoutMs = Math.min(
+      platformExecutionBudgetCeilings("swarms").runTimeoutMs,
+      Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
+    );
+  }
 
   // The RUN's clock. Nested under the caller's abort (shutdown / cancel) and
   // composed with `runStop`, the spend-cap short-circuit — so every session's
@@ -950,6 +959,12 @@ async function runJourneyFanOut(
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
 
+        // Queue before claiming an attempt or starting its deadline. Release
+        // after each session so other runs share the machine fairly.
+        const releaseLocalSlot = isLocalHarnessVenue(target.harness)
+          ? await acquireLocalHarnessSlot(sessionSignal)
+          : undefined;
+        try {
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
         // session's lifetime: the browser-artifact outbox, the widget-snapshot
@@ -1706,6 +1721,7 @@ async function runJourneyFanOut(
             await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
           }
         }
+        } finally { releaseLocalSlot?.(); }
       }
     } catch (err) {
       // A worker-level throw (a model-less pinned spec whose modelId can't
@@ -1797,11 +1813,7 @@ async function runJourneyFanOut(
       while (!stopScheduling()) {
         const target = targetQueue.shift();
         if (!target) return;
-        // Acquire before claiming attempts, so queued local work is not shown
-        // as running and does not spend its attempt deadline waiting for a slot.
-        if (isLocalHarnessVenue(target.harness)) {
-          await withLocalHarnessSlot(() => runTarget(target), sessionSignal);
-        } else await runTarget(target);
+        await runTarget(target);
       }
     };
     await Promise.all(Array.from({ length: workerCount }, () => worker()));

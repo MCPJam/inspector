@@ -16,7 +16,7 @@ export const isLocalHarnessVenue = (harness: string | undefined) => !HOSTED_MODE
 /** All schedulers share these slots; waiting happens before iteration deadlines. */
 let active = 0;
 const waiters: Array<() => void> = [];
-export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function acquireLocalHarnessSlot(signal?: AbortSignal): Promise<() => void> {
   if (signal?.aborted) throw signal.reason;
   if (active >= 2) await new Promise<void>((resolve, reject) => {
     const ready = () => { signal?.removeEventListener("abort", abort); resolve(); };
@@ -29,8 +29,21 @@ export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: Ab
     signal?.addEventListener("abort", abort, { once: true });
   });
   else active++;
-  try { if (signal?.aborted) throw signal.reason; return await run(); }
-  finally { const next = waiters.shift(); if (next) next(); else active--; }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    const next = waiters.shift();
+    if (next) next(); else active--;
+  };
+  if (signal?.aborted) { release(); throw signal.reason; }
+  return release;
+}
+
+export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const release = await acquireLocalHarnessSlot(signal);
+  try { return await run(); }
+  finally { release(); }
 }
 
 export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown }) {

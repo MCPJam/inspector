@@ -477,7 +477,6 @@ export function useLocalHarnessController(
   useEffect(() => {
     if (!offerable || !inScope || !operationActive) return;
     let cancelled = false;
-    const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const tick = async () => {

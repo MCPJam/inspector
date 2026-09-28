@@ -37,6 +37,17 @@ const {
   WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {},
 }));
 
+// Runtime preparation is covered separately; this route must use its fresh
+// server-bound target, not the stale launch credential sent by the renderer.
+vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
+    kind: "local-native", workspaceGrantId: "ws_fresh", runtimeId: "rt_fresh",
+    machineId: "machine-fresh", permissionProfile: "workspace-edits",
+    policyVersion: "policy-fresh", actingUserId: "authkit:user_01ABC",
+    grantToken: "fresh-grant-capability",
+  } })),
+}));
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -427,9 +438,9 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
       expect(engineArgs.harnessExecutionTarget).toMatchObject({
         kind: "local-native",
-        workspaceGrantId: "ws_abc123",
-        runtimeId: "rt_deadbeef",
-        grantToken: "grant-capability-value",
+        workspaceGrantId: "ws_fresh",
+        runtimeId: "rt_fresh",
+        grantToken: "fresh-grant-capability",
       });
     });
 
@@ -507,10 +518,9 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
 
-    it("does not verify a bearer for an ordinary hosted turn", async () => {
-      // The verification is scoped to an explicit local ask. Every other turn
-      // on this route — anonymous desktop, guest, BYOK — must authenticate
-      // exactly as it did before.
+    it("prepares local execution even when the client sends no target", async () => {
+      // Readiness owns session verification for automatically selected local
+      // execution; no second renderer-controlled grant is needed.
       await postLocalTurn({ harnessTarget: undefined });
 
       expect(verifyAuthKitTokenMock).not.toHaveBeenCalled();
@@ -518,7 +528,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(
         handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0]
           .harnessExecutionTarget,
-      ).toBeUndefined();
+      ).toMatchObject({ kind: "local-native", grantToken: "fresh-grant-capability" });
     });
 
     it("exempts a local turn from the computers-data-plane requirement", async () => {

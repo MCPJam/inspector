@@ -1114,6 +1114,9 @@ export const startSuiteRunWithRecorder = async ({
     /** The run's status as the platform holds it — `completed` on a replay of
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
+    environmentRef: (response?.configSnapshot as any)?.environmentRef as
+      | { environmentId: string }
+      | undefined,
     hostConfig: response?.hostConfig as
       | Record<string, unknown>
       | null
