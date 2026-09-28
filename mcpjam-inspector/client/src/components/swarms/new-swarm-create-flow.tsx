@@ -499,15 +499,20 @@ export function NewSwarmCreateFlow({
   );
   const [draft, setDraft] = useState(restoredDraft?.description ?? "");
   const attachInputRef = useRef<HTMLInputElement>(null);
-  const [attachError, setAttachError] = useState<string | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(
+    restoredDraft?.attachingFile
+      ? `Reading ${restoredDraft.attachingFile} was interrupted when this view reloaded. Attach it again.`
+      : null,
+  );
   const [draggingFile, setDraggingFile] = useState(false);
-  // Continue waits on this: a read that settled after generation started
-  // would append text the personas were never generated from.
-  const [pendingAttachments, setPendingAttachments] = useState(0);
+  // The file being read, one at a time. Continue waits on it: a read that
+  // settled after generation started would append text the personas were
+  // never generated from. Persisted so a remount mid-read can say so.
+  const [attachingFile, setAttachingFile] = useState<string | null>(null);
   const attachFile = useCallback(async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
-    setPendingAttachments((n) => n + 1);
+    setAttachingFile(file.name);
     try {
       const result = await readDescribeAttachment(file);
       if (!result.ok) {
@@ -517,7 +522,7 @@ export function NewSwarmCreateFlow({
       setAttachError(null);
       setDraft((current) => appendToDraft(current, result.text));
     } finally {
-      setPendingAttachments((n) => n - 1);
+      setAttachingFile(null);
     }
   }, []);
   /**
@@ -885,10 +890,13 @@ export function NewSwarmCreateFlow({
     !generating &&
     !materializing;
   const hasSwarmName = swarmName.trim().length > 0;
+  // No attaching while personas are generated from the current draft, and one
+  // file at a time.
+  const attachDisabled = generating || materializing || attachingFile !== null;
   const canContinue =
     generating ||
     materializing ||
-    pendingAttachments > 0 ||
+    attachingFile !== null ||
     serverBlock !== null ||
     modelBlock !== null ||
     !hasSwarmName
@@ -901,7 +909,7 @@ export function NewSwarmCreateFlow({
   const continueHint = (() => {
     if (generating || materializing) return null;
     if (!canContinue) {
-      if (pendingAttachments > 0) return "Reading the attached file…";
+      if (attachingFile !== null) return "Reading the attached file…";
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
       if (serverBlock) return "Pick a server to continue.";
@@ -1790,6 +1798,7 @@ export function NewSwarmCreateFlow({
     proposed.length > 0 ||
     launchedRuns.length > 0 ||
     generatingSince !== null ||
+    attachingFile !== null ||
     targetState.environmentIds.length > 0 ||
     targetState.stack.hostIds.length > 0;
 
@@ -1839,6 +1848,7 @@ export function NewSwarmCreateFlow({
       launchedRuns,
       runLabels: [...launchedRunLabelsRef.current.entries()],
       generatingSince,
+      attachingFile,
       launch: {
         flowId: flowIdRef.current,
         swarmId: persistedSwarmIdRef.current,
@@ -1848,6 +1858,7 @@ export function NewSwarmCreateFlow({
       },
     });
   }, [
+    attachingFile,
     createdEnvOverlay,
     draft,
     generatingSince,
@@ -2226,14 +2237,14 @@ export function NewSwarmCreateFlow({
                   // Always claim a file drag: an unclaimed drop makes the
                   // browser open the file in place of the app.
                   event.preventDefault();
-                  if (generating || materializing) return;
+                  if (attachDisabled) return;
                   setDraggingFile(true);
                 }}
                 onDragLeave={() => setDraggingFile(false)}
                 onDrop={(event) => {
                   if (!event.dataTransfer.types.includes("Files")) return;
                   event.preventDefault();
-                  if (generating || materializing) return;
+                  if (attachDisabled) return;
                   setDraggingFile(false);
                   void attachFile(event.dataTransfer.files);
                 }}
@@ -2265,7 +2276,7 @@ export function NewSwarmCreateFlow({
                   size="sm"
                   className="text-muted-foreground"
                   title="Or drop a .txt or .md file on the box"
-                  disabled={generating || materializing}
+                  disabled={attachDisabled}
                   onClick={() => attachInputRef.current?.click()}
                   data-testid="new-swarm-describe-attach"
                 >

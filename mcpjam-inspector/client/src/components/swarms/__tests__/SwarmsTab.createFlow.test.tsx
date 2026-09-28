@@ -2265,6 +2265,35 @@ describe("SwarmsTab create flow — survives a remount", () => {
     );
   });
 
+  it("says an attachment read was interrupted instead of dropping the file silently", async () => {
+    // Like a generation, a file read dies with the unmounted component, so
+    // the restored Describe step must ask for the file again.
+    openDescribe();
+    fillDescribe();
+    const pending = Object.assign(new File(["x"], "research.md"), {
+      text: () => new Promise<string>(() => {}),
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [pending] },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toBeDisabled(),
+    );
+
+    remount();
+
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent(
+      "Reading research.md was interrupted when this view reloaded. Attach it again.",
+    );
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+      "Support agents answering refunds",
+    );
+    // The dead read no longer holds Continue.
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+  });
+
   it("leaving the flow ends it — a later visit starts clean", async () => {
     openDescribe();
     fillDescribe();
