@@ -15,6 +15,7 @@ import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -123,6 +124,19 @@ v1.use("*", async (c, next) => {
   }
   return next();
 });
+
+// MJ-012, per server: the same budget `/api/web` puts on its tools, resources
+// and prompts routes, keyed on (verified principal, `:serverId`, family) and
+// shared with them — a caller does not get a second budget by switching
+// surfaces. See `mcp-operation-rate-limit.ts`. `/*` also matches the bare
+// listing path (`.../tools`). Registered after the guest gate so a request it
+// turns away never spends a budget.
+for (const family of ["tools", "resources", "prompts"] as const) {
+  v1.use(
+    `/projects/:projectId/servers/:serverId/${family}/*`,
+    mcpOperationRateLimit(family),
+  );
+}
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
