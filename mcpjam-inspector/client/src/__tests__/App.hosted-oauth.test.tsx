@@ -174,7 +174,10 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        "ready" | "auth-loading" | "project-loading" | "logged-out",
+        | "ready"
+        | "auth-loading"
+        | "project-loading"
+        | "logged-out",
     },
     mockListTools: vi.fn().mockResolvedValue({ tools: [] }),
     mockMCPSidebar: vi.fn(() => <div />),
@@ -235,8 +238,8 @@ function mockFreshGuestUser(
           hasSeenOnboarding: false,
         }
       : ref === "projects:getMyProjects"
-        ? allProjects
-        : undefined,
+      ? allProjects
+      : undefined,
   );
 }
 
@@ -1046,8 +1049,12 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.getByRole("heading", { name: "Connecting to OAuth server" }),
     ).toBeInTheDocument();
-    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("hosted-shell-gate-overlay")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("hosted-oauth-loading"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("hosted-shell-gate-overlay"),
+    ).not.toBeInTheDocument();
   });
 
   it("escapes a stale queryless callback page back to the root shell", async () => {
@@ -4016,8 +4023,8 @@ describe("App hosted OAuth callback handling", () => {
             hasSeenOnboarding: false,
           }
         : ref === "projects:getMyProjects"
-          ? []
-          : undefined,
+        ? []
+        : undefined,
     );
 
     render(<App />);
@@ -4054,8 +4061,8 @@ describe("App hosted OAuth callback handling", () => {
             hasSeenOnboarding: false,
           }
         : ref === "projects:getMyProjects"
-          ? []
-          : undefined,
+        ? []
+        : undefined,
     );
 
     render(<App />);
@@ -4239,14 +4246,19 @@ describe("App hosted OAuth callback handling", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await screen.findByRole("button", { name: "Edit server details" });
-    fireEvent.click(screen.getByRole("button", { name: "Edit server details" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
     await expect(authorizationResult).resolves.toBe(false);
     await screen.findByRole("heading", { name: "Set up your server" });
-    expect(screen.getByRole("combobox", { name: "Authentication" }))
-      .toHaveTextContent("Auto");
+    expect(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    ).toHaveTextContent("Auto");
 
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(appState.handleConnect).toHaveBeenCalledTimes(2),
+    );
     expect(appState.handleConnect.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         name: "Multiaccount",
@@ -4309,6 +4321,57 @@ describe("App hosted OAuth callback handling", () => {
         secretPatch: {
           headers: { Authorization: "Bearer secret-token" },
         },
+      }),
+    );
+  });
+
+  it("explicitly clears a saved bearer header when onboarding switches to no authentication", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.handleConnect.mockImplementationOnce(
+      (_formData: unknown, options: Record<string, unknown>) => {
+        const requestOAuthAuthorization = options.requestOAuthAuthorization as (
+          serverName: string,
+        ) => Promise<boolean>;
+        void requestOAuthAuthorization("Secure");
+      },
+    );
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await screen.findByRole("heading", { name: "Connecting to Secure" });
+    appState.projectServers.Secure = {
+      name: "Secure",
+      config: { url: "https://secure.example/mcp" },
+      hasBearerToken: true,
+    } as (typeof appState.projectServers)[string];
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(
+      screen.getByRole("option", { name: "No Authentication" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+
+    await waitFor(() =>
+      expect(appState.handleConnect).toHaveBeenCalledTimes(2),
+    );
+    expect(appState.handleConnect.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        authMethod: "none",
+        secretPatch: { headers: {} },
       }),
     );
   });
@@ -4636,7 +4699,8 @@ describe("App hosted OAuth callback handling", () => {
     mockFreshGuestUser();
     const appState = createAppStateMock();
     let requestAuthorization:
-      ((serverName: string) => Promise<boolean>) | undefined;
+      | ((serverName: string) => Promise<boolean>)
+      | undefined;
     appState.handleConnect.mockImplementation(
       (_formData: unknown, options: Record<string, unknown>) => {
         requestAuthorization = options.requestOAuthAuthorization as (
@@ -5712,18 +5776,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-          ? [
-              {
-                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-                name: "Slack",
-                hostConfigId: "host-config-slack",
-                modelId: "claude-sonnet-4",
-                serverCount: 0,
-                createdAt: 0,
-                updatedAt: 0,
-              },
-            ]
-          : undefined,
+        ? [
+            {
+              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+              name: "Slack",
+              hostConfigId: "host-config-slack",
+              modelId: "claude-sonnet-4",
+              serverCount: 0,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ]
+        : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
