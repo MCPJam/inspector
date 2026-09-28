@@ -1051,8 +1051,9 @@ export function NewSwarmRunningStep({
           attempt.errorCode,
         );
         // The code comes off the attempt, not the humanized info: that only
-        // carries a code through for the codes it words itself, so the
-        // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
+        // carries a code through for the codes it words itself, so a
+        // `spend_cap_exceeded` attempt (whole-run finalize or a capped credit
+        // session) reaches here carrying none.
         if (isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
           continue;
         }

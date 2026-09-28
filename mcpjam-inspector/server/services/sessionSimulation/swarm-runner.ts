@@ -103,7 +103,10 @@ import type {
  *     hosts continue.
  *   - An ORG SPEND-CAP breach (message looks like an org/spend cap) stops
  *     scheduling ALL hosts, cancels in-flight turns, and finalizes the run's
- *     remaining pending attempts (`errorCode: "spend_cap_exceeded"`).
+ *     remaining pending attempts (`errorCode: "spend_cap_exceeded"`). In a
+ *     run with starter sessions the stop is credit-only: starter sessions
+ *     keep running, and each credit session records the same code on its own
+ *     attempt instead of a run-level finalize.
  *   - Abort (shutdown / user cancel) stops new scheduling and cancels in-flight
  *     turns AND the (now-cancellable) persona driver, so every in-flight session
  *     unwinds promptly and self-reports its own accurate terminal via the normal

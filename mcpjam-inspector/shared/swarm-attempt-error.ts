@@ -407,8 +407,9 @@ export function humanizeSwarmAttemptErrorMessage(
 
 /**
  * Backend denial codes whose limit belongs to the ACCOUNT rather than to one
- * host's own provider key. `spend_cap_exceeded` is the runner's own whole-run
- * finalize code; the rest mirror `USER_OWNED_DENIAL_CODES` in
+ * host's own provider key. `spend_cap_exceeded` is the runner's own cap code,
+ * written by the whole-run finalize and, after a credit-only stop, on each
+ * capped credit attempt; the rest mirror `USER_OWNED_DENIAL_CODES` in
  * `server/utils/mcpjam-stream-handler.ts`.
  *
  * Kept separate from that list: it answers who is at fault, this one whether
