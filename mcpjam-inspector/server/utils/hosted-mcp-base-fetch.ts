@@ -5,18 +5,14 @@
  * `config.baseFetch ?? this.defaultBaseFetch` and falls back to the global when
  * both are absent, so a manager built without either dials `globalThis.fetch`:
  * no address classification, and redirects followed by the HTTP client with
- * nothing checking where they land. The conformance and readiness lanes have
- * passed a pinned fetch in since the seam existed; the hosted connection
- * factories never did, and every `/api/web/*` MCP operation went out that way.
- * That is pentest finding MJ-001 — a caller stores a server URL, asks us to
- * connect, and reads the answer back out of the response.
+ * nothing checking where they land. Every hosted connection factory passes
+ * this transport in, as the conformance and readiness lanes pass theirs (MJ-001).
  *
- * The guard itself is not new and is not written here. `createStreamingPinnedFetch`
- * resolves once, refuses the disallowed answers, pins the surviving address into
- * the socket, and re-runs all of it on every redirect hop. This module exists so
+ * The guard itself is not written here. `createStreamingPinnedFetch` resolves
+ * once, refuses the disallowed answers, pins the surviving address into the
+ * socket, and re-runs all of it on every redirect hop. This module exists so
  * there is ONE place that decides what a hosted MCP connection dials through,
- * rather than six construction sites each deciding it independently — which is
- * how five of them came to decide nothing at all.
+ * rather than each construction site deciding it independently.
  *
  * STREAMING, NOT BUFFERING. `createPinnedFetch` (the sibling) reads the whole
  * body before returning; an MCP session is `text/event-stream` and would break
@@ -43,8 +39,8 @@ import { resolvePlatformMcpUrl } from "./platform-mcp-url.js";
  *
  * Matched to `createConformanceFetch`, which matched it to undici's
  * `headersTimeout` — the bound these connections already had from the global
- * `fetch`. Closing an SSRF hole is not a reason to start failing servers that
- * connected fine yesterday.
+ * `fetch`, so a server that connected under the global fetch still connects
+ * under this one.
  */
 const MCP_CHAIN_TIMEOUT_MS = 300_000;
 /**
