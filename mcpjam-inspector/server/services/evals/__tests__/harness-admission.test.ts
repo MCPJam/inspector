@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+vi.mock("../../../config.js", async () => ({ ...(await vi.importActual("../../../config.js")), HOSTED_MODE: true }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   checkEvalExecutionAdmission,

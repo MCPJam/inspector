@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "@/lib/config";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 
 /**
@@ -15,7 +16,9 @@ export const CLAUDE_CODE_HOST_FEATURE_FLAG = "claude-code-host-enabled";
 
 /** Tri-state flag value for route guards that must wait for PostHog. */
 export function useClaudeCodeHostEnabledState(): boolean | undefined {
-  return useFeatureFlagEnabled(CLAUDE_CODE_HOST_FEATURE_FLAG);
+  const hosted = useFeatureFlagEnabled(CLAUDE_CODE_HOST_FEATURE_FLAG);
+  const local = useFeatureFlagEnabled("local-harness-enabled");
+  return HOSTED_MODE ? hosted : local;
 }
 
 export function useClaudeCodeHostEnabled(): boolean {

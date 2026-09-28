@@ -1,3 +1,5 @@
+import { setupLocalHarness, ensureLocalHarnessTarget, LocalRuntimePreparingError } from "../../utils/harness/local/readiness.js";
+import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace } from "../../utils/harness/local/authorization.js";
 /**
  * Local-harness control routes — `/api/mcp/local-harness/*`.
  *
@@ -91,6 +93,28 @@ localHarness.use("/*", async (c, next) => {
   }
   return next();
 });
+
+// Setup is the Add client action. Readiness renews execution credentials from
+// durable server state and can resume an interrupted, already-authorized install.
+for (const path of ["/setup", "/readiness"] as const) {
+  localHarness.post(path, async (c) => {
+    if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body.projectId !== "string" || !body.projectId) return c.json({ error: "projectId is required" }, 400);
+    if (path === "/setup" && body.accepted !== true) return c.json({ error: "Local execution authorization is required" }, 400);
+    try {
+      const bearer = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      const ready = path === "/setup"
+        ? await setupLocalHarness({ bearer, waitForInstall: false, projectId: body.projectId, ...(typeof body.workspacePath === "string" ? { workspacePath: body.workspacePath } : {}) })
+        : await ensureLocalHarnessTarget({ bearer, waitForInstall: false, projectId: body.projectId, scope: "attended" });
+      const { grantToken, actingUserId: _user, ...target } = ready.target;
+      return c.json({ state: "ready", target: { ...target, harnessId: "claude-code" }, token: grantToken, expiresAt: ready.expiresAt, grantId: ready.grantId, workspaceDisplayRoot: ready.workspaceDisplayRoot, runtime: ready.runtime, grantedAt: new Date().toISOString() });
+    } catch (error) {
+      if (error instanceof LocalRuntimePreparingError) return c.json({ state: "installing" }, 202);
+      return c.json({ error: error instanceof Error ? error.message : "Claude Code setup failed" }, 409);
+    }
+  });
+}
 
 /**
  * The signed-in user consent binds to.
@@ -633,6 +657,7 @@ localHarness.post("/consent/grant", async (c) => {
     policyVersion: LOCAL_HARNESS_POLICY_VERSION,
   };
   const granted = await grantLocalHarnessConsent(binding);
+  await updateAuthorizedWorkspace({ userId, machineId, projectId, workspaceGrantId });
 
   return c.json({
     grantId: granted.grantId,
@@ -668,10 +693,16 @@ localHarness.post("/consent/grant", async (c) => {
  * the user means when they click the button with nothing in flight.
  */
 localHarness.post("/consent/revoke", async (c) => {
+  const actor = await resolveConsentActor(c);
+  if (!actor.ok) return c.json({ error: actor.message }, actor.status);
+
   const body = (await c.req.json().catch(() => null)) as {
     grantId?: unknown;
+    projectId?: unknown;
+    forget?: unknown;
   } | null;
   const grantId = typeof body?.grantId === "string" ? body.grantId : null;
+  if (body?.forget === true || !grantId) await revokeLocalHarnessAuthorization(actor.actor.userId, typeof body?.projectId === "string" ? body.projectId : undefined);
   const removed = await revokeLocalHarnessGrants(
     grantId ? { grantId } : undefined,
   );

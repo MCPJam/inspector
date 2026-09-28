@@ -44,6 +44,7 @@ vi.mock("@/lib/local-harness-consent", async () => {
   >("@/lib/local-harness-consent");
   return {
     ...actual,
+    ensureLocalHarnessReady: vi.fn(async () => { throw new Error("Not set up"); }),
     fetchLocalHarnessAvailability: fetchAvailabilityMock,
     fetchLocalHarnessRuntimeStatus: fetchRuntimeStatusMock,
     startLocalHarnessRuntimeInstall: startInstallMock,
@@ -195,7 +196,7 @@ describe("what the user asked for is preserved", () => {
     expect(result.current.hostedAvailable).toBe(false);
   });
 
-  it("invents no default while availability is unknown", async () => {
+  it("keeps local intent while readiness is unknown", async () => {
     // Loading, a failed fetch and a 401 are all "we do not know". Picking
     // either way from one of them hides a real option or claims one that does
     // not exist.
@@ -207,68 +208,29 @@ describe("what the user asked for is preserved", () => {
     });
     const { result } = render();
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.requestedTarget).toBeNull();
+    expect(result.current.requestedTarget).toBe("local-native");
     expect(result.current.hostedAvailable).toBeNull();
     // And a network failure is not "unavailable" — it says nothing about this
     // machine, so the honest phase is that we still do not know.
     expect(result.current.phase).toBe("loading");
   });
 
-  it("does not overwrite a choice that lands before the effect writes", async () => {
-    // The derived default is RECORDED, not just returned, so every reader
-    // agrees on one stored fact. Recording it in an effect means the write
-    // happens after the commit, while its `storedTarget !== null` guard was
-    // read during it — and another Inspector window recording an explicit
-    // choice in that gap would be silently overwritten by a default derived
-    // before that choice existed. An explicit choice has to win.
-    const key = `mcp-local-harness-target-v1:${PROJECT}`;
-    let resolveAvailability: (value: unknown) => void = () => {};
-    fetchAvailabilityMock.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveAvailability = resolve;
-        }),
-    );
-
-    // The other window's write, placed in the LAYOUT phase of the commit that
-    // first carries `hostedAvailable: false`. React runs every layout effect
-    // before any passive effect, and the default is recorded in a passive one
-    // — so this lands after the render that read `storedTarget` as null and
-    // before the write that guard was protecting. The gap, made deterministic
-    // rather than raced for.
-    let armed = false;
-    const { result } = renderHook(() => {
-      const controller = useLocalHarnessController({
-        projectId: PROJECT,
-        userKey: "member",
-        inScope: true,
-        scopeKey: "host-1:claude-code",
-      } as never);
-      React.useLayoutEffect(() => {
-        if (!armed) return;
-        armed = false;
-        localStorage.setItem(key, "hosted");
-      });
-      return controller;
-    });
-
-    armed = true;
-    await act(async () => {
-      resolveAvailability({ ok: true, availability: AVAILABILITY });
-    });
+  it("migrates an old hosted preference to this installation's local venue", async () => {
+    saveHarnessTarget(PROJECT, "hosted");
+    const { result } = render();
     await waitFor(() => expect(result.current.loading).toBe(false));
-
-    expect(localStorage.getItem(key)).toBe("hosted");
+    expect(result.current.requestedTarget).toBe("local-native");
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("local-native");
   });
 
-  it("does not default to local when a cloud target also exists", async () => {
+  it("uses local execution even when cloud infrastructure is configured", async () => {
     fetchAvailabilityMock.mockResolvedValue({
       ok: true,
       availability: { ...AVAILABILITY, hostedAvailable: true },
     });
     const { result } = render();
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.requestedTarget).toBeNull();
+    expect(result.current.requestedTarget).toBe("local-native");
     expect(result.current.hostedAvailable).toBe(true);
   });
 });
@@ -363,7 +325,7 @@ describe("the target survives a browser that will not store it", () => {
       );
     });
 
-    expect(loadStoredHarnessTarget(PROJECT)).toBe("hosted");
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("local-native");
     resetSessionHarnessTargetsForTests();
   });
 

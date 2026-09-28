@@ -325,6 +325,9 @@ export async function startLoopbackModelBroker(args: {
   machineId: string;
   keyId: string;
   runId?: string;
+  evalIterationId?: string;
+  journeyRunId?: string;
+  hostId?: string;
   maxOutputTokens?: number;
   bearer: string;
   signal?: AbortSignal;
@@ -362,6 +365,8 @@ export async function startLoopbackModelBroker(args: {
         harnessId: args.harnessId,
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
+        ...(args.evalIterationId ? { evalIterationId: args.evalIterationId } : {}),
+        ...(args.journeyRunId ? { journeyRunId: args.journeyRunId, hostId: args.hostId } : {}),
         machineId: args.machineId,
         keyId: args.keyId,
         ...(args.runId ? { runId: args.runId } : {}),

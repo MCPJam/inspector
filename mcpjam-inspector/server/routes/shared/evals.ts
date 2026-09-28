@@ -2661,7 +2661,7 @@ export async function prepareEvalRun(
     // environment resolves to at an unchanged revision. Echoing all three lets
     // the mutation reject that drift instead of starting a run whose tool
     // snapshot describes a different configuration than it executes.
-    ...(environmentLaunch?.runtimeVenue === "local"
+    ...(request.runtimeVenue === "local" || environmentLaunch?.runtimeVenue === "local"
       ? { runtimeVenue: "local" as const }
       : {}),
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,

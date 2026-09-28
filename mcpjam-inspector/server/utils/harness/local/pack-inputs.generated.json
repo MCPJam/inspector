@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "fingerprint": "sha256:72c1dcd239a6482da9466bfd2a109071aae48370fc267261dfdd5c38749c30bc",
+  "inputs": {
+    "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:7899a80bd23a5aaf482fc7125ddb65310c1da0ac83cb2c47574c0b0b9a7460da",
+    "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:5c2e4206bb7878cadf0143d58113e6adaf29727657a04424b69c7ba7518aad3c",
+    "mcpjam-inspector/scripts/local-harness-toolchain.json": "sha256:621261feb62400bd29bf2e88d508ecc6ac4ace155aa19d833d6da79998ff06db",
+    "mcpjam-inspector/scripts/read-local-harness-toolchain.mjs": "sha256:c15e4c3799e32e5c0daf26bde9ae58bf836e7d323788d75e5d0a788c74e59e96",
+    "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts": "sha256:9ce90d684567770d0a94d3ff436dfb86dbff9c6ce35962cd6fba26c69d7e2bdc",
+    "mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs": "sha256:278f2ac6ca25c64cb4d6421b7c0847efcc945e12e152fcac39501933c238f98f",
+    "mcpjam-inspector/server/utils/harness/local/runtime-identity.ts": "sha256:772dbb182a0170c4f5add5365be6a525ede7d0d7717c9e1df1cce528df22bb35",
+    "mcpjam-inspector/tools/mcpjam-job-launcher/go.mod": "sha256:fbca4a6dbab07247ec198d388a18fda8d54ea224b2ac1153d069b3de76f7dffa",
+    "mcpjam-inspector/tools/mcpjam-job-launcher/go.sum": "sha256:ef3aadfe3bfc56cc423184cffdf0fed07e86d45ac3a8eaef5a852f5559fa1fa9",
+    "mcpjam-inspector/tools/mcpjam-job-launcher/main.go": "sha256:c3c5a24c16ff609cb7660845b8460d32134c4d4073928cb45b94e5cb6b93a57d",
+    "mcpjam-inspector/tools/mcpjam-job-launcher/main_test.go": "sha256:a132f51debb45404e804cf7e06b2a5ab2aedea8f5b9c20cdecb2fea7ad3d1735",
+    "package-lock.json": "sha256:12642f6ae0812629a84141ef95222a7121ceea24e81989944738d920e04b518c",
+    "recipe/.npmrc": "sha256:33407538312b25ba20b19987a8fff3043c3b258372f720bd574469b3cf2ddb8c",
+    "recipe/bridge.mjs": "sha256:d5d9897bf3b904784a1c7ba7b1b8cd19641a8661e4e4ff19a2e6dec3f4eef35e",
+    "recipe/package.json": "sha256:56e448924578f4966b4bd1e1390e3d6e1462838f4a96015c5063149a22e041d8",
+    "recipe/pnpm-lock.yaml": "sha256:0b4a2f446412dade358e42aab93b5f1d598c44ed52fb6647cd03cd38625cc61f",
+    "recipe/pnpm-workspace.yaml": "sha256:4007d907af0111709b1d4a4945f76e0e753582116e78237db73ffc5a8a4d57ba"
+  }
+}

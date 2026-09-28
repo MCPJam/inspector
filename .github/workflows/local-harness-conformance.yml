@@ -32,7 +32,8 @@ on:
       - "mcpjam-inspector/server/utils/harness/registry.ts"
       - "mcpjam-inspector/package.json"
       - "package-lock.json"
-      - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
+      - "mcpjam-inspector/scripts/*local-harness*"
+      - ".github/workflows/local-harness-pack.yml"
       # The launcher is part of the foundation Windows conformance rests on,
       # and this is the only workflow that compiles it. Left out of the filter,
       # a PR that changed nothing but the launcher was never built or tested
@@ -44,7 +45,6 @@ permissions:
   contents: read
 
 env:
-  BUNDLED_NODE_VERSION: "24.20.0"
   # Hold every mock upstream response briefly. An instant in-process upstream
   # is not a neutral simplification: it hid a gateway defect for four runs by
   # always answering inside the window where the gateway was tearing its own
@@ -60,9 +60,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
       # partial tree and the adapter ends up in neither place the build looks.
@@ -70,6 +74,9 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+      - name: Check reviewed pack inputs
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
+
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
@@ -89,22 +96,34 @@ jobs:
             runner: ubuntu-latest
             platform_key: linux-x64
             node_dist: linux-x64
+          - label: darwin-x64 scenarios
+            runner: macos-15-intel
+            platform_key: darwin-x64
+            node_dist: darwin-x64
+          - label: linux-arm64 scenarios
+            runner: ubuntu-24.04-arm
+            platform_key: linux-arm64
+            node_dist: linux-arm64
           - label: darwin-arm64 scenarios
             runner: macos-latest
             platform_key: darwin-arm64
             node_dist: darwin-arm64
     steps:
       - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ steps.toolchain.outputs.pnpm }}
 
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
@@ -144,6 +163,13 @@ jobs:
         run: |
           mkdir -p "$HOME" "$CONFORMANCE_ROOT/workspace"
           npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      - name: Workspace and MCP delivery
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: npx tsx server/utils/harness/local/conformance/run-native-turn.ts delivery
 
       # The negative that makes the loopback guarantee enforceable rather than
       # aspirational: a pack whose launcher does not constrain the listener must
@@ -240,16 +266,20 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ steps.toolchain.outputs.pnpm }}
 
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
@@ -262,9 +292,15 @@ jobs:
       # The Job Object launcher is what whole-tree cleanup rests on here, so a
       # conformance run without it is not testing Windows support — it is
       # testing that Windows is refused, which the unit suite already covers.
+      - name: Set up the pinned Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
       - name: Build the Job Object launcher
         working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
-        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+        run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
       # The launcher's unit tests, on the only runner that can run them: the
       # code is `syscall.SysProcAttr` and `golang.org/x/sys/windows`, so it
@@ -308,6 +344,15 @@ jobs:
           mkdir -p "$CONFORMANCE_ROOT/home" "$CONFORMANCE_ROOT/workspace"
           HOME="$CONFORMANCE_ROOT/home" \
             npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      - name: Workspace and MCP delivery
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-native-turn.ts delivery
 
       # The one that matters on Windows: aborting must take the vendor binary
       # down with the bridge. That is the whole reason the Job Object exists,

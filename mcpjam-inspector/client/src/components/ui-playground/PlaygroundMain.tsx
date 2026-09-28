@@ -1,3 +1,4 @@
+import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
@@ -3796,33 +3797,15 @@ export function PlaygroundMain({
   const ensureLocalHarnessReadyForSend =
     useCallback(async (): Promise<boolean> => {
       if (!localHarnessRequested) return true;
-      const phase = localHarnessRef.current.phase;
-      if (phase === "ready") return true;
-
-      if (phase === "installing" || phase === "authorizing") {
-        // Setup is running. Saying so beats a dialog that would only report the
-        // same thing.
-        toast.info("Claude Code is still setting up on this machine.");
+      if (!convexProjectId) return false;
+      try {
+        await ensureLocalHarnessReady(convexProjectId);
+        return true;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Claude Code is not ready. Retry setup from the client settings.");
         return false;
       }
-      if (phase === "unavailable") {
-        toast.error(
-          localHarnessRef.current.reason ??
-            "This Inspector can't run Claude Code on this machine.",
-        );
-        return false;
-      }
-
-      // Deduplicated: repeated Send gestures while the dialog is open must not
-      // stack dialogs or capture a second approval.
-      if (localHarnessDialogOpenRef.current) return false;
-
-      return await new Promise<boolean>((resolve) => {
-        localHarnessPendingSendRef.current = () => resolve(true);
-        localHarnessCancelSendRef.current = () => resolve(false);
-        setLocalHarnessDialog({ trigger: "first_send" });
-      });
-    }, [localHarnessRequested]);
+    }, [localHarnessRequested, convexProjectId]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -4885,7 +4868,7 @@ export function PlaygroundMain({
     (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
       <LocalHarnessComposerNotice
         controller={localHarness}
-        onRetry={() => setLocalHarnessDialog({ trigger: "chip" })}
+        onRetry={() => { void ensureLocalHarnessReadyForSend().then(() => localHarness.refresh()); }}
       />
     ) : null;
   const localHarnessReadyNotice =
@@ -4929,7 +4912,7 @@ export function PlaygroundMain({
           ...(localHarness.workspace?.displayRoot
             ? { displayRoot: localHarness.workspace.displayRoot }
             : {}),
-          hostedAvailable: localHarness.hostedAvailable,
+          hostedAvailable: false,
           onSelect: (target) => {
             localHarness.select(target);
             track("local_harness_target_selected", { target });

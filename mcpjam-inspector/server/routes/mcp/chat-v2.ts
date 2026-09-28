@@ -1,3 +1,4 @@
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
@@ -1323,10 +1324,19 @@ chatV2.post("/", async (c) => {
     if (harnessTargetParse.kind === "refused") {
       return c.json({ error: harnessTargetParse.reason }, 400);
     }
-    const harnessExecutionTarget =
+    let harnessExecutionTarget =
       harnessTargetParse.kind === "local-native"
         ? harnessTargetParse.target
         : undefined;
+
+    if (!HOSTED_MODE && resolvedExecution.harness === "claude-code" && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
+      if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: "Sign in and choose a project to run Claude Code locally" }, 403);
+      try {
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended" })).target;
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : "Claude Code is not ready" }, 409);
+      }
+    }
 
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
     if (resolvedExecution.harness) {

@@ -58,7 +58,7 @@ export const LOCAL_COMPUTER_ENABLED =
  * start a vendor harness on itself.
  */
 export const LOCAL_HARNESS_ENABLED =
-  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED !== "false";
 
 /**
  * Scheduled eval runs — the deployment switch over ENABLING one, enforced on

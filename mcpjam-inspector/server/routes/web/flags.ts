@@ -4,7 +4,7 @@ import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
 import { checkSessionRevocation } from "../../services/revoked-session-cache.js";
 import { sessionRevokedResponse } from "../../middleware/session-revocation.js";
-import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
+import { evaluateClientFeatureFlags, evaluateLocalHarnessRollout } from "../../utils/analytics.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
 
 /**
@@ -40,7 +40,7 @@ const LOCAL_PLATFORMS = new Set(["npm", "docker", "mac", "win", "electron"]);
 
 /** Whose flags a request gets: an id, nobody, or a signed-out session. */
 type FlagsIdentity =
-  | { kind: "id"; distinctId: string }
+  | { kind: "id"; distinctId: string; member?: boolean }
   | { kind: "none" }
   | { kind: "revoked" };
 
@@ -66,7 +66,7 @@ async function verifiedIdentity(token: string): Promise<FlagsIdentity> {
   if (!checkSessionRevocation(session.sid, { requireFresh: false }).ok) {
     return { kind: "revoked" };
   }
-  return { kind: "id", distinctId: session.sub };
+  return { kind: "id", distinctId: session.sub, member: true };
 }
 
 async function resolveIdentity(c: Context): Promise<FlagsIdentity> {
@@ -168,6 +168,7 @@ clientFlags.get("/", async (c) => {
           flagPersonProperties(c),
         )
       : {};
+  if (!HOSTED_MODE) flags["local-harness-enabled"] = identity.kind === "id" && identity.member === true && await evaluateLocalHarnessRollout(identity.distinctId);
   return c.json({ flags });
 });
 

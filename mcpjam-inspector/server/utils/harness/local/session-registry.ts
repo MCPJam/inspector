@@ -303,3 +303,14 @@ export async function stopAllLocalHarnessSessions(): Promise<{
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/** Includes escaped predecessors: deleting their workspace before stop is proven is unsafe. */
+export async function stopLocalHarnessWorkspace(workspaceGrantId: string): Promise<boolean> {
+  const records = new Set([...sessions.values(), ...unstopped].filter(record => record.workspaceGrantId === workspaceGrantId));
+  let stopped = true;
+  for (const record of records) {
+    if (claimRecord(record)) stopped = (await endRecord(record)).stopped && stopped;
+    else stopped = false;
+  }
+  return stopped;
+}

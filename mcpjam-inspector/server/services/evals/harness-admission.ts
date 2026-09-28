@@ -1,3 +1,4 @@
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 /**
  * Admission gate for eval runs whose resolved host config selects a HARNESS
  * (Claude Code | Codex) rather than the emulated engine.
@@ -280,6 +281,7 @@ export function checkEvalHarnessStaticAdmission(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
+    localExecution: isLocalHarnessVenue(harness),
     requireToolApproval: hostConfig.requireToolApproval === true,
     hasSelectedMcpServers,
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
@@ -381,6 +383,7 @@ export function checkEvalHarnessAdmission(args: {
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
+    localExecution: isLocalHarnessVenue(harness),
         requireToolApproval,
         hasSelectedMcpServers,
         model: {
@@ -559,7 +562,7 @@ export function checkEvalExecutionAdmission(args: {
   // Checked BEFORE the built-in tool rule, and regardless of it: a harness on
   // this surface would run on the acting member's personal computer no matter
   // which tools the host grants.
-  if (singleCase && harness) {
+  if (singleCase && harness && !isLocalHarnessVenue(harness)) {
     return { ok: false, reason: harnessNeedsSuiteRunReason(harness) };
   }
 

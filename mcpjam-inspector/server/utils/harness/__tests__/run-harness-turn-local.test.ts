@@ -1,3 +1,4 @@
+vi.mock("../local/pack-bootstrap.js", () => ({ withLocalPackBootstrap: async (adapter: unknown) => adapter }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
@@ -385,7 +386,7 @@ describe("runHarnessTurn local continuity", () => {
   });
 
   it.each(["stop", "error", "persist-failure"])(
-    "recovers on turn 3 after turn 2 ends with %s and removes its state",
+    "preserves the saved conversation on turn 3 after turn 2 ends with %s",
     async (failure) => {
       let saved: any;
       let persistFails = false;
@@ -410,17 +411,18 @@ describe("runHarnessTurn local continuity", () => {
           : new Error("Turn failed");
       }
       await runHarnessTurn(options as any, "none");
-      expect(harnessState.stateExists).toBe(false);
+      expect(harnessState.stateExists).toBe(true);
+      expect(harnessState.discardState).not.toHaveBeenCalled();
+      expect(releaseHarnessSessionState).toHaveBeenCalled();
       expect(saved).toBe(firstState);
       harnessState.streamError = null;
       persistFails = false;
 
       const result = await runHarnessTurn(options as any, "ui");
       const stream = await result.response!.text();
-      expect(stream).toContain('"type":"data-harness-reset"');
-      expect(stream).toContain('"reason":"resume-failed"');
+      expect(stream).not.toContain('"type":"data-harness-reset"');
       expect(harnessState.create).toHaveBeenLastCalledWith({
-        sessionId: firstState.harnessSessionId,
+        sessionId: firstState.harnessSessionId, resumeFrom: firstState.resumeState,
       });
       expect(saved.harnessSessionId).toBe(firstState.harnessSessionId);
       expect(saved).not.toBe(firstState);
@@ -443,6 +445,7 @@ describe("runHarnessTurn local continuity", () => {
     await runHarnessTurn(baseOptions() as any, "none");
     expect(harnessState.create).toHaveBeenCalledOnce();
     expect(harnessState.teardown).toHaveBeenCalledOnce();
-    expect(harnessState.discardState).toHaveBeenCalledOnce();
+    expect(harnessState.discardState).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
   });
 });

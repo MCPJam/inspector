@@ -462,7 +462,7 @@ describe("POST /consent/grant", () => {
     packVersion: "3.4.0",
     treeDigest: `sha256:${"a".repeat(64)}`,
     permissionProfile: "workspace-edits",
-    policyVersion: "local-harness-policy-2026-09-01",
+    policyVersion: "local-harness-policy-2026-09-28",
   };
 
   it("mints when what was approved is still true", async () => {

@@ -44,14 +44,36 @@ on:
 permissions:
   contents: read
 
-env:
-  # Pinned deliberately. The pack's `bin/node` is what interprets the bridge on
-  # every user's machine, and it is inside the digest — so bumping it is a
-  # reviewed change that produces a new pack, not something a runner picks.
-  BUNDLED_NODE_VERSION: "24.20.0"
+concurrency:
+  group: local-harness-pack-${{ inputs.pack_version }}
+  cancel-in-progress: false
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate publication request
+        uses: actions/github-script@v7
+        env:
+          PACK_VERSION: ${{ inputs.pack_version }}
+          SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        with:
+          script: |
+            if (context.ref !== 'refs/heads/main') throw new Error('Pack publication requires main');
+            if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.env.PACK_VERSION)) throw new Error('pack_version must be an independent semver, e.g. 1.0.0');
+            if (!process.env.SIGNING_KEY) throw new Error('LOCAL_HARNESS_PACK_SIGNING_KEY is required');
+            const tag = `local-harness-pack-v${process.env.PACK_VERSION}`;
+            for (const check of [
+              () => github.rest.repos.getReleaseByTag({ ...context.repo, tag }),
+              () => github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` }),
+            ]) {
+              try { await check(); }
+              catch (error) { if (error.status === 404) continue; throw error; }
+              throw new Error('Pack tag or release already exists; publish a new version');
+            }
+
   build:
+    needs: preflight
     name: ${{ matrix.platform_key }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -73,10 +95,7 @@ jobs:
           - platform_key: linux-arm64
             runner: ubuntu-24.04-arm
             node_dist: linux-arm64
-          # Built so the artifact and the digest exist, and so a regression in
-          # the pack build is caught on Windows too. The PLATFORM stays refused
-          # regardless: `nativePlatforms` does not list win32 until the
-          # conformance suite passes on `windows-latest`.
+          # Windows includes the verified Job Object launcher.
           - platform_key: win32-x64
             runner: windows-latest
             node_dist: win-x64
@@ -84,10 +103,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
 
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
@@ -96,7 +119,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ steps.toolchain.outputs.pnpm }}
 
       # Only the adapter package is needed: the pack build reads its bridge
       # recipe and installs that recipe's own frozen graph inside the pack.
@@ -108,6 +131,9 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+
+      - name: Check reviewed pack inputs
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
 
       # The pack ships an official nodejs.org build, not the runner's Node:
       # the runner's is not signed the way a binary we ask users to execute
@@ -153,6 +179,13 @@ jobs:
       # Object — and the helper that creates one has to live INSIDE the pack,
       # covered by its tree digest. Built here rather than checked in, so the
       # binary that ships is the one this commit's source produces.
+      - name: Set up the pinned Go toolchain
+        if: startsWith(matrix.platform_key, 'win32')
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
       - name: Build the Job Object launcher
         if: startsWith(matrix.platform_key, 'win32')
         working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
@@ -175,7 +208,6 @@ jobs:
       # build itself only warns, because a local build without the key is the
       # normal development case — this is the release saying it is not.
       - name: A release must have the pack signing key
-        if: ${{ inputs.enforce_committed_digests }}
         shell: bash
         env:
           LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
@@ -316,3 +348,30 @@ jobs:
           set -euo pipefail
           node scripts/write-pack-digests.mjs \
             --check --version "$PACK_VERSION" --digests "$DIGESTS"
+
+  publish:
+    needs: [build, collect]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: local-harness-pack-*
+          path: packs
+          merge-multiple: true
+      - name: Publish a new immutable pack version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PACK_VERSION: ${{ inputs.pack_version }}
+          PACK_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="local-harness-pack-v$PACK_VERSION"
+          # No upload --clobber or release-edit retry: an existing version is never replaced.
+          gh release create "$tag" packs/local-harness-pack-* \
+            --target "$PACK_SHA" --title "Local harness pack $PACK_VERSION" \
+            --notes "Signed local Claude Code runtime for Node and Electron." --draft --latest=false
+          gh release edit "$tag" --draft=false --latest=false

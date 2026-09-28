@@ -1,3 +1,5 @@
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
+import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { apiSessionWriteAllowed } from "./api-session-write-guard";
 import { BrowserSessionService } from "../../services/browserd/session-service";
@@ -30,7 +32,6 @@ import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
-  LOCAL_HARNESS_ENABLED,
   WEB_STREAM_TIMEOUT_MS,
   webmcpInspectorReachable,
 } from "../../config.js";
@@ -994,26 +995,23 @@ chatV2.post("/", async (c) => {
     // construction (HOSTED_MODE forces the kill switch off) and an explicit ask
     // gets a 400 saying so. Dropping the field silently would leave a
     // misconfigured client believing its turn ran locally.
-    const hostedHarnessTargetParse = parseHarnessExecutionTarget({
-      body: body as { harnessTarget?: RawHarnessTargetInput },
-      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
-      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
-      // Even on a non-hosted deployment this route is the org-aware one, whose
-      // turns are not necessarily an attended member running on their own
-      // machine. Local execution belongs on the local route.
-      actorEligible: false,
-      // Nothing here can consent, so there is no acting user to bind a grant
-      // to. Both gates above already refuse a local target on this route; this
-      // says the same thing in the one field a grant would be verified against.
-      actingUserId: null,
-    });
-    if (hostedHarnessTargetParse.kind === "refused") {
-      return c.json({ error: hostedHarnessTargetParse.reason }, 400);
+    let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
+    if (!HOSTED_MODE && resolvedExecution.harness === "claude-code" && !c.get("guestId") && !isScenarioSession) {
+      if (!hostedBody.projectId) return c.json({ error: "A project is required for local Claude Code" }, 400);
+      try {
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: bearerToken, projectId: hostedBody.projectId, scope: "attended" })).target;
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : "Claude Code is not ready" }, 409);
+      }
+    } else {
+      const parsed = parseHarnessExecutionTarget({ body: body as { harnessTarget?: RawHarnessTargetInput }, grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER), serverEnabled: false, actorEligible: false, actingUserId: null });
+      if (parsed.kind === "refused") return c.json({ error: parsed.reason }, 400);
     }
 
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        localExecution: Boolean(harnessExecutionTarget),
         requireToolApproval,
         // Use the SERVER-resolved host server list, not the request body — a
         // stale/tampered request mustn't send an empty array to bypass the
@@ -2085,7 +2083,7 @@ chatV2.post("/", async (c) => {
           customProviders: body.customProviders,
           uiMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness }
+            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -2163,7 +2161,7 @@ chatV2.post("/", async (c) => {
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness }
+            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.

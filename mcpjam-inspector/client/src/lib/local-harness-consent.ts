@@ -9,12 +9,9 @@
  * `x-mcpjam-local-harness-grant` header, where `resolveLocalHarnessAvailability`
  * re-verifies it against the terms it independently resolved.
  *
- * That server-side re-verification is the real enforcement point, so the CLIENT
- * treats a stored token as consent and does NOT pre-verify. The local-computer
- * twin learned this the expensive way: a verify-on-mount loop racing grant,
- * revoke, and the same-tab storage event grew five race guards for zero safety,
- * because a stale or tampered token simply fails the next turn's server check.
- * localStorage is the single source of truth here, read synchronously.
+ * Durable authorization lives in protected server storage. This module caches
+ * only short-lived launch credentials, renewed through shared readiness after
+ * identity, membership, policy and runtime checks. localStorage is a UI cache.
  *
  * ── Why every call returns a TYPED result ────────────────────────────────
  * These used to answer `null` for everything: a 401, a 403, a 409, a network
@@ -629,7 +626,7 @@ export async function revokeLocalHarnessConsent(
   try {
     await localHarnessRequest(
       "consent/revoke",
-      stored ? { grantId: stored.grantId } : {},
+      { ...(stored ? { grantId: stored.grantId } : {}), projectId, forget: true },
     );
   } catch {
     // Already forgotten locally; the TTL and the server's own sweep finish it.
@@ -663,4 +660,36 @@ export async function stopAllLocalHarnessSessions(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Durable authorization lives on the server; this cache is only a launch credential. */
+export async function ensureLocalHarnessReady(projectId: string, setup = false, signal?: AbortSignal): Promise<StoredLocalHarnessConsent> {
+  const response = await authFetch(`/api/mcp/local-harness/${setup ? "setup" : "readiness"}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, ...(setup ? { accepted: true } : {}) }),
+    signal,
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Claude Code setup failed. Please retry.");
+  if (response.status === 202) {
+    // Poll the existing install; a terminal failure must remain a visible Retry.
+    for (;;) {
+      await new Promise<void>((resolve, reject) => {
+        const finish = () => { signal?.removeEventListener("abort", abort); resolve(); };
+        const timer = setTimeout(finish, 1000);
+        const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason); };
+        if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
+      });
+      const statusResponse = await authFetch("/api/mcp/local-harness/runtime/status", { signal });
+      if (!statusResponse.ok) throw new Error("Could not check Claude Code installation. Please retry.");
+      const status = await statusResponse.json();
+      if (status.state === "ready") return ensureLocalHarnessReady(projectId, false, signal);
+      if (!["downloading", "verifying", "extracting", "installing"].includes(status.state)) throw new Error(status.message ?? "Claude Code installation was interrupted. Please retry.");
+    }
+  }
+  const consent = parseStoredLocalHarnessConsent(JSON.stringify(result));
+  if (!consent) throw new Error("Claude Code setup returned an invalid credential");
+  signal?.throwIfAborted();
+  persistLocalHarnessConsent(projectId, consent);
+  return consent;
 }

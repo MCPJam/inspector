@@ -1,3 +1,7 @@
+import { localDiskResumeState } from "./local/resume-state.js";
+import { localHarnessEvidence } from "./local/evidence.js";
+import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
+import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
 import { getManagerConnections } from "../mcp-connections.js";
 import { toModelMessageToolOutput } from "../normalize-model-messages-for-convex.js";
 import {
@@ -345,6 +349,10 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
           : {}),
       });
     }
+  } else if (strategy.plane === "local-loopback") {
+    for (const id of configured) {
+      inputs.push({ name: id, proxyUrl: await resolveHarnessProxyUrl({ strategy, serverId: id, authHeader }), proxyToken: strategy.token, scopeStepUpCorrelationId });
+    }
   } else if (configured.length > 0) {
     // LOCAL plane: servers live in the persistent manager (often just local
     // names with no Convex row), reached through the per-server adapter tunnel.
@@ -371,7 +379,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   // sealed token for every policied server. A policied entry that ended up with
   // a bare token would be an unenforced run.
   const mcpJson = buildHarnessProxyMcpJson(inputs);
-  if (toolPolicy) {
+  if (toolPolicy && strategy.plane !== "local-loopback") {
     const keyToName = harnessServerKeyToName(inputs);
     for (const [key, entry] of Object.entries(mcpJson.mcpServers)) {
       const serverId = keyToName[key];
@@ -820,7 +828,9 @@ export async function runHarnessTurn(
    */
   let localTeardown: (() => Promise<void>) | null = null;
   let discardLocalState: (() => Promise<void>) | undefined;
+  let localMcpPlane: Awaited<ReturnType<typeof startLocalHarnessMcpPlane>> | undefined;
   let retainLocalState = false;
+  let localStateCommitted = false;
   // This turn's claim on the box, held across the preparation window (step 3a)
   // and given up the moment the lease is recorded — recording it consumes the
   // claim, and from then on the lease's own per-box fence is what excludes other
@@ -1243,7 +1253,7 @@ export async function runHarnessTurn(
       if (
         nativeMcpDelivery &&
         (selectedServers?.length ?? 0) > 0 &&
-        !harnessMcpProxy
+        !harnessMcpProxy && !harnessExecutionTarget
       ) {
         throw new Error(
           "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy",
@@ -1252,13 +1262,18 @@ export async function runHarnessTurn(
       const pluginServerOrigins = effectiveCapabilities
         ? pluginOriginByServerId(effectiveCapabilities)
         : undefined;
+      const localEvidence = harnessExecutionTarget && evalIterationId ? await localHarnessEvidence(authHeader, evalIterationId, turnId) : undefined;
+      if (localEvidence) onHarnessEvidenceDecision?.({ ...localEvidence.decision, turnId });
+      if (harnessExecutionTarget && nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
+        localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence });
+      }
       const proxyConfig = nativeMcpDelivery
         ? await buildHarnessProxyMcpJsonFromManager({
             manager: mcpClientManager,
             selectedServerIds: selectedServers ?? [],
             authHeader,
             projectId,
-            strategy: harnessMcpProxy ?? { plane: "local-mcp" },
+            strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
             scopeStepUpCorrelationId: turnId,
             // The SAME per-turn id the scope-step-up correlation uses. It is
             // already minted fresh for every turn attempt, which is exactly
@@ -1584,6 +1599,7 @@ export async function runHarnessTurn(
               harnessAdapter.id,
               harnessExecutionTarget.permissionProfile,
               harnessExecutionTarget.kind,
+              sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
             )
           : null;
       const permissionMode: HarnessV1PermissionMode =
@@ -1837,7 +1853,7 @@ export async function runHarnessTurn(
       const localSessionId = harnessExecutionTarget
         ? localEligibility?.resume
           ? continuity!.state!.harnessSessionId
-          : `local-${crypto.randomUUID()}`
+          : harnessExecutionTarget.localSessionId ?? `local-${crypto.randomUUID()}`
         : undefined;
       let localPrepared: PreparedLocalHarnessTurn | null = null;
       if (harnessExecutionTarget) {
@@ -1847,10 +1863,12 @@ export async function runHarnessTurn(
         const localRunId = crypto.randomUUID();
         const preparation = await prepareLocalHarnessTurn({
           target: harnessExecutionTarget,
+          scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
           harnessId: harnessAdapter.id,
           modelId,
           sessionId: localSessionId!,
           runId: localRunId,
+          evalIterationId, journeyRunId, hostId,
           actor: {
             isGuest: false,
             isScenarioSession: Boolean(scenarioId),
@@ -1873,6 +1891,8 @@ export async function runHarnessTurn(
           );
         }
         localPrepared = preparation.prepared;
+        // A failed or stopped turn must not erase an already saved conversation.
+        retainLocalState = Boolean(localEligibility?.resume && localPrepared.sessionStateExists);
         localTeardown = preparation.prepared.teardown;
         discardLocalState = preparation.prepared.discardState;
         // The mode the agent was already built around, against the mode the
@@ -2172,11 +2192,12 @@ export async function runHarnessTurn(
       // take it at all. Writing the branch here is what makes "the servers
       // cannot be silently dropped at construction" a compile-time fact instead
       // of a convention.
-      const harnessRuntime =
+      let harnessRuntime =
         harnessAdapter.mcpDelivery === "native" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({ modelId, auth, mcpJson })
           : harnessAdapter.createHarness({ modelId, auth });
+      if (localPrepared) harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the
       // tool's `execute()` HERE on MCPJam's server, and submits the result back.
@@ -2593,7 +2614,7 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: resumable.resumeState,
+            resumeFrom: localPrepared ? localDiskResumeState(resumable.resumeState) : resumable.resumeState,
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {
@@ -3632,7 +3653,8 @@ export async function runHarnessTurn(
               // hanging here is not.
               signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             });
-            retainLocalState = ok;
+            localStateCommitted = ok;
+            retainLocalState ||= ok;
             if (!ok && !localPrepared) await releaseHarnessLease?.();
           } else if (runSucceeded && !aborted && continuity) {
             const resumeState = await session.detach();
@@ -3659,7 +3681,8 @@ export async function runHarnessTurn(
               ...(executionScope ? { executionScope } : {}),
             };
           } else {
-            await session.destroy();
+            if (localPrepared && retainLocalState) await session.stop();
+            else await session.destroy();
             if (continuity && !localPrepared) await releaseHarnessLease?.();
           }
         } catch (finalizeErr) {
@@ -3763,6 +3786,8 @@ export async function runHarnessTurn(
     // the other did. Bounded, because a stop that hangs must not take the whole
     // turn's teardown with it — the same lesson the revoke deadline below
     // encodes.
+    await localMcpPlane?.close();
+    localMcpPlane = undefined;
     if (localTeardown) {
       const teardown = localTeardown;
       localTeardown = null;
@@ -3825,6 +3850,7 @@ export async function runHarnessTurn(
           persistOutcome.outcome === "duplicate";
         if (capturedHarnessCommit && onConversationComplete && persistOk) {
           retainLocalState = true;
+          localStateCommitted = true;
         }
         if (persistOutcome && chatSessionId) {
           writePersistReceipt(receiptWriter, persistOutcome, {
@@ -3863,7 +3889,7 @@ export async function runHarnessTurn(
     // blocked with "Another turn is already running" until the lease TTL. This runs
     // on BOTH stream paths (UI onFinish + inline finally). Idempotent, and a no-op
     // on non-continuity turns (releaseHarnessLease is undefined).
-    if (!sessionEstablished || (discardLocalState && !retainLocalState)) {
+    if (!sessionEstablished || (discardLocalState && !localStateCommitted)) {
       await releaseHarnessLease?.();
     }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown

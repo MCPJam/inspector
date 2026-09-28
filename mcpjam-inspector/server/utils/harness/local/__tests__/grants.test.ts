@@ -324,12 +324,12 @@ describe("harness consent", () => {
     ).resolves.toMatchObject({ reason: "expired" });
   });
 
-  it("rotates rather than accumulating when the same terms are re-consented", async () => {
+  it("keeps concurrent turns valid when credentials are renewed", async () => {
     const first = await grantLocalHarnessConsent(binding());
     const second = await grantLocalHarnessConsent(binding());
     await expect(
       verifyLocalHarnessGrant(first.token, binding()),
-    ).resolves.toMatchObject({ ok: false });
+    ).resolves.toMatchObject({ ok: true });
     await expect(
       verifyLocalHarnessGrant(second.token, binding()),
     ).resolves.toMatchObject({ ok: true });

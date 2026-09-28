@@ -1,3 +1,5 @@
+import { withLocalPackBootstrap } from "../pack-bootstrap.js";
+import { localDiskResumeState } from "../resume-state.js";
 /**
  * TURN CONFORMANCE RUNNER — drives the merged local-harness foundation end to end on this
  * machine against a mock Anthropic upstream behind a loopback gateway.
@@ -537,7 +539,7 @@ async function main() {
     startupTimeoutMs: 90_000,
   });
   const agent: any = new HarnessAgent({
-    harness: harness as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "You are running a conformance check.",
+    harness: await withLocalPackBootstrap(harness, plan.runtime.rootPath) as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "You are running a conformance check.",
     // Work-dir layout: "project" is the symlink to the granted workspace inside
     // session state, so Claude Code's cwd resolves to the user's checkout.
     sandboxConfig: { workDir: "project" },
@@ -658,8 +660,7 @@ async function main() {
       throw new Error("Claude Code connected to an MCP server not selected in MCPJam");
     }
     note("workspace MCP server received zero connections; MCPJam-selected MCP server executed successfully");
-    await workspaceMcp!.close();
-    await deliveryMcp.close();
+
   }
 
   const treeBefore = [bridgePid, ...(await descendants(bridgePid))];
@@ -676,6 +677,18 @@ async function main() {
   note(`after stop: surviving pids=${JSON.stringify(survivors)} (expect [])`);
   const recordsAfterStop = (await listProcessRecords()).length;
   note(`registry records after stop: ${recordsAfterStop}`);
+
+  if (MODE === "delivery") {
+    // Use the previously SAVED sidecar, as a stopped/failed chat turn does.
+    const afterStop = { s: await agent.createSession({ sessionId, resumeFrom: localDiskResumeState(resumeState) }) };
+    const continued = await runTurn("after-stop-continues", agent, afterStop, "COUNT");
+    const count = Number(/USER_TURNS=(\d+)/.exec(continued.text)?.[1] ?? 0);
+    await afterStop.s.stop();
+    if (count < 7) throw new Error(`Stop lost conversation history: saw ${count} turns`);
+    note(`Stop preserved conversation state: next message sees ${count} user turns`);
+    await workspaceMcp!.close();
+    await deliveryMcp!.close();
+  }
 
   const after = (await readdir(WORKSPACE)).filter((e) => !before.has(e));
   note(`new entries in workspace after session: ${JSON.stringify(after)}`);

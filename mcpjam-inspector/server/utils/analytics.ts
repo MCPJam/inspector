@@ -190,6 +190,17 @@ export async function evaluateBrowserRollout(
   }
 }
 
+/** Same server-owned rollout decision for setup, launches and client visibility. */
+export async function evaluateLocalHarnessRollout(distinctId: string, _email?: string): Promise<boolean> {
+  if (!distinctId) return false;
+  try {
+    return (await getClient(true)?.isFeatureEnabled("local-harness-enabled", distinctId, {
+      sendFeatureFlagEvents: false,
+      personProperties: { deployment: "self_hosted" },
+    })) === true;
+  } catch { return false; }
+}
+
 /**
  * Values for the flags the web client reads, for `GET /api/web/flags`
  * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure

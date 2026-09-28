@@ -1,3 +1,5 @@
+import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
+import { isLocalHarnessVenue, prepareLocalHarnessRun, withLocalHarnessSlot, assertLocalHarnessCapabilities } from "../../utils/harness/local/run-resources.js";
 import {
   isTransientSpendRefusal,
   humanizeSwarmAttemptError,
@@ -338,6 +340,7 @@ export interface StartJourneyRunOptions {
    * matters; threading an await through all ~35 call sites would buy noise.
    */
   getBearer: () => Promise<string>;
+  localHarnessActor?: LocalHarnessActor;
   /** Builds a fresh connected manager scoped to one host's `serverIds`. */
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
@@ -725,13 +728,15 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const harnessNeedsBox = target.harness !== undefined;
+    const localHarness = isLocalHarnessVenue(target.harness);
+    const harnessNeedsBox = target.harness !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
     let harnessTargetIntent: SandboxIntent | undefined;
     try {
       bearer = await getBearer();
+      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined });
 
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
@@ -816,6 +821,7 @@ async function runJourneyFanOut(
             ? undefined
             : checkHarnessRuntimeAvailable({
                 harnessId: target.harness,
+                localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
                 // from a plugin has an empty `serverIds` and would otherwise slip
@@ -1284,7 +1290,9 @@ async function runJourneyFanOut(
           // Because it persists per-turn and returns only after the last persist,
           // the transcript is durable before we report the terminal below.
           if (stoppedByBackend) return;
-          const sessionResult = await runSyntheticHostSession({
+          const runSession = async () => {
+            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor }) : undefined;
+            try { return await runSyntheticHostSession({
             runId,
             projectId,
             chatSessionId,
@@ -1316,6 +1324,7 @@ async function runJourneyFanOut(
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
               harness: target.harness,
+              ...(localResources ? { harnessExecutionTarget: localResources.target } : {}),
               // The trusted binding to THIS attempt's disposable box. It reaches
               // `resolveHostTools` on `ctx`, never on the host config, so nothing
               // in the (member-readable) run snapshot can forge one.
@@ -1412,6 +1421,9 @@ async function runJourneyFanOut(
               });
             },
           });
+            } finally { await localResources?.cleanup(); }
+          };
+          const sessionResult = await runSession();
           const { outcome, errorMessage, errorReason, errorRefusal } =
             sessionResult;
 
@@ -1785,7 +1797,11 @@ async function runJourneyFanOut(
       while (!stopScheduling()) {
         const target = targetQueue.shift();
         if (!target) return;
-        await runTarget(target);
+        // Acquire before claiming attempts, so queued local work is not shown
+        // as running and does not spend its attempt deadline waiting for a slot.
+        if (isLocalHarnessVenue(target.harness)) {
+          await withLocalHarnessSlot(() => runTarget(target), sessionSignal);
+        } else await runTarget(target);
       }
     };
     await Promise.all(Array.from({ length: workerCount }, () => worker()));

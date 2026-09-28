@@ -1,3 +1,6 @@
+import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
+import { isLocalHarnessVenue, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
+import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
 import {
   assertOrgModelAllowed,
@@ -2327,6 +2330,7 @@ type EvalOrgLocalUsageContext = {
 };
 
 type RunIterationBackendParams = RunIterationBaseParams & {
+  harnessExecutionTarget?: LocalHarnessExecutionTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
@@ -2677,6 +2681,14 @@ const runHostedIteration = async (
       : {}),
   });
   try {
+    const harness = harnessOfHostConfig(params.suiteHostConfig);
+    if (isLocalHarnessVenue(harness)) {
+      const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
+      if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
+      const resources = await prepareLocalHarnessRun({ bearer: params.convexAuthToken, projectId: project.projectId });
+      try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
+      finally { await resources.cleanup(); }
+    }
     return await runHostedIterationWithBrowser(params, browser);
   } finally {
     await browser.dispose();
@@ -3795,7 +3807,9 @@ async function executeCommittedTestCase(
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
-) => executeCommittedTestCase(params);
+) => isLocalHarnessVenue(harnessOfHostConfig(params.suiteHostConfig))
+  ? withLocalHarnessSlot(() => executeCommittedTestCase(params), params.abortSignal)
+  : executeCommittedTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
   gradingMode,
@@ -5915,6 +5929,7 @@ const runLocalIteration = async ({
 // runIterationViaBackendWithBrowser + streamIterationViaBackendWithBrowser pair.
 const runHostedIterationWithBrowser = async (
   {
+    harnessExecutionTarget,
     test,
     runIndex,
     budgets,
@@ -6399,7 +6414,15 @@ const runHostedIterationWithBrowser = async (
       hostedBrowserAvailable: hostedBrowserAdvertisable(),
       runId,
     });
-    if (sandboxNeed.needed) {
+    if (harnessExecutionTarget) {
+      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy });
+      if (runId) {
+        const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
+        if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
+        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0) });
+      }
+    }
+    if (sandboxNeed.needed && !harnessExecutionTarget) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
           sandboxNeed.runtimeKind === "desktop-browser"
@@ -6809,6 +6832,7 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The iteration this run's harness turns record evidence against. Sent
     // only on the harness path with a real iteration row: a quick run has no
     // run to attach evidence to, and the emulated engine records firsthand
@@ -7269,4 +7293,6 @@ export const streamTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit"> & {
     emit: StreamEmit;
   },
-) => executeCommittedTestCase(params);
+) => isLocalHarnessVenue(harnessOfHostConfig(params.suiteHostConfig))
+  ? withLocalHarnessSlot(() => executeCommittedTestCase(params), params.abortSignal)
+  : executeCommittedTestCase(params);

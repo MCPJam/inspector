@@ -1,3 +1,5 @@
+import { HOSTED_MODE } from "@/lib/config";
+import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -102,6 +104,7 @@ export function CreateHostDialog({
     initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const selectedTemplateInput =
     catalogState.status === "live"
       ? getCatalogTemplate(catalogState.catalog, selectedTemplateId)
@@ -140,6 +143,7 @@ export function CreateHostDialog({
   }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
+    setSetupError(null);
     setName("");
     userEditedNameRef.current = false;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
@@ -155,6 +159,7 @@ export function CreateHostDialog({
       }
       return;
     }
+    setSetupError(null);
     setIsSaving(true);
     try {
       // New hosts start with no seeded servers: keeps creation deliberate.
@@ -166,6 +171,9 @@ export function CreateHostDialog({
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
+      if (!HOSTED_MODE && seed.harness === "claude-code") {
+        await ensureLocalHarnessReady(projectId, true);
+      }
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -196,14 +204,16 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create client");
+      const message = err instanceof Error ? err.message : "Failed to create client";
+      setSetupError(message);
+      toast.error(message);
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && !isSaving && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>New Client</DialogTitle>
@@ -273,13 +283,15 @@ export function CreateHostDialog({
             />
           </div>
         </div>
+        {!HOSTED_MODE && selectedTemplateInput?.harness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs on this computer. Creating this client installs its runtime and allows local commands for chats, evals, and swarms.</p>}
+        {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create
+            {isSaving && !HOSTED_MODE && selectedTemplateInput?.harness === "claude-code" ? "Setting up Claude Code…" : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>
