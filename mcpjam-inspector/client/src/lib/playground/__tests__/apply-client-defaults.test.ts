@@ -146,9 +146,7 @@ describe("applyHostConfigToPlayground", () => {
 
     // Empty/whitespace skips the configured id, then the resolver
     // tries the host style's template default.
-    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
-      "anthropic/claude-haiku-4.5"
-    );
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("openai/gpt-5.6-luna");
   });
 
   it("leaves the model alone for unknown host styles with no catalog default", () => {
@@ -182,9 +180,7 @@ describe("applyHostConfigToPlayground", () => {
     );
 
     expect(setHostStyle).toHaveBeenCalledWith("claude");
-    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
-      "anthropic/claude-haiku-4.5"
-    );
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("openai/gpt-5.6-luna");
     expect(applyHostTemplateSpy).toHaveBeenCalledWith({});
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
     expect(setDeviceTypeSpy).toHaveBeenCalledWith("fill");
