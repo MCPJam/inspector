@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
@@ -15,6 +15,12 @@ import {
   patchClaudeCodeHarnessBootstrap,
   registeredHarnessIds,
 } from "../registry";
+
+vi.mock("../claude-code-bootstrap.js", async (original) => {
+  const actual = await original<typeof import("../claude-code-bootstrap.js")>();
+  return { ...actual, createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness) };
+});
+import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
 
 describe("harness registry", () => {
   it("returns the claude-code adapter", () => {
@@ -631,27 +637,24 @@ const toUserMessage = (options) => ({
     expect(() => getHarnessAdapter("pi")).toThrow(/Unsupported harness/);
   });
 
-  describe("deliverMcpServers (refactor guard — Claude .mcp.json unchanged)", () => {
+  describe("native MCP delivery", () => {
     const mcpJson = {
       mcpServers: {
         weather: { type: "http" as const, url: "https://example.com/mcp" },
       },
     };
 
-    it("Claude Code writes the same path + content the inline write did", async () => {
+    it("Claude Code uses session configuration without writing workspace files", () => {
       const adapter = getHarnessAdapter("claude-code");
-      const writes: { path: string; content: string }[] = [];
-      await adapter.deliverMcpServers?.({
-        writeTextFile: async (a) => {
-          writes.push(a);
-        },
-        sessionWorkDir: "/home/user/work",
-        mcpJson,
+      expect(adapter.mcpNativeDelivery).toBe("session-config");
+      expect(adapter.deliverMcpServers).toBeUndefined();
+      const runtime = adapter.createHarness({
+        modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson,
       });
-      expect(writes).toHaveLength(1);
-      expect(writes[0]!.path).toBe("/home/user/work/.mcp.json");
-      // Content is the canonical serialization (same helper as before the refactor).
-      expect(JSON.parse(writes[0]!.content)).toEqual(mcpJson);
+      expect(runtime.harnessId).toBe("claude-code");
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        mcpServers: mcpJson.mcpServers,
+      }));
     });
 
     it("Codex writes no sandbox MCP config — its servers are host-executed", () => {

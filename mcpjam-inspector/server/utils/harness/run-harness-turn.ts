@@ -14,7 +14,7 @@ import {
  *
  * Instead of MCPJam's emulated Convex `/stream` loop, it runs the AI SDK
  * **Claude Code harness** inside the host's E2B computer (Phase 2 provider),
- * attaches the host's MCP servers via a generated `.mcp.json` (Phase 3), and
+ * attaches the host's MCP servers via the adapter's native configuration, and
  * adapts the harness event stream back into MCPJam's UI chunks + persistence.
  *
  * ── dual-`ai` boundary ────────────────────────────────────────────────────
@@ -117,6 +117,7 @@ import {
   prepareLocalHarnessTurn,
   type PreparedLocalHarnessTurn,
 } from "./local/local-turn.js";
+import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
 import { localPermissionModeFor } from "./local/compatibility.js";
 import {
   resolveWorkingDirectory,
@@ -575,6 +576,9 @@ export function harnessRuntimeFingerprint(parts: {
   const pluginDimension = pluginVersionsFingerprint(parts.pluginVersions ?? []);
   const s = [
     String(HARNESS_RUNTIME_COMPAT_VERSION),
+    // Older Claude sessions have workspace .mcp.json files. Start a new lane
+    // when moving to SDK config so stale servers cannot be loaded from disk.
+    ...(parts.harnessId === "claude-code" ? ["session-mcp-v1"] : []),
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
     ...(pluginDimension ? [pluginDimension] : []),
@@ -1395,6 +1399,14 @@ export async function runHarnessTurn(
       //
       // Brokered secrets are NOT here and never will be: their values reach the
       // box through E2B's egress proxy, outside this process entirely.
+      if (harnessExecutionTarget) {
+        await assertLocalSecretDelivery({
+          bearer: authHeader,
+          projectId,
+          environmentId,
+          environmentUnresolvedReason,
+        });
+      }
       const runtimeSecrets = runtimeSecretsOverride ?? null;
       const secretEnv = runtimeSecrets
         ? toSecretEnv(runtimeSecrets)
@@ -1850,6 +1862,8 @@ export async function runHarnessTurn(
           projectId,
           bearer: authHeader,
           requireToolApproval,
+          scopedEnv: sessionSecretEnv,
+          onSecretEnvDelivered,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!preparation.ok) {
@@ -2174,7 +2188,7 @@ export async function runHarnessTurn(
       //   - on HOST-EXECUTED delivery only, the selected servers' MCP tools.
       //     Under NATIVE delivery `hostExecutedMcp.tools` is empty by
       //     construction (the branch above never ran), because those tools reach
-      //     the runtime via `.mcp.json` and its own MCP client — so the model
+      //     the runtime via native configuration and its own MCP client — so the model
       //     never sees a tool twice.
       // Built-ins are spread LAST: their names are unprefixed, MCP projections
       // are `mcp__…`-prefixed, so the two sets cannot collide — but if a future
@@ -2236,9 +2250,14 @@ export async function runHarnessTurn(
               })
               .map(([name]) => name)
           : [];
+      const skillsBaseDir =
+        localPrepared?.skillsBaseDir ?? harnessAdapter.skillsBaseDir;
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
+        ...(localPrepared
+          ? { sandboxConfig: { workDir: localPrepared.sandboxWorkDir } }
+          : {}),
         // Deliver skills via the adapter's own param (host-agnostic: it writes
         // them natively at the real $HOME — Claude Code under `.claude/skills`,
         // Codex under `.agents/skills`). The per-adapter `prepareSkills` owns the
@@ -2285,7 +2304,7 @@ export async function runHarnessTurn(
           sandboxFileSession = session;
           // NATIVE delivery only: write the host's MCP servers into the session
           // before the runtime starts, via the adapter's own strategy (Claude
-          // Code writes a `.mcp.json`). A host-executed adapter has nothing to
+          // runtimes can require config files). A host-executed adapter has nothing to
           // write — its servers already went out as `tools` above — and the
           // adapter union forbids it from carrying `deliverMcpServers` at all.
           if (
@@ -2350,7 +2369,7 @@ export async function runHarnessTurn(
               session,
               skills: deliveredSkills,
               skillsHash: skillsHash ?? "",
-              skillsBase: harnessAdapter.skillsBaseDir,
+              skillsBase: skillsBaseDir!,
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
             // OWNERSHIP PRE-SEED (stable adapter line). The adapter re-writes
@@ -2369,13 +2388,13 @@ export async function runHarnessTurn(
             if (preparedSkills && preparedSkills.payload.length > 0) {
               await handOffLegacySkillDirs({
                 session,
-                skillsBase: harnessAdapter.skillsBaseDir,
+                skillsBase: skillsBaseDir!,
                 deliveredNames: deliveredSkills.map((s) => s.name),
                 ...(abortSignal ? { signal: abortSignal } : {}),
               });
               await preseedAdapterSkills({
                 session,
-                skillsBase: harnessAdapter.skillsBaseDir,
+                skillsBase: skillsBaseDir!,
                 payload: preparedSkills.payload,
                 trailingNewline:
                   harnessAdapter.skillsWriteOptions.trailingNewline,
@@ -2393,7 +2412,7 @@ export async function runHarnessTurn(
               await materializePinnedSkillFiles({
                 session,
                 artifacts: pinnedHarnessSkills!,
-                skillsBase: harnessAdapter.skillsBaseDir,
+                skillsBase: skillsBaseDir!,
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
             }
@@ -2428,7 +2447,7 @@ export async function runHarnessTurn(
                 session,
                 files: capabilitySkillFiles(effectiveCapabilities),
                 skillNamesById: deliveredSkillNamesById,
-                skillsBase: harnessAdapter.skillsBaseDir,
+                skillsBase: skillsBaseDir!,
                 ...(uploadQuotaComputerId
                   ? { computerId: uploadQuotaComputerId }
                   : {}),
@@ -2455,7 +2474,7 @@ export async function runHarnessTurn(
               // since the root differs (Codex `.agents/skills`).
               const skillOrigins = deliveredPluginSkillOrigins({
                 set: effectiveCapabilities,
-                skillsBaseDir: harnessAdapter.skillsBaseDir,
+                skillsBaseDir: skillsBaseDir!,
                 deliveredNameBySkillId: deliveredSkillNamesById,
               });
               if (skillOrigins.length > 0) {
@@ -2487,7 +2506,7 @@ export async function runHarnessTurn(
                   session,
                   files: fileResult.files,
                   skillNamesById: deliveredSkillNamesById,
-                  skillsBase: harnessAdapter.skillsBaseDir,
+                  skillsBase: skillsBaseDir!,
                   ...(uploadQuotaComputerId
                     ? { computerId: uploadQuotaComputerId }
                     : {}),
@@ -2648,7 +2667,7 @@ export async function runHarnessTurn(
         await materializeSkillFrontmatter({
           session: sandboxFileSession,
           skills: deliveredSkills,
-          skillsBase: harnessAdapter.skillsBaseDir,
+          skillsBase: skillsBaseDir!,
           ...(abortSignal ? { signal: abortSignal } : {}),
         }).catch(() => {});
       }
@@ -3561,7 +3580,7 @@ export async function runHarnessTurn(
               // Names already delivered as cloud skills this turn are the adapter's
               // own dirs — not adoptions.
               managedNames: new Set(deliveredSkills.map((s) => s.name)),
-              skillsBase: harnessAdapter.skillsBaseDir,
+              skillsBase: skillsBaseDir!,
               // The turn's `abortSignal` bounded nothing here: this branch only
               // runs on a CLEAN success, where that signal is by definition not
               // aborted. Compose it with a deadline so a stalled adoption can't
@@ -3581,7 +3600,7 @@ export async function runHarnessTurn(
               await appendManagedSkills({
                 session: fileSession,
                 skills: adopted,
-                skillsBase: harnessAdapter.skillsBaseDir,
+                skillsBase: skillsBaseDir!,
               }).catch(() => {});
             }
           }

@@ -98,3 +98,14 @@ Two facts are darwin-specific and need a `macos-latest` job: the `(node)`
 command an exiting process reports, and the `ps -g` group probe. Everything
 else is portable — the SDK ships linux binaries and nodejs.org ships linux
 tarballs — so `ubuntu-latest` covers the rest.
+
+### Workspace delivery smoke check
+
+After building the pack and preparing the isolated conformance home/runtime as
+above, run `run-native-turn.ts delivery`. This uses the product Claude Code
+adapter with session-config MCP delivery. It verifies a real MCP tool call,
+a write in the granted workspace, a materialized test secret in Bash, a skill
+under the synthetic home, and that an existing workspace `.mcp.json` remains
+unchanged. It also runs the usual approval, resume, and teardown checks.
+The upstream model and model gateway are deterministic local test servers;
+this is not the signed-in Playground/broker billing check.

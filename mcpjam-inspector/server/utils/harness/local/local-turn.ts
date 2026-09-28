@@ -67,6 +67,9 @@ import {
   registerLocalHarnessSession,
   getLocalHarnessSession,
 } from "./session-registry.js";
+import { join } from "node:path";
+import { toAdapterPath } from "./adapter-path.js";
+import { validateLocalHarnessSecretEnv } from "./session-env.js";
 import { mkdir, stat } from "node:fs/promises";
 import { reserveLoopbackPort } from "./bridge-endpoint.js";
 import { createRequire } from "node:module";
@@ -104,6 +107,8 @@ export interface PreparedLocalHarnessTurn {
    * directly is what put bridge state inside the user's checkout.
    */
   sandboxWorkDir: string;
+  /** Adapter-facing path under the session's synthetic HOME. */
+  skillsBaseDir: string;
   /** Observed before preparation creates the directory; a sidecar alone is insufficient. */
   sessionStateExists: boolean;
   permissionMode: "allow-reads" | "allow-edits" | "allow-all";
@@ -156,8 +161,9 @@ export interface PrepareLocalHarnessTurnArgs {
   bearer: string;
   /** Set when the host asks for tool approval, which narrows the mode. */
   requireToolApproval?: boolean;
-  /** Env the adapter needs beyond the model credential (bridge token, port). */
+  /** Materialized project secrets; runtime-owned credential names are refused. */
   scopedEnv?: Readonly<Record<string, string>>;
+  onSecretEnvDelivered?: () => void;
   maxOutputTokens?: number;
   signal?: AbortSignal;
 }
@@ -165,6 +171,7 @@ export interface PrepareLocalHarnessTurnArgs {
 export async function prepareLocalHarnessTurn(
   args: PrepareLocalHarnessTurnArgs,
 ): Promise<LocalHarnessTurnPreparation> {
+  validateLocalHarnessSecretEnv(args.scopedEnv ?? {});
   const verifyStartedAt = Date.now();
 
   // The pack's install root is where availability looks for a runtime. Reading
@@ -433,6 +440,11 @@ async function prepareWithReservedRuntime(outer: {
       workspacePath: plan.workspacePath,
       workspaceGrantId: plan.target.workspaceGrantId,
       sessionStateDir,
+      ...(args.onSecretEnvDelivered && Object.keys(args.scopedEnv ?? {}).length
+        ? {
+            onBridgeStarted: async () => { args.onSecretEnvDelivered?.(); },
+          }
+        : {}),
       targetKind: "local-native",
       bridgePort,
       scopedEnv: {
@@ -526,6 +538,9 @@ async function prepareWithReservedRuntime(outer: {
           ANTHROPIC_BASE_URL: started.baseUrl,
         } as HarnessAuth,
         sandboxWorkDir: "project",
+        skillsBaseDir: toAdapterPath(
+          join(sessionStateDir, "home", ".claude", "skills"),
+        ),
         sessionStateExists,
         permissionMode,
         brokerRunId: broker.runId,
