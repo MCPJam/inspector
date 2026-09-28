@@ -44,6 +44,31 @@ function detail(
 }
 
 describe("DirectoryDetailDialog", () => {
+  it.each([
+    null,
+    '<img/src=x data-marker="payload" onerror=alert(1)>detail',
+  ])(
+    "renders raw listing text without creating HTML elements (%s)",
+    (description) => {
+      const fallback = '<script data-marker="payload">alert(1)</script>';
+      const displayName =
+        'Promise<Object> <svg data-marker="payload" onload=alert(1)>';
+      render(
+        <DirectoryDetailDialog
+          open
+          onOpenChange={vi.fn()}
+          server={server({ displayName, description: fallback })}
+          detail={
+            description === null ? null : detail({ description })
+          }
+        />,
+      );
+      expect(screen.getByText(displayName)).toBeInTheDocument();
+      expect(screen.getByText(description ?? fallback)).toBeInTheDocument();
+      expect(document.body.querySelector("[data-marker]")).toBeNull();
+    },
+  );
+
   it("renders the parsed body: description, author, tools, access, links", () => {
     render(
       <DirectoryDetailDialog

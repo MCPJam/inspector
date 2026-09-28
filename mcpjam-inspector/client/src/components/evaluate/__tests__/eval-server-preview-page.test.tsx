@@ -11,6 +11,26 @@ describe("EvalServerPreviewPage", () => {
     clearEvalServerPreviewDraft(server.id);
   });
 
+  it("renders suite titles and descriptions as literal text", () => {
+    const preview = buildEvalServerPreview(server);
+    const title = '<svg data-marker="payload" onload=alert(1)>Promise<Object>';
+    const description =
+      '<img/src=x data-marker="payload" onerror=alert(1)>Example';
+    preview.suites[0]!.title = title;
+    preview.suites[0]!.description = description;
+    render(
+      <EvalServerPreviewPage
+        server={server}
+        preview={preview}
+        onOpenCase={vi.fn()}
+        onRunFirstEvals={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(title)).toBeInTheDocument();
+    expect(screen.getByText(description)).toBeInTheDocument();
+    expect(document.body.querySelector("[data-marker]")).toBeNull();
+  });
+
   it("renders the first-run suites step from the preview fixture", () => {
     render(
       <EvalServerPreviewPage
