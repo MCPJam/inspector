@@ -286,7 +286,7 @@ describe("PatternMatchFields — counting, per unit", () => {
     const { last } = setup(rule({ patterns: ["secret"] }));
     const note = screen.getByText(/At least 0 and at most 0 means no call/);
     expect(note).toHaveTextContent(
-      "At least 0 and at most 0 means no call matches — not that the tool was never called.",
+      "At least 0 and at most 0 means no call matches, not that the tool was never called.",
     );
     expect(note).toHaveTextContent(
       /Counts only calls that match every pattern, not all calls/,
@@ -318,7 +318,7 @@ describe("PatternMatchFields — counting, per unit", () => {
     const { last } = setup(resultRule({ patterns: ["secret"] }));
     const note = screen.getByText(/At least 0 and at most 0 means no result/);
     expect(note).toHaveTextContent(
-      "At least 0 and at most 0 means no result matches — not that the tool returned nothing.",
+      "At least 0 and at most 0 means no result matches, not that the tool returned nothing.",
     );
     expect(note).toHaveTextContent(
       /Counts only results that match every pattern, not all results/,
