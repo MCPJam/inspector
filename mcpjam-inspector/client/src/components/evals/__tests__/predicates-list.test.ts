@@ -95,6 +95,34 @@ describe("summarizePredicate", () => {
     expect(summarizePredicate({ type: "noToolErrors" })).toBe("no tool errors");
   });
 
+  it("summarizes toolArgumentsMatch by matching calls, not all calls", () => {
+    expect(
+      summarizePredicate({
+        type: "toolArgumentsMatch",
+        toolName: "create_view",
+        patterns: ["Idea", "Build"],
+        flags: "i",
+      }),
+    ).toBe(
+      "at least 1 matching call(s) to create_view whose arguments match all of /Idea/i, /Build/i",
+    );
+    expect(
+      summarizePredicate({
+        type: "toolArgumentsMatch",
+        toolName: "create_view",
+        patterns: ["secret"],
+        min: 0,
+        max: 0,
+      }),
+    ).toBe("no matching call to create_view whose arguments match /secret/");
+    expect(
+      summarizePredicate({
+        type: "toolArgumentsMatch",
+        toolName: "create_view",
+      } as unknown as Predicate),
+    ).toBe("");
+  });
+
   it("degrades to an empty summary instead of throwing on a malformed-but-typed predicate", () => {
     // Valid `type` discriminant but the variant's payload is missing — exactly
     // what `parseIterationPredicates` lets through (it only checks the row

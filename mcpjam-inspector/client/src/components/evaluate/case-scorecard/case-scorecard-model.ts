@@ -399,6 +399,22 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
   ]);
 
 /**
+ * Whether this check needs a tool call, so a negative case cannot hold beside
+ * it.
+ *
+ * `toolArgumentsMatch` decides by its count, not its kind: `min` (default 1)
+ * counts MATCHING calls, so `min: 0, max: 0` — "no call matches" — holds on a
+ * transcript with no calls at all. The SDK refuses the same pairing on the
+ * same rule.
+ */
+function contradictsNegativeCase(predicate: Predicate): boolean {
+  if (predicate.type === "toolArgumentsMatch") {
+    return (predicate.min ?? 1) >= 1;
+  }
+  return NEGATIVE_CONTRADICTING_KINDS.has(predicate.type as PredicateKind);
+}
+
+/**
  * What a check PROTECTS, in words a reader who has never authored an eval can
  * repeat.
  *
@@ -454,6 +470,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   toolCalledBefore: "Require this tool before that one",
   noRepeatedIdenticalCall: "Catch the same call being made twice over",
   argumentsMatchToolSchema: "Catch arguments the tool's own schema rejects",
+  toolArgumentsMatch: "Check what the tool was sent",
   noDeprecatedToolCalled: "Catch a tool the server calls deprecated",
   noDestructiveToolCalled: "Catch a tool the server marks destructive",
 };
@@ -1067,8 +1084,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
 
   const contradicting = [...authoredStepRows, ...caseRows, ...suiteRows].some(
     (row) =>
-      row.predicate !== undefined &&
-      NEGATIVE_CONTRADICTING_KINDS.has(row.predicate.type as PredicateKind),
+      row.predicate !== undefined && contradictsNegativeCase(row.predicate),
   );
 
   return {

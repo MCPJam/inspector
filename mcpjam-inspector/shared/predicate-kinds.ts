@@ -4,6 +4,7 @@
 
 import type { Predicate } from "@/shared/eval-matching";
 import {
+  describeToolArgumentsMatchExpectation,
   isObservationPredicateKind,
   isTurnScopablePredicateKind,
   OBSERVATION_PREDICATE_KINDS,
@@ -88,6 +89,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   fullPageHasContinuation: "Full pages carry continuation metadata",
   // ── Tool call: was the call itself well formed ──────────────────────────
   argumentsMatchToolSchema: "Arguments match the tool's schema",
+  toolArgumentsMatch: "Tool arguments match pattern(s)",
   noRepeatedIdenticalCall: "No identical call repeated back-to-back",
   // ── Selection: which tools the run reached ──────────────────────────────
   toolCallCountUnder: "Fewer than N tool calls",
@@ -151,6 +153,7 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "toolErrorNamesInput",
   "fullPageHasContinuation",
   "argumentsMatchToolSchema",
+  "toolArgumentsMatch",
   "noRepeatedIdenticalCall",
   "toolCallCountUnder",
   "toolCalledBefore",
@@ -322,6 +325,12 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       };
     case "argumentsMatchToolSchema":
       return { type: "argumentsMatchToolSchema" };
+    // One empty pattern and nothing else. `min`, `max` and `flags` stay
+    // unwritten rather than seeded with their defaults: the predicate is the
+    // criterion's identity, so a blank that wrote `min: 1` would mint a
+    // different id from the same check authored anywhere that omits it.
+    case "toolArgumentsMatch":
+      return { type: "toolArgumentsMatch", toolName: "", patterns: [""] };
     case "toolCallCountUnder":
       return { type: "toolCallCountUnder", count: 10 };
     case "toolCalledBefore":
@@ -447,9 +456,49 @@ export function formatCriterion(
       return predicate.toolName && predicate.beforeToolName
         ? `${predicate.toolName} called before ${predicate.beforeToolName}`
         : base;
+    case "toolArgumentsMatch": {
+      const sentence = describeToolArgumentsMatch(predicate);
+      if (sentence) return sentence[0]!.toUpperCase() + sentence.slice(1);
+      return predicate.toolName ? `${base} (${predicate.toolName})` : base;
+    }
     default:
       return base;
   }
+}
+
+/** A pattern as a reader sees it — `/Idea/i` — cut so eight stay one line. */
+function shownPattern(pattern: string, flags: string): string {
+  const text = pattern.length > 60 ? `${pattern.slice(0, 60)}…` : pattern;
+  return `/${text}/${flags}`;
+}
+
+/**
+ * A `toolArgumentsMatch` check in one counting-exact sentence, or `undefined`
+ * when a stored row lost the fields it needs.
+ *
+ * It always says "matching", and says what a match is: `min`/`max` count the
+ * calls whose arguments match EVERY pattern, never all calls. "No matching
+ * call" is the `0/0` spelling — a reader who took it for "never called" would
+ * read a pass beside a transcript full of calls as a contradiction.
+ */
+export function describeToolArgumentsMatch(
+  predicate: Extract<Predicate, { type: "toolArgumentsMatch" }>,
+): string | undefined {
+  const { toolName, patterns } = predicate;
+  if (!toolName || !Array.isArray(patterns) || patterns.length === 0) {
+    return undefined;
+  }
+  const flags = typeof predicate.flags === "string" ? predicate.flags : "";
+  const shown = patterns.map((p) => shownPattern(String(p), flags)).join(", ");
+  const all = patterns.length === 1 ? "" : "all of ";
+  const subject = predicate.argument
+    ? `whose "${predicate.argument}" argument matches ${all}`
+    : `whose arguments match ${all}`;
+  const expectation = describeToolArgumentsMatchExpectation({
+    min: typeof predicate.min === "number" ? predicate.min : 1,
+    max: typeof predicate.max === "number" ? predicate.max : undefined,
+  });
+  return `${expectation} to ${toolName} ${subject}${shown}`;
 }
 
 export function filterKindsForMenu(

@@ -78,10 +78,20 @@ describe("add-step-picker-catalog integrity", () => {
     );
   });
 
-  it("has 6 primary items and 17 secondary items", () => {
+  it("has 6 primary items and 18 secondary items", () => {
     expect(primaryItems()).toHaveLength(6);
-    expect(secondaryItems()).toHaveLength(17);
-    expect(secondaryCount()).toBe(17);
+    expect(secondaryItems()).toHaveLength(18);
+    expect(secondaryCount()).toBe(18);
+  });
+
+  it("files toolArgumentsMatch with the other tool-call checks", () => {
+    const entry = PICKER_CATALOG.find(
+      (e) =>
+        e.choice.kind === "check" &&
+        e.choice.predicateKind === "toolArgumentsMatch",
+    );
+    expect(entry?.group).toBe("transcriptMore");
+    expect(entry?.tier).toBe("secondary");
   });
 
   it("places widgetNoConsoleErrors under viewLifecycle, not transcript", () => {
