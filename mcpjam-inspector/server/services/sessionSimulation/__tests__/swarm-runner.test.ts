@@ -2079,6 +2079,134 @@ describe("swarm fan-out runner — starter funding (swarm-admission-v1)", () => 
       expect(starterSteps()).toEqual([undefined, undefined]);
     });
 
+    it("grounds a read-only target on the claim's funding, claiming its first session once, before grounding", async () => {
+      claimsAnswer(planFor(STARTER_TARGET, ["credits", "credits"]));
+
+      await startJourneyRun(
+        baseOpts({
+          hosts: [STARTER_TARGET],
+          setupWrites: false,
+          sessionsPerTarget: 2,
+          sessionFunding: planFor(STARTER_TARGET, ["starter", "starter"]),
+        }),
+      );
+
+      expect(setupTurnMock).not.toHaveBeenCalled();
+      const claims = reportAttemptMock.mock.calls
+        .map((c) => c[2] as any)
+        .filter((a) => a.status === "running");
+      expect(claims.map((a) => a.sessionIdx)).toEqual([0, 1]);
+      expect(reportAttemptMock.mock.invocationCallOrder[0]).toBeLessThan(
+        reportTargetGroundingMock.mock.invocationCallOrder[0]!,
+      );
+      expect(starterSteps()).toEqual([undefined, undefined]);
+    });
+
+    it.each([
+      ["credits", false],
+      ["starter", true],
+    ] as const)(
+      "after a credit-only cap, grounds a read-only target planned starter only when its claim says starter (claim %s)",
+      async (recorded, grounded) => {
+        // The credit target trips the cap; the starter target's first
+        // claim answers only after that, so its grounding reads a stopped
+        // credit rail.
+        let releaseClaim!: () => void;
+        const capReported = new Promise<void>((resolve) => {
+          releaseClaim = resolve;
+        });
+        reportAttemptMock.mockImplementation(
+          async (_url, _bearer, args: any) => {
+            if (args.targetId === "t-credit" && args.status === "rate_limited")
+              setTimeout(releaseClaim, 0);
+            if (args.targetId === "t-starter" && args.status === "running")
+              await capReported;
+            return {
+              ok: true,
+              applied: true,
+              ...(args.status === "running"
+                ? {
+                    funding:
+                      args.targetId === "t-starter" ? recorded : "credits",
+                  }
+                : {}),
+            };
+          },
+        );
+        runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+          adapter.persist.targetId === "t-credit"
+            ? {
+                outcome: "rate_limited",
+                errorMessage: "Org daily spend cap exceeded",
+              }
+            : { outcome: "succeeded" },
+        );
+
+        await startJourneyRun(
+          baseOpts({
+            hosts: [CREDIT_TARGET, STARTER_TARGET],
+            setupWrites: false,
+            sessionsPerTarget: 1,
+            sessionFunding: [
+              ...planFor(CREDIT_TARGET, ["credits"]),
+              ...planFor(STARTER_TARGET, ["starter"]),
+            ],
+          }),
+        );
+
+        expect(
+          reportTargetGroundingMock.mock.calls.some(
+            (c) => (c[2] as any).targetId === "t-starter",
+          ),
+        ).toBe(grounded);
+        expect(
+          terminals()
+            .filter((t) => t.targetId === "t-starter")
+            .map((t) => [t.status, t.errorCode]),
+        ).toEqual(
+          grounded
+            ? [["succeeded", undefined]]
+            : [["rate_limited", "spend_cap_exceeded"]],
+        );
+      },
+    );
+
+    it("keeps a target going when its read-only grounding call is rejected as a starter step, without a spend-cap stop", async () => {
+      reportTargetGroundingMock.mockImplementation(
+        async (_url, _bearer, body: any) => {
+          if (body.skippedReason === "connect_failed")
+            throw new SwarmAgentError(
+              403,
+              '{"code":"swarm_starter_rejected"}',
+              'swarm-agent https://convex.site/journey-execution/runs/grounding failed (403): {"code":"swarm_starter_rejected"}',
+            );
+          return {};
+        },
+      );
+      const plan = planFor(STARTER_TARGET, ["starter", "starter"]);
+      claimsAnswer(plan);
+
+      await startJourneyRun(
+        baseOpts({
+          hosts: [STARTER_TARGET],
+          setupWrites: false,
+          sessionsPerTarget: 2,
+          sessionFunding: plan,
+        }),
+      );
+
+      expect(
+        reportTargetGroundingMock.mock.calls.map(
+          (c) => (c[2] as any).skippedReason,
+        ),
+      ).toEqual(["connect_failed", "starter_step_rejected"]);
+      expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+      expect(
+        terminals().some((t) => t.errorCode === "spend_cap_exceeded"),
+      ).toBe(false);
+    });
+
     it("does not retry a setup whose starter step the backend rejected", async () => {
       const { SwarmSetupError } = await import("../swarm-setup-turn");
       setupTurnMock.mockRejectedValue(

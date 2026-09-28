@@ -134,6 +134,56 @@ describe("target preparation", () => {
     ).resolves.toBeUndefined();
     expect(built.dispose).toHaveBeenCalledTimes(1);
   });
+  it("ends a read-only grounding call the backend rejected as a starter step with starter_step_rejected, once", async () => {
+    mocks.probe.mockResolvedValue({
+      probes: [{ serverId: "s", toolName: "list_projects", text: "[]" }],
+      probedTools: ["s/list_projects"],
+    });
+    mocks.report.mockImplementation(async (_url, _bearer, body) => {
+      if (body.probes?.length)
+        throw new Error(
+          'swarm-agent https://test/journey-execution/runs/grounding failed (403): {"code":"swarm_starter_rejected","refusalReason":"duplicate"}',
+        );
+      return {};
+    });
+    await expect(
+      prepareTargetGrounding({
+        ...args(),
+        setupWrites: false,
+        starterFunded: true,
+      }),
+    ).resolves.toBeUndefined();
+    // The rejected call is not made again, and the discovery is not rerun:
+    // the grounding is recorded once more, without probes, with the reason.
+    expect(mocks.probe).toHaveBeenCalledTimes(1);
+    expect(mocks.setup).not.toHaveBeenCalled();
+    expect(mocks.report.mock.calls.map((c) => c[2])).toEqual([
+      expect.objectContaining({ probedTools: ["s/list_projects"] }),
+      {
+        projectId: "p",
+        runId: "run",
+        targetId: "env-a",
+        hostId: "h",
+        probes: [],
+        probedTools: ["s/list_projects"],
+        skippedReason: "starter_step_rejected",
+      },
+    ]);
+    expect(mocks.report.mock.calls[0][2].probes).toHaveLength(1);
+  });
+  it("records a grounding step rejected before its report as starter_step_rejected, not connect_failed", async () => {
+    mocks.probe.mockRejectedValue(
+      new Error(
+        "This starter step could not be authorized. (swarm_starter_rejected, HTTP 403)",
+      ),
+    );
+    await prepareTargetGrounding({ ...args(), setupWrites: false });
+    expect(mocks.report).toHaveBeenCalledTimes(1);
+    expect(mocks.report.mock.calls[0][2]).toMatchObject({
+      probes: [],
+      skippedReason: "starter_step_rejected",
+    });
+  });
   it("never prepares legacy targets or cancelled runs", async () => {
     const a = args();
     await prepareTargetGrounding({

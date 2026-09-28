@@ -14,7 +14,19 @@ import { withDeadline } from "../../utils/run-supervisor/deadline";
 import type { JourneyManagerFactory } from "./swarm-runner";
 import { abortable, probeReadOnlyTools } from "./target-discovery";
 import { runSwarmSetupTurn, SwarmSetupError } from "./swarm-setup-turn";
-import { STARTER_STEP_REJECTED_ERROR_CODE } from "../../../shared/swarm-attempt-error";
+import {
+  isStarterStepRejected,
+  STARTER_STEP_REJECTED_ERROR_CODE,
+} from "../../../shared/swarm-attempt-error";
+import { spendRefusalOf } from "./admission-retry";
+
+/** A grounding call the backend refused as `swarm_starter_rejected`. */
+function isRejectedStarterStep(error: unknown): boolean {
+  return isStarterStepRejected(
+    spendRefusalOf(error)?.code,
+    error instanceof Error ? error.message : undefined,
+  );
+}
 export async function prepareTargetGrounding(args: {
   runId: string;
   projectId: string;
@@ -27,7 +39,7 @@ export async function prepareTargetGrounding(args: {
   convexHttpUrl: string;
   bearer: string;
   signal: AbortSignal;
-  /** The target has a starter-funded session; see `runSwarmSetupTurn`. */
+  /** The target's first claim confirmed starter; see `runSwarmSetupTurn`. */
   starterFunded?: boolean;
 }) {
   if (!args.target.targetId || args.signal.aborted) return;
@@ -38,7 +50,10 @@ export async function prepareTargetGrounding(args: {
     hostId: args.target.hostId,
   };
   let setup: SetupRecord | undefined;
-  const report = async (body: Parameters<typeof reportTargetGrounding>[2]) => {
+  /** Answers `rejected` when the backend refused the call as a starter step. */
+  const report = async (
+    body: Parameters<typeof reportTargetGrounding>[2],
+  ): Promise<"rejected" | undefined> => {
     if (args.signal.aborted) return;
     try {
       await reportTargetGrounding(
@@ -47,13 +62,35 @@ export async function prepareTargetGrounding(args: {
         body,
         args.signal,
       );
-    } catch {
+    } catch (error) {
+      if (isRejectedStarterStep(error)) {
+        logger.warn("[swarm.runner] target grounding starter step rejected", {
+          ...identity,
+          reason: STARTER_STEP_REJECTED_ERROR_CODE,
+        });
+        return "rejected";
+      }
       logger.warn(
         "[swarm.runner] target grounding report unavailable",
         identity,
       );
     }
   };
+  // A grounding call refused as a starter step ends the grounding with that
+  // reason, exactly as a refused setup does: it is recorded once, without
+  // probes, and neither the call nor the discovery runs again. It is not a
+  // credits problem and does not stop the target's sessions, which read-only
+  // grounding never gates.
+  const reportRejected = (probedTools: string[]) =>
+    report({
+      ...identity,
+      probes: [],
+      probedTools,
+      skippedReason: STARTER_STEP_REJECTED_ERROR_CODE,
+      ...(setup?.createdEntities.length
+        ? { seedFacts: setup.createdEntities }
+        : {}),
+    });
   if (args.setupWrites) {
     const setupArgs = { ...args, authHeader: `Bearer ${args.bearer}` };
     try {
@@ -106,17 +143,20 @@ export async function prepareTargetGrounding(args: {
       signal: deadline.signal,
     });
     if (args.signal.aborted) return;
-    await report({
+    const outcome = await report({
       ...identity,
       ...discovery,
       ...(setup?.createdEntities.length
         ? { seedFacts: setup.createdEntities }
         : {}),
     });
+    if (outcome === "rejected") await reportRejected(discovery.probedTools);
     logger.info("target.discovery.finish", identity);
-  } catch {
-    if (!args.signal.aborted) {
-      await report({
+  } catch (error) {
+    if (!args.signal.aborted && isRejectedStarterStep(error)) {
+      await reportRejected([]);
+    } else if (!args.signal.aborted) {
+      const outcome = await report({
         ...identity,
         probes: [],
         probedTools: [],
@@ -125,6 +165,7 @@ export async function prepareTargetGrounding(args: {
           ? { seedFacts: setup.createdEntities }
           : {}),
       });
+      if (outcome === "rejected") await reportRejected([]);
       logger.info("target.discovery.skipped", identity);
     }
   } finally {

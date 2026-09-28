@@ -1086,22 +1086,23 @@ async function runJourneyFanOut(
         (_, idx) => plannedFunding(target, idx),
       ).includes("starter");
       const groundingAllowed = !harnessTargetBlockedReason && !stopScheduling();
-      // The setup claim. A setup that writes runs on MCPJam's money only when
-      // the create response planned a starter session for this target AND the
-      // backend confirms it: the target's first session is claimed before its
-      // setup, and only a claim that answers `starter` funds the setup. Any
-      // other answer (credits, or no claim at all) sets up on the credit rail.
-      // The first session keeps this claim; it is not claimed twice.
+      // The setup claim. A target's grounding (its setup when it writes, its
+      // read-only discovery when it does not) runs on MCPJam's money only
+      // when the create response planned a starter session for this target
+      // AND the backend confirms it: the target's first session is claimed
+      // before its grounding, and only a claim that answers `starter` funds
+      // it. Any other answer (credits, or no claim at all) grounds on the
+      // credit rail. The first session keeps this claim; it is not claimed
+      // twice.
       let setupClaim: Awaited<ReturnType<typeof claimSession>> = undefined;
-      if (groundingAllowed && opts.setupWrites && plannedStarter && targetId) {
+      if (groundingAllowed && plannedStarter && targetId) {
         bearer = await getBearer();
         setupClaim = await claimSession(0, bearer);
         if (stoppedByBackend) return;
       }
-      const setupStarterFunded = opts.setupWrites
-        ? !!setupClaim && fundingOf(setupClaim, 0) === "starter"
-        : plannedStarter;
-      // A setup MCPJam funds is neither skipped nor cancelled by a credit
+      const setupStarterFunded =
+        !!setupClaim && fundingOf(setupClaim, 0) === "starter";
+      // Grounding MCPJam funds is neither skipped nor cancelled by a credit
       // session's spend cap.
       if (
         groundingAllowed &&
