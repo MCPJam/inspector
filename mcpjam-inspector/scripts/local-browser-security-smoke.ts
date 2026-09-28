@@ -109,7 +109,8 @@ async function main() {
   try {
     const page = await context.newPage();
     await page.goto("https://example.com/");
-    assert.match(await page.pageText(), /Example Domain/);
+    // Extraction may omit the heading; verify the public page's body instead.
+    assert.match(await page.pageText(), /for use in (?:documentation|illustrative) examples/i);
     await page.goto(websiteUrl);
     assert.match(await page.pageText(), /Local development works/);
     const secret = join(directory, "synthetic-secret.txt");
