@@ -110,6 +110,12 @@ export interface ResolveTurnRuntimeArgs {
    */
   modelSelection?: ModelSelection;
   /**
+   * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`): the
+   * backend holds credits against it. Sent on that rail ONLY. Nothing in this repo shows `/stream/org` or
+   * the direct engine reading it, so a BYOK turn keeps its own limits.
+   */
+  maxOutputTokens?: number;
+  /**
    * The settings this turn runs with, already resolved once by
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
    * host defaults). `temperature` is what the caller hands the engine; a
@@ -399,9 +405,14 @@ export async function resolveTurnRuntime(
       ]);
     }
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection
+      args.extraBodyFields ||
+      hostedSelection ||
+      args.maxOutputTokens !== undefined
         ? {
             ...(args.extraBodyFields ?? {}),
+            ...(args.maxOutputTokens !== undefined
+              ? { maxOutputTokens: args.maxOutputTokens }
+              : {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
           }
         : undefined;

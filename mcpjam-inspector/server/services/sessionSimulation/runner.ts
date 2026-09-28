@@ -1924,8 +1924,8 @@ export async function drainAssistantTurn(
     /**
      * Per-step output-token ceiling for the hosted body (see
      * `SyntheticHostRuntime.maxOutputTokens`). The backend reserves credits
-     * against it, so a realistic ceiling is a realistic hold. Merged into
-     * `extraBodyFields`, which the hosted engines post verbatim.
+     * against it, so a realistic ceiling is a realistic hold. Sent on the
+     * MCPJam-hosted rail only (see `resolveTurnRuntime`).
      */
     maxOutputTokens?: number;
     /** Optional turn hooks (browser session context attachment points). */
@@ -1983,12 +1983,13 @@ export async function drainAssistantTurn(
   // body as an extra field. The backend spend writer ignores unknown fields
   // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
   // so this is forward-compatible and inert for the scenario path.
+  // `maxOutputTokens` is NOT merged here: it rides the MCPJam-hosted rail only,
+  // so `resolveTurnRuntime` adds it once the rail is known.
   const mergedExtraBodyFields =
-    journeyRunId !== undefined || maxOutputTokens !== undefined
+    journeyRunId !== undefined
       ? {
           ...(extraBodyFields ?? {}),
-          ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-          ...(journeyRunId !== undefined ? { journeyRunId } : {}),
+          journeyRunId,
         }
       : extraBodyFields;
 
@@ -2023,6 +2024,7 @@ export async function drainAssistantTurn(
       : {}),
     ...(attribution ? { attribution } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     // What the engine is handed below, so the rail applies the effort and
     // the local execution record states the settings actually sent.
     ...(args.temperature !== undefined || reasoningEffort !== undefined
