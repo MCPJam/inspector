@@ -513,12 +513,16 @@ export type {
   ToolSafetyClassification,
 } from "./tool-policy.js";
 export {
+  TOOL_POLICY_BLOCK_MARKER,
   TOOL_POLICY_DECISION_REASONS,
+  UnmatchedToolPolicyNameError,
   buildToolPolicySnapshot,
   classifyToolSafety,
   decideToolPolicy,
   decideToolPolicyFromSnapshot,
+  isToolPolicyBlockResult,
   isToolPolicyDecisionReason,
+  validateToolPolicyNames,
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
@@ -617,6 +621,26 @@ export {
   isEvalVerdictPolicyV2,
   resolvedEvalValidityPolicySchema,
 } from "./verdict-policy.js";
+
+// ── the run verdict AGGREGATOR (v2) ─────────────────────────────────────────
+/**
+ * The producer side of the contract above: trial observations in, one
+ * `EvalVerdictDecision` out — a mirror of the backend aggregator hosted and
+ * SDK-ingest finalization call, held to the same generated run corpus. Plus
+ * the finalization adapter that reads one iteration's evidence as a trial.
+ */
+export type {
+  EvalCaseVerdictInput,
+  EvalTrialObservation,
+  EvalV2IterationEvidence,
+} from "./verdict-aggregate.js";
+export {
+  EvalVerdictAggregationError,
+  aggregateEvalCaseVerdict,
+  aggregateEvalRunVerdict,
+  evalV2IterationHasEvaluatorError,
+  evalV2TrialObservation,
+} from "./verdict-aggregate.js";
 
 /**
  * The generated JSON Schema (draft 2020-12) for a v2 verdict decision.
