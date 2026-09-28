@@ -26,6 +26,13 @@ import {
   MCPJAM_PLACEHOLDER_API_KEY,
   MCPJAM_PROXY_PLACEHOLDER_ORIGIN,
 } from "./mcpjam-model-lease.js";
+import { anthropicNativeModelId } from "./model-native-ids.js";
+
+export {
+  ANTHROPIC_NATIVE_MODEL_IDS,
+  anthropicNativeModelId,
+  type NativeModelIdMapping,
+} from "./model-native-ids.js";
 
 /**
  * Custom base URLs for built-in providers that support them.
@@ -334,7 +341,10 @@ export function createModelFromString(
         apiKey,
         ...(baseUrls?.anthropic && { baseURL: baseUrls.anthropic }),
       });
-      return anthropic(model) as ProviderLanguageModel;
+      // The canonical spelling a suite or the model picker hands out
+      // (`claude-sonnet-4.5`) is not an id api.anthropic.com serves; the
+      // reviewed native one is. Native ids and unknown ids pass through.
+      return anthropic(anthropicNativeModelId(model)) as ProviderLanguageModel;
     }
 
     case "openai": {
