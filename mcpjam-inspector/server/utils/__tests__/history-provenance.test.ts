@@ -19,7 +19,6 @@ import {
   fenceToolOutput,
   historyProvenanceContextFor,
   historyVerificationFor,
-  LEGACY_SIGNATURE_CUTOFF,
   presentHistoryForModel,
   REMOVED_FENCE_MARKER,
   resolveHistoryProvenanceKey,
@@ -260,7 +259,6 @@ function legacySignature(kind: string, content: unknown[]): string {
 }
 const digestOf = (text: string) =>
   createHash("sha256").update(text).digest("base64url");
-const beforeCutoff = LEGACY_SIGNATURE_CUTOFF - 1;
 
 function userMessage(id: string, text: string) {
   return { id, role: "user", parts: [{ type: "text", text }] };
@@ -436,12 +434,9 @@ describe("earlier-form signatures", () => {
   it("are not accepted by a bare check", () => {
     const signature = legacySignature("assistant-text", [digestOf("hi")]);
     expect(verifyAssistantText(ctx, "hi", signature)).toBe(false);
-    expect(
-      verifyAssistantText(ctx, "hi", signature, { acceptLegacy: true }),
-    ).toBe(true);
   });
 
-  it("count before the cutoff, ahead of anything in the current form", async () => {
+  it("are rejected even ahead of current signatures", async () => {
     const current = await uiMessageFrom(
       liveTurn(createUiChunkProvenanceSigner(ctx)),
     );
@@ -453,19 +448,16 @@ describe("earlier-form signatures", () => {
         current,
       ],
       ctx,
-      { now: beforeCutoff },
     );
     expect(report).toMatchObject({
-      unverifiedTextParts: 0,
-      unverifiedToolCalls: 0,
-      unverifiedToolResults: 0,
+      unverifiedTextParts: 1,
+      unverifiedToolCalls: 1,
+      unverifiedToolResults: 1,
     });
   });
 
-  it("do not count from the cutoff on", () => {
-    const report = verifyClientHistory([legacyMessage()], ctx, {
-      now: LEGACY_SIGNATURE_CUTOFF,
-    });
+  it("are rejected when no current signatures are supplied", () => {
+    const report = verifyClientHistory([legacyMessage()], ctx);
     expect(report.unverifiedTextParts).toBe(1);
     expect(report.unverifiedToolCalls).toBe(1);
     expect(report.omittedReplyParts).toBe(2);
@@ -478,7 +470,6 @@ describe("earlier-form signatures", () => {
     const report = verifyClientHistory(
       [current, userMessage("u2", "and now?"), legacyMessage()],
       ctx,
-      { now: beforeCutoff },
     );
     expect(report.unverifiedTextParts).toBe(1);
     expect(report.unverifiedToolCalls).toBe(1);
@@ -493,7 +484,7 @@ describe("earlier-form signatures", () => {
     text.providerMetadata.mcpjam.textSig = legacySignature("assistant-text", [
       digestOf("Checking "),
     ]);
-    const report = verifyClientHistory([message], ctx, { now: beforeCutoff });
+    const report = verifyClientHistory([message], ctx);
     expect(report.unverifiedTextParts).toBe(1);
   });
 });
@@ -1658,4 +1649,37 @@ describe("signHistoryForPersistence", () => {
     expect(out[1].content[3].providerOptions).toEqual(unissued);
     expect(out[2].content[0].providerOptions).toEqual(unissued);
   });
+});
+
+it("rejects chat-A legacy content in chat B without upgrading it on persistence", async () => {
+  const text = "Signed in chat A, replayed into chat B";
+  const signature = legacySignature("assistant-text", [digestOf(text)]);
+  const report = verifyClientHistory(
+    [
+      {
+        id: "a",
+        role: "assistant",
+        parts: [
+          {
+            type: "text",
+            text,
+            providerMetadata: { mcpjam: { textSig: signature } },
+          },
+        ],
+      },
+    ],
+    otherChat,
+  );
+  expect(report.unverifiedTextParts).toBe(1);
+  expect(report.omittedReplyParts).toBe(1);
+  const model = await convertToModelMessages(report.messages as UIMessage[]);
+  expect(
+    JSON.stringify(presentHistoryForModel(model, tools, presentation)),
+  ).not.toContain(text);
+  const persisted = signHistoryForPersistence(model, otherChat, tools) as any[];
+  const part = persisted[0].content[0];
+  expect(part.providerOptions.mcpjam.textSig).not.toMatch(/^mjpv2\./);
+  expect(
+    verifyAssistantText(otherChat, text, part.providerOptions.mcpjam.textSig),
+  ).toBe(false);
 });

@@ -49,9 +49,9 @@
  * item id counts once per history. Content carried into another chat (a fork,
  * an edited message, a compare column) starts that chat without it, and the
  * browser is told so ({@link verifyClientHistory}'s `omittedReplyParts`).
- * Signatures in the earlier form ({@link LEGACY_PROVENANCE_SIGNATURE_PREFIX})
- * are honoured until {@link LEGACY_SIGNATURE_CUTOFF}, and only in the part of
- * a conversation before anything signed in the current form.
+ * Earlier mjpv1 signatures do not bind a chat and are never accepted from
+ * browser-sent history. A legacy migration must use trusted persisted history
+ * loaded for the target chat, not signatures supplied by the browser.
  *
  * THE KEY is derived from `INSPECTOR_SERVICE_TOKEN` under its own label, so
  * every hosted replica shares it. In hosted mode verification always runs
@@ -84,17 +84,6 @@ import {
 
 /** The signature form this server issues. */
 export const PROVENANCE_SIGNATURE_PREFIX = "mjpv2";
-/** The earlier form: verified during the transition, never issued. */
-export const LEGACY_PROVENANCE_SIGNATURE_PREFIX = "mjpv1";
-/**
- * The end of the transition from {@link LEGACY_PROVENANCE_SIGNATURE_PREFIX}
- * signatures, set about 30 days after the current form was introduced
- * (2026-09-27). Until then, a
- * conversation started under the earlier form keeps its earlier replies in
- * the model's context, and is saved with current signatures the next time it
- * is continued. From then on, earlier-form signatures count as none.
- */
-export const LEGACY_SIGNATURE_CUTOFF = Date.parse("2026-10-27T00:00:00Z");
 const PROVENANCE_KEY_LABEL = "mcpjam/history-provenance/v1";
 const FENCE_KEY_LABEL = "mcpjam/tool-output-fence/v1";
 
@@ -104,13 +93,7 @@ export const REASONING_SIGNATURE_FIELD = "reasoningSig";
 export const FILE_SIGNATURE_FIELD = "fileSig";
 export const CALL_SIGNATURE_FIELD = "callSig";
 export const RESULT_SIGNATURE_FIELD = "resultSig";
-const SIGNATURE_FIELDS = [
-  TEXT_SIGNATURE_FIELD,
-  REASONING_SIGNATURE_FIELD,
-  FILE_SIGNATURE_FIELD,
-  CALL_SIGNATURE_FIELD,
-  RESULT_SIGNATURE_FIELD,
-] as const;
+
 /**
  * The mark on content the server could not verify as its own. On a tool
  * part it is about the RESULT; {@link CALL_PROVENANCE_FIELD} is about the call.
@@ -223,8 +206,6 @@ export function resolveToolOutputFenceKey(
 //   mjpv2.<itemId>.<mac over [role, kind, project, chat, itemId, …content]>
 // and for a tool call or result, whose id is its tool call id:
 //   mjpv2.<mac over [role, kind, project, chat, toolCallId, toolName, …]>
-// Earlier form, verified only ({@link legacySignature}):
-//   mjpv1.<mac over [kind, project, …content]>
 
 function hmac(key: Buffer, prefix: string, fields: readonly unknown[]): string {
   return createHmac("sha256", key)
@@ -274,37 +255,16 @@ function toolSignature(
   return `${PROVENANCE_SIGNATURE_PREFIX}.${digest}`;
 }
 
-function legacySignature(
-  ctx: ProvenanceContext,
-  kind: ItemKind | ToolKind,
-  content: readonly unknown[],
-): string {
-  return `${LEGACY_PROVENANCE_SIGNATURE_PREFIX}.${hmac(
-    ctx.key,
-    LEGACY_PROVENANCE_SIGNATURE_PREFIX,
-    [kind, ctx.projectId, ...content],
-  )}`;
-}
-
-type ParsedSignature =
-  { form: "current"; itemId: string | undefined } | { form: "legacy" };
+type ParsedSignature = { itemId: string | undefined };
 
 function parseSignature(signature: unknown): ParsedSignature | null {
   if (typeof signature !== "string") return null;
   const parts = signature.split(".");
-  if (parts[0] === LEGACY_PROVENANCE_SIGNATURE_PREFIX) {
-    return parts.length === 2 ? { form: "legacy" } : null;
-  }
   if (parts[0] !== PROVENANCE_SIGNATURE_PREFIX) return null;
-  if (parts.length === 2) return { form: "current", itemId: undefined };
+  if (parts.length === 2) return { itemId: undefined };
   return parts.length === 3 && ITEM_ID_PATTERN.test(parts[1]!)
-    ? { form: "current", itemId: parts[1] }
+    ? { itemId: parts[1] }
     : null;
-}
-
-/** Whether a value is a signature in the current form. */
-function isCurrentFormSignature(signature: unknown): boolean {
-  return parseSignature(signature)?.form === "current";
 }
 
 function sameSignature(given: unknown, expected: string | null): boolean {
@@ -314,36 +274,15 @@ function sameSignature(given: unknown, expected: string | null): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** How a signature is checked. */
-export interface SignatureCheckOptions {
-  /**
-   * Whether an earlier-form signature may count. {@link verifyClientHistory}
-   * decides this per message; the default is no.
-   */
-  acceptLegacy?: boolean;
-}
-
-/**
- * Check an item signature: the current form against this chat and the item
- * id it names, or — when allowed — the earlier form. Returns the item id a
- * current-form signature named, so a caller can count each id once.
- */
+/** Check a chat-bound item signature and return its id for replay detection. */
 function checkItemSignature(
   ctx: ProvenanceContext,
   kind: ItemKind,
   content: readonly unknown[],
   signature: unknown,
-  options: SignatureCheckOptions,
 ): { ok: boolean; itemId?: string } {
   const parsed = parseSignature(signature);
   if (!parsed) return { ok: false };
-  if (parsed.form === "legacy") {
-    return {
-      ok:
-        options.acceptLegacy === true &&
-        sameSignature(signature, legacySignature(ctx, kind, content)),
-    };
-  }
   if (parsed.itemId === undefined) return { ok: false };
   return sameSignature(
     signature,
@@ -358,16 +297,9 @@ function checkToolSignature(
   kind: ToolKind,
   content: readonly unknown[] | null,
   signature: unknown,
-  options: SignatureCheckOptions,
 ): boolean {
   const parsed = parseSignature(signature);
   if (!parsed || !content) return false;
-  if (parsed.form === "legacy") {
-    return (
-      options.acceptLegacy === true &&
-      sameSignature(signature, legacySignature(ctx, kind, content))
-    );
-  }
   return (
     parsed.itemId === undefined &&
     sameSignature(signature, toolSignature(ctx, kind, content))
@@ -417,14 +349,12 @@ export function verifyAssistantText(
   ctx: ProvenanceContext,
   text: string,
   signature: unknown,
-  options: SignatureCheckOptions = {},
 ): boolean {
   return checkItemSignature(
     ctx,
     "assistant-text",
     [textDigest(text)],
     signature,
-    options,
   ).ok;
 }
 
@@ -468,14 +398,12 @@ export function verifyAssistantReasoning(
   ctx: ProvenanceContext,
   text: string,
   signature: unknown,
-  options: SignatureCheckOptions = {},
 ): boolean {
   return checkItemSignature(
     ctx,
     "assistant-reasoning",
     [textDigest(text)],
     signature,
-    options,
   ).ok;
 }
 
@@ -500,15 +428,9 @@ export function verifyAssistantFile(
   ctx: ProvenanceContext,
   file: AssistantFileClaim,
   signature: unknown,
-  options: SignatureCheckOptions = {},
 ): boolean {
-  return checkItemSignature(
-    ctx,
-    "assistant-file",
-    fileContent(file),
-    signature,
-    options,
-  ).ok;
+  return checkItemSignature(ctx, "assistant-file", fileContent(file), signature)
+    .ok;
 }
 
 /** A tool call as the model issued it. */
@@ -540,14 +462,12 @@ export function verifyToolCall(
   ctx: ProvenanceContext,
   claim: ToolCallClaim,
   signature: unknown,
-  options: SignatureCheckOptions = {},
 ): boolean {
   return checkToolSignature(
     ctx,
     "tool-call",
     toolCallContent(claim),
     signature,
-    options,
   );
 }
 
@@ -583,14 +503,12 @@ export function verifyToolResult(
   ctx: ProvenanceContext,
   claim: ToolResultClaim,
   signature: unknown,
-  options: SignatureCheckOptions = {},
 ): boolean {
   return checkToolSignature(
     ctx,
     "tool-result",
     toolResultContent(claim),
     signature,
-    options,
   );
 }
 
@@ -991,8 +909,6 @@ export interface ClientHistoryVerificationOptions {
   approvalBinding?: ToolApprovalBinding;
   /** The approval key; defaults to the deployment's. For tests. */
   approvalKey?: Buffer | null;
-  /** The time checked against {@link LEGACY_SIGNATURE_CUTOFF}. For tests. */
-  now?: number;
 }
 
 function isToolUiPart(part: Record<string, unknown>): boolean {
@@ -1014,7 +930,7 @@ function toolNameOfUiPart(part: Record<string, unknown>): string | undefined {
 /** The input the AI SDK's converter gives the model for a tool part. */
 function toolInputOfUiPart(part: Record<string, unknown>): unknown {
   return part.state === "output-error"
-    ? (part.input ?? part.rawInput)
+    ? part.input ?? part.rawInput
     : part.input;
 }
 
@@ -1053,7 +969,6 @@ function verifyUiToolPart(
   ctx: ProvenanceContext | null,
   part: Record<string, unknown>,
   options: ClientHistoryVerificationOptions,
-  check: SignatureCheckOptions,
 ): {
   part: Record<string, unknown>;
   callVerified: boolean;
@@ -1081,7 +996,7 @@ function verifyUiToolPart(
             : part.output,
       };
       resultVerified = toolPartSignatures(part, RESULT_SIGNATURE_FIELD).some(
-        (signature) => verifyToolResult(ctx, claim, signature, check),
+        (signature) => verifyToolResult(ctx, claim, signature),
       );
     }
     // A result signature covers the call it answers, so it proves both.
@@ -1089,7 +1004,7 @@ function verifyUiToolPart(
       resultVerified ||
       (ctx !== null &&
         toolPartSignatures(part, CALL_SIGNATURE_FIELD).some((signature) =>
-          verifyToolCall(ctx, call, signature, check),
+          verifyToolCall(ctx, call, signature),
         )) ||
       approvalIssuedFor(part, call, options);
   }
@@ -1162,7 +1077,6 @@ function assistantPartClaim(
 function verifyAssistantPart(
   ctx: ProvenanceContext,
   part: Record<string, unknown>,
-  check: SignatureCheckOptions,
   seenItemIds: Set<string>,
 ): boolean {
   const claim = assistantPartClaim(part);
@@ -1172,7 +1086,6 @@ function verifyAssistantPart(
     claim.kind,
     claim.content,
     claim.signature,
-    check,
   );
   if (!result.ok) return false;
   if (result.itemId === undefined) return true;
@@ -1189,48 +1102,11 @@ function hasReplyContent(part: Record<string, unknown>): boolean {
   );
 }
 
-/** Every signature an assistant message's parts carry. */
-function signaturesOf(message: Record<string, unknown>): unknown[] {
-  if (!Array.isArray(message.parts)) return [];
-  const signatures: unknown[] = [];
-  for (const part of message.parts as unknown[]) {
-    if (!isRecord(part)) continue;
-    for (const metadata of [
-      part.providerMetadata,
-      part.callProviderMetadata,
-      part.resultProviderMetadata,
-    ]) {
-      for (const field of SIGNATURE_FIELDS) {
-        const signature = readMcpjamField(metadata, field);
-        if (signature !== undefined) signatures.push(signature);
-      }
-    }
-  }
-  return signatures;
-}
-
-/**
- * Where earlier-form signatures stop counting in this history: the first
- * assistant message carrying any current-form signature. Everything the
- * server signs now is in the current form, so earlier-form content can only
- * come before it.
- */
-function legacyBoundaryOf(messages: readonly unknown[]): number {
-  const index = messages.findIndex(
-    (message) =>
-      isRecord(message) &&
-      message.role === "assistant" &&
-      signaturesOf(message).some(isCurrentFormSignature),
-  );
-  return index < 0 ? messages.length : index;
-}
-
 /**
  * Check a browser-sent UI-message history against the server's signatures,
  * and mark what does not verify. With no signing context nothing verifies.
  * A current-form signature verifies only for this chat, and an item id only
- * once; an earlier-form one only before {@link LEGACY_SIGNATURE_CUTOFF} and
- * only ahead of the first message signed in the current form. Never throws;
+ * once. Earlier forms never verify because they do not bind a chat. Never throws;
  * content is never removed here — see {@link presentHistoryForModel} for what
  * the model is shown.
  */
@@ -1248,10 +1124,8 @@ export function verifyClientHistory(
     removedAssistantContextParts: 0,
     omittedReplyParts: 0,
   };
-  const legacyAllowed = (options.now ?? Date.now()) < LEGACY_SIGNATURE_CUTOFF;
-  const legacyBoundary = legacyAllowed ? legacyBoundaryOf(messages) : 0;
   const seenItemIds = new Set<string>();
-  for (const [index, message] of messages.entries()) {
+  for (const message of messages) {
     if (!isRecord(message)) {
       report.messages.push(message);
       continue;
@@ -1272,9 +1146,6 @@ export function verifyClientHistory(
       report.messages.push(message);
       continue;
     }
-    const check: SignatureCheckOptions = {
-      acceptLegacy: index < legacyBoundary,
-    };
     const parts: unknown[] = [];
     for (const part of message.parts as unknown[]) {
       if (!isRecord(part)) {
@@ -1294,7 +1165,7 @@ export function verifyClientHistory(
         part.type === "file"
       ) {
         const verified =
-          ctx !== null && verifyAssistantPart(ctx, part, check, seenItemIds);
+          ctx !== null && verifyAssistantPart(ctx, part, seenItemIds);
         if (!verified) {
           report.unverifiedTextParts += 1;
           if (hasReplyContent(part)) report.omittedReplyParts += 1;
@@ -1306,7 +1177,7 @@ export function verifyClientHistory(
         continue;
       }
       if (isToolUiPart(part)) {
-        const tool = verifyUiToolPart(ctx, part, options, check);
+        const tool = verifyUiToolPart(ctx, part, options);
         if (!tool.callVerified) {
           report.unverifiedToolCalls += 1;
           report.omittedReplyParts += 1;
@@ -1581,7 +1452,9 @@ export function fenceToolOutput(
       return typeof output.value === "string"
         ? {
             ...output,
-            value: `${head}\n${withoutFenceMarkers(output.value)}\n${fence.close}`,
+            value: `${head}\n${withoutFenceMarkers(output.value)}\n${
+              fence.close
+            }`,
           }
         : output;
     case "json":
@@ -1589,7 +1462,9 @@ export function fenceToolOutput(
       return {
         ...output,
         type: output.type === "json" ? "text" : "error-text",
-        value: `${head}\n${withoutFenceMarkers(stringifyForModel(output.value))}\n${fence.close}`,
+        value: `${head}\n${withoutFenceMarkers(
+          stringifyForModel(output.value),
+        )}\n${fence.close}`,
       };
     case "content":
       return Array.isArray(output.value)
