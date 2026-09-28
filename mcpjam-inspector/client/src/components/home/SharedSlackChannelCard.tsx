@@ -6,7 +6,8 @@ import {
   type ReactNode,
 } from "react";
 import { useAction, useQuery } from "convex/react";
-import { ExternalLink, Hash, Loader2 } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
+import slackLogo from "/slack_logo.png";
 import { useSharedSlackChannelEnabled } from "@/hooks/useSharedSlackChannelEnabled";
 import { track } from "@/lib/analytics";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -40,7 +41,21 @@ export type SharedSlackChannelDto = {
   channel: SharedSlackChannelView | null;
   canProvision: boolean;
   canManageInvite: boolean;
+  // A paid org's automatic onboarding job is queued or running and will
+  // email the owner a Slack invite. Optional: older backends omit it.
+  automaticInvitePending?: boolean;
 };
+
+type SharedSlackCardState =
+  | SharedSlackChannelStatus
+  | "none"
+  | "automatic_invite_pending";
+
+// Codes where the backend refuses a manual retry until support reconciles.
+const SUPPORT_ONLY_ERROR_CODES = new Set([
+  "provision_outcome_unknown",
+  "possible_existing_channel",
+]);
 
 function convexErrCode(err: unknown): string | undefined {
   if (err && typeof err === "object" && "data" in err) {
@@ -86,15 +101,30 @@ function errorCopy(
       return "The Slack Connect invite was declined. Free Slack workspaces cannot accept Connect invites — contact support if that isn't the case.";
     case "invite_expired":
       return "The Slack Connect invite expired. Request a new one.";
+    case "provision_outcome_unknown":
+      return "We couldn't confirm the shared channel was created. Contact support to finish setting it up.";
+    case "invite_outcome_unknown":
+      return "We couldn't confirm Slack sent your invite. Check your email, or retry to look for it again — retrying won't send a second invite.";
+    case "owner_changed":
+      return "Your organization's owner changed during setup. We'll retry and invite the new owner.";
+    case "not_paid":
+      return "Setup stopped because your organization no longer has an active paid plan.";
+    case "stale_claim":
+      return "Channel setup was interrupted. Try again.";
+    case "rate_limited":
+      return "Slack setup is busy. Try again in a minute.";
+    case "possible_existing_channel":
+      return "Your organization may already have a shared Slack channel with MCPJam, so we paused setup to avoid creating a second one. We've emailed your organization owner, and our team will connect you.";
     default:
       return "Could not set up the shared Slack channel. Try again.";
   }
 }
 
 function cardState(
-  channel: SharedSlackChannelView | null
-): SharedSlackChannelStatus | "none" {
-  return channel?.status ?? "none";
+  dto: SharedSlackChannelDto | undefined
+): SharedSlackCardState {
+  if (dto?.channel) return dto.channel.status;
+  return dto?.automaticInvitePending ? "automatic_invite_pending" : "none";
 }
 
 function SharedSlackSkeleton() {
@@ -112,6 +142,15 @@ function SharedSlackSkeleton() {
         <div className="h-3.5 w-56 animate-pulse rounded-sm bg-muted" />
       </div>
     </section>
+  );
+}
+
+// The real Slack mark, in the same muted tile the other home cards use.
+function SlackMark() {
+  return (
+    <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60">
+      <img src={slackLogo} alt="" className="size-3.5 object-contain" />
+    </div>
   );
 }
 
@@ -176,7 +215,7 @@ export function SharedSlackChannelCard({
   useEffect(() => {
     if (!enabled || !organizationId || dto === undefined) return;
     if (dto.channel === null && !dto.canProvision) return;
-    const state = cardState(dto.channel);
+    const state = cardState(dto);
     const key = `${organizationId}:${state}`;
     if (viewedKey.current === key) return;
     viewedKey.current = key;
@@ -186,7 +225,7 @@ export function SharedSlackChannelCard({
   const runProvision = useCallback(
     async (kind: "provision" | "retry") => {
       if (!organizationId) return;
-      const state = cardState(dto?.channel ?? null);
+      const state = cardState(dto);
       track(
         kind === "retry"
           ? "home_shared_slack_retry_clicked"
@@ -234,13 +273,32 @@ export function SharedSlackChannelCard({
     );
   }
 
+  if (channel === null && dto.automaticInvitePending) {
+    // No Set up button: a manual setup here would race the automatic one
+    // and invite whoever clicked instead of the owner the email promised.
+    return (
+      <CardShell>
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <SlackMark />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] text-foreground">
+              Your Slack invite is on its way
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              We&apos;re setting up a Slack Connect channel with the MCPJam
+              team. Slack will email the invite to your organization owner.
+            </p>
+          </div>
+        </div>
+      </CardShell>
+    );
+  }
+
   if (channel === null) {
     return (
       <CardShell>
         <div className="flex items-center gap-2.5 px-4 py-3">
-          <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60 text-muted-foreground">
-            <Hash className="size-3.5" strokeWidth={1.75} />
-          </div>
+          <SlackMark />
           <div className="min-w-0 flex-1">
             <p className="text-[13px] text-foreground">
               Set up your shared Slack channel
@@ -317,9 +375,7 @@ export function SharedSlackChannelCard({
     return (
       <CardShell>
         <div className="flex items-center gap-2.5 px-4 py-3">
-          <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60 text-muted-foreground">
-            <Hash className="size-3.5" strokeWidth={1.75} />
-          </div>
+          <SlackMark />
           <p className="min-w-0 flex-1 truncate text-[13px] text-foreground">
             {channel.channelName
               ? `#${channel.channelName}`
@@ -362,7 +418,8 @@ export function SharedSlackChannelCard({
             )}
           </p>
         </div>
-        {dto.canManageInvite ? (
+        {dto.canManageInvite &&
+        !SUPPORT_ONLY_ERROR_CODES.has(channel.errorCode ?? "") ? (
           <button
             type="button"
             disabled={busy}
