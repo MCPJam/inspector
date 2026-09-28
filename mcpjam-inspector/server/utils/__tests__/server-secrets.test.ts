@@ -32,6 +32,11 @@ describe("fetchRuntimeServerSecrets", () => {
     { names: undefined, expected: ["X-Api-Version", "X-Api-Key"] },
     { names: null, expected: ["X-Api-Version", "X-Api-Key"] },
     { names: [42], expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: [""], expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: [" X-Api-Key"], expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: ["X-Api-Key\r\n"], expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: ["X-Unknown"], expected: ["X-Api-Version", "X-Api-Key"] },
+    { names: ["x-api-key"], expected: ["x-api-key"] },
   ])(
     "uses an explicit credential header list and fails closed for old/invalid responses: $names",
     async ({ names, expected }) => {

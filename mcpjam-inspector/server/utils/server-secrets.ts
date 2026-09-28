@@ -60,6 +60,26 @@ function parseRecord(value: unknown): Record<string, string> | null {
   return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
+/** The backend classifies values; malformed names must never weaken binding. */
+function parseCredentialHeaderNames(
+  value: unknown,
+  headers: Record<string, string> | null
+): string[] {
+  const allNames = Object.keys(headers ?? {});
+  const normalizedNames = new Set(allNames.map((name) => name.toLowerCase()));
+  // HTTP field names are tokens. Whitespace must not leave a credential
+  // outside the transport's case-insensitive strip set.
+  const token = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+  return Array.isArray(value) &&
+    value.every((name) =>
+      typeof name === "string" &&
+      token.test(name) &&
+      normalizedNames.has(name.toLowerCase())
+    )
+    ? value
+    : allNames;
+}
+
 function isErrorCode(value: unknown): value is ErrorCode {
   return (
     typeof value === "string" &&
@@ -364,11 +384,10 @@ export async function fetchRuntimeServerSecrets(args: {
     boundOrigins: boundOriginsFromReveal(body),
     // Older backends did not distinguish public literals from credentials.
     // Preserve their fail-closed behavior unless an explicit valid list arrives.
-    credentialHeaderNames:
-      Array.isArray(body.credentialHeaderNames) &&
-      body.credentialHeaderNames.every((name: unknown) => typeof name === "string")
-        ? body.credentialHeaderNames
-        : Object.keys(parseRecord(body.headers) ?? {}),
+    credentialHeaderNames: parseCredentialHeaderNames(
+      body.credentialHeaderNames,
+      parseRecord(body.headers)
+    ),
   };
 }
 
