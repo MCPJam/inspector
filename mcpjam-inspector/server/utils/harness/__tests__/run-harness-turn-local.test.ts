@@ -371,6 +371,14 @@ describe("runHarnessTurn local continuity", () => {
     expect(harnessState.create).not.toHaveBeenCalled();
   });
 
+  it("refuses unrestricted direct turns before preparing a local runtime", async () => {
+    const options = baseOptions();
+    options.harnessExecutionTarget.permissionProfile = "unrestricted";
+    await runHarnessTurn(options as any, "none");
+    expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+    expect(harnessState.create).not.toHaveBeenCalled();
+  });
+
   it("discards state after a one-shot run without a continuity lane", async () => {
     await runHarnessTurn(baseOptions({ sourceType: "eval", chatSessionId: undefined }) as any, "none");
     expect(harnessState.session.destroy).toHaveBeenCalledOnce();

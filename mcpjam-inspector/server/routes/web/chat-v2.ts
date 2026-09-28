@@ -1,3 +1,4 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
@@ -996,7 +997,7 @@ chatV2.post("/", async (c) => {
     // gets a 400 saying so. Dropping the field silently would leave a
     // misconfigured client believing its turn ran locally.
     let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
-    if (!HOSTED_MODE && resolvedExecution.harness === "claude-code" && !c.get("guestId") && !isScenarioSession) {
+    if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
       if (!hostedBody.projectId) return c.json({ error: "A project is required for local Claude Code" }, 400);
       try {
         harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: bearerToken, projectId: hostedBody.projectId, scope: "attended" })).target;

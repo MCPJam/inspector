@@ -1,3 +1,4 @@
+import { computePackInputs } from "./check-local-harness-inputs.mjs";
 /**
  * The release gate for local Claude Code execution.
  *
@@ -148,6 +149,9 @@ async function fetchAsset(baseUrl, name) {
 }
 
 async function main() {
+  const computedInputs = await computePackInputs();
+  const recordedInputs = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
+  if (JSON.stringify(computedInputs) !== JSON.stringify(recordedInputs)) throw new Error("Pack inputs differ from the reviewed fingerprint. Recompute and review before releasing.");
   const args = parseArgs(process.argv.slice(2));
   const facts = await readCommittedFacts();
   const version = facts.expectedVersion;

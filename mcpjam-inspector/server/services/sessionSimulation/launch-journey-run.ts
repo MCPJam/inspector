@@ -1,5 +1,6 @@
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import { resolveLocalHarnessActor } from "../../utils/harness/local/acting-user.js";
-import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 /**
  * Launching a journey run, with no HTTP in it.
  *
@@ -275,7 +276,9 @@ export async function launchJourneyRun(
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
-  const localActorResult = isLocalHarnessVenue("claude-code")
+  const localEnabled = Boolean(input.waveId) && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
+  if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended" });
+  const localActorResult = localEnabled
     ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
     : undefined;
 
@@ -286,7 +289,7 @@ export async function launchJourneyRun(
   let created;
   try {
     created = await createJourneyRun(convexHttpUrl, deps.bearerToken, {
-      runtimeVenue: isLocalHarnessVenue("claude-code") ? "local" : "hosted",
+      runtimeVenue: localEnabled ? "local" : "hosted",
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,

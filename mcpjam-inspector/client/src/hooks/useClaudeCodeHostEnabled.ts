@@ -18,7 +18,9 @@ export const CLAUDE_CODE_HOST_FEATURE_FLAG = "claude-code-host-enabled";
 export function useClaudeCodeHostEnabledState(): boolean | undefined {
   const hosted = useFeatureFlagEnabled(CLAUDE_CODE_HOST_FEATURE_FLAG);
   const local = useFeatureFlagEnabled("local-harness-enabled");
-  return HOSTED_MODE ? hosted : local;
+  if (HOSTED_MODE) return hosted;
+  if (hosted === true || local === true) return true;
+  return hosted === undefined || local === undefined ? undefined : false;
 }
 
 export function useClaudeCodeHostEnabled(): boolean {

@@ -143,7 +143,16 @@ const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE = `      ...permissionOptions,
       mcpServers,
       cwd: workdir,`;
 const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
-      ...(gatewayModelOverrideSettingsFor(start.model) ? { settings: { ...(permissionOptions.settings ?? {}), ...gatewayModelOverrideSettingsFor(start.model) } } : {}),
+      settings: {
+        ...(permissionOptions.settings ?? {}),
+        ...(gatewayModelOverrideSettingsFor(start.model) ?? {}),
+        ...(process.env.MCPJAM_LOCAL_CONTROL_ROOT ? { permissions: {
+          ...(permissionOptions.settings?.permissions ?? {}),
+          deny: [...(permissionOptions.settings?.permissions?.deny ?? []),
+            "Read(" + process.env.MCPJAM_LOCAL_CONTROL_ROOT + "/**)",
+            "Edit(" + process.env.MCPJAM_LOCAL_CONTROL_ROOT + "/**)"]
+        } } : {}),
+      },
       mcpServers,
       cwd: workdir,`;
 

@@ -1,3 +1,4 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
@@ -53,7 +54,6 @@ import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
 import {
   HOSTED_MODE,
-  LOCAL_HARNESS_ENABLED,
   WEBMCP_INSPECTOR_ENABLED,
 } from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
@@ -1313,11 +1313,13 @@ chatV2.post("/", async (c) => {
       }
       localHarnessActingUserId = actor.actor.userId;
     }
+    const localSelected = await shouldUseLocalHarness(resolvedExecution.harness, requestAuthHeader, typeof body.projectId === "string" ? body.projectId : undefined);
+    if (asksForLocalNative && !localSelected) return c.json({ error: "Local Claude Code is unavailable or no longer authorized for this project" }, 409);
     const harnessTargetParse = parseHarnessExecutionTarget({
-      body,
+      body: body.harnessTarget?.serverAuthorized === true ? {} : body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
       actingUserId: localHarnessActingUserId,
-      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      serverEnabled: localSelected,
       actorEligible:
         !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
     });
@@ -1329,7 +1331,7 @@ chatV2.post("/", async (c) => {
         ? harnessTargetParse.target
         : undefined;
 
-    if (!HOSTED_MODE && resolvedExecution.harness === "claude-code" && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
+    if (localSelected && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
       if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: "Sign in and choose a project to run Claude Code locally" }, 403);
       try {
         harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended" })).target;

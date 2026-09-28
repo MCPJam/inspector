@@ -1,3 +1,4 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -192,7 +193,7 @@ evals.post("/run", async (c) =>
             createConvexClient(bearer),
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              ...(!HOSTED_MODE ? { runtimeVenue: "local" as const } : {}),
+              ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
               projectId: rawBody.projectId,
               environmentId: rawBody.environmentId,
             },
@@ -241,7 +242,7 @@ evals.post("/run", async (c) =>
       try {
         prepared = await prepareEvalRun(manager, {
           ...body,
-          ...(!HOSTED_MODE ? { runtimeVenue: "local" as const } : {}),
+          ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
           convexAuthToken,
           ...(preflightEnvironment
             ? { resolvedEnvironment: preflightEnvironment }
@@ -300,7 +301,7 @@ async function resolveEnvironmentOnRawBody(
       createConvexClient(await getConvexBearerForRequest(c)),
       {
         serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              ...(!HOSTED_MODE ? { runtimeVenue: "local" as const } : {}),
+              ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), args.projectId)) ? { runtimeVenue: "local" as const } : {}),
         projectId: args.projectId,
         environmentId: args.environmentId,
       },
@@ -401,7 +402,7 @@ evals.post("/run-test-case", async (c) => {
     async (manager, body) =>
       runEvalTestCaseWithManager(manager, {
         ...body,
-        ...(!HOSTED_MODE ? { runtimeVenue: "local" as const } : {}),
+        ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
         // The DELEGATED JWT: the run's Convex calls use this bearer, and an
         // `sk_` API key 401s Convex's query and action surfaces.
         convexAuthToken: await getConvexBearerForRequest(c),

@@ -143,6 +143,7 @@ const SCOPED_NAME_DENYLIST = new Set([
   "APPDATA",
   "LOCALAPPDATA",
   "PWD",
+  "MCPJAM_LOCAL_CONTROL_ROOT",
   // Names the shell the vendor CLI runs commands through. A scoped override
   // would point it at any executable; the provider sets it from a path it
   // has verified exists.
@@ -175,9 +176,10 @@ export function buildLocalHarnessEnv(
     if (typeof value === "string" && value.length > 0) env[name] = value;
   }
 
-  env.PATH = systemPath(platform, base);
+  env.PATH = platform === "win32" && opts.gitBashPath ? `${path.dirname(opts.gitBashPath)}${path.delimiter}${systemPath(platform, base)}` : systemPath(platform, base);
   env.HOME = opts.syntheticHome;
   env.PWD = opts.sessionRoot;
+  env.MCPJAM_LOCAL_CONTROL_ROOT = path.dirname(path.dirname(opts.syntheticHome)).replace(/-sessions$/, "");
   // Vendor CLIs write caches and temp files; point every conventional variable
   // at the session's own disposable state so nothing lands in the user's real
   // config and everything is removed with the session.

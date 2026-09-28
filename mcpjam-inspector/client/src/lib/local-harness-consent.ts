@@ -2,16 +2,11 @@
  * Client side of the local-harness consent CAPABILITY, and of the runtime
  * operation that has to finish before there is anything to consent to.
  *
- * The server (`/api/mcp/local-harness/*`) is the authority: grant mints a token
- * whose HASH it persists, and re-derives every identity in the binding from
- * what it can prove rather than from what the caller claimed. This module
- * stores the plaintext in `localStorage` and rides it on a chat turn in the
- * `x-mcpjam-local-harness-grant` header, where `resolveLocalHarnessAvailability`
- * re-verifies it against the terms it independently resolved.
- *
- * Durable authorization lives in protected server storage. This module caches
- * only short-lived launch credentials, renewed through shared readiness after
- * identity, membership, policy and runtime checks. localStorage is a UI cache.
+ * Durable authorization and live execution credentials stay on the server.
+ * Setup/readiness cache display metadata with serverAuthorized=true; normal
+ * sends carry that marker and the server derives a fresh target. The legacy
+ * explicit-consent API retains token compatibility for existing callers.
+ * localStorage is a UI cache, never the durable authorization source.
  *
  * ── Why every call returns a TYPED result ────────────────────────────────
  * These used to answer `null` for everything: a 401, a 403, a 409, a network
@@ -27,7 +22,7 @@
  * agent may work in THIS directory for THIS project", and those are different
  * decisions a user should be able to make differently.
  *
- * Stored alongside the token are the opaque ids a turn has to send back and the
+ * Stored with the readiness status are opaque ids and the
  * display strings the UI shows. No absolute path is ever among them: the server
  * returns a tilde-shortened display root and nothing else.
  */
@@ -59,6 +54,7 @@ export interface LocalHarnessTargetIds {
 export interface StoredLocalHarnessConsent {
   grantId: string;
   token: string;
+  serverAuthorized?: boolean;
   expiresAt: string;
   target: LocalHarnessTargetIds;
   /** `~/code/project`. Display only — the server never returns an absolute path. */
@@ -127,9 +123,10 @@ export function parseStoredLocalHarnessConsent(
   try {
     const parsed = JSON.parse(raw) as StoredLocalHarnessConsent | null;
     if (!parsed || typeof parsed !== "object") return null;
-    if (typeof parsed.token !== "string" || parsed.token.length < 16) {
+    if (parsed.serverAuthorized !== true && (typeof parsed.token !== "string" || parsed.token.length < 16)) {
       return null;
     }
+    if (parsed.serverAuthorized === true) parsed.token = "";
     if (!parsed.target || typeof parsed.target.runtimeId !== "string") {
       return null;
     }
@@ -663,7 +660,7 @@ export async function stopAllLocalHarnessSessions(): Promise<boolean> {
 }
 
 /** Durable authorization lives on the server; this cache is only a launch credential. */
-export async function ensureLocalHarnessReady(projectId: string, setup = false, signal?: AbortSignal): Promise<StoredLocalHarnessConsent> {
+export async function ensureLocalHarnessReady(projectId: string, setup = false, signal?: AbortSignal, onProgress?: (message: string) => void): Promise<StoredLocalHarnessConsent> {
   const response = await authFetch(`/api/mcp/local-harness/${setup ? "setup" : "readiness"}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ projectId, ...(setup ? { accepted: true } : {}) }),
@@ -672,8 +669,11 @@ export async function ensureLocalHarnessReady(projectId: string, setup = false, 
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? "Claude Code setup failed. Please retry.");
   if (response.status === 202) {
+    onProgress?.("Installing Claude Code…");
     // Poll the existing install; a terminal failure must remain a visible Retry.
+    const deadline = Date.now() + 20 * 60_000;
     for (;;) {
+      if (Date.now() >= deadline) throw new Error("Claude Code is still installing. Setup will continue in the background; retry when it finishes.");
       await new Promise<void>((resolve, reject) => {
         const finish = () => { signal?.removeEventListener("abort", abort); resolve(); };
         const timer = setTimeout(finish, 1000);
@@ -683,6 +683,7 @@ export async function ensureLocalHarnessReady(projectId: string, setup = false, 
       const statusResponse = await authFetch("/api/mcp/local-harness/runtime/status", { signal });
       if (!statusResponse.ok) throw new Error("Could not check Claude Code installation. Please retry.");
       const status = await statusResponse.json();
+      onProgress?.(status.state === "downloading" ? `Downloading Claude Code: ${Math.round(status.percent ?? 0)}%` : `Claude Code: ${status.state}`);
       if (status.state === "ready") return ensureLocalHarnessReady(projectId, false, signal);
       if (!["downloading", "verifying", "extracting", "installing"].includes(status.state)) throw new Error(status.message ?? "Claude Code installation was interrupted. Please retry.");
     }

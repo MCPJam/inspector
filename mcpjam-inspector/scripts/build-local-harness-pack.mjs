@@ -32,7 +32,6 @@
 //
 // Usage:
 //   node scripts/build-local-harness-pack.mjs \
-//     --adapter-bridge node_modules/@ai-sdk/harness-claude-code/dist/bridge \
 //     --node-tarball /tmp/node-v24.20.0-linux-x64.tar.xz \
 //     --platform linux-x64 \
 //     --out .pack-out \
@@ -578,9 +577,7 @@ async function main() {
   // installing under `mcpjam-inspector/node_modules`. A path relative to this
   // script is right on exactly one of those layouts and silently wrong on the
   // other — which is what `check:bundled-runtime-paths` exists to stop.
-  const adapterBridge = resolve(
-    String(args["adapter-bridge"] ?? defaultAdapterBridgeDir()),
-  );
+  const adapterBridge = resolve(defaultAdapterBridgeDir());
   const outRoot = resolve(String(args.out ?? join(inspectorRoot, ".pack-out")));
   const nodeTarball = args["node-tarball"]
     ? resolve(String(args["node-tarball"]))
@@ -589,9 +586,7 @@ async function main() {
   if (!existsSync(adapterBridge)) {
     fail(`no adapter bridge directory at ${adapterBridge}`);
   }
-  if (adapterBridge !== resolve(defaultAdapterBridgeDir())) {
-    fail("--adapter-bridge must name the installed pinned adapter; custom recipes cannot match the runtime bootstrap");
-  }
+
 
   const required = createRequire(import.meta.url);
   const adapterVersion = JSON.parse(
@@ -884,5 +879,5 @@ async function main() {
 // Only build when run as the entry point, so a test can import the digest
 // implementation and prove it agrees with the server's.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => fail(error.message));
+  main().catch((error) => fail(error.stack ?? error.message));
 }

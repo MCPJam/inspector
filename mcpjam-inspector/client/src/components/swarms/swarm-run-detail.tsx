@@ -412,7 +412,7 @@ export function SwarmRunDetail({
             data-testid="swarm-run-detail-title"
           >
             {title}
-            {hasLocalExecution && <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">{hasHostedExecution ? "Local + cloud" : "This machine"}</span>}
+            {hasLocalExecution && <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">{hasHostedExecution ? "Local + cloud" : "Ran locally"}</span>}
           </h1>
         }
         meta={

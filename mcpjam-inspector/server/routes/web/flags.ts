@@ -1,10 +1,12 @@
+import { localHarnessAccountEnabled } from "../../utils/harness/local/readiness.js";
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 import { Hono, type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
 import { checkSessionRevocation } from "../../services/revoked-session-cache.js";
 import { sessionRevokedResponse } from "../../middleware/session-revocation.js";
-import { evaluateClientFeatureFlags, evaluateLocalHarnessRollout } from "../../utils/analytics.js";
+import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
 
 /**
@@ -168,7 +170,7 @@ clientFlags.get("/", async (c) => {
           flagPersonProperties(c),
         )
       : {};
-  if (!HOSTED_MODE) flags["local-harness-enabled"] = identity.kind === "id" && identity.member === true && await evaluateLocalHarnessRollout(identity.distinctId);
+  if (!HOSTED_MODE) flags["local-harness-enabled"] = identity.kind === "id" && identity.member === true && isLocalHarnessVenue("claude-code") && await localHarnessAccountEnabled(c.req.header("authorization"));
   return c.json({ flags });
 });
 

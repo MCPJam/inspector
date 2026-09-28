@@ -445,7 +445,7 @@ const toUserMessage = (options) => ({
     // settings, spread last into the query options): injecting a bare
     // `settings` key earlier in the literal would be silently clobbered.
     expect(bridge?.content).toContain(
-      "settings: { ...(permissionOptions.settings ?? {})",
+      "...(permissionOptions.settings ?? {})",
     );
     // Fallback dedup only suppresses an EXACT repeat of the immediately prior
     // fallback (e.g. msg.result echoing the last text block) — never a full
@@ -518,7 +518,7 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     expect(bridge?.content).toContain(
-      "settings: { ...(permissionOptions.settings ?? {})",
+      "...(permissionOptions.settings ?? {})",
     );
     // The effort-level compat knob is createClaudeCode `env` configuration
     // now, not a bridge-source rewrite (the installed bridge has no reference

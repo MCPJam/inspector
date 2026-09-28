@@ -280,6 +280,7 @@ export interface LocalHarnessControllerState {
   revoke: () => Promise<void>;
   /** A fresh, re-checked snapshot for one send. Null ⇒ do not send local. */
   resolveSendTarget: () => {
+      serverAuthorized?: boolean;
     target: StoredLocalHarnessConsent["target"];
     token: string;
   } | null;
@@ -584,7 +585,10 @@ export function useLocalHarnessController(
     let cancelled = false;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let renewing = false;
     const renew = async () => {
+      if (cancelled || renewing) return;
+      renewing = true;
       try {
         const ready = await ensureLocalHarnessReady(projectId, false, abort.signal);
         if (!cancelled) {
@@ -592,6 +596,7 @@ export function useLocalHarnessController(
           timer = setTimeout(renew, Math.max(30_000, Date.parse(ready.expiresAt) - Date.now() - 60_000));
         }
       } catch { /* Existing status and retry controls expose failures. */ }
+      finally { renewing = false; }
     };
     void renew();
     const focus = () => { if (timer) clearTimeout(timer); void renew(); };
@@ -974,7 +979,7 @@ export function useLocalHarnessController(
         return null;
       }
     }
-    return { target: fresh.target, token: fresh.token };
+    return { target: fresh.target, token: fresh.token, ...(fresh.serverAuthorized ? { serverAuthorized: true } : {}) };
   }, [offerable, inScope, projectId, userKey, availability]);
 
   return {

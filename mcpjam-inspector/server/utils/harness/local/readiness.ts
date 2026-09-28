@@ -7,7 +7,7 @@ import { join, sep } from "node:path";
 import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../../config.js";
 import { resolveLocalHarnessActor, type LocalHarnessActor } from "./acting-user.js";
 import { authorizeLocalHarness, readLocalHarnessAuthorization } from "./authorization.js";
-import { getLocalMachineId, grantLocalHarnessConsent, localHarnessStateRoot, registerWorkspaceGrant, resolveWorkspaceGrant } from "./grants.js";
+import { getLocalMachineId, grantLocalHarnessConsent, registerWorkspaceGrant, resolveWorkspaceGrant } from "./grants.js";
 import { readRuntimeInstallStatus, installRuntimePack, startRuntimeInstall, manifestWithExpectedBundleDigest } from "./runtime-install.js";
 import { resolveManagedBundle } from "./runtime-identity.js";
 import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
@@ -15,7 +15,7 @@ import { localHarnessManifestsForDevelopment } from "./availability.js";
 import { currentLocalPlatform, localPackTarget, LOCAL_HARNESS_POLICY_VERSION } from "./targets.js";
 import { readLocalInstanceIdentity, setRegisteredKeyId } from "./instance-key.js";
 import { registerLocalInstance } from "../harness-model-broker.js";
-import { resolveSuggestedWorkspace } from "./suggested-workspace.js";
+
 import { evaluateLocalHarnessRollout } from "../../analytics.js";
 import type { LocalHarnessExecutionTarget } from "./local-turn.js";
 
@@ -47,9 +47,8 @@ export async function setupLocalHarness(args: { bearer: string; projectId: strin
   const actor = await verifyLocalHarnessMember(args.bearer, args.projectId);
   const machineId = await getLocalMachineId();
   let path = args.workspacePath;
-  if (!path) path = (await resolveSuggestedWorkspace({ displayRoot: value => value }))?.canonicalPath;
   if (!path) {
-    path = join(localHarnessStateRoot(), "workspaces", createHash("sha256").update(args.projectId).digest("hex").slice(0, 24));
+    path = join(homedir(), ".mcpjam", "harness-workspaces", createHash("sha256").update(args.projectId).digest("hex").slice(0, 24));
     await mkdir(path, { recursive: true, mode: 0o700 });
   }
   const workspace = await registerWorkspaceGrant(path);
@@ -91,15 +90,20 @@ export async function ensureLocalHarnessTarget(args: {
   const workspace = await resolveWorkspaceGrant(workspaceGrantId);
   if (!workspace.ok) throw new Error(workspace.message);
   const identity = await readLocalInstanceIdentity();
-  const registration = await registerLocalInstance({ machineId, publicKey: identity.publicKey, bearer: args.bearer });
-  if (!registration.ok) throw new Error(registration.error);
-  setRegisteredKeyId(registration.keyId);
+  // Detached work reuses the instance registered by the original member setup.
+  if (args.trustedActor) {
+    if (!identity.keyId) throw new Error("Reopen Claude Code from Playground before starting local background work");
+  } else {
+    const registration = await registerLocalInstance({ machineId, publicKey: identity.publicKey, bearer: args.bearer });
+    if (!registration.ok) throw new Error(registration.error);
+    setRegisteredKeyId(registration.keyId);
+  }
   const permissionProfile = args.scope === "unattended" ? "unrestricted" : "workspace-edits";
   const granted = await grantLocalHarnessConsent({
     userId: actor.userId, machineId, projectId: args.projectId, workspaceGrantId,
     harnessId: "claude-code", targetKind: "local-native", runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, scope: args.scope,
-  });
+  }, { ttlMs: args.scope === "attended" ? 15 * 60_000 : 12 * 60 * 60_000 });
   return { grantId: granted.grantId, expiresAt: granted.expiresAt,
     workspaceDisplayRoot: (workspace.canonicalPath === homedir() || workspace.canonicalPath.startsWith(`${homedir()}${sep}`)) ? `~${workspace.canonicalPath.slice(homedir().length)}` : workspace.canonicalPath,
     runtime: { runtimeId: runtime.runtime.runtimeId, adapterVersion: runtime.runtime.adapterVersion, digest: runtime.runtime.digest, packVersion: status.packVersion },
@@ -107,4 +111,18 @@ export async function ensureLocalHarnessTarget(args: {
     kind: "local-native", machineId, workspaceGrantId, runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, grantToken: granted.token, actingUserId: actor.userId,
   } satisfies LocalHarnessExecutionTarget };
+}
+
+/** Account eligibility is checked with backend-verified properties, never renderer flags. */
+export async function localHarnessAccountEnabled(bearer: string | undefined, projectId?: string): Promise<boolean> {
+  if (!bearer || HOSTED_MODE || !LOCAL_HARNESS_ENABLED) return false;
+  const actor = await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}`, contextCredential: null });
+  if (!actor.ok) return false;
+  try {
+    const client = localHarnessBackend(bearer);
+    const user = await client.query("users:getCurrentUser" as never, {}) as { email?: string } | null;
+    if (!(await evaluateLocalHarnessRollout(actor.actor.subject, user?.email))) return false;
+    if (!projectId) return true;
+    return Boolean(await readLocalHarnessAuthorization(actor.actor.userId, await getLocalMachineId(), projectId));
+  } catch { return false; }
 }

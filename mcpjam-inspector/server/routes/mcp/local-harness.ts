@@ -1,4 +1,4 @@
-import { setupLocalHarness, ensureLocalHarnessTarget, LocalRuntimePreparingError } from "../../utils/harness/local/readiness.js";
+import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError } from "../../utils/harness/local/readiness.js";
 import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace } from "../../utils/harness/local/authorization.js";
 /**
  * Local-harness control routes — `/api/mcp/local-harness/*`.
@@ -91,6 +91,10 @@ localHarness.use("/*", async (c, next) => {
       403,
     );
   }
+  if (c.req.method === "POST" && /\/(runtime\/install|workspace-grant|consent\/grant)$/.test(c.req.path) &&
+      !(await localHarnessAccountEnabled(c.req.header("authorization")))) {
+    return c.json({ error: "Local Claude Code is unavailable for this account or rollout verification is temporarily unavailable" }, 403);
+  }
   return next();
 });
 
@@ -108,7 +112,7 @@ for (const path of ["/setup", "/readiness"] as const) {
         ? await setupLocalHarness({ bearer, waitForInstall: false, projectId: body.projectId, ...(typeof body.workspacePath === "string" ? { workspacePath: body.workspacePath } : {}) })
         : await ensureLocalHarnessTarget({ bearer, waitForInstall: false, projectId: body.projectId, scope: "attended" });
       const { grantToken, actingUserId: _user, ...target } = ready.target;
-      return c.json({ state: "ready", target: { ...target, harnessId: "claude-code" }, token: grantToken, expiresAt: ready.expiresAt, grantId: ready.grantId, workspaceDisplayRoot: ready.workspaceDisplayRoot, runtime: ready.runtime, grantedAt: new Date().toISOString() });
+      return c.json({ state: "ready", target: { ...target, harnessId: "claude-code" }, serverAuthorized: true, expiresAt: ready.expiresAt, grantId: ready.grantId, workspaceDisplayRoot: ready.workspaceDisplayRoot, runtime: ready.runtime, grantedAt: new Date().toISOString() });
     } catch (error) {
       if (error instanceof LocalRuntimePreparingError) return c.json({ state: "installing" }, 202);
       return c.json({ error: error instanceof Error ? error.message : "Claude Code setup failed" }, 409);

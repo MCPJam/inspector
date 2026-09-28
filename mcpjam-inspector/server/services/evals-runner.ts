@@ -1,5 +1,5 @@
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
-import { isLocalHarnessVenue, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
+import { shouldUseLocalHarness, isLocalHarnessVenue, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
 import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
 import {
@@ -1858,6 +1858,7 @@ async function createIterationDirectly(
     return result?.iterationId as string | undefined;
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
+    if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
     return undefined;
   }
 }
@@ -2686,8 +2687,8 @@ const runHostedIteration = async (
   });
   try {
     const harness = harnessOfHostConfig(params.suiteHostConfig);
-    if (isLocalHarnessVenue(harness)) {
-      const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
+    const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
+    if (await shouldUseLocalHarness(harness, params.convexAuthToken, project && "projectId" in project ? project.projectId : undefined)) {
       if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
       const resources = await prepareLocalHarnessRun({ bearer: params.convexAuthToken, projectId: project.projectId });
       try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
@@ -3480,7 +3481,7 @@ const executeTestCase = async (params: {
       try {
         const iterationParams = {
           namedHostId: hostPolicy?.namedHostId,
-    ...(isLocalHarnessVenue(harnessOfHostConfig(suiteHostConfig)) ? { runtimeVenue: "local" as const } : {}),
+    ...((await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, "projectId" in (orgModelConfigTarget ?? {}) ? (orgModelConfigTarget as { projectId: string }).projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
@@ -4596,6 +4597,7 @@ const runLocalIteration = async ({
   modelDefinition,
   modelApiKeys,
   orgModelConfig,
+  orgModelConfigTarget,
   convexClient,
   runId,
   abortSignal,
@@ -4793,7 +4795,7 @@ const runLocalIteration = async ({
   };
   const iterationParamsBase = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(isLocalHarnessVenue(harnessOfHostConfig(suiteHostConfig)) ? { runtimeVenue: "local" as const } : {}),
+    ...((await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, "projectId" in (orgModelConfigTarget ?? {}) ? (orgModelConfigTarget as { projectId: string }).projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -6126,7 +6128,7 @@ const runHostedIterationWithBrowser = async (
 
   const iterationParams = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(isLocalHarnessVenue(harnessOfHostConfig(suiteHostConfig)) ? { runtimeVenue: "local" as const } : {}),
+    ...((await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, "projectId" in (orgModelConfigTarget ?? {}) ? (orgModelConfigTarget as { projectId: string }).projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,

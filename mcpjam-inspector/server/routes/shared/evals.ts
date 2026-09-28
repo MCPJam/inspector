@@ -1,3 +1,5 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { listBaseServers } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
@@ -2308,76 +2310,6 @@ export async function fetchRunPinnedSkillsWithRetry(
  * gate because the gate is deliberately shape-agnostic about cases; this is the
  * one place that already knows the run's own step model.
  */
-function casesAssertingWidgetRender(
-  tests: ReadonlyArray<Record<string, any>>,
-): string[] {
-  const titles = new Set<string>();
-  for (const test of tests) {
-    const steps = Array.isArray(test.steps) ? test.steps : [];
-    const asserts =
-      steps.some(
-        (step: any) =>
-          step?.kind === "assert" && step?.assertion?.type === "widgetRendered",
-      ) ||
-      (Array.isArray(test.successPredicates) &&
-        test.successPredicates.some(
-          (predicate: any) => predicate?.type === "widgetRendered",
-        ));
-    if (asserts) titles.add(String(test.title ?? "(untitled case)"));
-  }
-  return [...titles];
-}
-
-/**
- * Terminally fail a run that has a row but has not executed anything.
- *
- * `startSuiteRunWithRecorder` creates the run AND precreates its iteration
- * rows, so finalizing only the run leaves every attempt stuck pending — the
- * shape an operator sees as a run that never ends. Both writes are best-effort
- * and their failures are LOGGED, never rethrown: the caller is already
- * reporting a real cause, and masking it with a cleanup error costs the reason
- * the run failed.
- *
- * Shared by the pinned-skill setup abort and the harness admission gate: they
- * fail at the same point in the lifecycle and must leave the same wreckage
- * behind, which is exactly the invariant a second hand-written copy loses.
- */
-async function failRunBeforeExecution(
-  convexClient: ConvexHttpClient,
-  recorder: SuiteRunRecorder,
-  runId: string,
-  { reason }: { reason: string },
-): Promise<void> {
-  const cause = reason.slice(0, 500);
-  await convexClient
-    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
-      runId,
-      error: cause,
-    })
-    .catch((cleanupError: unknown) =>
-      logger.warn(
-        "[evals] Failed to fail pending iterations after setup abort",
-        {
-          runId,
-          error:
-            cleanupError instanceof Error
-              ? cleanupError.message
-              : String(cleanupError),
-        },
-      ),
-    );
-  await recorder
-    .finalize({ status: "failed", notes: cause })
-    .catch((finalizeError: unknown) =>
-      logger.warn("[evals] Failed to finalize run after setup abort", {
-        runId,
-        error:
-          finalizeError instanceof Error
-            ? finalizeError.message
-            : String(finalizeError),
-      }),
-    );
-}
 
 /**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
@@ -2791,6 +2723,7 @@ export async function prepareEvalRun(
   // their first line when no harness is selected, which is exactly the runs
   // this rule is about.
   const executionAdmission = checkEvalExecutionAdmission({
+    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, projectIdForOrgConfig ?? undefined),
     hostConfig: suiteHostConfig ?? null,
     pinnedComputerImageId:
       (config.environment as { computerEnvironmentId?: string } | undefined)
@@ -2820,6 +2753,7 @@ export async function prepareEvalRun(
   // throw and strand it running forever. Same cleanup the setup phase below
   // performs, for the same reason.
   const harnessAdmission = checkEvalHarnessAdmission({
+    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, projectIdForOrgConfig ?? undefined),
     hostConfig: suiteHostConfig ?? null,
     // Already includes the servers the environment's pinned plugin versions
     // contribute (`environmentServerIds` projects the effective set), so the
@@ -2862,6 +2796,7 @@ export async function prepareEvalRun(
   // mints that token (it enforces in-process), and the refusal reads its
   // delivery off the adapter rather than off a bare "is a harness" boolean.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken, projectId ?? undefined),
     hasToolPolicy: Boolean(toolPolicy),
     harness: harnessAdmission.harness,
   });
@@ -3463,6 +3398,7 @@ export async function prepareSingleCaseExecution(
   // path); refused only where this deployment cannot seal the policy into the
   // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, projectId ?? undefined),
     hasToolPolicy: Boolean(toolPolicy),
     harness: harnessOfHostConfig(effectiveHostConfig),
   });
@@ -3483,6 +3419,7 @@ export async function prepareSingleCaseExecution(
   // running the case inside a suite rather than at pinning an image, which
   // would change nothing here. Before the commit, so a refusal writes nothing.
   const singleCaseAdmission = checkEvalExecutionAdmission({
+    localExecution: await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, projectId ?? undefined),
     hostConfig: effectiveHostConfig ?? null,
     surface: "single-case",
   });

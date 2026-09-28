@@ -1097,6 +1097,9 @@ export async function runHarnessTurn(
     };
 
     try {
+      if (harnessExecutionTarget?.permissionProfile === "unrestricted" && sourceType !== "eval" && sourceType !== "swarm") {
+        throw new Error("Unrestricted local execution requires an authorized eval or swarm session");
+      }
       if (!projectId) {
         throw new Error(
           "harness turn requires a projectId to resolve the computer",
@@ -1265,7 +1268,7 @@ export async function runHarnessTurn(
       const localEvidence = harnessExecutionTarget && evalIterationId ? await localHarnessEvidence(authHeader, evalIterationId, turnId) : undefined;
       if (localEvidence) onHarnessEvidenceDecision?.({ ...localEvidence.decision, turnId });
       if (harnessExecutionTarget && nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
-        localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence });
+        localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter });
       }
       const proxyConfig = nativeMcpDelivery
         ? await buildHarnessProxyMcpJsonFromManager({
@@ -1869,6 +1872,8 @@ export async function runHarnessTurn(
           sessionId: localSessionId!,
           runId: localRunId,
           evalIterationId, journeyRunId, hostId,
+          targetId: harnessExecutionTarget.targetId,
+          sessionIdx: harnessExecutionTarget.sessionIdx,
           actor: {
             isGuest: false,
             isScenarioSession: Boolean(scenarioId),
@@ -3873,14 +3878,9 @@ export async function runHarnessTurn(
     if (discardLocalState && !retainLocalState) {
       // Keep the lane claimed until its private state has been discarded, so
       // a successor cannot resume while this finalizer removes its directory.
-      await Promise.race([
-        discardLocalState().catch((error) => {
-          logger.warn("[harness] local session state cleanup failed", { error });
-        }),
-        new Promise<void>((resolvePromise) =>
-          setTimeout(resolvePromise, HARNESS_TEARDOWN_TIMEOUT_MS).unref?.(),
-        ),
-      ]);
+      await discardLocalState().catch((error) => {
+        logger.warn("[harness] local session state cleanup failed", { error });
+      });
     }
     // Pre-session cleanup: if the session was never established (the turn failed
     // or aborted after claimHarnessSessionState but before createSession — sandbox

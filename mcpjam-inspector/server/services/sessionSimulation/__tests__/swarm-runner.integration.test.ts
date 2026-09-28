@@ -400,6 +400,7 @@ it("runs a local Claude swarm through the shared core without reserving a cloud 
   await startJourneyRun({
     ...opts,
     hosts: [{ ...opts.hosts[0]!, harness: "claude-code" }],
+    localHarnessActor: { credential: "authkit", subject: "user", userId: "authkit:user" },
   } as any);
   expect(runAssistantTurnMock).toHaveBeenCalled();
   const turn = runAssistantTurnMock.mock.calls[0]![0] as any;

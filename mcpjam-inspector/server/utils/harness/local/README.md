@@ -37,7 +37,7 @@ a mode gets a user-facing name.
 | Workspace path restriction    | Cloud mount       | Inspector file API + policy only | OS/backend enforced                    |
 | Network restriction           | Cloud policy      | **No Inspector guarantee**       | Backend policy + gateway allowlist     |
 | Hard CPU/memory quota         | Cloud policy      | Best effort                      | Required where advertised              |
-| Suitable for unattended work  | Yes               | **No**                           | Only after a separate product decision |
+| Suitable for unattended work  | Yes               | Authorized evals/swarms, full OS-user permissions | Only where verified |
 
 Per platform, for `local-native`:
 

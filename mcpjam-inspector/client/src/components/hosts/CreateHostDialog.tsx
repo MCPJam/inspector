@@ -1,3 +1,4 @@
+import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
 import { HOSTED_MODE } from "@/lib/config";
 import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -70,6 +71,7 @@ export function CreateHostDialog({
   const adminOnly = !roleLoading && !canManageClients;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
+  const localHarnessEnabled = useLocalHarnessEnabled();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
@@ -171,9 +173,6 @@ export function CreateHostDialog({
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
-      if (!HOSTED_MODE && seed.harness === "claude-code") {
-        await ensureLocalHarnessReady(projectId, true);
-      }
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -186,6 +185,12 @@ export function CreateHostDialog({
         // scenario-minting path.
         ...(owner ? { owner } : {}),
       });
+      if (!HOSTED_MODE && localHarnessEnabled && seed.harness === "claude-code") {
+        const setupToast = toast.loading("Installing Claude Code…");
+        void ensureLocalHarnessReady(projectId, true, undefined, message => toast.loading(message, { id: setupToast }))
+          .then(() => toast.success("Claude Code is ready", { id: setupToast }))
+          .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : "Claude Code setup needs a retry."}`, { id: setupToast }));
+      }
       toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
@@ -213,7 +218,7 @@ export function CreateHostDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && !isSaving && handleClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>New Client</DialogTitle>
@@ -283,15 +288,15 @@ export function CreateHostDialog({
             />
           </div>
         </div>
-        {!HOSTED_MODE && selectedTemplateInput?.harness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs on this computer. Creating this client installs its runtime and allows local commands for chats, evals, and swarms.</p>}
+        {!HOSTED_MODE && localHarnessEnabled && selectedTemplateInput?.harness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSaving}>
+          <Button variant="outline" onClick={handleClose}>
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {isSaving && !HOSTED_MODE && selectedTemplateInput?.harness === "claude-code" ? "Setting up Claude Code…" : "Create"}
+            {isSaving && !HOSTED_MODE && localHarnessEnabled && selectedTemplateInput?.harness === "claude-code" ? "Setting up Claude Code…" : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

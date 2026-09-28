@@ -56,13 +56,13 @@ jobs:
         uses: actions/github-script@v7
         env:
           PACK_VERSION: ${{ inputs.pack_version }}
-          SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
         with:
           script: |
             if (context.ref !== 'refs/heads/main') throw new Error('Pack publication requires main');
             if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.env.PACK_VERSION)) throw new Error('pack_version must be an independent semver, e.g. 1.0.0');
-            if (!process.env.SIGNING_KEY) throw new Error('LOCAL_HARNESS_PACK_SIGNING_KEY is required');
             const tag = `local-harness-pack-v${process.env.PACK_VERSION}`;
+            const releases = await github.paginate(github.rest.repos.listReleases, { ...context.repo, per_page: 100 });
+            if (releases.some(release => release.tag_name === tag)) throw new Error(`Release ${tag} already exists (including drafts)`);
             for (const check of [
               () => github.rest.repos.getReleaseByTag({ ...context.repo, tag }),
               () => github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` }),
@@ -73,6 +73,7 @@ jobs:
             }
 
   build:
+    environment: local-harness-pack-release
     needs: preflight
     name: ${{ matrix.platform_key }}
     runs-on: ${{ matrix.runner }}
@@ -101,14 +102,14 @@ jobs:
             node_dist: win-x64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
@@ -117,7 +118,7 @@ jobs:
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
@@ -181,7 +182,7 @@ jobs:
       # binary that ships is the one this commit's source produces.
       - name: Set up the pinned Go toolchain
         if: startsWith(matrix.platform_key, 'win32')
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version: ${{ steps.toolchain.outputs.go }}
           cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
@@ -198,7 +199,7 @@ jobs:
         # vcs.revision into the binary, and the binary is inside the pack's
         # tree digest — so the digest changed on every commit to main, and the
         # committed table was one SHA stale by construction (that is why the
-        # 3.3.6 table was unshipped). The Go toolchain is still the runner
+        # 3.3.6 table was unshipped). The Go toolchain is pinned above; the runner
         # image's; a bump there changes the binary too, and the table with it.
         run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
@@ -210,7 +211,7 @@ jobs:
       - name: A release must have the pack signing key
         shell: bash
         env:
-          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
         run: |
           if [ -z "${LOCAL_HARNESS_PACK_SIGNING_KEY:-}" ]; then
             echo "LOCAL_HARNESS_PACK_SIGNING_KEY is not set; a release cannot" >&2
@@ -222,7 +223,7 @@ jobs:
         working-directory: mcpjam-inspector
         shell: bash
         env:
-          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
           # Through the ENVIRONMENT, never interpolated into the shell source.
           # `pack_version` is a `workflow_dispatch` input — a string a person
           # types — and `${{ }}` substitutes before bash parses, so a quote in
@@ -277,7 +278,7 @@ jobs:
           "${{ inputs.pack_version }}"
 
       - name: Upload the pack
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}
           path: ${{ runner.temp }}/pack-out/local-harness-pack-*
@@ -322,12 +323,16 @@ jobs:
           echo "$map"
 
       - name: Check out the Inspector sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
 
       # The gate that makes the checked-in digest table load-bearing.
       #

@@ -887,6 +887,8 @@ export interface MCPJamHandlerOptions {
     actingUserId: string;
     /** Server scheduler-owned session identity; never parsed from renderer input. */
     localSessionId?: string;
+    targetId?: string;
+    sessionIdx?: number;
   };
   authHeader?: string;
   scenarioId?: string;

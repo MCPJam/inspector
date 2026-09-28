@@ -481,9 +481,8 @@ export function resolveLocalCompatibility(
     };
   }
 
-  // `unrestricted` never runs without an outer boundary, whatever a manifest
-  // says. Checked here as well as in the mapping so a future manifest edit
-  // cannot re-open it by accident.
+  // Attended native turns cannot use unrestricted permissions. Authorized
+  // evals and swarms deliberately run as the OS user without containment.
   if (
     query.scope !== "unattended" &&
     query.permissionProfile === "unrestricted" &&

@@ -1,3 +1,5 @@
+import { revokeLocalHarnessGrants } from "./grants.js";
+import { stopLocalHarnessWorkspace, stopLocalHarnessProject } from "./session-registry.js";
 /** Durable user intent, independent of per-run credentials and runtime updates. */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -39,8 +41,12 @@ export async function authorizeLocalHarness(args: Pick<LocalHarnessAuthorization
 export async function revokeLocalHarnessAuthorization(userId: string, projectId?: string) {
   await lock(async () => {
     const state = await read();
-    state.authorizations = state.authorizations.filter(a => a.userId !== userId || (projectId !== undefined && a.projectId !== projectId));
+    const revoked = state.authorizations.filter(a => a.userId === userId && (projectId === undefined || a.projectId === projectId));
+    state.authorizations = state.authorizations.filter(a => !revoked.includes(a));
     await persistCapabilityState(file(), state);
+    await revokeLocalHarnessGrants({ userId, projectId });
+    await stopLocalHarnessProject(userId, projectId);
+    await Promise.all(revoked.map(a => stopLocalHarnessWorkspace(a.workspaceGrantId)));
   });
 }
 

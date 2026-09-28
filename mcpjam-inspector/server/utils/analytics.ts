@@ -191,12 +191,12 @@ export async function evaluateBrowserRollout(
 }
 
 /** Same server-owned rollout decision for setup, launches and client visibility. */
-export async function evaluateLocalHarnessRollout(distinctId: string, _email?: string): Promise<boolean> {
-  if (!distinctId) return false;
+export async function evaluateLocalHarnessRollout(distinctId: string, email?: string): Promise<boolean> {
+  if (!distinctId || !email) return false;
   try {
     return (await getClient(true)?.isFeatureEnabled("local-harness-enabled", distinctId, {
       sendFeatureFlagEvents: false,
-      personProperties: { deployment: "self_hosted" },
+      personProperties: { email, deployment: "self_hosted" },
     })) === true;
   } catch { return false; }
 }

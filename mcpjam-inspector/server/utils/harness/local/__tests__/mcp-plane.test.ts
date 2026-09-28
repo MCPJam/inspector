@@ -8,12 +8,13 @@ async function fixture(options: Partial<Parameters<typeof startLocalHarnessMcpPl
   const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "hello" }] }));
   const manager = { hasServer: (id: string) => ["selected", "private"].includes(id), listTools, executeTool: callTool } as unknown as MCPClientManager;
   plane = await startLocalHarnessMcpPlane({ manager, serverIds: ["selected"], turnId: "turn", ...options });
-  const request = (serverId: string, token = plane!.strategy.token, origin?: string) => fetch(`${plane!.strategy.baseUrl}/${serverId}`, { method: "POST", headers: { "content-type": "application/json", "x-mcpjam-proxy-token": token, ...(origin ? { origin } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+  const request = (serverId: string, token: string | null = plane!.strategy.token, origin?: string) => fetch(`${plane!.strategy.baseUrl}/${serverId}`, { method: "POST", headers: { "content-type": "application/json", ...(token === null ? {} : { "x-mcpjam-proxy-token": token }), ...(origin ? { origin } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
   return { request, listTools, callTool };
 }
 describe("local MCP plane", () => {
   it("refuses absent/wrong capabilities and browser origins before touching a server", async () => {
     const { request, listTools } = await fixture();
+    expect((await request("selected", null)).status).toBe(403);
     expect((await request("selected", "wrong")).status).toBe(403);
     expect((await request("selected", undefined, "https://attacker.example")).status).toBe(403);
     expect(listTools).not.toHaveBeenCalled();
@@ -30,10 +31,10 @@ describe("local MCP plane", () => {
   });
 });
 
-async function call() {
+async function call(name = "echo") {
   return fetch(`${plane!.strategy.baseUrl}/selected`, {
     method: "POST", headers: { "content-type": "application/json", "x-mcpjam-proxy-token": plane!.strategy.token },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "echo", arguments: { value: "hello" } } }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: { value: "hello" } } }),
   });
 }
 it("blocks denied tools before execution or evidence capture", async () => {
@@ -59,4 +60,10 @@ it("settles the exact tool outcome before returning it", async () => {
   const result = await (await call()).json();
   expect(order).toEqual(["started", "executed", "settled"]);
   expect(afterExecute).toHaveBeenCalledWith(expect.objectContaining({ serverId: "selected", toolName: "echo", outcome: { kind: "result", result: result.result } }));
+});
+
+it("cannot reroute through a prefixed tool name", async () => {
+  const { callTool } = await fixture();
+  await call("private:echo");
+  expect(callTool).not.toHaveBeenCalled();
 });

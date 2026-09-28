@@ -608,7 +608,7 @@ async function runJourneyFanOut(
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
   if (!opts.budgets) {
     // Only size a platform default. Explicit/frozen limits remain authoritative.
-    const localSessions = hosts.filter(host => isLocalHarnessVenue(host.harness)).length * sessionsPerTarget;
+    const localSessions = hosts.filter(host => (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(host.harness))).length * sessionsPerTarget;
     budgets.runTimeoutMs = Math.min(
       platformExecutionBudgetCeilings("swarms").runTimeoutMs,
       Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
@@ -737,7 +737,7 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const localHarness = isLocalHarnessVenue(target.harness);
+    const localHarness = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness));
     const harnessNeedsBox = target.harness !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
@@ -961,7 +961,7 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = isLocalHarnessVenue(target.harness)
+        const releaseLocalSlot = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness))
           ? await acquireLocalHarnessSlot(sessionSignal)
           : undefined;
         try {
@@ -1339,7 +1339,7 @@ async function runJourneyFanOut(
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
               harness: target.harness,
-              ...(localResources ? { harnessExecutionTarget: localResources.target } : {}),
+              ...(localResources ? { harnessExecutionTarget: { ...localResources.target, targetId, sessionIdx } } : {}),
               // The trusted binding to THIS attempt's disposable box. It reaches
               // `resolveHostTools` on `ctx`, never on the host config, so nothing
               // in the (member-readable) run snapshot can forge one.

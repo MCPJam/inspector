@@ -25,6 +25,8 @@ export interface LocalHarnessSessionRecord {
   /** Opaque ids only — this record is read by telemetry and a stop-all route. */
   runtimeId: string;
   workspaceGrantId: string;
+  userId?: string;
+  projectId?: string;
   /** The broker run id, for revoking the lease server-side. */
   brokerRunId: string | null;
   gateway: LocalModelGateway | null;
@@ -313,4 +315,9 @@ export async function stopLocalHarnessWorkspace(workspaceGrantId: string): Promi
     else stopped = false;
   }
   return stopped;
+}
+
+export async function stopLocalHarnessProject(userId: string, projectId?: string): Promise<void> {
+  const records = new Set([...sessions.values(), ...unstopped].filter(record => record.userId === userId && (projectId === undefined || record.projectId === projectId)));
+  await Promise.all([...records].filter(claimRecord).map(endRecord));
 }

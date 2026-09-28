@@ -1,3 +1,6 @@
+const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}) }));
+vi.mock("../harness-admission.js", () => ({ checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
+vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Replays use the frozen client and environment; old backends fail closed
@@ -41,7 +44,8 @@ vi.mock("../compat-runtime.js", () => ({
   loadSuiteHostConfig: vi.fn(async () => ({ harness: "harness:cursor" })),
 }));
 
-vi.mock("@mcpjam/sdk/host-config/internal", () => ({
+vi.mock("@mcpjam/sdk/host-config/internal", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@mcpjam/sdk/host-config/internal")>(),
   resolveOpenAiCompatForHostConfig: vi.fn(() => false),
 }));
 
@@ -124,4 +128,13 @@ it("passes the saved Claude client and frozen environment to the shared executor
     projectEnvironmentId: "frozen-environment",
   }));
   expect(runEvalSuiteWithAiSdkMock.mock.calls[0]?.[0]).not.toHaveProperty("projectEnvironmentUnresolvedReason");
+});
+
+it.each(["execution", "harness", "policy"] as const)("refuses replay when %s admission fails, before any model runs", async gate => {
+  admission.failed.mockClear();
+  if (gate === "policy") admission.policy.mockReturnValueOnce("Policy cannot be enforced" as never);
+  else admission[gate].mockReturnValueOnce({ ok: false, reason: "Client cannot execute" } as never);
+  await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "refused-run" })).rejects.toThrow();
+  expect(admission.failed).toHaveBeenCalledOnce();
+  expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
 });

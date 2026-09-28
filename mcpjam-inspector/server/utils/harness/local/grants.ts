@@ -702,6 +702,8 @@ export async function verifyLocalHarnessGrant(
 /** Revoke by grant id, by binding, or — with no argument — every grant on this
  *  machine (the "stop everything" affordance). */
 export function revokeLocalHarnessGrants(selector?: {
+  userId?: string;
+  projectId?: string;
   grantId?: string;
   binding?: HarnessGrantBinding;
 }): Promise<number> {
@@ -710,6 +712,8 @@ export function revokeLocalHarnessGrants(selector?: {
     const before = state.harnessGrants.length;
     if (!selector) {
       state.harnessGrants = [];
+    } else if (selector.userId) {
+      state.harnessGrants = state.harnessGrants.filter(g => g.binding.userId !== selector.userId || (selector.projectId !== undefined && g.binding.projectId !== selector.projectId));
     } else if (selector.grantId) {
       state.harnessGrants = state.harnessGrants.filter(
         (g) => g.grantId !== selector.grantId,

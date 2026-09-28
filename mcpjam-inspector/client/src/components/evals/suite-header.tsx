@@ -425,7 +425,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 Run {formatRunId(selectedRunDetails._id)}
               </h2>
               {selectedRunDetails.configSnapshot.executionVenue === "local" && (
-                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">This machine</span>
+                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">Ran locally</span>
               )}
               <PassCriteriaBadge
                 run={selectedRunDetails}

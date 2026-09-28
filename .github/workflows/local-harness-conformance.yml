@@ -10,8 +10,15 @@
 name: Local harness conformance
 
 on:
+  push:
+    branches: [main]
   workflow_call:
     inputs:
+      published_pack_version:
+        description: Verify and run a pinned published pack instead of building one.
+        required: false
+        type: string
+        default: ""
       pack_version:
         description: Pack version to build and run against.
         required: false
@@ -22,6 +29,12 @@ on:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
         value: ${{ jobs.summarize.outputs.conformance_version }}
   workflow_dispatch:
+    inputs:
+      published_pack_version:
+        description: Pinned published version to verify (empty builds source).
+        required: false
+        type: string
+        default: ""
   pull_request:
     paths:
       - "mcpjam-inspector/server/utils/harness/local/**"
@@ -138,10 +151,23 @@ jobs:
           set -euo pipefail
           url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
           curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          actual=$(shasum -a 256 "$RUNNER_TEMP/node-runtime.tar.gz" | awk '{print $1}')
+          test "$actual" = "$expected"
 
       # The real thing, not a fixture: these scenarios exist to prove the pack
       # a user would install actually runs.
+      - name: Prepare the pinned published pack
+        if: inputs.published_pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
+
       - name: Build the pack
+        if: inputs.published_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
@@ -252,6 +278,14 @@ jobs:
             exit 1
           fi
 
+      - name: Preserve verified published-pack identity
+        if: inputs.published_pack_version != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-pack-${{ matrix.platform_key }}
+          path: ${{ runner.temp }}/conformance/published-conformance-input.json
+          if-no-files-found: error
+
   # Windows. Gating, like the POSIX legs, since `nativePlatforms` lists win32:
   # this job going green is what earned that entry, and it going red is what
   # would make the entry a lie. The two are the SAME change and must move
@@ -325,13 +359,26 @@ jobs:
           archive="node-v${BUNDLED_NODE_VERSION}-win-x64.zip"
           curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
             -o "$RUNNER_TEMP/node-runtime.zip"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="$archive" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          actual=$(sha256sum "$RUNNER_TEMP/node-runtime.zip" | awk '{print $1}')
+          test "$actual" = "$expected"
+
+      - name: Prepare the pinned published pack
+        if: inputs.published_pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
 
       - name: Build the pack
+        if: inputs.published_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform win32-x64 \
-            --pack-version conformance \
+            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
             --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
             --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
@@ -412,6 +459,14 @@ jobs:
             echo "supervised processes survived the conformance run" >&2
             exit 1
           fi
+
+      - name: Preserve verified published-pack identity
+        if: inputs.published_pack_version != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-pack-windows-x64
+          path: ${{ runner.temp }}/conformance/published-conformance-input.json
+          if-no-files-found: error
 
   summarize:
     name: conformance version

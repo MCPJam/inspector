@@ -16,7 +16,7 @@ vi.mock("../grants.js", () => ({
   localHarnessStateRoot: () => "/unused", registerWorkspaceGrant: vi.fn(),
   resolveWorkspaceGrant: async () => ({ ok: true, canonicalPath: "/workspace" }),
 }));
-vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key" }), setRegisteredKeyId: vi.fn() }));
+vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
 import { ensureLocalHarnessTarget } from "../readiness.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
@@ -47,8 +47,20 @@ describe("shared local readiness", () => {
     const ready = await ensureLocalHarnessTarget({ bearer: "delegated", projectId: "project", scope: "unattended", workspaceGrantId: "scratch", trustedActor: actor });
     expect(mocks.actor).not.toHaveBeenCalled();
     expect(ready.target).toMatchObject({ workspaceGrantId: "scratch", permissionProfile: "unrestricted" });
-    expect(mocks.grant).toHaveBeenCalledWith(expect.objectContaining({ scope: "unattended", userId: "authkit:user" }));
+    expect(mocks.grant).toHaveBeenCalledWith(expect.objectContaining({ scope: "unattended", userId: "authkit:user" }), expect.any(Object));
     mocks.query.mockImplementation(async (name: string) => name === "projects:getMyProjects" ? [{ _id: "project" }] : { externalId: "different-user" });
     await expect(ensureLocalHarnessTarget({ bearer: "delegated", projectId: "project", scope: "unattended", trustedActor: actor })).rejects.toThrow(/identity changed/);
   });
+});
+
+it("refuses a removed durable authorization before starting any runtime", async () => {
+  mocks.authorization.mockResolvedValue(null);
+  await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/Add client/);
+  expect(mocks.install).not.toHaveBeenCalled();
+  expect(mocks.grant).not.toHaveBeenCalled();
+});
+it("refuses rollout removal before issuing a grant", async () => {
+  mocks.rollout.mockResolvedValue(false);
+  await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/not available/);
+  expect(mocks.grant).not.toHaveBeenCalled();
 });

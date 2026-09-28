@@ -93,6 +93,7 @@ describe("the child environment is an allowlist", () => {
         "NO_COLOR",
         "PATH",
         "PWD",
+      "MCPJAM_LOCAL_CONTROL_ROOT",
         "TERM",
         "TMPDIR",
         "XDG_CACHE_HOME",

@@ -3778,7 +3778,7 @@ export function PlaygroundMain({
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
-      if (!localHarnessRequested) return true;
+      if (!localHarnessRequested || (!setup && localHarness.phase === "ready")) return true;
       if (!convexProjectId || localHarnessPreparingRef.current) return false;
       localHarnessPreparingRef.current = true;
       setLocalHarnessPreparing(true);
@@ -3792,7 +3792,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId]);
+    }, [localHarnessRequested, convexProjectId, localHarness.phase]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {

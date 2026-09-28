@@ -1,4 +1,6 @@
-import { HOSTED_MODE } from "../../config.js";
+import { checkEvalExecutionAdmission, checkEvalHarnessAdmission, casesAssertingWidgetRender, failRunBeforeExecution } from "./harness-admission.js";
+import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
 import {
@@ -120,7 +122,7 @@ export async function prepareSuiteReplayFromRun(
       passCriteria,
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
-      runtimeVenue: HOSTED_MODE ? "hosted" : "local",
+      runtimeVenue: await shouldUseLocalHarness("claude-code", convexAuthToken, replayMetadata.projectId) ? "local" : "hosted",
       useCurrentSuiteConfig,
       environmentOverride:
         useCurrentSuiteConfig === true
@@ -132,6 +134,25 @@ export async function prepareSuiteReplayFromRun(
     const replayHostConfig =
       runHostConfigSnapshot ??
       (await loadSuiteHostConfig(convexClient, replayMetadata.suiteId));
+    const localExecution = await shouldUseLocalHarness(typeof replayHostConfig?.harness === "string" ? replayHostConfig.harness : undefined, convexAuthToken, replayMetadata.projectId);
+    const executionAdmission = checkEvalExecutionAdmission({
+      localExecution,
+      hostConfig: replayHostConfig,
+      pinnedComputerImageId: (config.environment as { computerEnvironmentId?: string } | undefined)?.computerEnvironmentId ?? null,
+    });
+    const harnessAdmission = checkEvalHarnessAdmission({
+      localExecution,
+      hostConfig: replayHostConfig, serverIds: replayServerIds, cases: config.tests,
+      widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
+      projectId: replayMetadata.projectId ?? null,
+    });
+    const refusal = !executionAdmission.ok ? executionAdmission.reason : !harnessAdmission.ok ? harnessAdmission.reason :
+      harnessToolPolicyLaunchRefusal({ hasToolPolicy: Boolean(replayToolPolicy), harness: harnessAdmission.harness,
+        localExecution: await shouldUseLocalHarness(harnessAdmission.harness, convexAuthToken, replayMetadata.projectId) });
+    if (refusal) {
+      await failRunBeforeExecution(convexClient, recorder, runId, { reason: refusal });
+      throw new Error(refusal);
+    }
     const suiteInjectOpenAiCompat =
       resolveOpenAiCompatForHostConfig(replayHostConfig);
 

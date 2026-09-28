@@ -93,6 +93,8 @@ export interface LocalHarnessExecutionTarget {
   actingUserId: string;
   /** Server scheduler-owned session identity; never parsed from renderer input. */
   localSessionId?: string;
+  targetId?: string;
+  sessionIdx?: number;
 }
 
 export interface PreparedLocalHarnessTurn {
@@ -153,6 +155,8 @@ export interface PrepareLocalHarnessTurnArgs {
   runId: string;
   evalIterationId?: string;
   journeyRunId?: string;
+  targetId?: string;
+  sessionIdx?: number;
   hostId?: string;
   actor: LocalHarnessActor;
   projectId: string;
@@ -368,6 +372,8 @@ async function prepareWithReservedRuntime(outer: {
     projectId: args.projectId,
     evalIterationId: args.evalIterationId,
     journeyRunId: args.journeyRunId,
+    targetId: args.targetId,
+    sessionIdx: args.sessionIdx,
     hostId: args.hostId,
     harnessId: args.harnessId,
     modelId: args.modelId,
@@ -468,6 +474,8 @@ async function prepareWithReservedRuntime(outer: {
     // Built before the teardown that has to drop it, so the drop can prove the
     // entry under this id is still the one this turn registered.
     const sessionRecord = {
+      userId: args.target.actingUserId,
+      projectId: args.projectId,
       sessionId: args.sessionId,
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
