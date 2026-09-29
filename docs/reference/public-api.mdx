@@ -539,6 +539,20 @@ violation. Read what you recognize; ignore the rest.
   why it is never inferred from anything else.
 </Warning>
 
+**Feedback** — report a problem with MCPJam itself to the MCPJam team:
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /feedback` | Send a bug report, missing-capability note, or other feedback to the MCPJam team. Body: `{ kind, summary, details?, operation?, requestId?, errorCode?, projectId? }`. Responds `201 { id, receivedAt, duplicate }` once stored. Signed-in accounts only (guests get `401`). Rate-limited per user (`429` with `Retry-After`). Accepts `Idempotency-Key` (validated strictly — an empty or over-long key is `400`, not silently ignored; the same key with different content is `409`). **The text goes to the MCPJam team, outside your organization, and is kept for 180 days.** |
+
+<Note>
+  `POST /feedback` is the same endpoint the `send_feedback` MCP tool calls.
+  Include the failing call's `x-request-id` as `requestId` when you have one —
+  it lets the team find that request in the server logs. An identical report
+  from you in the last 24 hours returns `duplicate: true` with the original
+  receipt instead of filing a second report.
+</Note>
+
 **Planning** — one read that answers "may I?" before you try:
 
 | Endpoint | What it does |
