@@ -3631,62 +3631,70 @@ export function TestTemplateEditor({
             });
           } catch (error) {
             if (abortController.signal.aborted) {
-              let resolved!: CompareRunRecord;
-              setCompareRunRecords((previous) => {
-                const existing = previous[modelValue];
-                // A retry starts a newer request for this model and aborts the
-                // old controller. If that old abort rejects later, it must not
-                // overwrite the newer running/completed row as cancelled.
-                if (compareRequestGenByModelRef.current[modelValue] !== myGen) {
-                  resolved =
-                    existing ??
-                    buildCompareRunRecord({
-                      modelValue,
-                      modelLabel,
-                      iteration: null,
-                      completedAt: Date.now(),
-                    });
-                  return previous;
-                }
-                const base = buildCompareRunRecord({
-                  modelValue,
-                  modelLabel,
-                  iteration: null,
-                  cancelled: true,
-                  startedAt: existing?.startedAt ?? null,
-                  completedAt: Date.now(),
+              // Resolve from inside the updater, like the stream-completed path
+              // above: React may defer the updater, so a value assigned there
+              // isn't ready right after setCompareRunRecords returns.
+              return new Promise<CompareRunRecord>((resolve) => {
+                setCompareRunRecords((previous) => {
+                  const existing = previous[modelValue];
+                  // A retry starts a newer request for this model and aborts the
+                  // old controller. If that old abort rejects later, it must not
+                  // overwrite the newer running/completed row as cancelled.
+                  if (
+                    compareRequestGenByModelRef.current[modelValue] !== myGen
+                  ) {
+                    resolve(
+                      existing ??
+                        buildCompareRunRecord({
+                          modelValue,
+                          modelLabel,
+                          iteration: null,
+                          completedAt: Date.now(),
+                        }),
+                    );
+                    return previous;
+                  }
+                  const base = buildCompareRunRecord({
+                    modelValue,
+                    modelLabel,
+                    iteration: null,
+                    cancelled: true,
+                    startedAt: existing?.startedAt ?? null,
+                    completedAt: Date.now(),
+                  });
+                  const tokensUsed =
+                    existing?.streamingMetrics?.tokensUsed ??
+                    existing?.metrics.tokensUsed ??
+                    0;
+                  const toolCallCount =
+                    existing?.streamingMetrics?.toolCallCount ??
+                    existing?.metrics.toolCallCount ??
+                    0;
+                  const cancelledRecord: CompareRunRecord = {
+                    ...base,
+                    streamingTrace: existing?.streamingTrace,
+                    streamingDraftMessages: existing?.streamingDraftMessages,
+                    streamingActualToolCalls:
+                      existing?.streamingActualToolCalls,
+                    streamingMetrics:
+                      existing?.streamingMetrics != null
+                        ? existing.streamingMetrics
+                        : undefined,
+                    streamingStepStatus: existing?.streamingStepStatus,
+                    streamingLiveBrowserSteps:
+                      existing?.streamingLiveBrowserSteps,
+                    streamingLiveBrowserFrameSequence:
+                      existing?.streamingLiveBrowserFrameSequence,
+                    metrics: {
+                      ...base.metrics,
+                      toolCallCount,
+                      tokensUsed,
+                    },
+                  };
+                  resolve(cancelledRecord);
+                  return { ...previous, [modelValue]: cancelledRecord };
                 });
-                const tokensUsed =
-                  existing?.streamingMetrics?.tokensUsed ??
-                  existing?.metrics.tokensUsed ??
-                  0;
-                const toolCallCount =
-                  existing?.streamingMetrics?.toolCallCount ??
-                  existing?.metrics.toolCallCount ??
-                  0;
-                resolved = {
-                  ...base,
-                  streamingTrace: existing?.streamingTrace,
-                  streamingDraftMessages: existing?.streamingDraftMessages,
-                  streamingActualToolCalls: existing?.streamingActualToolCalls,
-                  streamingMetrics:
-                    existing?.streamingMetrics != null
-                      ? existing.streamingMetrics
-                      : undefined,
-                  streamingStepStatus: existing?.streamingStepStatus,
-                  streamingLiveBrowserSteps:
-                    existing?.streamingLiveBrowserSteps,
-                  streamingLiveBrowserFrameSequence:
-                    existing?.streamingLiveBrowserFrameSequence,
-                  metrics: {
-                    ...base.metrics,
-                    toolCallCount,
-                    tokensUsed,
-                  },
-                };
-                return { ...previous, [modelValue]: resolved };
               });
-              return resolved;
             }
             const message = getBillingErrorMessage(
               error,
