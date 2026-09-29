@@ -4094,12 +4094,22 @@ export default function App() {
     shellBillingStatus?.isOwner === false;
 
   useEffect(() => {
+    // A pending delete hides the org, which nulls billingProjectId; keep the
+    // project so a failed delete gives it back.
+    const activeProjectOrganizationId = activeProject?.organizationId;
+    const isActiveProjectDeletionPending =
+      !!activeProjectOrganizationId &&
+      deletingOrganizationIds.includes(activeProjectOrganizationId) &&
+      !optimisticallyDeletedOrganizationIds.includes(
+        activeProjectOrganizationId,
+      );
     const hasStaleCloudProjectSelection =
       isCloudSyncActive &&
       !isLoadingOrganizations &&
       !isLoadingRemoteProjects &&
       activeProjectId !== "none" &&
       (!!convexProjectId || !activeProject) &&
+      !isActiveProjectDeletionPending &&
       !billingProjectId;
 
     if (!hasStaleCloudProjectSelection) {
@@ -4113,9 +4123,11 @@ export default function App() {
     billingProjectId,
     clearConvexActiveProjectSelection,
     convexProjectId,
+    deletingOrganizationIds,
     isCloudSyncActive,
     isLoadingOrganizations,
     isLoadingRemoteProjects,
+    optimisticallyDeletedOrganizationIds,
   ]);
 
   // Fetch project servers to map server IDs to names

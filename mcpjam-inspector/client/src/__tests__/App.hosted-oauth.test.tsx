@@ -11,6 +11,10 @@ import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
 import {
+  beginOrganizationDeletion,
+  endOrganizationDeletion,
+} from "@/stores/organization-deletion-store";
+import {
   markSignOutInProgress,
   resetSignOutLatchForTests,
   SIGN_OUT_SUPPRESSION_WINDOW_MS,
@@ -1144,6 +1148,66 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
+  });
+
+  it("keeps the synced project while its org's deletion is pending", async () => {
+    const clearConvexActiveProjectSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: true,
+      activeOrganizationId: "org-1",
+      clearConvexActiveProjectSelection,
+      projects: {
+        ws_local: {
+          id: "ws_local",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return existingConvexUser;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-2",
+            name: "Org Two",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    act(() => beginOrganizationDeletion("org-1"));
+
+    try {
+      render(<App />);
+      await act(async () => {});
+
+      // A failed delete gives org-1 back; its project must still be selected.
+      expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
+    } finally {
+      act(() => endOrganizationDeletion("org-1"));
+    }
   });
 
   // (Removed) "passes a billing-safe project id to the scenarios tab" —
