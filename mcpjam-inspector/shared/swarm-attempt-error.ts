@@ -81,7 +81,7 @@ const HOLDS_COMMITTED_SENTENCE =
  *   release them as they finish. Read off the structured pair when the caller
  *   has it, and off the stored sentence when all it has is an attempt row.
  * - `spending_reservation_busy` (503): MCPJam's own reservation lost its
- *   concurrency race on every retry and committed nothing — the model was not
+ *   concurrency race on every retry and committed nothing, so the model was not
  *   called, so asking again is safe (`runSpendingReservationWithOccRetry` in
  *   the backend's `convex/lib/occRetry.ts`).
  */
