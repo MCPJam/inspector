@@ -2,6 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccessRequired } from "../AccessRequired";
 import { confirmAccessToken } from "@/lib/session-token";
+import {
+  ACCESS_LINK_RECEIVED_EVENT,
+  rememberAccessToken,
+} from "@/lib/access-link";
 vi.mock("@/lib/session-token", () => ({ confirmAccessToken: vi.fn() }));
 vi.mock("@/lib/theme-utils", () => ({
   getInitialThemeMode: () => "light",
@@ -47,6 +51,20 @@ describe("AccessRequired", () => {
       }),
     );
     await waitFor(() => expect(confirmAccessToken).toHaveBeenCalledWith(token));
+  });
+  it("confirms a link pasted into this tab's address bar", async () => {
+    vi.mocked(confirmAccessToken).mockResolvedValue(token);
+    const granted = vi.fn();
+    window.addEventListener("mcpjam:access-granted", granted);
+    try {
+      render(<AccessRequired />);
+      rememberAccessToken(token);
+      fireEvent(window, new Event(ACCESS_LINK_RECEIVED_EVENT));
+      await waitFor(() => expect(granted).toHaveBeenCalledOnce());
+      expect(confirmAccessToken).toHaveBeenCalledWith(token);
+    } finally {
+      window.removeEventListener("mcpjam:access-granted", granted);
+    }
   });
   it("does not expose a rejected link in its error", async () => {
     vi.mocked(confirmAccessToken).mockRejectedValue(new Error(token));

@@ -3,8 +3,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
   ACCESS_GRANTED_EVENT,
+  ACCESS_LINK_RECEIVED_EVENT,
   LOCAL_ACCESS_KEY,
   parseAccessLink,
+  readAccessToken,
 } from "@/lib/access-link";
 import { copyToClipboard } from "@/lib/clipboard";
 import { confirmAccessToken } from "@/lib/session-token";
@@ -44,8 +46,18 @@ export function AccessRequired({ restarted = false }: { restarted?: boolean }) {
       if (event.key === LOCAL_ACCESS_KEY && event.newValue)
         void accept(event.newValue);
     };
+    // A link pasted into this tab's address bar: storage events only reach
+    // other tabs, so the URL watcher announces it here.
+    const receivePasted = () => {
+      const token = readAccessToken();
+      if (token) void accept(token);
+    };
     window.addEventListener("storage", receive);
-    return () => window.removeEventListener("storage", receive);
+    window.addEventListener(ACCESS_LINK_RECEIVED_EVENT, receivePasted);
+    return () => {
+      window.removeEventListener("storage", receive);
+      window.removeEventListener(ACCESS_LINK_RECEIVED_EVENT, receivePasted);
+    };
   }, []);
   return (
     <main className="flex h-screen overflow-y-auto bg-background px-6 py-12 text-foreground">
