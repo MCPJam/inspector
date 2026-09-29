@@ -91,6 +91,10 @@ export interface LocalHarnessExecutionTarget {
   grantToken: string;
   /** The acting user, resolved by the route from the verified bearer. */
   actingUserId: string;
+  /** Server scheduler-owned session identity; never parsed from renderer input. */
+  localSessionId?: string;
+  targetId?: string;
+  sessionIdx?: number;
 }
 
 export interface PreparedLocalHarnessTurn {
@@ -149,6 +153,11 @@ export interface PrepareLocalHarnessTurnArgs {
   modelId: string;
   sessionId: string;
   runId: string;
+  evalIterationId?: string;
+  journeyRunId?: string;
+  targetId?: string;
+  sessionIdx?: number;
+  hostId?: string;
   actor: LocalHarnessActor;
   projectId: string;
   /**
@@ -161,6 +170,7 @@ export interface PrepareLocalHarnessTurnArgs {
   bearer: string;
   /** Set when the host asks for tool approval, which narrows the mode. */
   requireToolApproval?: boolean;
+  scope?: "attended" | "unattended";
   /** Materialized project secrets; runtime-owned credential names are refused. */
   scopedEnv?: Readonly<Record<string, string>>;
   onSecretEnvDelivered?: () => void;
@@ -318,6 +328,7 @@ async function prepareWithReservedRuntime(outer: {
       policyVersion: args.target.policyVersion,
     },
     actor: args.actor,
+    scope: args.scope,
     // Server-derived, never from a request body: consent binds to a user, and
     // a user the caller names is a user the caller chose.
     userId: args.target.actingUserId,
@@ -359,6 +370,11 @@ async function prepareWithReservedRuntime(outer: {
   }
   const broker = await startLoopbackModelBroker({
     projectId: args.projectId,
+    evalIterationId: args.evalIterationId,
+    journeyRunId: args.journeyRunId,
+    targetId: args.targetId,
+    sessionIdx: args.sessionIdx,
+    hostId: args.hostId,
     harnessId: args.harnessId,
     modelId: args.modelId,
     machineId: identity.machineId,
@@ -398,6 +414,8 @@ async function prepareWithReservedRuntime(outer: {
       });
     await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
 
+    const hooksPath = join(sessionStateDir, "empty-git-hooks");
+    if (args.scope === "unattended") await mkdir(hooksPath, { recursive: true, mode: 0o700 });
     const gatewayStartedAt = Date.now();
     try {
       gateway = await startLocalModelGateway({
@@ -449,12 +467,15 @@ async function prepareWithReservedRuntime(outer: {
       bridgePort,
       scopedEnv: {
         ...(args.scopedEnv ?? {}),
+        ...(args.scope === "unattended" ? { GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hooksPath, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {}),
       },
     });
 
     // Built before the teardown that has to drop it, so the drop can prove the
     // entry under this id is still the one this turn registered.
     const sessionRecord = {
+      userId: args.target.actingUserId,
+      projectId: args.projectId,
       sessionId: args.sessionId,
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
@@ -614,10 +635,12 @@ async function revokeLease(runId: string, bearer: string): Promise<void> {
  * mismatch — so the value has to come from the installed package rather than
  * from the manifest, or the check would be comparing the pin to itself.
  */
+declare const __MCPJAM_CLAUDE_ADAPTER_VERSION__: string | undefined;
 let cachedAdapterVersion: string | null = null;
 
 async function readInstalledAdapterVersion(): Promise<string> {
   if (cachedAdapterVersion !== null) return cachedAdapterVersion;
+  if (typeof __MCPJAM_CLAUDE_ADAPTER_VERSION__ === "string") return __MCPJAM_CLAUDE_ADAPTER_VERSION__;
   try {
     const required = createRequire(import.meta.url);
     const pkg = required("@ai-sdk/harness-claude-code/package.json") as {

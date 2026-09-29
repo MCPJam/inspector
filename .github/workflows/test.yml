@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: MCPJam/mcpjam-backend
-          ref: 86369ce132b76b4dd06b856608eb7f519f32811e
+          ref: 60729a6c15a8d278e88107004cfa66ea1a8ab6cb
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false
@@ -351,6 +351,11 @@ jobs:
 
       - name: Run Playwright smoke
         run: npm run test:e2e -w @mcpjam/inspector
+
+      - name: Run local access e2e
+        # Its own config: the smoke config seeds every page with the access key,
+        # and this spec proves what a browser without one sees.
+        run: npm run test:e2e:local-access -w @mcpjam/inspector
 
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector

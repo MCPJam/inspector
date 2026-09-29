@@ -1,3 +1,5 @@
+import { localHarnessAccountEnabled } from "../../utils/harness/local/readiness.js";
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 import { Hono, type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
@@ -40,7 +42,7 @@ const LOCAL_PLATFORMS = new Set(["npm", "docker", "mac", "win", "electron"]);
 
 /** Whose flags a request gets: an id, nobody, or a signed-out session. */
 type FlagsIdentity =
-  | { kind: "id"; distinctId: string }
+  | { kind: "id"; distinctId: string; member?: boolean }
   | { kind: "none" }
   | { kind: "revoked" };
 
@@ -66,7 +68,7 @@ async function verifiedIdentity(token: string): Promise<FlagsIdentity> {
   if (!checkSessionRevocation(session.sid, { requireFresh: false }).ok) {
     return { kind: "revoked" };
   }
-  return { kind: "id", distinctId: session.sub };
+  return { kind: "id", distinctId: session.sub, member: true };
 }
 
 async function resolveIdentity(c: Context): Promise<FlagsIdentity> {
@@ -168,6 +170,7 @@ clientFlags.get("/", async (c) => {
           flagPersonProperties(c),
         )
       : {};
+  if (!HOSTED_MODE) flags["local-harness-enabled"] = identity.kind === "id" && identity.member === true && isLocalHarnessVenue("claude-code") && await localHarnessAccountEnabled(c.req.header("authorization"));
   return c.json({ flags });
 });
 

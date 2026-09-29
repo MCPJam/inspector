@@ -1,5 +1,7 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
+import { AccessRequired } from "./components/AccessRequired";
 import { traceConvexQueries } from "./lib/trace-convex-queries";
 import { StrictMode, type ReactNode } from "react";
 import { appRoot as root } from "./app-root";
@@ -15,6 +17,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
+import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { reportCaught } from "./lib/error-reporting";
 import {
   handleWorkosRefreshFailure,
@@ -77,6 +80,9 @@ initSentry();
 
 // Stop browser page translation from crashing React; see the module comment.
 installTranslatedPageDomGuard();
+
+// Offer a reload when a deploy has removed this build's lazy chunks.
+installStaleChunkRecovery();
 
 // The invariant a browser can actually decide. Its reasoning, and the half
 // that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
@@ -489,5 +495,15 @@ if (isInIframe) {
     );
   }
 
+  if (!HOSTED_MODE) {
+    window.addEventListener(ACCESS_REQUIRED_EVENT, (event) => {
+      root.render(
+        <AccessRequired restarted={(event as CustomEvent).detail?.restarted} />,
+      );
+    });
+    window.addEventListener(ACCESS_GRANTED_EVENT, () => {
+      void bootstrap();
+    });
+  }
   bootstrap();
 }
