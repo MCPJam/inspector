@@ -17,6 +17,8 @@
  * - Are static assets that don't expose sensitive data
  */
 
+import { tunnelManager } from "../services/tunnel-manager.js";
+import "../types/hono.js";
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
 
@@ -68,8 +70,6 @@ const UNPROTECTED_PREFIXES = [
   // unauthenticated callers from filling the in-memory fileStore with up
   // to 20 MB blobs per request.
   "/api/apps/files/file/",
-  "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
-  "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/xaa/.well-known/", // Public XAA issuer discovery + JWKS for external authorization servers
   // CLI OAuth bridge: public front-channel (config metadata + browser
   // redirects through AuthKit). Returns no tokens or sensitive data; the
@@ -196,6 +196,27 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // A tunnel bearer is valid only for its exact adapter server, on every
+  // transport path. Never infer authorization from forwarding headers.
+  const adapter = /^\/api\/mcp\/adapter-http\/([^/]+)(?:\/|$)/.exec(path);
+  const secrets = c.req.queries("k");
+  if (adapter && secrets !== undefined) {
+    let serverId: string;
+    try {
+      serverId = decodeURIComponent(adapter[1]);
+    } catch {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    if (
+      secrets.length !== 1 ||
+      !tunnelManager.verifyTunnelSecret("adapter-http", serverId, secrets[0])
+    ) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    c.set("bridgeCaller", "tunnel");
+    return next();
+  }
+
   // Extract token from header (preferred)
   let token: string | undefined;
   const authHeader = c.req.header("X-MCP-Session-Auth");
@@ -211,6 +232,7 @@ export async function sessionAuthMiddleware(
 
   // No token provided
   if (!token) {
+    c.header("X-MCPJam-Session", "missing");
     return c.json(
       {
         error: "Unauthorized",
@@ -225,6 +247,7 @@ export async function sessionAuthMiddleware(
 
   // Invalid token
   if (!validateToken(token)) {
+    c.header("X-MCPJam-Session", "invalid");
     return c.json(
       {
         error: "Unauthorized",
@@ -235,5 +258,6 @@ export async function sessionAuthMiddleware(
     );
   }
 
+  c.set("bridgeCaller", "local");
   return next();
 }
