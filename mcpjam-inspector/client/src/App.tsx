@@ -3994,7 +3994,8 @@ export default function App() {
     activeProject?.clientConfig,
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig
@@ -4004,7 +4005,8 @@ export default function App() {
   // A skipped query reads as `undefined`, so this already covers the window
   // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
-    Boolean(convexProjectId) && projectServerConfigDto === undefined;
+    shouldQueryProjectId(convexProjectId) &&
+    projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
