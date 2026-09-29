@@ -140,6 +140,7 @@ import { clearOrgAgentPolicyCache } from "../../../utils/org-agent-policy.js";
 import {
   AGENT_API_GATED_OPERATIONS,
   AGENT_API_OPERATIONS,
+  AGENT_API_SYSTEM_PROMPT,
   buildAgentApiToolSet,
   type CreatedResource,
 } from "../agent.js";
@@ -1131,6 +1132,21 @@ describe("gated proposal tools", () => {
     const description = tools[runEvalSuiteOperation.name]!.description;
     expect(description).toMatch(/REQUIRES HUMAN APPROVAL/);
     expect(description).toMatch(/never that it has run or started/i);
+  });
+
+  it("marks EVERY gated tool the way the base prompt says to look for", async () => {
+    // The base prompt no longer lists the gated operations; it names this
+    // marker. So the marker has to be on every one of them, or a tool the
+    // prompt claims to describe would read as one that just runs.
+    expect(AGENT_API_SYSTEM_PROMPT).toContain(
+      "Tools whose description says REQUIRES HUMAN APPROVAL",
+    );
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    for (const operation of AGENT_API_GATED_OPERATIONS) {
+      expect(tools[operation.name]!.description, operation.name).toMatch(
+        /REQUIRES HUMAN APPROVAL/,
+      );
+    }
   });
 
   it("persists the VALIDATED, project-clamped input and returns only an id", async () => {

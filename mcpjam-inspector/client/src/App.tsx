@@ -3,6 +3,7 @@ import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
 import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { useOrganizationDeletionStore } from "@/stores/organization-deletion-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -2598,7 +2599,6 @@ export function OrganizationsRoute({
     routeOrganizationSection,
     checkoutIntentForBilling,
     consumeCheckoutIntent,
-    handleCheckoutIntentNavigationStarted,
     handleOrganizationDeleted,
   } = useAppRouteContext();
 
@@ -2614,7 +2614,6 @@ export function OrganizationsRoute({
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
-      onCheckoutIntentNavigationStarted={handleCheckoutIntentNavigationStarted}
       onOrganizationDeleted={handleOrganizationDeleted}
     />
   );
@@ -2861,13 +2860,21 @@ export default function App() {
         : nextIds;
     });
   }, [isLoadingOrganizations, sortedOrganizations]);
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
+  );
   const effectiveOrganizations = useMemo(
     () =>
       sortedOrganizations.filter(
         (organization) =>
+          !deletingOrganizationIds.includes(organization._id) &&
           !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+    [
+      deletingOrganizationIds,
+      optimisticallyDeletedOrganizationIds,
+      sortedOrganizations,
+    ],
   );
   // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
   // whose membership hasn't linked yet, so every org-scoped query for it is
@@ -4087,12 +4094,22 @@ export default function App() {
     shellBillingStatus?.isOwner === false;
 
   useEffect(() => {
+    // A pending delete hides the org, which nulls billingProjectId; keep the
+    // project so a failed delete gives it back.
+    const activeProjectOrganizationId = activeProject?.organizationId;
+    const isActiveProjectDeletionPending =
+      !!activeProjectOrganizationId &&
+      deletingOrganizationIds.includes(activeProjectOrganizationId) &&
+      !optimisticallyDeletedOrganizationIds.includes(
+        activeProjectOrganizationId,
+      );
     const hasStaleCloudProjectSelection =
       isCloudSyncActive &&
       !isLoadingOrganizations &&
       !isLoadingRemoteProjects &&
       activeProjectId !== "none" &&
       (!!convexProjectId || !activeProject) &&
+      !isActiveProjectDeletionPending &&
       !billingProjectId;
 
     if (!hasStaleCloudProjectSelection) {
@@ -4106,9 +4123,11 @@ export default function App() {
     billingProjectId,
     clearConvexActiveProjectSelection,
     convexProjectId,
+    deletingOrganizationIds,
     isCloudSyncActive,
     isLoadingOrganizations,
     isLoadingRemoteProjects,
+    optimisticallyDeletedOrganizationIds,
   ]);
 
   // Fetch project servers to map server IDs to names
@@ -4703,11 +4722,7 @@ export default function App() {
     billingSignInStartedRef.current = false;
   }, []);
 
-  const handleCheckoutIntentNavigationStarted = useCallback(() => {
-    consumeCheckoutIntent();
-  }, [consumeCheckoutIntent]);
-
-  // `/billing?plan=&interval=` → auth (if needed) → org billing path → auto-checkout when intent is valid.
+  // `/billing?plan=&interval=` → auth (if needed) → org plans path → plan confirmation when intent is valid.
   useEffect(() => {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
@@ -4815,7 +4830,7 @@ export default function App() {
 
     if (
       routeOrganizationId === orgId &&
-      routeOrganizationSection === "billing"
+      routeOrganizationSection === "plans"
     ) {
       return;
     }
@@ -4823,7 +4838,7 @@ export default function App() {
     // The current route is the retry guard. If another redirect wins after
     // this navigation, the changed route reruns the effect and resumes the
     // handoff instead of leaving a lifetime ref latched until reload.
-    navigate(buildOrganizationPath(orgId, "billing"), { replace: true });
+    navigate(buildOrganizationPath(orgId, "plans"), { replace: true });
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
@@ -4949,9 +4964,13 @@ export default function App() {
       return;
     }
 
+    // A pending delete holds the route only while the org is still listed, so
+    // Back to an org that is already gone still redirects.
     if (
       routeOrganizationId &&
-      optimisticallyDeletedOrganizationIds.includes(routeOrganizationId)
+      ((deletingOrganizationIds.includes(routeOrganizationId) &&
+        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
+        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
     }
@@ -4974,6 +4993,7 @@ export default function App() {
     }
   }, [
     activeTab,
+    deletingOrganizationIds,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
@@ -4982,6 +5002,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
     setActiveOrganizationId,
+    sortedOrganizations,
   ]);
 
   const handleOrganizationDeleted = useCallback(
@@ -5298,7 +5319,7 @@ export default function App() {
         !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
-        routeOrganizationSection !== "billing" ||
+        routeOrganizationSection !== "plans" ||
         !pendingCheckoutIntent
       ) {
         return null;
@@ -5618,7 +5639,6 @@ export default function App() {
     evalChatHandoff,
     firstRunPlaygroundPrompt,
     suspendRouteAutoConnect: shouldShowFirstRunOverlay,
-    handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
     handleContinueEvalInChat,

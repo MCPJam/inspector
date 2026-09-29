@@ -168,3 +168,10 @@ describe("bounds", () => {
     expect(result).toMatchObject({ acknowledged: false, attempts: 0 });
   });
 });
+
+test("honors the server retry-after delay", async () => {
+  const sleep = vi.fn(async () => {});
+  const attempt = vi.fn().mockResolvedValueOnce({ status: "retryable", reason: "busy", retryAfterMs: 2500 }).mockResolvedValueOnce({ status: "acknowledged", value: true });
+  expect(await writeUntilAcknowledged(attempt, { sleep })).toMatchObject({ acknowledged: true });
+  expect(sleep).toHaveBeenCalledWith(2500);
+});

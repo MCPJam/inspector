@@ -447,6 +447,37 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 
 ---
 
+## `test` command
+
+Run a suite file locally — see [Local evals](/cli/local-evals). Results are never uploaded.
+
+```bash
+mcpjam test .mcpjam/evals/example.yaml
+mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `<file>` | required | One suite file (YAML or JSON). No globs, directories or stdin. |
+| `--case <id>` | every enabled case | Run only this exact case id. Repeatable. |
+| `--server <name=url>` | | Bind a target server to an HTTP(S) URL. Repeatable. Split on the first `=`; duplicate or unknown names are usage errors. |
+| `--mcp-config <path>` | | Explicit MCP JSON config, consulted before `./.mcp.json` and `./.mcpjam/mcp.json`. A missing or invalid file fails setup. |
+| `--host <template>` | none | Emulate one host template's handshake and settings. Never launches the real client. |
+| `--inference <mode>` | `auto` | `auto`, `byok` or `mcpjam`. |
+| `--allow-approximated <case>` | | Approve an `approximated` imported case for this run. Repeatable; requires `--approval-reason`. |
+| `--approval-reason <text>` | | 1–500 characters. |
+| `--concurrency <n>` | `1` | Iterations of one case in flight at once. |
+| `--iteration-timeout <ms>` | `120000` | Per-iteration execution timeout. |
+| `--max-steps <n>` | `10` | Model steps per prompt. |
+| `--reporter <format>` | | `json-summary`, `junit-xml` or `html` document on stdout. |
+| `--out <path>` | | Write the report atomically (the `--reporter` format, else JSON). |
+| `--api-key`, `--api-url`, `--api-header`, `--project` | | MCPJam-hosted inference only; resolved only when a case needs it. |
+| `--url`, `--command`, … | | The shared connection flags (see [`server` commands](#server-commands)), for a suite with exactly one target server. Without `--url` or `--command`, the flags that configure that one server (`--header`, `--env`, `--cwd`, `--args`, `--transport`, `--client-capabilities` and the credential flags) are refused rather than ignored: configure a server bound with `--server` or an MCP config file in its config entry. |
+
+Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted — see [Exit codes](/cli/local-evals#exit-codes).
+
+---
+
 ## `compat` command
 
 Check whether an MCP server's tools and widgets work on each AI host. Uses shared server connection flags (see [`server` commands](#server-commands)) plus:

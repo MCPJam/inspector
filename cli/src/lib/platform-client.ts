@@ -285,10 +285,6 @@ export function webOriginForApiBaseUrl(baseUrl: string): string {
 }
 
 /**
- * Map platform API failures onto CLI errors: the stable wire code becomes
- * the CLI error code (exit 1), with login guidance on auth failures.
- */
-/**
  * Whether a platform refusal is the CI-owned suite lock.
  *
  * Reads `details.reason`, which is the platform's stable code, rather than the
@@ -303,6 +299,22 @@ function ciOwnedSuiteReason(details: unknown): boolean {
   );
 }
 
+/**
+ * The failing request's id, carried in `details` (the JSON a script reads) so
+ * a bug report can quote the id the API logged that request under. Client-side
+ * failures (network, timeout) never reached the API and carry none.
+ */
+function withRequestId(
+  details: Record<string, unknown> | undefined,
+  requestId: string | undefined,
+): Record<string, unknown> | undefined {
+  return requestId ? { ...(details ?? {}), requestId } : details;
+}
+
+/**
+ * Map platform API failures onto CLI errors: the stable wire code becomes
+ * the CLI error code (exit 1), with login guidance on auth failures.
+ */
 export function toCliError(error: unknown): CliError {
   if (error instanceof CliError) {
     return error;
@@ -319,7 +331,7 @@ export function toCliError(error: unknown): CliError {
         `${error.message} If this run is syncing a suite file, make sure the file's ` +
           "`suite.id` still matches the suite it created — a renamed id no longer owns it.",
         1,
-        error.details,
+        withRequestId(error.details, error.requestId),
       );
     }
     // A usage-limit refusal keeps its exit code and wire code (it is not an
@@ -332,14 +344,19 @@ export function toCliError(error: unknown): CliError {
         error.code,
         `${error.message} ${platformRefusalHint(refusal)}`,
         1,
-        { ...(error.details ?? {}), refusal },
+        withRequestId({ ...(error.details ?? {}), refusal }, error.requestId),
       );
     }
     const message =
       error.code === "UNAUTHORIZED"
         ? `${error.message} Run \`mcpjam cloud login\` or pass a valid sk_ API key.`
         : error.message;
-    return cliError(error.code, message, 1, error.details);
+    return cliError(
+      error.code,
+      message,
+      1,
+      withRequestId(error.details, error.requestId),
+    );
   }
   return cliError(
     "INTERNAL_ERROR",

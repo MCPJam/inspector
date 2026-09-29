@@ -70,6 +70,11 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "subscriptions.ts",
         "tasks.ts",
         "telemetry.ts",
+        // Local, like `server.ts`: `mcpjam test` runs a suite file against
+        // servers on THIS machine and never uploads. Its `--api-key`,
+        // `--api-url` and `--project` exist only to reach MCPJam-hosted
+        // inference, resolved lazily when a case needs it.
+        "test.ts",
         "tools.ts",
         "xaa.ts",
       ].includes(file)
