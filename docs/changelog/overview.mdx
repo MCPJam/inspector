@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-29
+
+#### Changed
+
+- **Swarm audience descriptions now accept up to 10,000 characters** — the Describe step previously capped the audience description at 2,000 characters, which was not enough for users describing three or more personas. The cap is now 10,000 characters across the create flow, the API (`create_swarm`, `update_swarm`, `generate_personas`, `generate_goals`), and the CLI `--description` flag.
+
+  The Describe box shows a live `n / 10,000` counter (counted after trimming, the same way the server counts it). Past the cap the counter turns red, the **Continue** button is disabled, and a hint explains what to fix. There is no hard character limit on the field itself, so pasting a long document does not silently truncate it.
+
+- **Attach a `.txt` or `.md` file to the Describe box** — an **Attach .txt or .md** button and drag-and-drop onto the textarea let you bring in user-research notes from a file. The file is read in the browser and appended to whatever you have already typed, under the same character counter. Nothing is uploaded. Unsupported file types, empty files, and files over 1 MB show an inline error and leave the draft untouched.
+
 ### 2026-09-26
 
 #### Changed
