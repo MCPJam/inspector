@@ -3645,6 +3645,14 @@ describe("OrganizationsTab billing", () => {
 
     it("keeps another org gated when this delete fails", async () => {
       deleteOrganizationMock.mockRejectedValue(new Error("Delete refused"));
+      const { sortedOrganizations } = mockUseOrganizationQueries();
+      mockUseOrganizationQueries.mockReturnValue({
+        sortedOrganizations: [
+          ...sortedOrganizations,
+          { ...sortedOrganizations[0], _id: "org-2", name: "Org Two" },
+        ],
+        isLoading: false,
+      });
       act(() => beginOrganizationDeletion("org-2"));
 
       render(
@@ -3663,6 +3671,38 @@ describe("OrganizationsTab billing", () => {
       });
       expect(screen.getByText("Deleting organization...")).toBeInTheDocument();
       act(() => endOrganizationDeletion("org-2"));
+    });
+
+    it("shows not found once a finished delete drops the org from the list", async () => {
+      deleteOrganizationMock.mockResolvedValue(undefined);
+
+      const { rerender } = render(
+        <OrganizationsTab
+          organizationId="org-1"
+          onOrganizationDeleted={vi.fn()}
+        />,
+      );
+      await confirmDelete();
+      await waitFor(() => {
+        expect(deleteOrganizationMock).toHaveBeenCalledTimes(1);
+      });
+
+      // Browser Back to the deleted org, after Convex has dropped it.
+      mockUseOrganizationQueries.mockReturnValue({
+        sortedOrganizations: [],
+        isLoading: false,
+      });
+      rerender(
+        <OrganizationsTab
+          organizationId="org-1"
+          onOrganizationDeleted={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("Organization not found")).toBeInTheDocument();
+      expect(
+        screen.queryByText("Deleting organization..."),
+      ).not.toBeInTheDocument();
     });
   });
   /**

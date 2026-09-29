@@ -4964,9 +4964,12 @@ export default function App() {
       return;
     }
 
+    // A pending delete holds the route only while the org is still listed, so
+    // Back to an org that is already gone still redirects.
     if (
       routeOrganizationId &&
-      (deletingOrganizationIds.includes(routeOrganizationId) ||
+      ((deletingOrganizationIds.includes(routeOrganizationId) &&
+        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
         optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
@@ -4999,6 +5002,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
     setActiveOrganizationId,
+    sortedOrganizations,
   ]);
 
   const handleOrganizationDeleted = useCallback(

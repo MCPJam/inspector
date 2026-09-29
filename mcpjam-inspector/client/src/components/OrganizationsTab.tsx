@@ -567,7 +567,9 @@ export function OrganizationsTab({
     );
   }
 
-  if (organizationId && deletingOrganizationIds.includes(organizationId)) {
+  // Only while the org is still listed: once its delete lands it falls
+  // through to "not found" instead of waiting here forever.
+  if (organization && deletingOrganizationIds.includes(organization._id)) {
     return (
       <OrganizationStateShell>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

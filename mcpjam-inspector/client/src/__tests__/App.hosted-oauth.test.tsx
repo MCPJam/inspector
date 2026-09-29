@@ -3081,6 +3081,49 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/servers");
   });
 
+  it("redirects Back to an org whose delete already landed", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/organizations/org-gone");
+
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-owned",
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return existingConvexUser;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-owned",
+            name: "Owned Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    // A successful delete leaves its id in the store after Convex drops the org.
+    act(() => beginOrganizationDeletion("org-gone"));
+
+    try {
+      render(<App />);
+
+      await waitFor(() => {
+        expect(window.location.pathname).toBe("/servers");
+      });
+    } finally {
+      act(() => endOrganizationDeletion("org-gone"));
+    }
+  });
+
   it("clears deleted-org fallback state without switching away from a different active org", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
