@@ -14,7 +14,14 @@
  */
 import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { HOSTED_MODE } from "../../config.js";
+import { logger } from "../../utils/logger.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  hostedInternalErrorMessage,
+  responseRequestId,
+} from "../web/hosted-internal-error.js";
+import { redactForLog } from "./redact-log-message.js";
 import {
   API_VOCABULARY_HEADER,
   UNKNOWN_API_VOCABULARY_MESSAGE,
@@ -23,6 +30,61 @@ import {
 } from "./api-vocabulary.js";
 
 export const PROXY_TIMEOUT_MS = 15_000;
+
+/**
+ * Convex's own failure prose, relayed inside an upstream error envelope. An
+ * argument-validation rejection quotes the whole validator definition
+ * (`Validator: v.union(v.literal("mcp-apps"), …)`) and Convex prefixes its
+ * request id — text written for operators, not callers (MJ-020 retest #3:
+ * "the raw Convex validator is still returned by the read-proxy family").
+ * The verbatim-passthrough contract holds for envelopes the upstream AUTHORED;
+ * these markers only ever appear when it relayed a Convex exception instead.
+ */
+const CONVEX_INTERNAL_DETAIL =
+  /\bArgumentValidationError\b|\bValidator:\s|\[Request ID:/;
+
+/**
+ * Withhold relayed Convex exception text from a proxied error body (MJ-020).
+ *
+ * Hosted mode only, matching `backendFailureText`: a local inspector keeps the
+ * verbatim passthrough, because the person reading it runs the server. The
+ * status is preserved either way; only the leaking body is replaced, with the
+ * detail logged under the request id the caller is given.
+ */
+function sanitizeProxiedFailure(
+  c: Context,
+  convexPath: string,
+  status: number,
+  body: unknown,
+): unknown {
+  if (status < 400) return body;
+  // `body` came out of `response.json()`, so it is always serializable.
+  const serialized = JSON.stringify(body) ?? "";
+  if (!CONVEX_INTERNAL_DETAIL.test(serialized)) return body;
+  if (!HOSTED_MODE) return body;
+  const { requestId } = responseRequestId(c);
+  logger.warn("[v1.read-proxy] upstream error text withheld from response", {
+    convexPath,
+    status,
+    requestId,
+    detail: redactForLog(serialized),
+  });
+  const upstreamCode = (body as { code?: unknown } | null)?.code;
+  const code =
+    typeof upstreamCode === "string" && !CONVEX_INTERNAL_DETAIL.test(upstreamCode)
+      ? upstreamCode
+      : status >= 500
+        ? ErrorCode.INTERNAL_ERROR
+        : ErrorCode.VALIDATION_ERROR;
+  return {
+    code,
+    message:
+      status >= 500
+        ? hostedInternalErrorMessage(requestId)
+        : `One or more request parameters were invalid. If it keeps happening, contact support with reference ${requestId}.`,
+    details: { requestId },
+  };
+}
 
 /** Copy whitelisted query params from the incoming request onto the target. */
 export function forwardQueryParams(
@@ -142,7 +204,11 @@ export async function fetchConvexV1Read(
     const value = response.headers.get(name);
     if (value) headers[name] = value;
   }
-  return { status: response.status, body, headers };
+  return {
+    status: response.status,
+    body: sanitizeProxiedFailure(c, convexPath, response.status, body),
+    headers,
+  };
 }
 
 export async function proxyConvexV1Read(
