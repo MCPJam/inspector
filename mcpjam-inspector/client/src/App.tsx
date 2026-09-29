@@ -3130,8 +3130,9 @@ export default function App() {
     getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
   // A guest whose row vanished was most likely promoted in another tab; a
-  // reload picks up the shared AuthKit session. Once per page load to avoid
-  // loops, and never on a one-shot callback URL.
+  // reload picks up the shared AuthKit session. The sessionStorage flag allows
+  // one reload per tab until a user row is back, and never on a one-shot
+  // callback URL or the hosted chat route.
   const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
     try {
       return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
@@ -3156,7 +3157,7 @@ export default function App() {
         try {
           sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
         } catch {
-          // Nothing to re-arm without storage.
+          // Re-arm in memory anyway; setItem below falls back to the setup error.
         }
         setGuestReloadUsed(false);
       }
@@ -3164,14 +3165,14 @@ export default function App() {
     }
     try {
       sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
-      window.location.reload();
     } catch {
       // Without storage there is no loop guard: show the setup error instead.
       setGuestReloadUsed(true);
       return;
     }
+    window.location.reload();
     // A cancelled unload leaves the page alive: fall back to the setup error.
-    const fallback = window.setTimeout(() => setGuestReloadUsed(true), 5_000);
+    const fallback = window.setTimeout(() => setGuestReloadUsed(true), 10_000);
     return () => window.clearTimeout(fallback);
   }, [shouldReloadForMissingGuest, hasCurrentUser, guestReloadUsed]);
 

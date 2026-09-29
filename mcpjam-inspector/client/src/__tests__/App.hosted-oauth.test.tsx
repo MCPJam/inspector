@@ -697,9 +697,9 @@ describe("App hosted OAuth callback handling", () => {
   describe("guest whose user row disappears", () => {
     let currentUser: unknown = null;
     const reload = vi.fn();
-    const setup = (path = "/servers") => {
+    const setup = (path = "/servers", { keepScenario = false } = {}) => {
       clearHostedOAuthPendingState();
-      clearScenarioSession();
+      if (!keepScenario) clearScenarioSession();
       window.history.replaceState({}, "", path);
       reload.mockReset();
       vi.stubGlobal("location", { ...window.location, reload });
@@ -740,7 +740,7 @@ describe("App hosted OAuth callback handling", () => {
         render(<App />);
         expect(reload).toHaveBeenCalledTimes(1);
         act(() => {
-          vi.advanceTimersByTime(5_000);
+          vi.advanceTimersByTime(10_000);
         });
         expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
       } finally {
@@ -772,6 +772,35 @@ describe("App hosted OAuth callback handling", () => {
         expect(reload).not.toHaveBeenCalled();
       },
     );
+
+    it("shows the setup error when ensureUser never finished", () => {
+      setup();
+      mockDbUserState.isUserReady = false;
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    });
+
+    it("does not reload while AuthKit is still loading", () => {
+      setup();
+      mockWorkOsAuthState.isLoading = true;
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("does not reload a signed-in tab", () => {
+      setup();
+      mockWorkOsAuthState.user = { id: "user-1" };
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    });
+
+    it("does not reload the hosted chat route", () => {
+      setup("/servers", { keepScenario: true });
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+    });
   });
 
   it("shows loading before any hosted authorize CTA can render", async () => {
