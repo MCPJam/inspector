@@ -148,6 +148,19 @@ export function fundingReviewNotice(args: {
       )}; now it is ${now}. Nothing was launched. Review the split, then launch again.`;
 }
 
+/**
+ * The final split check could not be made after a split was on screen. Launching
+ * without it could move conversations onto the organization's credits, so
+ * nothing is launched.
+ */
+export function fundingUnverifiedNotice(shown: number): string {
+  return `We couldn't confirm the ${plural(
+    shown,
+    "sponsored conversation",
+    "sponsored conversations",
+  )} you were shown, so nothing was launched. Try launching again.`;
+}
+
 /** The 409 case: the backend refused a run whose split had moved. */
 export function fundingChangedNotice(args: {
   launched: number;
