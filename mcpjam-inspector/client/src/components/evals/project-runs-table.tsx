@@ -21,6 +21,7 @@ import {
   type RunPassRateChange,
 } from "./run-pass-rate-changes";
 import { useProjectRunHistory } from "./use-project-run-history";
+import { isActiveRun } from "./run-metrics";
 import {
   displayRunServerNames,
   isEphemeralCheckServerName,
@@ -829,8 +830,17 @@ export function ProjectRunsTable({
           // effect. What is missing is reported beside the chart instead.
           // Not gated on `history.loading` either: every auto-loaded page
           // restarts that read, which put the chart back to its skeleton
-          // until the last page landed.
-          complete={rows.some((row) => history.details.has(row._id))}
+          // until the last page landed. While a read is in flight only a
+          // settled detail counts; an active one is skipped by the chart and
+          // would read as "No completed runs" until the refresh lands.
+          complete={rows.some((row) => {
+            const detail = history.details.get(row._id);
+            return (
+              detail !== undefined &&
+              (!history.loading ||
+                (!isActiveRun(row) && !isActiveRun(detail.run)))
+            );
+          })}
           partial={
             status !== "Exhausted" ||
             rows.some((row) => !history.details.has(row._id))

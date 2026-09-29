@@ -714,6 +714,67 @@ describe("project run history metrics", () => {
     );
   });
 
+  it("keeps the Suite Health skeleton while a just-finished run is re-read", async () => {
+    const running = makeRow({
+      _id: "only",
+      status: "running",
+      result: "pending",
+    });
+    setRows([running]);
+    let releaseFinished!: (value: unknown) => void;
+    const finishedRun = new Promise((resolve) => {
+      releaseFinished = resolve;
+    });
+    let runReads = 0;
+    mocks.query.mockImplementation(async (name: string, args: any) => {
+      if (name === "testSuites:getTestSuiteRun")
+        return (runReads += 1) === 1 ? running : finishedRun;
+      return {
+        page: [
+          {
+            _id: `${args.runId}-iteration`,
+            suiteRunId: args.runId,
+            status: "completed",
+            result: "passed",
+          },
+        ],
+        isDone: true,
+        continueCursor: "",
+      };
+    });
+    const view = () => (
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+      />
+    );
+    const { rerender } = render(view());
+    expect(
+      await screen.findByText(/No completed runs with recorded results/),
+    ).toBeVisible();
+
+    const finished = {
+      ...running,
+      status: "completed" as const,
+      result: "passed" as const,
+    };
+    setRows([finished]);
+    rerender(view());
+    expect(
+      screen.getByRole("status", { name: "Loading run history" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/No completed runs with recorded results/),
+    ).toBeNull();
+
+    await act(async () => releaseFinished(finished));
+    expect(await screen.findByTestId("suite-health-average")).toHaveTextContent(
+      "100%",
+    );
+  });
+
   it("renders the grouped table shell on the first page load", () => {
     setRows([], "LoadingFirstPage");
     render(
