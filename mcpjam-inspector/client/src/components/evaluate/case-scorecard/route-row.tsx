@@ -367,10 +367,11 @@ function AddToolRow({
         </div>
       ) : null}
       {/* Only the pattern check: here a name absent from the list is expected,
-          it belongs to the server that has not loaded. The region stays
-          mounted so a screen reader announces the warning when it appears. */}
+          it belongs to the server that has not loaded. The region stays in the
+          accessibility tree while empty (sr-only, never display: none) so a
+          screen reader announces the warning when it appears. */}
       {showFreeText ? (
-        <p className="text-[11px] text-warning empty:hidden" role="status">
+        <p className="text-[11px] text-warning empty:sr-only" role="status">
           {toolNameWarning(name)}
         </p>
       ) : null}
