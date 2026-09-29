@@ -163,6 +163,7 @@ import {
   runEvalSuiteOperation,
   generateEvalCasesOperation,
   setEvalSuiteScheduleOperation,
+  updateEvalSuiteOperation,
   type PlatformApiClient,
 } from "@mcpjam/sdk/platform";
 
@@ -405,6 +406,26 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(engineOpts.approvalMode).toBe("auto-deny");
   });
 
+  it.each([true, false])(
+    "MJ-008 retest #3: a surfaceless caller's turn cannot execute a write, requireToolApproval=%s",
+    async (requireToolApproval) => {
+      // The retest drove the headless surface with `requireToolApproval` set
+      // both ways and saw a non-read-only operation execute identically. The
+      // field is not part of this route's contract, so it must change nothing
+      // — and the write tools must not reach the engine at all.
+      const res = await turnRequest(makeApp(), {
+        ...OK_BODY,
+        requireToolApproval,
+      });
+      expect(res.status).toBe(200);
+      const engineOpts = runUnifiedAssistantTurnMock.mock.calls.at(-1)![0];
+      const tools = engineOpts.tools as Record<string, unknown>;
+      expect(tools[createEvalSuiteOperation.name]).toBeUndefined();
+      expect(tools[updateEvalSuiteOperation.name]).toBeUndefined();
+      expect(tools[listProjectServersOperation.name]).toBeDefined();
+    },
+  );
+
   it("bills the turn to MCPJam on the pinned agent model", async () => {
     // Slack and Discord are the same agent as the in-app panel, so MCPJam pays
     // for them the same way. The claim only works for the pinned model, which
@@ -521,6 +542,18 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
   });
 
   it("surfaces already-created resources on a failed turn", async () => {
+    // A surfaced (Slack) turn: the create tool only exists where a person
+    // sees the turn (MJ-008), and this case is about what happens after it
+    // ran.
+    process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH = SLACK_TOKEN_HASH;
+    resetSlackRateLimitForTests();
+    resolveSlackActingUserMock.mockResolvedValue({
+      userId: "user_1",
+      workosUserId: "workos|alice",
+      organizationId: "org_1",
+      defaultProjectId: null,
+    });
+    createProposedActionMock.mockResolvedValue({ created: true });
     const executeSpy = vi
       .spyOn(createEvalSuiteOperation, "execute")
       .mockResolvedValue({
@@ -538,7 +571,16 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
       return okTurnResult({ turnTrace: undefined });
     });
     try {
-      const res = await turnRequest(makeApp(), OK_BODY);
+      const res = await makeApp().request("/api/v1/projects/p1/agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SLACK_TOKEN}`,
+          "x-mcpjam-slack-team-id": "T1",
+          "x-mcpjam-slack-user-id": "U1",
+        },
+        body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+      });
       expect(res.status).toBe(500);
       const body = (await res.json()) as {
         details?: { createdResources?: Array<{ id: string }> };
@@ -546,6 +588,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
       expect(body.details?.createdResources?.[0]?.id).toBe("ts_9");
     } finally {
       executeSpy.mockRestore();
+      delete process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
     }
   });
 
@@ -629,6 +672,31 @@ describe("agent tool surface", () => {
     expect(names).not.toContain("cancel_eval_run");
     // The in-app built-in gate must NOT widen to the create op.
     expect(isMcpjamToolId(createEvalSuiteOperation.name)).toBe(false);
+  });
+
+  it("omits every non-read-only operation unless the turn has a human surface (MJ-008)", () => {
+    const withoutSurface = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const withSurface = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+      hasHumanSurface: true,
+    });
+    // Decided by the operation's own catalog flag, a missing flag counting as
+    // a write — asserted across the WHOLE direct tier so a re-tiered or newly
+    // added write cannot land back on the headless surface unnoticed.
+    for (const operation of AGENT_API_OPERATIONS) {
+      expect(withSurface[operation.name], operation.name).toBeDefined();
+      if (operation.readOnly === true) {
+        expect(withoutSurface[operation.name], operation.name).toBeDefined();
+      } else {
+        expect(withoutSurface[operation.name], operation.name).toBeUndefined();
+      }
+    }
   });
 
   it("clamps every operation to the route's project", async () => {
@@ -820,6 +888,7 @@ describe("agent tool surface", () => {
       client: {} as PlatformApiClient,
       projectId: "p1",
       created,
+      hasHumanSurface: true,
     });
     const tool = tools[createEvalSuiteOperation.name]! as {
       execute: (input: unknown, ctx: unknown) => Promise<unknown>;
@@ -858,6 +927,7 @@ describe("agent tool surface", () => {
       client: {} as PlatformApiClient,
       projectId: "p1",
       created: [],
+      hasHumanSurface: true,
     });
     const tool = tools[createEvalSuiteOperation.name]! as {
       execute: (input: unknown, ctx: unknown) => Promise<unknown>;
@@ -1008,6 +1078,7 @@ describe("agent tool surface", () => {
       client: {} as PlatformApiClient,
       projectId: "p1",
       created,
+      hasHumanSurface: true,
     });
     const tool = tools[createEvalSuiteOperation.name]! as {
       execute: (input: unknown, ctx: unknown) => Promise<unknown>;
@@ -1125,6 +1196,20 @@ describe("gated proposal tools", () => {
     for (const operation of AGENT_API_GATED_OPERATIONS) {
       expect(withoutSurface[operation.name]).toBeUndefined();
     }
+  });
+
+  it("offers the direct-tier writes only where a person sees the turn (MJ-008)", async () => {
+    // The surface comes from the AUTH METHOD plus a conversation, never the
+    // body. With one, the documented tier holds: non-spending writes execute
+    // directly. Without one, they are omitted exactly like the gated tier.
+    const withSurface = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(withSurface[createEvalSuiteOperation.name]).toBeDefined();
+    expect(withSurface[updateEvalSuiteOperation.name]).toBeDefined();
+
+    const withoutSurface = await toolsForSlackTurn();
+    expect(withoutSurface[createEvalSuiteOperation.name]).toBeUndefined();
+    expect(withoutSurface[updateEvalSuiteOperation.name]).toBeUndefined();
+    expect(withoutSurface[listProjectServersOperation.name]).toBeDefined();
   });
 
   it("tells the model in the tool description that calling it does not run it", async () => {
@@ -1556,8 +1641,10 @@ describe("gated proposal tools", () => {
     executeSpy.mockRestore();
   });
 
-  it("does not offer a run when the caller has no surface at all", async () => {
-    const app = makeApp();
+  it("does not offer the create — or a run — when the caller has no surface at all", async () => {
+    // No conversation ⇒ no surface ⇒ the non-read-only create tool is not
+    // offered in the first place (MJ-008), so there is no created suite for
+    // the run-offer path to propose from either.
     const executeSpy = vi
       .spyOn(createEvalSuiteOperation, "execute")
       .mockResolvedValue({
@@ -1565,34 +1652,9 @@ describe("gated proposal tools", () => {
         suite: { id: "ts_1", name: "smoke" },
         servers: [],
       } as never);
-    let captured: Record<string, GatedTool> | undefined;
-    prepareChatV2Mock.mockImplementation(async (opts: any) => {
-      captured = opts.builtInTools;
-      return {
-        allTools: opts.builtInTools ?? {},
-        enhancedSystemPrompt: opts.systemPrompt,
-      };
-    });
-    runUnifiedAssistantTurnMock.mockImplementation(async () => {
-      await captured![createEvalSuiteOperation.name]!.execute(
-        VALID_CREATE_INPUT,
-        {}
-      );
-      return okTurnResult();
-    });
-
-    const res = await app.request("/api/v1/projects/p1/agent", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${SLACK_TOKEN}`,
-        "x-mcpjam-slack-team-id": "T1",
-        "x-mcpjam-slack-user-id": "U1",
-      },
-      body: JSON.stringify(OK_BODY),
-    });
-    const body = (await res.json()) as { proposedActions: unknown[] };
-    expect(body.proposedActions).toEqual([]);
+    const tools = await toolsForSlackTurn();
+    expect(tools[createEvalSuiteOperation.name]).toBeUndefined();
+    expect(executeSpy).not.toHaveBeenCalled();
     expect(createProposedActionMock).not.toHaveBeenCalled();
     executeSpy.mockRestore();
   });
