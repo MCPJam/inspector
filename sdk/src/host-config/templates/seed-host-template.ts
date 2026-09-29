@@ -1180,12 +1180,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { height: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
-        platform: "desktop",
+        platform: "web",
         deviceCapabilities: {
           touch: false,
           hover: true,
@@ -1206,7 +1206,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Same capture: ChatGPT never opened a `subscriptions/listen` stream,
         // so no server notification can reach it. `refetches` stays absent —
         // unprovable while nothing is ever delivered.
-        toolListChanged: { listens: false },
+        toolListChanged: { listens: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Stored in the established connection-profile envelope. The
@@ -1219,9 +1219,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // above — apps that branch on `hostInfo.name === "chatgpt"`
           // (e.g. OpenAI Apps SDK widgets) need this to take that path.
           uiInitialize: {
-            hostInfo: { name: "chatgpt", version: "0.0.1" },
+            hostInfo: { name: "chatgpt", version: "unknown" },
           },
           mcpAppsOverrides: {
+            // 2026-09-29 capture (ChatGPT web): insets sent (all 0), and
+            // only inline + fullscreen offered — no pip.
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
             cspFrameDomains: true,
             cspBaseUriDomains: true,
             // One directive, one answer: the declared wss endpoint connected
@@ -1301,13 +1305,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             permissions: {
               mode: "custom",
-              // Per ui/initialize hostCapabilities only `microphone` is
-              // advertised. Per the outer iframe `allow=` attribute,
-              // `clipboard-write` is ALSO emitted at runtime even though
-              // it's not in the advertised metadata. Include both so a
-              // widget testing in MCPJam-as-ChatGPT actually gets what
-              // the production iframe grants.
-              allow: { microphone: true, clipboardWrite: true },
+              // 2026-09-29: ChatGPT's OUTER frame may still carry
+              // `clipboard-write` (captured 2026-05-18), but the widget's own
+              // frame is `allow="fullscreen *; microphone *"` and its
+              // Permissions Policy blocks clipboard-write, so a widget cannot
+              // write. Microphone is delegated and reads `granted`.
+              allow: { microphone: true },
             },
             // The 2026-08-24 capture read and wrote all three browser
             // storage APIs from inside the widget sandbox — every one
@@ -1338,7 +1341,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // `clipboard-write *; local-network-access *; microphone *;
             // midi *`:
             //   - clipboard-write + microphone → spec features, modeled
-            //     in `permissions.allow` above.
+            //     in `permissions.allow` above (clipboard-write stops at the
+            //     outer frame; see there).
             //   - local-network-access + midi → ALREADY in MCPJam's
             //     renderer baseline (sandboxed-iframe.tsx's
             //     `outerAllowAttribute` memo), auto-granted to every

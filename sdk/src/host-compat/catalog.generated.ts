@@ -1367,7 +1367,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788307200000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1428,7 +1428,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostContext: {
         theme: "dark",
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: {
           height: 400,
           maxWidth: 768,
@@ -1524,7 +1524,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
-        platform: "desktop",
+        platform: "web",
         deviceCapabilities: {
           touch: false,
           hover: true,
@@ -1541,7 +1541,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
         toolListChanged: {
-          listens: false,
+          listens: true,
         },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
@@ -1554,7 +1554,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "chatgpt",
-              version: "0.0.1",
+              version: "unknown",
             },
           },
           compatRuntime: {
@@ -1583,7 +1583,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               mode: "custom",
               allow: {
                 microphone: true,
-                clipboardWrite: true,
               },
             },
             browserStorage: {
@@ -1598,7 +1597,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             ],
           },
           mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: true,
             hostContextChanged: true,
