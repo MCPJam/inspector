@@ -156,6 +156,49 @@ describe("securityHeadersMiddleware document policies", () => {
     },
   );
 
+  it.each([
+    [
+      "x-forwarded-proto: https",
+      "http://app.test/",
+      { "x-forwarded-proto": "https" },
+    ],
+    [
+      "a multi-hop x-forwarded-proto",
+      "http://app.test/",
+      { "x-forwarded-proto": "https, http" },
+    ],
+    ["an https:// request URL", "https://app.test/", {}],
+  ])("sends HSTS in hosted mode over %s", async (_label, url, headers) => {
+    mockConfig.hosted = true;
+    const res = await createApp().request(url, { headers });
+    expect(res.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=31536000",
+    );
+  });
+
+  it("omits HSTS in hosted mode when the client-facing hop is plain HTTP", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("https://app.test/", {
+      headers: { "x-forwarded-proto": "http" },
+    });
+    expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+  });
+
+  // A local run behind a TLS proxy is served on https://localhost, where HSTS
+  // would pin every localhost port to HTTPS. Outside hosted mode neither the
+  // URL nor a client-supplied x-forwarded-proto turns it on.
+  it.each([
+    [
+      "x-forwarded-proto: https",
+      "http://localhost/",
+      { "x-forwarded-proto": "https" },
+    ],
+    ["an https:// request URL", "https://localhost/", {}],
+  ])("omits HSTS outside hosted mode over %s", async (_label, url, headers) => {
+    const res = await createApp().request(url, { headers });
+    expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+  });
+
   it("denies unused hardware features and leaves SEP-1865 grants unlisted", async () => {
     const res = await createApp().request("/");
     const policy = res.headers.get("Permissions-Policy");
@@ -207,11 +250,7 @@ describe("securityHeadersMiddleware document policies", () => {
         },
       }),
     });
-    const ctx = {
-      header: vi.fn(),
-      req: { header: () => undefined, url: "http://localhost/" },
-      res: upstream,
-    } as unknown as Context;
+    const ctx = { header: vi.fn(), res: upstream } as unknown as Context;
 
     await securityHeadersMiddleware(ctx, async () => {});
 

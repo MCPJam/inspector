@@ -6,7 +6,7 @@
  * - X-Frame-Options: Prevents clickjacking
  * - X-XSS-Protection: Enables XSS filter
  * - Referrer-Policy: Controls referrer information
- * - Strict-Transport-Security: HTTPS requests only, see below
+ * - Strict-Transport-Security: hosted HTTPS requests only, see below
  *
  * HTML documents also get a Permissions-Policy denying hardware and sensor
  * features nothing here uses, and a Content-Security-Policy (MJ-016):
@@ -256,22 +256,18 @@ function setDocumentPolicies(
 const ONE_YEAR_SECONDS = 31_536_000;
 
 /**
- * Whether the request reached us over HTTPS, trusting `x-forwarded-proto` first
- * because the hosted deployment terminates TLS at the proxy. The header is a
- * comma-separated list when it crosses more than one hop; the client-facing
- * scheme is the first entry.
+ * Whether the client reached the hosted deployment over HTTPS. TLS terminates
+ * at the proxy, so `c.req.url` is `http://` internally and `x-forwarded-proto`
+ * carries the scheme; across more than one hop it is a comma-separated list
+ * whose first entry is the client-facing scheme. Hosted mode only: a local run
+ * has no proxy, so there the header is whatever the client chose to send.
  */
 function isHttpsRequest(c: Context): boolean {
   const forwardedProto = c.req.header("x-forwarded-proto");
   if (forwardedProto) {
     return forwardedProto.split(",")[0]?.trim().toLowerCase() === "https";
   }
-
-  try {
-    return new URL(c.req.url).protocol === "https:";
-  } catch {
-    return false;
-  }
+  return new URL(c.req.url).protocol === "https:";
 }
 
 /**
@@ -289,16 +285,16 @@ export async function securityHeadersMiddleware(
   c.header("X-XSS-Protection", "1; mode=block");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
 
-  // Only ever sent over HTTPS. The inspector also runs locally on
-  // http://localhost, and a browser that sees HSTS there pins *every* service
-  // on localhost to HTTPS — not just this port — which outlives the dev server
-  // and is not cleared by reloading.
+  // Hosted mode only. Browsers ignore STS received over plain HTTP (RFC 6797
+  // §8.1), so http://localhost is unaffected either way. https://localhost is
+  // not: a local run behind a TLS proxy would pin every service on localhost,
+  // on any port, to HTTPS for the whole max-age.
   //
   // `includeSubDomains` is left off on purpose: it would cover every
   // *.mcpjam.com host, including the tunnel and sandbox subdomains, and one of
   // those not serving HTTPS becomes unreachable for the whole max-age. Widening
   // this, and preload, belong with the edge configuration rather than here.
-  if (isHttpsRequest(c)) {
+  if (HOSTED_MODE && isHttpsRequest(c)) {
     c.header("Strict-Transport-Security", `max-age=${ONE_YEAR_SECONDS}`);
   }
 

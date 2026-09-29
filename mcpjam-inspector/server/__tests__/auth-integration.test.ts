@@ -233,7 +233,12 @@ describe("Auth Integration", () => {
       expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
     });
 
-    it("sets Strict-Transport-Security when the request arrived over HTTPS", async () => {
+    // This stack runs outside hosted mode, like a local or desktop run. A
+    // local run behind a TLS proxy is served on https://localhost, where HSTS
+    // would pin every localhost port to HTTPS, so a forwarded https scheme
+    // must not turn it on here. Hosted-mode HSTS is covered in
+    // security-headers.test.ts.
+    it("omits Strict-Transport-Security outside hosted mode even when x-forwarded-proto is https", async () => {
       const res = await app.request("/api/mcp/resources/list", {
         method: "POST",
         headers: {
@@ -244,41 +249,8 @@ describe("Auth Integration", () => {
         body: JSON.stringify({}),
       });
 
-      expect(res.headers.get("Strict-Transport-Security")).toBe(
-        "max-age=31536000",
-      );
-    });
-
-    // The load-bearing half of this pair: sending HSTS over plain
-    // http://localhost pins every localhost service to HTTPS in the
-    // developer's browser, well beyond this port and this process.
-    it("omits Strict-Transport-Security on a plain HTTP request", async () => {
-      const res = await app.request("/api/mcp/resources/list", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-MCP-Session-Auth": `Bearer ${validToken}`,
-        },
-        body: JSON.stringify({}),
-      });
-
+      expect(res.status).toBe(200);
       expect(res.headers.get("Strict-Transport-Security")).toBeNull();
-    });
-
-    it("reads the client-facing scheme from a multi-hop x-forwarded-proto", async () => {
-      const res = await app.request("/api/mcp/resources/list", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-MCP-Session-Auth": `Bearer ${validToken}`,
-          "x-forwarded-proto": "https, http",
-        },
-        body: JSON.stringify({}),
-      });
-
-      expect(res.headers.get("Strict-Transport-Security")).toBe(
-        "max-age=31536000",
-      );
     });
 
     it("sets X-Robots-Tag header", async () => {
