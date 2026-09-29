@@ -112,6 +112,20 @@ describe("addServerConfigSecrets", () => {
     );
   });
 
+  it("scrubs a short value only when its name says it is a credential", () => {
+    const scrubber = createSecretScrubber();
+    addServerConfigSecrets(scrubber, {
+      command: "node",
+      env: { DB_PASSWORD: "hunt", MODE: "fast", API_KEY: "ab" },
+      requestInit: { headers: { "x-api-key": "k3y9" } },
+    });
+    // Four characters under a credential name is a credential; "fast" is a
+    // setting; two characters would garble every text it appears in.
+    expect(scrubber.scrub("hunt k3y9 fast ab")).toBe(
+      "[REDACTED] [REDACTED] fast ab"
+    );
+  });
+
   it("scrubs the longest secret whole when one contains another", () => {
     const scrubber = createSecretScrubber();
     scrubber.add("secret_value");

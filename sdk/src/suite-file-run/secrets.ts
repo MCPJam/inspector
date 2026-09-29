@@ -35,11 +35,23 @@ import { redactTelemetryString } from "../telemetry-redaction.js";
 import type { SuiteFileRunErrorDetails } from "./errors.js";
 import type { SuiteFileIterationEvidence, SuiteFileRunIssue } from "./types.js";
 
-/** Shorter values are too likely to be ordinary words to scrub safely. */
-const MIN_SECRET_LENGTH = 6;
+/**
+ * An unclassified value is a secret only when it is at least this long AND
+ * shaped like a credential (`looksLikeCredential`): shorter values are too
+ * likely to be ordinary words to scrub safely.
+ */
+const MIN_UNCLASSIFIED_SECRET_LENGTH = 6;
+/**
+ * A value KNOWN to be a credential — a provider key, a bearer, a
+ * credential-named header or variable — is scrubbed from this length: a short
+ * password is still a password. Below it, replacing every occurrence would
+ * garble unrelated text and protect nothing a guess would not find.
+ */
+const MIN_CREDENTIAL_LENGTH = 4;
 const REDACTED = "[REDACTED]";
 
 export type SecretScrubber = {
+  /** Register a value known to be a credential (see `MIN_CREDENTIAL_LENGTH`). */
   add: (value: unknown) => void;
   /** Pattern redaction, then every known secret value replaced. */
   scrub: (text: string) => string;
@@ -53,7 +65,7 @@ export function createSecretScrubber(): SecretScrubber {
   // Sorted once per new secret, not once per string scrubbed.
   let ordered: string[] | undefined;
   const remember = (value: string) => {
-    if (value.length < MIN_SECRET_LENGTH || values.has(value)) return;
+    if (value.length < MIN_CREDENTIAL_LENGTH || values.has(value)) return;
     values.add(value);
     ordered = undefined;
   };
@@ -157,7 +169,8 @@ const CREDENTIAL_PREFIX =
  * URL — the credentials a URL carries are taken from its parts.
  */
 export function looksLikeCredential(value: string): boolean {
-  if (value.length < MIN_SECRET_LENGTH || /\s/.test(value)) return false;
+  if (value.length < MIN_UNCLASSIFIED_SECRET_LENGTH || /\s/.test(value))
+    return false;
   if (value.includes("://")) return false;
   if (CREDENTIAL_PREFIX.test(value)) return true;
   return value.length >= 20 && /[A-Za-z]/.test(value) && /\d/.test(value);
@@ -197,6 +210,18 @@ function addNamedValue(
   addUrlSecrets(scrubber, trimmed);
 }
 
+/** Collect the credentials among request headers, by name or shape. */
+export function addHeaderSecrets(
+  scrubber: SecretScrubber,
+  headers: unknown
+): void {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return;
+  for (const [name, value] of Object.entries(
+    headers as Record<string, unknown>
+  ))
+    addNamedValue(scrubber, name, value);
+}
+
 /** Collect the secret values an MCP server config carries. */
 export function addServerConfigSecrets(
   scrubber: SecretScrubber,
@@ -207,13 +232,7 @@ export function addServerConfigSecrets(
   for (const key of ["accessToken", "refreshToken", "clientSecret"])
     scrubber.add(record[key]);
   const requestInit = record.requestInit as { headers?: unknown } | undefined;
-  const headers = requestInit?.headers;
-  if (headers && typeof headers === "object" && !Array.isArray(headers)) {
-    for (const [name, value] of Object.entries(
-      headers as Record<string, unknown>
-    ))
-      addNamedValue(scrubber, name, value);
-  }
+  addHeaderSecrets(scrubber, requestInit?.headers);
   const env = record.env;
   if (env && typeof env === "object" && !Array.isArray(env)) {
     for (const [name, value] of Object.entries(env as Record<string, unknown>))

@@ -322,6 +322,36 @@ describe("MCPJam-hosted inference", () => {
     }
   });
 
+  it("never lets a platform header's credential through a refusal that quotes it", async () => {
+    stubPlatform({
+      refuseMint: {
+        status: 403,
+        body: {
+          code: "FORBIDDEN",
+          message: "header value hdr_auth_value9 was rejected",
+        },
+      },
+    });
+    const error = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "mcpjam",
+        resolveMcpjam: async () => ({
+          baseUrl: PLATFORM,
+          projectId: "proj_123",
+          getAuth: async () => "tok_1",
+          headers: {
+            "x-mcpjam-client": "cli-test",
+            "x-mcpjam-auth": "hdr_auth_value9",
+          },
+        }),
+      },
+    }).catch((caught: SuiteFileRunError) => caught);
+    expect(error).toBeInstanceOf(SuiteFileRunError);
+    const text = `${error.message} ${JSON.stringify(error.details)}`;
+    expect(text).not.toContain("hdr_auth_value9");
+  });
+
   it("bounds the platform resolve by the setup deadline, and aborts the work in flight", async () => {
     stubPlatform();
     let seen: AbortSignal | undefined;

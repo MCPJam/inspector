@@ -80,6 +80,7 @@ import {
 } from "./report.js";
 import { setupStep } from "./deadline.js";
 import {
+  addHeaderSecrets,
   addServerConfigSecrets,
   createSecretScrubber,
   scrubErrorDetails,
@@ -303,6 +304,9 @@ async function executeSuiteFile(
       throw error;
     }
     if (credentials.mcpjam) {
+      // The platform's extra headers go to its API only, but a refusal could
+      // quote one: the credentials among them are known secrets too.
+      addHeaderSecrets(secrets, credentials.mcpjam.headers);
       // Every bearer the platform callback hands out is a known secret from
       // then on; the scope and every model share this one wrapped callback.
       const readAuth = credentials.mcpjam.getAuth;
