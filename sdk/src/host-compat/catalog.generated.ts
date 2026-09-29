@@ -421,7 +421,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788307200000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
