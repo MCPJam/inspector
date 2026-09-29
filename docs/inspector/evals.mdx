@@ -229,6 +229,17 @@ System tools appear only in assertion pickers. They are not available in pinned 
 
 If an MCP tool and a system tool share the same name, the MCP tool takes precedence and the system tool is not added to the list.
 
+### Tool name matching
+
+Tool names in assertions are compared with **strict equality** — there are no wildcards or patterns. A name like `search*` is treated as the literal string `search*`, which no server advertises, so the assertion fails as "never called" on every trial.
+
+The case editor warns you when a saved tool name looks problematic:
+
+- **Pattern characters** (`*`, `?`, `[`, `]`) — the editor shows "Tool names match exactly. Wildcards such as \* are not supported."
+- **Name not in the loaded list** — the editor shows "No loaded tool is named '…'." This is advisory: the name may belong to a server whose tool list has not finished loading. The warning does not block saving.
+
+A saved name that is not in the currently loaded tool list still appears as its own option in the tool picker rather than showing as an empty "Pick a tool…" row, so a broken assertion is never silently presented as an unset one.
+
 ### Argument matching
 
 Tool-call argument comparison runs in one of three modes, configured at the suite:
