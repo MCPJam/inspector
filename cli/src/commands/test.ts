@@ -190,12 +190,40 @@ type AiSdkWarningLog = {
 };
 
 /**
+ * An AI SDK warning about the SDK's own internals rather than the user's
+ * suite or credentials, so printing it only adds noise:
+ *
+ * - the provider-adapter `specificationVersion` compatibility notice;
+ * - "The model "…" is unknown. The max output tokens have been limited to …".
+ *   The AI SDK's built-in model table does not know gateway-style ids such as
+ *   `anthropic/claude-haiku-4.5` (the MCPJam rail's), so it fires on every
+ *   hosted-inference run, and no flag or file setting in `mcpjam test` can
+ *   change it.
+ */
+export function isUnactionableAiSdkWarning(
+  warning: AiSdkWarningLog["warnings"][number]
+): boolean {
+  if (
+    warning.type === "compatibility" &&
+    warning.feature === "specificationVersion"
+  ) {
+    return true;
+  }
+  return (
+    typeof warning.message === "string" &&
+    /is unknown\. The max output tokens have been limited to/.test(
+      warning.message
+    )
+  );
+}
+
+/**
  * Route the AI SDK's warning log to stderr for the duration of a run.
  *
  * Left alone it prints with `console.info`/`console.warn`, and the first
  * banner lands on STDOUT — corrupting the one report document a pipeline
- * reads there. Each distinct warning is printed once; the provider-adapter
- * compatibility notice is an implementation detail nobody can act on.
+ * reads there. Each distinct warning is printed once; the ones nobody can act
+ * on are dropped (see {@link isUnactionableAiSdkWarning}).
  */
 function routeAiSdkWarnings(quiet: boolean): () => void {
   const holder = globalThis as { AI_SDK_LOG_WARNINGS?: unknown };
@@ -204,11 +232,7 @@ function routeAiSdkWarnings(quiet: boolean): () => void {
   holder.AI_SDK_LOG_WARNINGS = (log: AiSdkWarningLog) => {
     if (quiet) return;
     for (const warning of log.warnings ?? []) {
-      if (
-        warning.type === "compatibility" &&
-        warning.feature === "specificationVersion"
-      )
-        continue;
+      if (isUnactionableAiSdkWarning(warning)) continue;
       const text =
         warning.message ??
         (warning.feature
