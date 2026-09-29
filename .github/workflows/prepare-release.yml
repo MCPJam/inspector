@@ -109,7 +109,7 @@ jobs:
         working-directory: mcpjam-inspector
         run: |
           if jq -e '.releases[] | select(.name == "@mcpjam/inspector" and .type != "none")' "$RUNNER_TEMP/status.json" >/dev/null; then
-            node scripts/check-local-harness-release.mjs --version "$(jq -r .version package.json)"
+            node scripts/check-local-harness-release.mjs --assets --version "$(jq -r .version package.json)"
           fi
 
       - name: Open or refresh the version PR

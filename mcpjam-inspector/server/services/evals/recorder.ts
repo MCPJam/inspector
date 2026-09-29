@@ -1088,10 +1088,9 @@ export const startSuiteRunWithRecorder = async ({
      * "resolve the platform defaults" — the same code path, differing only in
      * which rung each field came from.
      */
-    // Read from the response's `configSnapshot`, where every other frozen
-    // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
-    // the top-level spelling as a fallback so the two repos can deploy in
-    // either order.
+    // The backend returns the frozen venue for both fresh and deduped runs.
+    // Never infer it from the new request on an idempotent retry.
+    harnessRuntimeVenue: (response?.configSnapshot?.executionVenue === "local" ? "local" : "hosted") as "local" | "hosted",
     executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
       ?.executionBudgets ?? response?.executionBudgets) as
       | ResolvedExecutionBudgets
@@ -1114,6 +1113,9 @@ export const startSuiteRunWithRecorder = async ({
     /** The run's status as the platform holds it — `completed` on a replay of
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
+    environmentRef: (response?.configSnapshot as any)?.environmentRef as
+      | { environmentId: string }
+      | undefined,
     hostConfig: response?.hostConfig as
       | Record<string, unknown>
       | null

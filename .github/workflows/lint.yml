@@ -74,6 +74,12 @@ jobs:
       - name: Lint DESIGN.md against the pinned spec
         run: npm run design:lint
 
+      - name: Verify local runtime input fingerprint
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
+
+      - name: Verify pinned runtime remains publishable
+        run: node mcpjam-inspector/scripts/check-local-harness-release.mjs --assets
+
       - name: Typecheck releasable packages
         run: npm run typecheck
 

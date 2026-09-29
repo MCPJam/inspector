@@ -143,7 +143,20 @@ const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE = `      ...permissionOptions,
       mcpServers,
       cwd: workdir,`;
 const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
-      ...(gatewayModelOverrideSettingsFor(start.model) ? { settings: { ...(permissionOptions.settings ?? {}), ...gatewayModelOverrideSettingsFor(start.model) } } : {}),
+      settings: {
+        ...(permissionOptions.settings ?? {}),
+        ...(gatewayModelOverrideSettingsFor(start.model) ?? {}),
+        ...(process.env.MCPJAM_LOCAL_CONTROL_ROOT ? { permissions: {
+          ...(permissionOptions.settings?.permissions ?? {}),
+          deny: [...(permissionOptions.settings?.permissions?.deny ?? []),
+            ...[process.env.MCPJAM_LOCAL_CONTROL_ROOT,
+              ...JSON.parse(process.env.MCPJAM_LOCAL_DENIED_ROOTS || "[]")].flatMap(root => {
+                const normalized = root.replaceAll(String.fromCharCode(92), "/").replace(/^([A-Za-z]):/, (_, drive) => "/" + drive.toLowerCase());
+                const absolute = "/" + normalized;
+                return ["Read(" + absolute + "/**)", "Edit(" + absolute + "/**)"];
+              })]
+        } } : {}),
+      },
       mcpServers,
       cwd: workdir,`;
 

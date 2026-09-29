@@ -1,3 +1,4 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -87,6 +88,10 @@ const TraceRepairStopSchema = z.object({
   convexAuthToken: z.string(),
 });
 
+async function requestRuntimeVenue(request: { convexAuthToken?: string; projectId?: string }): Promise<"local" | "hosted"> {
+  return request.projectId && await shouldUseLocalHarness("claude-code", request.convexAuthToken, request.projectId) ? "local" : "hosted";
+}
+
 evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, true));
 
 evals.post("/run", async (c) => {
@@ -105,7 +110,6 @@ evals.post("/run", async (c) => {
 
     const prepared = await prepareEvalRun(c.mcpClientManager, {
       ...validationResult.data,
-      runtimeVenue: "local",
     });
 
     detachPreparedEvalRun({
@@ -290,7 +294,7 @@ evals.post("/run-test-case", async (c) => {
     return c.json(
       await runEvalTestCaseWithManager(c.mcpClientManager, {
         ...validationResult.data,
-        runtimeVenue: "local",
+        runtimeVenue: await requestRuntimeVenue(validationResult.data),
       }),
     );
   } catch (error) {
@@ -319,7 +323,7 @@ evals.post("/stream-test-case", async (c) => {
 
     const stream = await streamEvalTestCaseWithManager(
       c.mcpClientManager,
-      { ...validationResult.data, runtimeVenue: "local" },
+      { ...validationResult.data, runtimeVenue: await requestRuntimeVenue(validationResult.data) },
       // Client disconnect aborts the run (including any awaited task).
       { requestSignal: c.req.raw.signal },
     );
@@ -399,7 +403,7 @@ evals.post("/generate-tests", async (c) => {
     return c.json(
       await generateEvalTestsWithManager(c.mcpClientManager, {
         ...validationResult.data,
-        runtimeVenue: "local",
+        runtimeVenue: await requestRuntimeVenue(validationResult.data),
       }),
     );
   } catch (error) {
@@ -428,7 +432,7 @@ evals.post("/generate-negative-tests", async (c) => {
     return c.json(
       await generateNegativeEvalTestsWithManager(c.mcpClientManager, {
         ...validationResult.data,
-        runtimeVenue: "local",
+        runtimeVenue: await requestRuntimeVenue(validationResult.data),
       }),
     );
   } catch (error) {

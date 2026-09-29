@@ -209,9 +209,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     permissionProfileMapping: {
       "read-only": "allow-reads",
       "workspace-edits": "allow-edits",
-      // `unrestricted` is deliberately absent: Claude Code CAN surface
-      // approvals, so there is no reason to offer a profile that switches them
-      // off on a host.
+      unrestricted: "allow-all",
     },
     // Native eligibility is per platform. macOS and Linux have POSIX process
     // groups, which is what whole-tree cleanup is built on there.
@@ -296,6 +294,7 @@ export type LocalCompatibilityResult =
     };
 
 export interface LocalCompatibilityQuery {
+  scope?: "attended" | "unattended";
   harnessId: string;
   platform: LocalPlatform | null;
   targetKind: "local-native" | "local-isolated";
@@ -331,6 +330,7 @@ export function localPermissionModeFor(
   harnessId: string,
   permissionProfile: LocalPermissionProfile,
   targetKind: "local-native" | "local-isolated",
+  scope: "attended" | "unattended" = "attended",
 ): "allow-reads" | "allow-edits" | "allow-all" | null {
   // OWN properties only, for the same reason `resolveLocalCompatibility` does
   // it below: `toString`, `constructor` or `__proto__` resolve to an inherited
@@ -349,7 +349,7 @@ export function localPermissionModeFor(
   // Mirrors the refusal in `resolveLocalCompatibility`: `unrestricted` never
   // runs natively whatever a manifest says, so it can never resolve to a mode
   // here either.
-  if (permissionProfile === "unrestricted" && targetKind === "local-native") {
+  if (permissionProfile === "unrestricted" && targetKind === "local-native" && scope !== "unattended") {
     return null;
   }
   return manifest.permissionProfileMapping[permissionProfile] ?? null;
@@ -481,10 +481,10 @@ export function resolveLocalCompatibility(
     };
   }
 
-  // `unrestricted` never runs without an outer boundary, whatever a manifest
-  // says. Checked here as well as in the mapping so a future manifest edit
-  // cannot re-open it by accident.
+  // Attended native turns cannot use unrestricted permissions. Authorized
+  // evals and swarms deliberately run as the OS user without containment.
   if (
+    query.scope !== "unattended" &&
     query.permissionProfile === "unrestricted" &&
     query.targetKind === "local-native"
   ) {
