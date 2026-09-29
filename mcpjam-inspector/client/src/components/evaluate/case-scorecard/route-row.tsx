@@ -23,6 +23,7 @@ import {
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
 import { ToolCalledWithFields } from "@/components/evals/checks-section";
+import { toolNameWarning } from "@/components/evals/tool-name-warning";
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import { UNSET_TOOLS_BLOCK_REASON } from "../simple-case/simple-case-model";
 import type {
@@ -291,6 +292,7 @@ function AddToolRow({
   onAdd: (toolName: string) => void;
 }) {
   const [name, setName] = useState("");
+  const showFreeText = availableTools.length === 0 || Boolean(toolsStatus);
   return (
     <div className="space-y-2">
       {toolsStatus === "loading" ? (
@@ -339,7 +341,7 @@ function AddToolRow({
         />
       ) : null}
       {/* A server that owes tools can only be reached by name until it loads. */}
-      {availableTools.length === 0 || toolsStatus ? (
+      {showFreeText ? (
         <div className="flex items-center gap-2">
           <Input
             value={name}
@@ -363,6 +365,15 @@ function AddToolRow({
             Add tool
           </Button>
         </div>
+      ) : null}
+      {/* Only the pattern check: here a name absent from the list is expected,
+          it belongs to the server that has not loaded. The region stays in the
+          accessibility tree while empty (sr-only, never display: none) so a
+          screen reader announces the warning when it appears. */}
+      {showFreeText ? (
+        <p className="text-[11px] text-warning empty:sr-only" role="status">
+          {toolNameWarning(name)}
+        </p>
       ) : null}
     </div>
   );
