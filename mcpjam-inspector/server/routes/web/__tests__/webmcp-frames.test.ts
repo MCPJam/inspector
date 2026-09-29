@@ -45,6 +45,9 @@ vi.mock("../../../config.js", () => ({
     return configState.enabled;
   },
   HOSTED_MODE: false,
+  // Origin validation keeps the server's own UI origin outside hosted mode,
+  // which reads the port even when ALLOWED_ORIGINS is set (as it is here).
+  SERVER_PORT: 6274,
 }));
 
 import {
