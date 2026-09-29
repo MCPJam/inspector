@@ -13,12 +13,15 @@ vi.mock("../../config.js", async (importOriginal) => {
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import {
   RELAY_BODY_READ_TIMEOUT_MS,
+  RELAY_INGEST_LIMIT_PER_MIN,
   RELAY_MAX_CLIENT_BUFFERED_BYTES,
 } from "../relay.js";
 
 const ORIGINAL_FETCH = global.fetch;
 const EDGE_SECRET = "edge-secret-for-tests";
-const LIMIT = 600;
+const INGEST_LIMIT = RELAY_INGEST_LIMIT_PER_MIN;
+const UNATTESTED_INGEST_LIMIT = 4 * RELAY_INGEST_LIMIT_PER_MIN;
+const OVERALL_LIMIT = 600;
 
 // A capture body for this deployment's project, so each request is one the
 // relay forwards and only the limiter decides.
@@ -70,11 +73,11 @@ describe("posthog relay rate limit (hosted mode)", () => {
     global.fetch = ORIGINAL_FETCH;
   });
 
-  it("keys on the attested client IP — rotating forwarding headers cannot reset the bucket", async () => {
+  it("caps ingestion per attested client IP — rotating forwarding headers cannot reset the bucket", async () => {
     const app = await createTestApp();
 
     let lastRes: Response | undefined;
-    for (let i = 0; i <= LIMIT; i++) {
+    for (let i = 0; i <= INGEST_LIMIT; i++) {
       lastRes = await capture(
         app,
         attested("203.0.113.7", {
@@ -85,15 +88,16 @@ describe("posthog relay rate limit (hosted mode)", () => {
     }
 
     expect(lastRes?.status).toBe(429);
+    expect(lastRes?.headers.get("retry-after")).toMatch(/^\d+$/);
     expect(await lastRes!.json()).toEqual({ error: "rate_limited" });
-    expect(vi.mocked(fetch).mock.calls.length).toBe(LIMIT);
+    expect(vi.mocked(fetch).mock.calls.length).toBe(INGEST_LIMIT);
 
     // A different attested IP is a different bucket and still passes.
     const other = await capture(app, attested("203.0.113.8"));
     expect(other.status).toBe(200);
   });
 
-  it("puts every request without an attested IP in one shared bucket", async () => {
+  it("puts ingestion without an attested IP in one shared bucket", async () => {
     const app = await createTestApp();
 
     // Each request claims a different address, through headers a client can
@@ -112,16 +116,33 @@ describe("posthog relay rate limit (hosted mode)", () => {
       }
     };
 
-    for (let i = 0; i < LIMIT; i++) {
+    for (let i = 0; i < UNATTESTED_INGEST_LIMIT; i++) {
       expect((await capture(app, unattested(i))).status).toBe(200);
     }
-    const refused = await capture(app, unattested(LIMIT));
+    const refused = await capture(app, unattested(UNATTESTED_INGEST_LIMIT));
     expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
     expect(await refused.json()).toEqual({ error: "rate_limited" });
 
     // An attested caller keeps its own bucket.
     const ok = await capture(app, attested("203.0.113.9"));
     expect(ok.status).toBe(200);
+  });
+
+  it("keeps the coarser overall budget on non-ingest paths", async () => {
+    const app = await createTestApp();
+    const asset = () =>
+      app.request("http://localhost:6274/relay/static/recorder.js", {
+        headers: attested("203.0.113.30"),
+      });
+
+    for (let i = 0; i < OVERALL_LIMIT; i++) {
+      expect((await asset()).status).toBe(200);
+    }
+    const refused = await asset();
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(await refused.json()).toEqual({ error: "rate_limited" });
   });
 
   it("caps the bytes one client has buffered at once", async () => {

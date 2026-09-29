@@ -5,6 +5,7 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
 import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
+import { createFixedWindowMap } from "../middleware/passthrough-rate-limit.js";
 import { getAttestedClientIp, getClientIp } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 
@@ -25,8 +26,9 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * in middleware/session-auth.ts). The upstream hosts are hardcoded constants,
  * never derived from the request, so there is no SSRF surface. Abuse is
  * bounded by path-scoped body limits, a body read deadline, buffering
- * budgets, bounded payload reads, a hosted-only per-IP rate limit, and the
- * 30s upstream timeout.
+ * budgets, bounded payload reads, hosted-only per-IP rate limits (a coarse
+ * one on everything, a tighter one on the ingest subpaths), and the 30s
+ * upstream timeout.
  * Requests are forwarded for our own PostHog project only (see "Project
  * pinning" below).
  */
@@ -157,51 +159,63 @@ export function flushRelayStats(): void {
 setInterval(flushRelayStats, STATS_FLUSH_INTERVAL_MS).unref();
 
 // ---------------------------------------------------------------------------
-// Rate limit (hosted only). Local installs are single-user; hosted is a
+// Rate limits (hosted only). Local installs are single-user; hosted is a
 // public unauthenticated endpoint. Keyed on getAttestedClientIp: the address
 // a trusted edge vouched for. Requests without one share a single bucket, so
 // forwarding headers a client writes itself never select a bucket (the same
-// keying as GET /api/web/flags). 600/min is ~10x the busiest real posthog-js
-// client.
+// keying as GET /api/web/flags). Fixed windows from the MJ-012 limiter, two
+// budgets:
+//
+// - RATE_LIMIT_PER_MIN covers everything the relay serves; 600/min is ~10x
+//   the busiest real posthog-js client, mostly asset and config reads.
+// - INGEST_LIMIT_PER_MIN covers only the ingest subpaths — the requests that
+//   write into the PostHog project (MJ-015 retest #3: 260 event posts from
+//   one address drew no 429). posthog-js batches captures and replay slices
+//   into a flush every few seconds, so a real browser stays well under one
+//   ingest request per second; 60/min refuses a burst like the retest's
+//   inside its first minute. The pooled bucket for unattested requests gets
+//   the multiple the other pooled windows use (passthrough-rate-limit.ts)
+//   because it covers many callers at once.
 // ---------------------------------------------------------------------------
 
 const RATE_LIMIT_PER_MIN = 600;
+export const RELAY_INGEST_LIMIT_PER_MIN = 60;
 const RATE_WINDOW_MS = 60_000;
 const UNATTESTED_CLIENT_KEY = "unattested";
 
-const ipWindows = new Map<string, { count: number; windowStart: number }>();
+const relayWindows = createFixedWindowMap(RATE_LIMIT_PER_MIN, RATE_WINDOW_MS);
+const ingestWindows = createFixedWindowMap(
+  RELAY_INGEST_LIMIT_PER_MIN,
+  RATE_WINDOW_MS,
+);
+const unattestedIngestWindows = createFixedWindowMap(
+  4 * RELAY_INGEST_LIMIT_PER_MIN,
+  RATE_WINDOW_MS,
+);
 
-setInterval(
-  () => {
-    const now = Date.now();
-    for (const [ip, entry] of ipWindows) {
-      if (now - entry.windowStart > RATE_WINDOW_MS * 2) {
-        ipWindows.delete(ip);
-      }
-    }
-  },
-  5 * 60_000,
-).unref();
+// The subpaths that write into the PostHog project: event capture (POST and
+// the GET ?data= form), session replay, logs and metrics.
+function isIngestSubpath(subpath: string): boolean {
+  return /^\/(?:e|i\/v0\/e|s|i\/v1\/(?:logs|metrics))\/?$/.test(subpath);
+}
 
 function relayClientKey(c: Context): string {
   return getAttestedClientIp(c) ?? UNATTESTED_CLIENT_KEY;
 }
 
-function relayRateLimit(c: Context): Response | null {
+function relayRateLimit(c: Context, subpath: string): Response | null {
   if (!HOSTED_MODE) return null;
-  const ip = relayClientKey(c);
-  const now = Date.now();
-  const entry = ipWindows.get(ip);
-  if (entry && now - entry.windowStart < RATE_WINDOW_MS) {
-    if (entry.count >= RATE_LIMIT_PER_MIN) {
-      stats.rateLimitRejects++;
-      return c.json({ error: "rate_limited" }, 429);
-    }
-    entry.count++;
-  } else {
-    ipWindows.set(ip, { count: 1, windowStart: now });
+  const attestedIp = getAttestedClientIp(c);
+  let refusedMs = relayWindows.charge(attestedIp ?? UNATTESTED_CLIENT_KEY);
+  if (refusedMs === null && isIngestSubpath(subpath)) {
+    refusedMs = attestedIp
+      ? ingestWindows.charge(attestedIp)
+      : unattestedIngestWindows.charge(UNATTESTED_CLIENT_KEY);
   }
-  return null;
+  if (refusedMs === null) return null;
+  stats.rateLimitRejects++;
+  c.header("Retry-After", String(Math.max(1, Math.ceil(refusedMs / 1000))));
+  return c.json({ error: "rate_limited" }, 429);
 }
 
 // ---------------------------------------------------------------------------
@@ -1123,7 +1137,7 @@ const relayRoutes = new Hono();
 // Anonymous by design, like PostHog capture. Bounded and validated separately
 // from the opaque PostHog proxy; never forwards this payload upstream twice.
 relayRoutes.post("/launch-engagement", makeBodyLimit(2048), async (c) => {
-  const limited = relayRateLimit(c);
+  const limited = relayRateLimit(c, "/launch-engagement");
   if (limited) return limited;
   const parsed = launchEngagementSchema.safeParse(
     await c.req.json().catch(() => null),
@@ -1134,7 +1148,9 @@ relayRoutes.post("/launch-engagement", makeBodyLimit(2048), async (c) => {
 });
 
 relayRoutes.all("*", async (c) => {
-  const limited = relayRateLimit(c);
+  const url = new URL(c.req.url);
+  const subpath = stripRelayPrefix(url.pathname);
+  const limited = relayRateLimit(c, subpath);
   if (limited) {
     return limited;
   }
@@ -1142,8 +1158,6 @@ relayRoutes.all("*", async (c) => {
   stats.requests++;
   const startedAt = Date.now();
 
-  const url = new URL(c.req.url);
-  const subpath = stripRelayPrefix(url.pathname);
   if (!supportsRelayRequest(subpath, c.req.method)) {
     recordResponseStatus(404);
     return c.json({ error: "not_found" }, 404);

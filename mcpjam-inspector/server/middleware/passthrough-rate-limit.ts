@@ -121,7 +121,7 @@ type Window = { count: number; windowStart: number };
 /** No window for this key yet — the caller decides whether to create one. */
 const ABSENT = "absent" as const;
 
-interface FixedWindowMap {
+export interface FixedWindowMap {
   /**
    * Charge a key that already has a window. `null` = allowed, a number =
    * refused with ms until it rolls, `ABSENT` = no window exists yet.
@@ -139,7 +139,10 @@ interface FixedWindowMap {
   size: () => number;
 }
 
-function createFixedWindowMap(limit: number, windowMs: number): FixedWindowMap {
+export function createFixedWindowMap(
+  limit: number,
+  windowMs: number
+): FixedWindowMap {
   const windows = new Map<string, Window>();
 
   setInterval(() => {
