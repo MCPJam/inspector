@@ -3237,6 +3237,8 @@ describe("eval run --file", () => {
         );
         assert.equal(policy.result.exitCode, 2, policy.stderr);
         assert.match(policy.stderr, /TOOL_POLICY_UNSUPPORTED/);
+        // The remediation names the command that CAN enforce the policy.
+        assert.match(policy.stderr, /mcpjam test <file>/);
 
         const validityFile = path.join(dir, "validity.yaml");
         await writeFile(
