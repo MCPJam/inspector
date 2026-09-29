@@ -3492,6 +3492,25 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
+  it("does not launch unchecked when the final check says sponsorship no longer applies after a split was shown", async () => {
+    fundingPreviewMock.mockResolvedValueOnce(supported([previewRun(1, 0)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+
+    fundingPreviewMock.mockResolvedValue({
+      supported: false,
+      remaining: 0,
+      granted: 0,
+      runs: [],
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
   it("reveals the split of brand-new goals once they exist, before any run starts", async () => {
     // New goals have no id until launch, so the split cannot be shown on
     // Confirm. Once created, the split is read, and if any conversation would
