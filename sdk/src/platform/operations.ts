@@ -15022,6 +15022,14 @@ export const getSwarmOperation: PlatformOperation<
   },
 };
 
+/**
+ * Longest audience description a swarm or a generation call accepts. Sized for
+ * pasted user research covering several personas. Mirrors the inspector's
+ * `shared/swarm-description.ts` and the backend's own cap; change all three
+ * together.
+ */
+const SWARM_DESCRIPTION_MAX_CHARS = 10_000;
+
 const createSwarmInput = z.object({
   project: z
     .string()
@@ -15030,7 +15038,7 @@ const createSwarmInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   name: z.string().trim().min(1).max(200),
-  description: z.string().max(2000).optional(),
+  description: z.string().max(SWARM_DESCRIPTION_MAX_CHARS).optional(),
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
   // `create_swarm` keeps its name through the goal rename, so it has no
   // deprecated twin to hold the old field spelling. It takes both until GA
@@ -15123,7 +15131,9 @@ export const createSwarmOperation: PlatformOperation<
 
 const updateSwarmInput = swarmSelectorInput.extend({
   name: z.string().trim().min(1).max(200).optional(),
-  description: z.union([z.string().max(2000), z.null()]).optional(),
+  description: z
+    .union([z.string().max(SWARM_DESCRIPTION_MAX_CHARS), z.null()])
+    .optional(),
   environmentIds: z
     .union([z.array(z.string().min(1)).min(1), z.null()])
     .optional(),
@@ -15253,7 +15263,7 @@ const generationGroundingInput = z.object({
     .string()
     .trim()
     .min(1)
-    .max(2000)
+    .max(SWARM_DESCRIPTION_MAX_CHARS)
     .optional()
     .describe("Who the audience is, in your own words."),
   journeyCount: z.number().int().min(1).max(5).optional(),
