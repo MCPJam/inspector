@@ -196,6 +196,7 @@ import type {
   PlatformHostDetail,
   PlatformOrganization,
   PlatformPage,
+  PlatformFeedbackReceipt,
   PlatformMe,
   PlatformModel,
   PlatformPlugin,
@@ -18782,6 +18783,113 @@ export const uninstallRegistryServerOperation: PlatformOperation<
   },
 };
 
+const sendFeedbackInput = z.object({
+  kind: z
+    .enum(["bug", "missing_capability", "confusing", "docs", "other"])
+    .describe(
+      "What sort of problem: `bug` (MCPJam misbehaved), `missing_capability` (a task these tools cannot do), `confusing`, `docs`, or `other`."
+    ),
+  summary: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .describe("One line: what went wrong or what is missing."),
+  details: z
+    .string()
+    .trim()
+    .max(8000)
+    .optional()
+    .describe(
+      "What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried."
+    ),
+  operation: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .describe("The MCPJam tool, CLI command or app page in use."),
+  requestId: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .describe(
+      "The `requestId` from the failing call's error, when there is one: it lets the team find that request in the server's logs."
+    ),
+  errorCode: z
+    .string()
+    .trim()
+    .max(64)
+    .optional()
+    .describe("The failing call's error code, e.g. `INTERNAL_ERROR`."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or ID, only when the report is about a specific project. Omit it otherwise: no project is assumed."
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry key. A retry with the same key returns the original receipt instead of filing the report twice; the same key with different content is refused."
+    ),
+});
+
+export type SendFeedbackInput = z.infer<typeof sendFeedbackInput>;
+
+export const sendFeedbackOperation: PlatformOperation<
+  SendFeedbackInput,
+  PlatformFeedbackReceipt
+> = {
+  name: "send_feedback",
+  title: "Send feedback to the MCPJam team",
+  description:
+    "Send feedback to the MCPJam team about MCPJam itself — a bug, a missing capability, or something confusing. SENDS YOUR TEXT TO THE MCPJAM TEAM (outside your organization); stored for 180 days. Not a rating of a chat session. Requires a signed-in account. Include requestId from a failing tool's error when you have one. Summarize; never paste secrets, tokens, or raw tool output.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: sendFeedbackInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    // Resolved only when named. Every other operation defaults an absent
+    // selector to the most recent project; a report filed against a project
+    // its author never chose would be misfiled, not scoped.
+    const projectId = input.project
+      ? (
+          await resolveProjectOrThrow(
+            { client, signal, onScopeResolved },
+            input.project
+          )
+        ).project.id
+      : undefined;
+    return client.sendFeedback(
+      {
+        body: {
+          kind: input.kind,
+          summary: input.summary,
+          ...(input.details ? { details: input.details } : {}),
+          ...(input.operation ? { operation: input.operation } : {}),
+          ...(input.requestId ? { requestId: input.requestId } : {}),
+          ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+          ...(projectId ? { projectId } : {}),
+        },
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -19002,4 +19110,5 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  sendFeedbackOperation,
 ];
