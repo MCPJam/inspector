@@ -60,6 +60,19 @@ describe("authorization refusals", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("drops a signed-out session refusal before it reaches either sink", () => {
+    reportCaught(
+      new ConvexError({
+        kind: "session_revoked",
+        message: "Authentication required",
+      }),
+      { source: "convex_query_subscription" },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+  });
+
   it("still reports a ConvexError that is not a refusal", () => {
     reportCaught(new ConvexError({ kind: "rate_limited" }), {
       source: "unit",

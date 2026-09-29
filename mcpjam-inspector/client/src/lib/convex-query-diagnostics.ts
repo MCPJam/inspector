@@ -1,5 +1,8 @@
 import type { ErrorEvent, EventHint } from "@sentry/react";
-import { isAuthorizationRefusal } from "./authorization-refusal";
+import {
+  isAuthorizationRefusal,
+  isSessionRevokedError,
+} from "./authorization-refusal";
 
 let backendHostname: string | undefined;
 
@@ -92,7 +95,11 @@ export function createConvexQueryEventProcessor(limit = 500) {
       );
       const details = queryFailureDetails(exception?.value ?? "");
       if (!details) return event;
-      if (isAuthorizationRefusal(hint.originalException)) return null;
+      if (
+        isAuthorizationRefusal(hint.originalException) ||
+        isSessionRevokedError(hint.originalException)
+      )
+        return null;
       const tags = queryFailureTags(exception!.value!)!;
       const hostname =
         typeof event.tags?.convex_backend === "string"
