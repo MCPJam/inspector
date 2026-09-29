@@ -92,7 +92,7 @@ docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
-Open the private link printed in the container logs to sign in. The plain address shows instructions to open or paste that link. Keep `-p 127.0.0.1:6274:6274` for local-only access. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
+Open the private link printed in the container logs to sign in. The plain address shows instructions to open or paste that link. If you already have that tab open, pasting the link into the address bar signs you in without a reload. Keep `-p 127.0.0.1:6274:6274` for local-only access. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
 
 ### Accessing over the network
 
