@@ -749,6 +749,65 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
+  it.each(["authorization-required", "failed"] as const)(
+    "preserves client-secret whitespace when submitting %s",
+    async (status) => {
+      const { onAuthorizeConnection, onConnectOwnServer } = renderOverlay(
+        {
+          status,
+          serverName: "Secure",
+          serverKind: "personal",
+          ...(status === "failed" ? { error: "Connection refused" } : {}),
+        },
+        true,
+        {
+          name: "Secure",
+          transport: "http",
+          urlOrCommand: "https://secure.example/mcp",
+          authentication: "oauth",
+          registrationMode: "preregistered",
+          clientId: "custom-client",
+          clientSecret: "  opaque-secret  ",
+        },
+      );
+      if (status === "failed") {
+        fireEvent.change(screen.getByLabelText("Server URL or command"), {
+          target: { value: "https://secure.example/mcp" },
+        });
+        await userEvent.click(
+          screen.getByRole("combobox", { name: "Authentication" }),
+        );
+        await userEvent.click(screen.getByRole("option", { name: "OAuth" }));
+        await userEvent.click(
+          screen.getByRole("button", { name: "Advanced Settings" }),
+        );
+        const registrationSelect = screen
+          .getByText("Registration Strategy")
+          .parentElement?.querySelector('[role="combobox"]');
+        await userEvent.click(registrationSelect!);
+        await userEvent.click(
+          screen.getByRole("option", { name: /Preregistration/ }),
+        );
+        fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
+          target: { value: "custom-client" },
+        });
+        fireEvent.change(screen.getByPlaceholderText("Your OAuth Client Secret"), {
+          target: { value: "  opaque-secret  " },
+        });
+      }
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: status === "failed" ? "Connect server" : "Authorize",
+        }),
+      );
+      const submit =
+        status === "failed" ? onConnectOwnServer : onAuthorizeConnection;
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({ clientSecret: "  opaque-secret  " }),
+      );
+    },
+  );
+
   it("clears hidden preregistered credentials when details switch to automatic registration", async () => {
     const { onConnectOwnServer } = renderOverlay(
       {

@@ -457,7 +457,7 @@ export function FirstRunOnboardingOverlay({
         clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
         clientSecret: clearClientCredentials
           ? undefined
-          : clientSecret.trim() || undefined,
+          : clientSecret || undefined,
         clearClientSecret: clearClientCredentials,
         oauthAllowPathScopedIssuer,
         xaaClientAuth,
@@ -511,7 +511,7 @@ export function FirstRunOnboardingOverlay({
       clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
       clientSecret: clearClientCredentials
         ? undefined
-        : clientSecret.trim() || undefined,
+        : clientSecret || undefined,
       clearClientSecret: clearClientCredentials,
       oauthAllowPathScopedIssuer,
       xaaClientAuth,
