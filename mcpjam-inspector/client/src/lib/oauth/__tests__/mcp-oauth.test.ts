@@ -11,6 +11,7 @@ const {
   mockDiscoverOAuthServerInfo,
   mockExchangeAuthorization,
   mockFetchToken,
+  mockFetchServerSecrets,
   mockGetConvexSiteUrl,
   mockRegisterClient,
   mockRunOAuthStateMachine,
@@ -21,11 +22,16 @@ const {
   mockDiscoverOAuthServerInfo: vi.fn(),
   mockExchangeAuthorization: vi.fn(),
   mockFetchToken: vi.fn(),
+  mockFetchServerSecrets: vi.fn(),
   mockGetConvexSiteUrl: vi.fn(),
   mockRegisterClient: vi.fn(),
   mockRunOAuthStateMachine: vi.fn(),
   mockSelectResourceURL: vi.fn(),
   mockStartAuthorization: vi.fn(),
+}));
+
+vi.mock("@/lib/apis/server-secrets-api", () => ({
+  fetchServerSecrets: mockFetchServerSecrets,
 }));
 
 vi.mock("@mcpjam/sdk/browser", async () => {
@@ -248,6 +254,8 @@ describe("mcp-oauth", () => {
     mockDiscoverOAuthServerInfo.mockReset();
     mockExchangeAuthorization.mockReset();
     mockFetchToken.mockReset();
+    mockFetchServerSecrets.mockReset();
+    mockFetchServerSecrets.mockResolvedValue({ env: null, headers: null });
     mockGetConvexSiteUrl.mockReset();
     mockRegisterClient.mockReset();
     mockRunOAuthStateMachine.mockReset();
@@ -1008,6 +1016,43 @@ describe("mcp-oauth", () => {
       expect(
         new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant")
       ).toBe("project-123");
+      expect(
+        localStorage.getItem("mcp-oauth-config-test-server") ?? ""
+      ).not.toContain("project-123");
+    });
+
+    it("migrates legacy custom headers out of browser storage", async () => {
+      localStorage.setItem(
+        "mcp-oauth-config-asana",
+        JSON.stringify({
+          scopes: ["read"],
+          customHeaders: { "X-API-Key": "legacy-secret" },
+          protocolMode: "auto",
+        })
+      );
+
+      const {
+        initiateOAuth,
+        readStoredOAuthConfig,
+        resolveOAuthCustomHeaders,
+      } = await import("../mcp-oauth");
+      expect(readStoredOAuthConfig("asana")).toMatchObject({
+        scopes: ["read"],
+        protocolMode: "auto",
+      });
+      expect(await resolveOAuthCustomHeaders("asana")).toEqual({
+        "X-API-Key": "legacy-secret",
+      });
+      await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+      });
+      expect(
+        mockRunOAuthStateMachine.mock.calls.at(-1)?.[0].customHeaders
+      ).toEqual({ "X-API-Key": "legacy-secret" });
+      expect(
+        localStorage.getItem("mcp-oauth-config-asana") ?? ""
+      ).not.toContain("legacy-secret");
     });
 
     it("replays the initial MCP initialize through the proxy when browser transport fails", async () => {
@@ -1836,6 +1881,44 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(2);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
+    });
+
+    it("recovers custom headers from encrypted server secrets after a callback reload", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValue(
+        createAsanaDiscoveryState()
+      );
+      const { initiateOAuth, rememberOAuthCustomHeaders, handleOAuthCallback } =
+        await import("../mcp-oauth");
+      const initiateResult = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        customHeaders: { "X-Tenant-Token": "tenant-secret" },
+      });
+      expect(initiateResult.success).toBe(true);
+      expect(
+        localStorage.getItem("mcp-oauth-config-asana") ?? ""
+      ).not.toContain("tenant-secret");
+
+      rememberOAuthCustomHeaders("asana", null);
+      mockFetchServerSecrets.mockResolvedValueOnce({
+        env: null,
+        headers: {
+          Authorization: "Bearer resource-token",
+          "X-Tenant-Token": "tenant-secret",
+        },
+      });
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
+
+      expect(callbackResult.success).toBe(true);
+      expect(mockFetchServerSecrets).toHaveBeenCalledWith({
+        projectId: "proj_default",
+        serverId: "srv_asana",
+      });
+      expect(
+        mockRunOAuthStateMachine.mock.calls.at(-1)?.[0].customHeaders
+      ).toEqual({ "X-Tenant-Token": "tenant-secret" });
     });
 
     it("stops a 2026 issuer mismatch before token exchange", async () => {

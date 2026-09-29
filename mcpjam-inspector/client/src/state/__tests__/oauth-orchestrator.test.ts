@@ -5,10 +5,12 @@ const {
   clearOAuthDataMock,
   initiateOAuthMock,
   readStoredOAuthConfigMock,
+  resolveOAuthCustomHeadersMock,
 } = vi.hoisted(() => ({
   clearOAuthDataMock: vi.fn(),
   initiateOAuthMock: vi.fn(),
   readStoredOAuthConfigMock: vi.fn(),
+  resolveOAuthCustomHeadersMock: vi.fn(),
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
@@ -16,6 +18,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   hasOAuthConfig: vi.fn(),
   initiateOAuth: initiateOAuthMock,
   readStoredOAuthConfig: readStoredOAuthConfigMock,
+  resolveOAuthCustomHeaders: resolveOAuthCustomHeadersMock,
 }));
 
 import { ensureAuthorizedForReconnect } from "../oauth-orchestrator";
@@ -47,6 +50,7 @@ describe("ensureAuthorizedForReconnect", () => {
     vi.clearAllMocks();
     localStorage.clear();
     readStoredOAuthConfigMock.mockReturnValue({});
+    resolveOAuthCustomHeadersMock.mockResolvedValue(undefined);
   });
 
   it("returns reauth_required instead of starting a fresh OAuth flow when interactive OAuth is disabled", async () => {

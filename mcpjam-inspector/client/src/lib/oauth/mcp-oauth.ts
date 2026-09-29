@@ -56,6 +56,7 @@ import {
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -168,6 +169,7 @@ type OAuthRegistrationStrategy =
 
 export interface StoredOAuthConfig {
   scopes?: string[];
+  /** Legacy read-only field, removed from browser storage on read. */
   customHeaders?: Record<string, string>;
   resourceUrl?: string;
   registryServerId?: string;
@@ -176,6 +178,31 @@ export interface StoredOAuthConfig {
   protocolVersion?: OAuthProtocolVersion;
   registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
+}
+
+const runtimeOAuthCustomHeaders = new Map<string, Record<string, string>>();
+
+function withoutAuthorizationHeader(
+  headers?: Record<string, string> | null
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const entries = Object.entries(headers).filter(
+    ([key, value]) =>
+      key.toLowerCase() !== "authorization" &&
+      typeof value === "string" &&
+      value !== ""
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+/** Keep OAuth request headers in memory only. */
+export function rememberOAuthCustomHeaders(
+  serverName: string,
+  headers?: Record<string, string> | null
+): void {
+  const sanitized = withoutAuthorizationHeader(headers);
+  if (sanitized) runtimeOAuthCustomHeaders.set(serverName, sanitized);
+  else runtimeOAuthCustomHeaders.delete(serverName);
 }
 
 interface OAuthRoutingConfig {
@@ -1090,10 +1117,16 @@ export function readStoredOAuthConfig(
       typeof parsed.customHeaders === "object" &&
       !Array.isArray(parsed.customHeaders)
     ) {
-      config.customHeaders = Object.fromEntries(
+      const legacyHeaders = Object.fromEntries(
         Object.entries(parsed.customHeaders).filter(
           ([, value]) => typeof value === "string"
         ) as Array<[string, string]>
+      );
+      rememberOAuthCustomHeaders(serverName, legacyHeaders);
+      // One-time migration: retain only public OAuth configuration.
+      localStorage.setItem(
+        `mcp-oauth-config-${serverName}`,
+        JSON.stringify(config)
       );
     }
 
@@ -1132,10 +1165,6 @@ export function buildStoredOAuthConfig(
 
   if (options.scopes && options.scopes.length > 0) {
     config.scopes = options.scopes;
-  }
-
-  if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
-    config.customHeaders = options.customHeaders;
   }
 
   if (options.resourceUrl?.trim()) {
@@ -1727,11 +1756,13 @@ function writeStoredOAuthConfig(
   updates: Partial<StoredOAuthConfig>
 ): void {
   const existing = readStoredOAuthConfig(serverName);
+  const { customHeaders: _legacyHeaders, ...publicExisting } = existing;
+  const { customHeaders: _ignoredHeaders, ...publicUpdates } = updates;
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
     JSON.stringify({
-      ...existing,
-      ...updates,
+      ...publicExisting,
+      ...publicUpdates,
     })
   );
 }
@@ -1933,6 +1964,7 @@ export interface MCPOAuthProviderConvexBinding {
   oauthResourceUrl?: string;
   kind: "generic" | "registry";
   hasClientSecret?: boolean;
+  hasCustomHeaders?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
 }
@@ -2453,6 +2485,7 @@ function buildConvexBindingForServer(input: {
   serverName: string;
   oauthResourceUrl?: string;
   hasClientSecret?: boolean;
+  hasCustomHeaders?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
 }): MCPOAuthProviderConvexBinding | undefined {
@@ -2464,6 +2497,8 @@ function buildConvexBindingForServer(input: {
       !!input.registryServerId && input.useRegistryOAuthProxy === true;
     const hasClientSecret =
       input.hasClientSecret ?? previousBinding?.hasClientSecret;
+    const hasCustomHeaders =
+      input.hasCustomHeaders ?? previousBinding?.hasCustomHeaders;
     const binding: MCPOAuthProviderConvexBinding = {
       projectId: resolved.projectId,
       serverId: resolved.serverId,
@@ -2472,6 +2507,7 @@ function buildConvexBindingForServer(input: {
         : {}),
       kind: isRegistry ? "registry" : "generic",
       ...(hasClientSecret ? { hasClientSecret: true } : {}),
+      ...(hasCustomHeaders ? { hasCustomHeaders: true } : {}),
       ...(isRegistry
         ? {
             registryServerId: input.registryServerId,
@@ -2487,6 +2523,45 @@ function buildConvexBindingForServer(input: {
   return previousBinding;
 }
 
+/** Recover OAuth headers from memory or the encrypted server-secret store. */
+export async function resolveOAuthCustomHeaders(
+  serverName: string,
+  options: { required?: boolean } = {}
+): Promise<Record<string, string> | undefined> {
+  const runtime = runtimeOAuthCustomHeaders.get(serverName);
+  if (runtime) return { ...runtime };
+
+  const binding = oauthBindingStorage.get(serverName);
+  if (!binding) {
+    if (options.required) {
+      throw new Error(
+        "OAuth custom headers could not be recovered for this server. Save the server and retry authorization."
+      );
+    }
+    return undefined;
+  }
+  if (!options.required && !binding.hasCustomHeaders) return undefined;
+
+  try {
+    const result = await fetchServerSecrets({
+      projectId: binding.projectId,
+      serverId: binding.serverId,
+    });
+    const headers = withoutAuthorizationHeader(result.headers);
+    if (headers) runtimeOAuthCustomHeaders.set(serverName, headers);
+    if (!headers && (options.required || binding.hasCustomHeaders)) {
+      throw new Error("Stored OAuth custom headers were not available.");
+    }
+    return headers ? { ...headers } : undefined;
+  } catch (error) {
+    if (options.required || binding.hasCustomHeaders) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not recover OAuth custom headers: ${message}`);
+    }
+    return undefined;
+  }
+}
+
 /**
  * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
  * Both OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`) need an
@@ -2500,6 +2575,7 @@ function createMCPOAuthProvider(input: {
   clientId?: string;
   clientSecret?: string;
   hasClientSecret?: boolean;
+  hasCustomHeaders?: boolean;
   oauthConfig: {
     resourceUrl?: string;
     registryServerId?: string;
@@ -2515,6 +2591,7 @@ function createMCPOAuthProvider(input: {
       serverName: input.serverName,
       oauthResourceUrl: input.oauthConfig.resourceUrl,
       hasClientSecret: input.clientSecret ? true : input.hasClientSecret,
+      hasCustomHeaders: input.hasCustomHeaders,
       registryServerId: input.oauthConfig.registryServerId,
       useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
     }),
@@ -2658,6 +2735,17 @@ export async function initiateOAuth(
   const getState = () => state;
   const requestedProtocolMode = resolveOAuthProtocolMode(options);
   const requestedRegistrationMode = resolveOAuthRegistrationMode(options);
+  if (options.customHeaders !== undefined) {
+    rememberOAuthCustomHeaders(options.serverName, options.customHeaders);
+  }
+  const recoveredCustomHeaders = await resolveOAuthCustomHeaders(
+    options.serverName
+  );
+  const flowOptions: BuiltOAuthRequest = {
+    ...options,
+    customHeaders: recoveredCustomHeaders,
+  };
+  const hasCustomHeaders = recoveredCustomHeaders !== undefined;
   let traceAuthorizationPlan: ResolvedAuthorizationPlan | undefined;
   const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
     publishOAuthTraceUpdate(
@@ -2701,6 +2789,7 @@ export async function initiateOAuth(
       clientId: options.clientId,
       clientSecret: options.clientSecret,
       hasClientSecret: options.hasClientSecret,
+      hasCustomHeaders,
       oauthConfig: {
         resourceUrl: options.resourceUrl,
         registryServerId: options.registryServerId,
@@ -2717,7 +2806,7 @@ export async function initiateOAuth(
     let authorizationPlan = await resolveOAuthExecutionPlan(
       provider,
       fetchFn,
-      options
+      flowOptions
     );
     assertCurrent();
     if (
@@ -2735,7 +2824,7 @@ export async function initiateOAuth(
       }
 
       authorizationPlan = await resolveOAuthExecutionPlan(provider, fetchFn, {
-        ...options,
+        ...flowOptions,
         registrationMode: "dcr",
         registrationStrategy: undefined,
       });
@@ -2848,7 +2937,7 @@ export async function initiateOAuth(
       },
       clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
       customScopes: requestedScope,
-      customHeaders: options.customHeaders,
+      customHeaders: recoveredCustomHeaders,
       // SEP-2350 step-up: honor a caller-supplied (same-origin validated)
       // protected-resource-metadata URL from the challenge instead of deriving
       // it from the server URL. `undefined` keeps today's discovery behavior.
@@ -3116,6 +3205,7 @@ export async function completeHostedOAuthCallback(
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+
     const storedOAuthConfig = readStoredOAuthConfig(serverName);
     const storedSession = loadOAuthFlowSession(serverName);
     const oauthResourceUrl = resolveOAuthResourceUrl({
@@ -3584,6 +3674,8 @@ export async function handleOAuthCallback(
       throw new Error("Server URL not found for OAuth callback");
     }
 
+    const customHeaders = await resolveOAuthCustomHeaders(serverName);
+
     // Get stored client credentials if any
     const storedClientInfo = readStoredClientInformation(serverName);
     const customClientId = storedClientInfo.client_id;
@@ -3709,7 +3801,7 @@ export async function handleOAuthCallback(
         },
         clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
         customScopes: oauthConfig.scopes?.join(" "),
-        customHeaders: oauthConfig.customHeaders,
+        customHeaders,
         authMode: "interactive",
         onTraceUpdate: ({ trace: snapshot }) => {
           emitTraceSnapshot(snapshot);
@@ -4012,6 +4104,7 @@ export async function waitForTokens(
  * added here too.
  */
 export function clearOAuthData(serverName: string): void {
+  runtimeOAuthCustomHeaders.delete(serverName);
   localStorage.removeItem(`mcp-tokens-${serverName}`);
   localStorage.removeItem(`mcp-client-${serverName}`);
   localStorage.removeItem(`mcp-verifier-${serverName}`);
