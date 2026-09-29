@@ -726,9 +726,10 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
  */
 const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
   cancelProjectServerConnectionOperation.name,
-  // A repeat lands on the report the first call stored: a replayed key returns
+  // A retry lands on the report the first call stored: a replayed key returns
   // the stored key→receipt row, and identical content without a key dedupes
-  // onto the original (`duplicate: true`). Nothing is filed twice.
+  // onto the original (`duplicate: true`) for 24 hours. The same content sent
+  // after that is filed as a new report on purpose; it is not a retry.
   sendFeedbackOperation.name,
 ]);
 
@@ -744,6 +745,11 @@ const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
  * exposure operations (the secret writes) move data WITHIN the organization's
  * own project and have not been evaluated for this claim. Opt-in, one name at
  * a time, like `IDEMPOTENT_WRITE_NAMES`.
+ *
+ * MCP defaults an absent `openWorldHint` to true, so leaving it off the other
+ * tools claims nothing about them either way. Marking any of them `false` needs
+ * its own review: several reach the caller's MCP servers, model providers or
+ * GitHub, which is open-world.
  */
 const EXTERNAL_COMMUNICATION_NAMES: ReadonlySet<string> = new Set([
   sendFeedbackOperation.name,
