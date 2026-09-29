@@ -624,6 +624,60 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
     ).toHaveLength(2);
   });
 
+  it("ends the credit-funded conversations of a mixed target skipped after a platform stop as missing prerequisites", async () => {
+    // Three targets fill the worker pool; the fourth (a mixed target whose
+    // setup is platform-paid) is pulled only after target B has hit the stop.
+    const C = target("c");
+    const D = target("d");
+    setupTurnMock.mockResolvedValue(READY_SETUP);
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.targetId === "target-b"
+        ? capacityFailure
+        : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      opts({
+        hosts: [B, C, D, A],
+        setupWrites: true,
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(B.targetId, "starter", "starter"),
+          ...funding(C.targetId, "credits", "credits"),
+          ...funding(D.targetId, "credits", "credits"),
+          ...funding(A.targetId, "starter", "credits"),
+        ],
+      }) as never,
+    );
+
+    // A was skipped: its platform-paid setup never ran and nothing was claimed.
+    expect(
+      setupTurnMock.mock.calls.some(
+        (call: any) => call[0].target.targetId === "target-a",
+      ),
+    ).toBe(false);
+    expect(claimed().some((c) => c.targetId === "target-a")).toBe(false);
+    // A's credit-funded conversation cannot run without that setup, so it is
+    // closed for what it is, by a credits-scoped call for that target. Its
+    // sponsored one is left for the run-level sweep, which is a platform stop.
+    const forA = finalizePendingAttemptsMock.mock.calls
+      .map((call) => call[2])
+      .filter((args) => args.targetId === "target-a");
+    expect(forA).toHaveLength(1);
+    expect(forA[0]).toMatchObject({
+      fundingScope: "credits",
+      terminalStatus: "failed",
+      errorCode: "prerequisites_unavailable",
+    });
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (call) =>
+          call[2].targetId === undefined &&
+          call[2].errorCode === "platform_capacity",
+      ),
+    ).toBe(true);
+  });
+
   it("classifies the raw wire form of a platform limit on a sponsored conversation as a platform stop", async () => {
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
       adapter.runtime.sponsorship

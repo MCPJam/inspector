@@ -808,12 +808,44 @@ async function runJourneyFanOut(
       // Nothing left that could start: a spend cap or platform limit already
       // stopped everything this target has. Its attempts stay pending for the
       // run-level finalize (never claimed, so sponsored ones are refunded).
+      //
+      // A target whose setup is platform-paid is skipped once the platform has
+      // stopped sponsored work: its setup would be refused, and it never falls
+      // back to the customer's credits. Its credit-funded conversations cannot
+      // run without that setup, so they end as missing prerequisites, the same
+      // as when the setup is refused, rather than under the run-level sweep's
+      // platform-capacity label.
+      const sponsoredSetupBlocked =
+        !!opts.setupWrites && targetSponsored && sponsoredStop !== undefined;
       if (
         !Array.from({ length: sessionsPerTarget }, (_, i) =>
           canStart(isSponsored(target, i)),
         ).some(Boolean) ||
-        (opts.setupWrites && targetSponsored && sponsoredStop !== undefined)
+        sponsoredSetupBlocked
       ) {
+        const hasCreditConversation = Array.from(
+          { length: sessionsPerTarget },
+          (_, i) => !isSponsored(target, i),
+        ).some(Boolean);
+        if (sponsoredSetupBlocked && hasCreditConversation && canStart(false)) {
+          const skipBearer = await getBearer().catch(() => undefined);
+          if (skipBearer) {
+            await finalizeTargetAttempts(
+              {
+                convexHttpUrl,
+                bearer: skipBearer,
+                projectId,
+                runId,
+                target,
+                fundingScope: "credits",
+              },
+              {
+                terminalStatus: "failed",
+                errorCode: "prerequisites_unavailable",
+              },
+            );
+          }
+        }
         return;
       }
       bearer = await getBearer();
@@ -1799,8 +1831,15 @@ async function runJourneyFanOut(
             // path instead (claiming it would spend the allowance), so it ends
             // with the provider's limit and its slots go back.
             if (targetHasSponsored(target)) {
-              await finalizeTargetSponsoredAttempts(
-                { convexHttpUrl, bearer, projectId, runId, target },
+              await finalizeTargetAttempts(
+                {
+                  convexHttpUrl,
+                  bearer,
+                  projectId,
+                  runId,
+                  target,
+                  fundingScope: "sponsored",
+                },
                 {
                   terminalStatus: "rate_limited",
                   errorCode: transientMessage
@@ -1977,13 +2016,14 @@ async function runJourneyFanOut(
       // sponsored conversations now, with this failure's reason, and the ones
       // that never started go back to the allowance.
       if (!platformFailure && targetHasSponsored(target)) {
-        await finalizeTargetSponsoredAttempts(
+        await finalizeTargetAttempts(
           {
             convexHttpUrl,
             bearer: cleanupBearer,
             projectId,
             runId,
             target,
+            fundingScope: "sponsored",
           },
           { terminalStatus: "failed", errorCode: failureCode },
         );
@@ -2262,24 +2302,29 @@ async function resolveTargetPinnedSkills(args: {
 }
 
 /**
- * Close a target's SPONSORED conversations that have not reached a terminal
- * state, without claiming them. A credit-funded conversation is walked through
- * the claim (`running`) and then its terminal, but for a sponsored one that
- * claim counts as execution and spends the launcher's allowance, and the
- * backend refuses a terminal report on a pending attempt. So this uses the
- * backend's own terminal path, `finalize-pending` scoped to this target's
- * sponsored conversations: one that never started is closed with this
- * target's own reason AND handed back to the allowance; one that had started
- * ends failed and keeps its unit. Other targets are not touched. Best-effort:
- * a failure is logged and the stale-run sweep stays the backstop.
+ * Close one funding scope of a target's conversations that have not reached a
+ * terminal state, through the backend's own terminal path (`finalize-pending`
+ * scoped to the target).
+ *
+ * SPONSORED conversations cannot be closed the way a credit-funded one is,
+ * which is walked through the claim (`running`) and then its terminal: for a
+ * sponsored one that claim counts as execution and spends the launcher's
+ * allowance, and the backend refuses a terminal report on a pending attempt.
+ * Scoped to a target's sponsored conversations this closes the ones that never
+ * started with the target's own reason AND hands their slot back; one that had
+ * started ends failed and keeps its unit. `"credits"` closes the target's
+ * credit-funded ones the same way, for a target the runner never started at
+ * all. Other targets are not touched. Best-effort: a failure is logged and the
+ * stale-run sweep stays the backstop.
  */
-async function finalizeTargetSponsoredAttempts(
+async function finalizeTargetAttempts(
   ctx: {
     convexHttpUrl: string;
     bearer: string;
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    fundingScope: "sponsored" | "credits";
   },
   terminal: {
     terminalStatus: "failed" | "rate_limited";
@@ -2287,7 +2332,7 @@ async function finalizeTargetSponsoredAttempts(
     errorMessage?: string;
   },
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target, fundingScope } = ctx;
   if (!target.targetId) return;
   try {
     await finalizePendingAttempts(convexHttpUrl, bearer, {
@@ -2298,16 +2343,17 @@ async function finalizeTargetSponsoredAttempts(
       ...(terminal.errorMessage
         ? { errorMessage: terminal.errorMessage }
         : {}),
-      fundingScope: "sponsored",
+      fundingScope,
       targetId: target.targetId,
     });
   } catch (err) {
     logger.warn(
-      "[swarm.runner] failed to close a target's sponsored attempts; leaving them for the stale-run sweep",
+      "[swarm.runner] failed to close a target's attempts; leaving them for the stale-run sweep",
       {
         runId,
         hostId: target.hostId,
         targetId: target.targetId,
+        fundingScope,
         error: err instanceof Error ? err.message : String(err),
       },
     );
