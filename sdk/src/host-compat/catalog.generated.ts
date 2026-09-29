@@ -3806,7 +3806,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -4003,14 +4003,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "Visual Studio Code",
-            version: "1.134.0",
+            version: "1.136.1",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
               name: "Visual Studio Code",
-              version: "1.134.0",
+              version: "1.136.1",
             },
           },
           compatRuntime: {

@@ -2459,11 +2459,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         toolListChanged: { listens: true, refetches: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
+          clientInfo: { name: "Visual Studio Code", version: "1.136.1" },
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Visual Studio Code", version: "1.134.0" },
+            hostInfo: { name: "Visual Studio Code", version: "1.136.1" },
           },
           compatRuntime: { openaiApps: false },
           sandbox: {

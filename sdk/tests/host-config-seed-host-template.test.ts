@@ -384,7 +384,7 @@ describe("seedHostTemplate", () => {
     });
   });
 
-  it("keeps VS Code 1.134 handshake facts and deliberate emulator defaults", () => {
+  it("keeps VS Code 1.136 handshake facts and deliberate emulator defaults", () => {
     const config = seedHostTemplate("vscode", { theme: "dark" });
     const profile = config.mcpProfile;
     const hostContext = config.hostContext as {
@@ -437,11 +437,11 @@ describe("seedHostTemplate", () => {
       // Widened beyond the single version VS Code negotiates by default: it
       // accepts all three 2025 revisions.
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
+      clientInfo: { name: "Visual Studio Code", version: "1.136.1" },
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
       name: "Visual Studio Code",
-      version: "1.134.0",
+      version: "1.136.1",
     });
     expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
     expect(profile?.apps?.mcpAppsOverrides).toMatchObject({

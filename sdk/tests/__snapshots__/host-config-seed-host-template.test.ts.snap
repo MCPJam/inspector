@@ -5198,14 +5198,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.134.0",
+            "version": "1.136.1",
           },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "Visual Studio Code",
-          "version": "1.134.0",
+          "version": "1.136.1",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -5466,14 +5466,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.134.0",
+            "version": "1.136.1",
           },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "Visual Studio Code",
-          "version": "1.134.0",
+          "version": "1.136.1",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
