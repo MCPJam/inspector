@@ -472,9 +472,17 @@ export function evalTestFromPlatformCase(
   // suite — used to sail past. Scanning the merged arrays here is what makes
   // the guard total; the per-step throw stays because it can name the step.
   if (evalCase.isNegative) {
-    // Any `toolCalledWith` still standing in `predicates` came from checks:
-    // the step-predicate route threw above.
-    if (predicates.some((predicate) => predicate.type === "toolCalledWith")) {
+    // A gating `toolCalledWith` still standing in `predicates` came from
+    // checks: the step-predicate route threw above. An advisory one — from a
+    // step or from checks — only warns, never fails the iteration, so it
+    // cannot contradict a case that passes with no calls.
+    if (
+      predicates.some(
+        (predicate) =>
+          predicate.type === "toolCalledWith" &&
+          checkRole(predicate) !== "advisory"
+      )
+    ) {
       throw new Error(
         `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
           `(passes only when NO tool is called) but a toolCalledWith check ` +
