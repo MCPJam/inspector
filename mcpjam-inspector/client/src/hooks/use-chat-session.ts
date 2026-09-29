@@ -1957,12 +1957,16 @@ export function useChatSession(
    */
   const turnAbortedRef = useRef(false);
   /**
-   * How the last response ended, from the same `onFinish`. A finish reason
-   * reaches the browser nowhere else — it is not stored on the message — and
-   * the SDK runs `onFinish` before it asks `sendAutomaticallyWhen`, so the
-   * auto-resume bound below always weighs the response it is deciding about.
+   * How the last response ended, from the same `onFinish`, and in which
+   * session. A finish reason reaches the browser nowhere else — it is not
+   * stored on the message — and the SDK runs `onFinish` before it asks
+   * `sendAutomaticallyWhen`, so the auto-resume bound below always weighs the
+   * response it is deciding about.
    */
-  const lastFinishReasonRef = useRef<string | undefined>(undefined);
+  const lastFinishRef = useRef<{
+    chatSessionId: string;
+    finishReason: string | undefined;
+  } | null>(null);
   /**
    * What the latest auto-resume decision held back, and for which session.
    * Recorded by `sendAutomaticallyWhen` itself — the SDK makes that decision
@@ -3488,7 +3492,10 @@ export function useChatSession(
     // the persist receipt already relies on.
     onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
-      lastFinishReasonRef.current = finishReason;
+      lastFinishRef.current = {
+        chatSessionId: chatSessionIdRef.current,
+        finishReason,
+      };
       baseSetMessages((current) =>
         timestampMessageById(current, message.id, Date.now()),
       );
@@ -3695,9 +3702,13 @@ export function useChatSession(
           scopeStepUpResumeInFlightRef.current,
         )
       ) {
+        const lastFinish = lastFinishRef.current;
         const reason = autoResumeStopReason({
           ...options,
-          finishReason: lastFinishReasonRef.current,
+          finishReason:
+            lastFinish?.chatSessionId === chatSessionIdRef.current
+              ? lastFinish.finishReason
+              : undefined,
           maxSteps: DEFAULT_TURN_MAX_STEPS,
         });
         if (reason && chatSessionIdRef.current) {

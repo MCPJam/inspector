@@ -277,6 +277,15 @@ describe("shouldAutoResumeTurn — bounded resumes (real ai package)", () => {
         }),
       ).toBe(false);
     }
+    // Named for what actually happened: the server reports a spent budget
+    // as `length` too, but this is not a truncated reply.
+    expect(
+      autoResumeStopReason({
+        messages,
+        finishReason: "length",
+        maxSteps: AGENT_MAX_STEPS,
+      }),
+    ).toBe("step_limit");
     // Even a response with no finish reason at all cannot restart it: the
     // budget alone is enough.
     expect(shouldAutoResumeTurn({ messages, maxSteps: AGENT_MAX_STEPS })).toBe(

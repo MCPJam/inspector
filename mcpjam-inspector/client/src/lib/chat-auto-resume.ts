@@ -54,20 +54,21 @@ export interface AutoResumeInput {
 export type AutoResumeStopReason = "cut_off" | "step_limit";
 
 /**
- * `cut_off` when the last response ended on the output-token limit: whatever
- * it was doing was truncated, and resuming asks the model to do it again under
- * the same limit. `step_limit` when the user message has already bought
- * `maxSteps` steps: the server cannot take another one, so a resume can only
- * come back empty. `null` when neither applies.
+ * `step_limit` when the user message has already bought `maxSteps` steps: the
+ * server cannot take another one, so a resume can only come back empty.
+ * Checked first because the server also reports a turn that ran out of steps
+ * as `length`. `cut_off` when the last response ended on the output-token
+ * limit: whatever it was doing was truncated, and resuming asks the model to
+ * do it again under the same limit. `null` when neither applies.
  */
 export function autoResumeStopReason(
   input: AutoResumeInput,
 ): AutoResumeStopReason | null {
-  if (input.finishReason === "length") return "cut_off";
   const maxSteps = input.maxSteps ?? DEFAULT_TURN_MAX_STEPS;
   if (countAssistantStepsSincePrompt(input.messages) >= maxSteps) {
     return "step_limit";
   }
+  if (input.finishReason === "length") return "cut_off";
   return null;
 }
 
