@@ -186,10 +186,13 @@ describe("runHarnessTurn history provenance (MJ-009)", () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
 
-    const result = await runHarnessTurn(baseOptions() as any, "ui");
+    const result = await runHarnessTurn(
+      { ...baseOptions(), chatSessionId: "chat-1" } as any,
+      "ui",
+    );
     const chunks = await streamedChunks(result.response!);
 
-    const ctx = historyProvenanceContextFor("project-1")!;
+    const ctx = historyProvenanceContextFor("project-1", "chat-1")!;
     const end = chunks.find((chunk) => chunk.type === "text-end");
     expect(
       verifyAssistantText(

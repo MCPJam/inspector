@@ -351,6 +351,46 @@ describe("uploadVideoBlob with the inspector service credential", () => {
     hostedMode.value = true;
   });
 
+  test("confirms the exact replay id before returning it", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === REPLAY_ISSUER)
+        return okJson({ uploadUrl: DESTINATION, uploadGrantId: "grant-video" });
+      if (url === DESTINATION) return okJson({ storageId: "vid-receipt" });
+      return okJson({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await uploadVideoBlob(target, Buffer.from([1]))).toBe("vid-receipt");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [url, init] = uploadCall(fetchMock, 2);
+    expect(url).toBe("https://demo.convex.site/internal/v1/uploads/complete");
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer user-bearer",
+      "x-inspector-service-token": "service-token-1",
+    });
+    expect(JSON.parse(String(init.body))).toEqual({
+      uploadGrantId: "grant-video",
+      storageId: "vid-receipt",
+    });
+  });
+
+  test("does not attach a replay when its receipt is refused", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === REPLAY_ISSUER)
+          return okJson({
+            uploadUrl: DESTINATION,
+            uploadGrantId: "grant-video",
+          });
+        if (url === DESTINATION) return okJson({ storageId: "vid-receipt" });
+        return errStatus(400);
+      }),
+    );
+    await expect(uploadVideoBlob(target, Buffer.from([1]))).rejects.toThrow(
+      "Upload receipt was refused",
+    );
+  });
+
   test("asks the replay issuer as the user, then stores the bytes at the destination", async () => {
     const fetchMock = vi.fn(async (url: string) =>
       url === REPLAY_ISSUER
@@ -651,10 +691,7 @@ describe("captureMcpAppWidgetSnapshots — skipToolCallIds", () => {
 // server, so one tool declaring a malformed resourceUri must drop out of the
 // batch rather than throw the whole capture away.
 describe("captureMcpAppWidgetSnapshots — malformed tool metadata", () => {
-  const toolMessages = (
-    toolCallId: string,
-    toolName: string,
-  ): ModelMessage[] =>
+  const toolMessages = (toolCallId: string, toolName: string): ModelMessage[] =>
     [
       {
         role: "assistant",

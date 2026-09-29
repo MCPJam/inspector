@@ -227,11 +227,11 @@ describe("BrowserSessionService", () => {
       },
     );
 
-    it("accepts a Convex-hosted deployment's storage origin", async () => {
+    it("refuses another Convex-hosted deployment's storage origin", async () => {
       vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
-      const location =
-        "https://happy-otter-123.convex.cloud/api/storage/0f1e2d3c-4b5a";
-      const requestFetch = archiveFetch(location);
+      const requestFetch = archiveFetch(
+        "https://happy-otter-123.convex.cloud/api/storage/0f1e2d3c-4b5a",
+      );
       const service = new BrowserSessionService({
         baseUrl: "https://convex.example",
         enabled: true,
@@ -245,7 +245,66 @@ describe("BrowserSessionService", () => {
           profileId: "profile-1",
           bearer: "user-token",
         }),
-      ).resolves.toEqual(new URL(location));
+      ).rejects.toThrow(/file storage/);
+      expect(requestFetch).toHaveBeenCalledTimes(1);
+    });
+
+    describe("storage origins from this deployment's configuration", () => {
+      function configured(env: Record<string, string>) {
+        for (const name of ["CONVEX_URL", "VITE_CONVEX_URL", "CONVEX_HTTP_URL"])
+          vi.stubEnv(name, env[name] ?? "");
+        vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+      }
+
+      async function resolveFrom(location: string) {
+        const service = new BrowserSessionService({
+          baseUrl: "https://convex.example",
+          enabled: true,
+          fetch: archiveFetch(location) as unknown as typeof globalThis.fetch,
+        });
+        return service.resolveProfileArchive({
+          projectId: "project-1",
+          profileId: "profile-1",
+          bearer: "user-token",
+        });
+      }
+
+      it("accepts the configured custom-domain Convex URL", async () => {
+        configured({
+          CONVEX_URL: "https://rt.example.com",
+          CONVEX_HTTP_URL: "https://rt-http.example.com",
+        });
+        const location = "https://rt.example.com/api/storage/0f1e2d3c";
+        await expect(resolveFrom(location)).resolves.toEqual(
+          new URL(location),
+        );
+      });
+
+      it("accepts the storage half of a configured default HTTP host", async () => {
+        configured({ CONVEX_HTTP_URL: "https://happy-otter-123.convex.site" });
+        const location =
+          "https://happy-otter-123.convex.cloud/api/storage/0f1e2d3c";
+        await expect(resolveFrom(location)).resolves.toEqual(
+          new URL(location),
+        );
+      });
+
+      it.each([
+        [
+          "another deployment's convex.cloud host",
+          "https://quiet-heron-456.convex.cloud/api/storage/0f1e2d3c",
+        ],
+        [
+          "the HTTP-actions origin",
+          "https://rt-http.example.com/api/storage/0f1e2d3c",
+        ],
+      ])("refuses %s", async (_case, location) => {
+        configured({
+          CONVEX_URL: "https://rt.example.com",
+          CONVEX_HTTP_URL: "https://rt-http.example.com",
+        });
+        await expect(resolveFrom(location)).rejects.toThrow(/file storage/);
+      });
     });
   });
 

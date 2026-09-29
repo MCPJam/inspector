@@ -133,9 +133,9 @@ function sharedFields(
 ) {
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
-    skillSelection: skillsEnabled ? (stack.skillSelection ?? null) : null,
+    skillSelection: skillsEnabled ? stack.skillSelection ?? null : null,
     computerEnvironmentId: computersEnabled
-      ? (stack.computerEnvironmentId ?? null)
+      ? stack.computerEnvironmentId ?? null
       : null,
   };
 }
@@ -178,6 +178,8 @@ function matchingNamedEnvironment(
     env.hostId === hostId &&
     isNamedEnvironment(env) &&
     (env.pluginVersionIds?.length ?? 0) === 0 &&
+    (env.serverSelection === undefined ||
+      env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
     (!modelSelection ||
       (env.modelSelection !== undefined &&
@@ -273,7 +275,9 @@ export async function resolveComposerEnvironments(args: {
       if (requireServerAttachment && lacksEvalServerSource(env)) {
         throw new ComposerResolveError(
           "NO_SERVER_GROUP",
-          `"${environmentLabel(env)}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
+          `"${environmentLabel(
+            env,
+          )}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
         );
       }
       environments.push(env);
@@ -388,7 +392,9 @@ export async function resolveComposerEnvironments(args: {
     // harness cannot run. Say so rather than persist an empty target list.
     throw new ComposerResolveError(
       "NO_TARGETS",
-      `None of the chosen clients can run the chosen models: ${skipped[0]?.reason ?? "no runnable model"}.`,
+      `None of the chosen clients can run the chosen models: ${
+        skipped[0]?.reason ?? "no runnable model"
+      }.`,
     );
   }
 
@@ -435,7 +441,23 @@ export async function resolveComposerEnvironments(args: {
 
     let results: Awaited<ReturnType<EnsureAdhocEnvironmentsFn>>;
     try {
-      results = await ensureAdhocEnvironments({ projectId, stacks });
+      results = [];
+      // Preparation is bounded independently of the suite's full matrix. The
+      // backend fingerprints each stack, so retrying after a partial batch
+      // reuses earlier rows and never truncates or splits the suite.
+      for (let offset = 0; offset < stacks.length; offset += 10) {
+        const batch = stacks.slice(offset, offset + 10);
+        const prepared = await ensureAdhocEnvironments({
+          projectId,
+          stacks: batch,
+        });
+        if (prepared.length !== batch.length) {
+          throw new Error(
+            "Environment preparation returned an incomplete batch.",
+          );
+        }
+        results.push(...prepared);
+      }
     } catch (err) {
       if (isAdhocUnavailable(err)) {
         throw new ComposerResolveError(
@@ -524,8 +546,17 @@ export function describeSkippedModelCells(
  * (`ENV_NO_SERVERS`); eval surfaces refuse to create them first.
  */
 export function lacksEvalServerSource(
-  env: Pick<ProjectEnvironmentView, "serverAttachmentId" | "pluginVersionIds">,
+  env: Pick<
+    ProjectEnvironmentView,
+    "serverAttachmentId" | "pluginVersionIds" | "serverSelection"
+  >,
 ): boolean {
+  if (env.serverSelection?.mode === "unresolved") return true;
+  if (
+    env.serverSelection?.mode === "none" ||
+    env.serverSelection?.mode === "local"
+  )
+    return false;
   return !env.serverAttachmentId && !(env.pluginVersionIds?.length ?? 0);
 }
 

@@ -1,5 +1,78 @@
 # `@mcpjam/sdk` changelog
 
+## 8.18.0
+
+### Minor Changes
+
+- [#5674](https://github.com/MCPJam/inspector/pull/5674) [`d9d4fbd`](https://github.com/MCPJam/inspector/commit/d9d4fbd4b594b7829826da6d514ce809bf356cd4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add `toolInputMatches` and `toolResultMatches`, two assertions that check what went into a tool call and what came back, with patterns. Each reads one unit at a time — a call to `toolName`, or one tool result in scope — and a unit matches only when every pattern in `patterns` matches that same unit, so labels split across several calls or results never add up to a match. `min` (default 1) and `max` count matching units, not all units; `min: 0, max: 0` means none matches, not that the tool was never called. An optional `path`, a JSON Pointer to one top-level key such as `"/elements"`, narrows the match to that argument, or to that key of the result's `structuredContent`. Patterns run on re2js (linear time; no lookaround or backreferences) with one shared `flags` set, and a pattern that does not compile is refused when the check is written.
+
+  `toolInputMatches` requires `toolName`, files at the Tool call stage and can be scoped to a single turn. `toolResultMatches` reads every tool's results unless `toolName` is set, matches the same content `toolResultContains` searches, includes `isError` results, and files at the Response stage.
+
+  Subjects are read with the new `canonicalJsonBounded`, which is byte-identical to `canonicalJson` under its budget and stops as soon as the budget is spent. A unit over 100,000 characters, or a result whose text was truncated for storage, is unreadable rather than truncated, and so are results an incomplete capture never recorded; a verdict any of them could decide is unscored instead of a pass or a fail. Reasons show values only with their keys, so sensitive-key redaction still applies, and scrub token-shaped text out of displayed patterns. Hosted authoring must wait for the matching backend deployment.
+
+### Patch Changes
+
+- [#5688](https://github.com/MCPJam/inspector/pull/5688) [`2b92d4c`](https://github.com/MCPJam/inspector/commit/2b92d4c393f2d8ced45a6b8d46eb710702eeedb1) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- Updated dependencies [[`d9d4fbd`](https://github.com/MCPJam/inspector/commit/d9d4fbd4b594b7829826da6d514ce809bf356cd4)]:
+  - @mcpjam/evaluators@0.4.0
+
+## 8.17.0
+
+### Minor Changes
+
+- [#5563](https://github.com/MCPJam/inspector/pull/5563) [`943bf24`](https://github.com/MCPJam/inspector/commit/943bf24eba36623c430a762ce401bdf59a8f8add) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add a saved model selection type beside a host config's model id.
+
+  `HostConfigInputV2` gains an optional `modelSelection`: the canonical model id, whose credentials serve it (`source: "hosted" | "org" | "local"`), which connection (`connectionRef`, never a key), an optional native or deployment id, optional settings (reasoning effort, temperature) and the permitted fallback. `modelId` stays required. When both are set they must name the same model; the canonicalizer throws on a mismatch instead of picking one. A config without `modelSelection` canonicalizes and hashes exactly as before.
+
+  `@mcpjam/sdk`, `@mcpjam/sdk/browser`, `@mcpjam/sdk/host-config` and `@mcpjam/sdk/host-config/internal` export the types (`ModelSelection`, `ModelConnectionRef`, `LegacyModelSelection`, `RequestedModelSelection`, …) and helpers: `validateModelSelection` (structured issues; rejects unknown keys, so a field like `apiKey` can never be saved), `isModelSelection`, `assertModelSelection`, `selectionFromLegacyModelId`, `isLegacySelection`, `selectionKey` and `defaultFallbackForPurpose`.
+
+  `EvalSuite.runWithClient` only runs hosted MCPJam models. It now refuses a saved client whose `modelSelection` uses an organization or local provider, throwing `UnsupportedModelSelectionError` (exported from `@mcpjam/sdk`, with `source` and `modelId`), instead of running that model on MCPJam's key. Clients with a hosted selection, or with no selection, run exactly as before.
+
+- [#5597](https://github.com/MCPJam/inspector/pull/5597) [`544aa1a`](https://github.com/MCPJam/inspector/commit/544aa1a8fa0ecb174ca0e7afce8ee4bac090eba7) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Share a ten-attempt connection queue across local Inspector tabs and desktop windows, with saved card order, manual priority, cancellation, and automatic recovery after interruption. Add optional caller cancellation to SDK connection startup and OAuth metadata discovery, and await startup resource cleanup before releasing local admission.
+
+- [#5600](https://github.com/MCPJam/inspector/pull/5600) [`afb5862`](https://github.com/MCPJam/inspector/commit/afb586230a7b0abdb3230e07f1b56c251956da15) Thanks [@SebasKoria](https://github.com/SebasKoria)! - Swarms now say when a session never ran, and why, on every tab that shows it.
+
+  A session whose attempt ended before it recorded a single message tested nothing about the server under test. Findings already said "Not run", but the Sessions tab showed an ordinary row with no preview, its detail pane hedged "May not have run" under a judge that tried to grade it, the Findings drawer listed it as "Session 1 (no preview)", and Insights drew the wave as 100% "Not analyzed". None of them said what actually happened, which is how a single endpoint returning 400 on every turn read for three days as "the server has friction at connection".
+
+  - **Sessions detail**: "This session didn't run", with the refusal the attempt recorded, worded the way the Run tab words it. No judge request, and no promote copy for a conversation that does not exist.
+  - **Sessions list and Findings drawer**: a "Didn't run" mark instead of an empty preview.
+  - **Findings summary**: a "Why sessions didn't run" line naming the most common refusal, beside the existing count.
+  - **Insights**: "These sessions didn't run" instead of waiting on or analyzing sessions that have nothing to read, and a one-line count beside a drawn flow when only some of them did.
+
+  `@mcpjam/sdk` gains `swarmSessionNeverRan(lifecycle, messageCount)`, the one rule every surface uses: the attempt ended and the session recorded no message. The backend mirrors it.
+
+  Deploy order: the backend change ships first (`getSession` error fields, `runAttemptStatus` on the swarm drilldown, `journeyRuns:listRunLaunchFailures`, and `notRun` in the insights summary). Against an older backend every surface keeps working: the detail pane falls back to status-only wording, the drawer keeps its old row, the Findings reason line is omitted, and Insights reads the backend's existing empty-transcript skips.
+
+### Patch Changes
+
+- [#5569](https://github.com/MCPJam/inspector/pull/5569) [`5f5f35a`](https://github.com/MCPJam/inspector/commit/5f5f35a47c6ab5a6fe3b2824480301e64f92b50e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Eval surfaces stop creating environments without a server group.
+
+  An eval run takes its servers from the environment's server group alone, so an environment without one runs with no tools (the backend refuses it with `ENV_NO_SERVERS`).
+
+  - `compose.hostServers` (SDK/MCP) and `--compose-host-servers` (CLI) are rejected for eval runs with an error that names `server`/`servers`/`serverGroup` and `--compose-server`/`--compose-server-group`; their help text no longer describes following the client's list.
+  - The inspector's "Where it runs" gains a server-group picker. New clients and models take the picked group (never the suite's legacy `serverAttachmentId`), copy only a setup every candidate environment shares, and refuse rather than drop plugin pins, captured server skills or secret grants.
+  - The run dialog no longer composes environments from a suite's legacy fields, blocks Start for a target with no server group, and launches a suite without environments through its own configuration.
+  - The `/evals` create dialog seeds and requires a server group, like the create page.
+
+- [#5575](https://github.com/MCPJam/inspector/pull/5575) [`06ab898`](https://github.com/MCPJam/inspector/commit/06ab89879cbfcc128feffa3c79bb2b7fde2f9bc0) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Show what each result actually ran on.
+
+  The SDK adds `readExecutionRecord` and `formatExecutionProvenanceLine` (with `summarizeExecutionRecord` and friends) for the backend's execution record, `PlatformEvalIteration.execution`, the run disclosure's per-model `provenance` / `recorded` facts, and an error slug `provider/fallback_prohibited`. Eval iterations (and their scorecard), swarm sessions and chat turns show "Ran on <model> via <rail/connection>, <harness vX>, effort/temperature, max output" with a visible deviation banner, and `mcpjam cloud eval run --wait` prints the same line per iteration. Rows recorded before the record existed show nothing, or "not recorded" in the CLI; nothing is guessed.
+
+- [#5613](https://github.com/MCPJam/inspector/pull/5613) [`a071d2e`](https://github.com/MCPJam/inspector/commit/a071d2e9c189d7a8b8e2aa9e36bbe91d7c878157) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The OAuth debugger no longer reports an MCP server's own bad reply to the first no-token request (a 500, 404, or bare 403) as an MCPJam error. The message still shows on screen. The SDK adds `isUnexpectedProbeStatus` to spot it.
+
+- [#5561](https://github.com/MCPJam/inspector/pull/5561) [`e66845f`](https://github.com/MCPJam/inspector/commit/e66845febe9e5b57913243b15009a2ec1d2ef2b2) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Explain a model whose provider is not enabled on MCPJam's hosted gateway.
+
+  The error catalog gains `provider/not_allowlisted`. The backend `/stream` code `provider_not_allowlisted` now maps to it instead of `provider/auth_error`, so chat and swarm sessions say the provider is not enabled on MCPJam's hosted gateway, that retrying or changing your API key will not help, and suggest another model or your own provider key.
+
+- [#5578](https://github.com/MCPJam/inspector/pull/5578) [`b5b30d0`](https://github.com/MCPJam/inspector/commit/b5b30d018b5bdee45fd4f8a274f2202b8b9b1dfe) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Send upload bytes through MCPJam's upload routes (MJ-006).
+
+  `reportEvalResults` now sends widget HTML that is too large to report inline to `POST /api/v1/projects/:projectId/eval-ingest/artifacts` as raw bytes with its own `Content-Type`, and reads back the storage id. 429 and 5xx answers retry on the same schedule as every other ingestion call, honouring `Retry-After`; an upload that still fails keeps the widget inline, as before.
+
+  The inspector serves that route, and its widget snapshots, saved views, eval attachments, skill supporting files, screenshots, replay videos and browser profile archives now send their bytes to routes that store them and answer with a storage id. Eval attachments over 19 MB and skill supporting files over 2 MB are refused with a clear message before anything is uploaded.
+
 ## 8.16.1
 
 ### Patch Changes

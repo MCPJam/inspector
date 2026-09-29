@@ -152,6 +152,7 @@ export interface RunAssistantTurnOptions {
    * resolved host config's `harness` field.
    */
   harness?: Harness;
+  harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
   persistMode: RunAssistantTurnPersistMode;
@@ -490,6 +491,7 @@ function buildHandlerOptions(
     // unified harness turns reach runHarnessTurn with harness=undefined (the old
     // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
     ...(opts.harness ? { harness: opts.harness } : {}),
+    ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP
     // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and

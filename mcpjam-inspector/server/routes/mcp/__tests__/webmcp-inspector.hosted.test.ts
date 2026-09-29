@@ -352,6 +352,48 @@ describe("hosted WebMCP inspector — control-plane refusals are answers, not cr
     );
     expect(status).toBe(500);
   });
+
+  it("answers a hosted 500 with a generic sentence and the request id", async () => {
+    hostedState.failWith = new Error(
+      "sandbox-info rejected the inspector service token (401): bad token",
+    );
+    const res = await appWith(VERIFIED).request(
+      "http://hosted/api/web/webmcp/sessions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(START),
+      },
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    const requestId = res.headers.get("x-request-id");
+    expect(requestId).toBeTruthy();
+    expect(body.requestId).toBe(requestId);
+    expect(body.error).toContain(requestId);
+    expect(JSON.stringify(body)).not.toContain("service token");
+  });
+
+  it("answers a failed start with a generic sentence and the request id", async () => {
+    hostedState.failWith = new HostedReserveError(
+      "sandbox sbx-4411 exited during boot",
+      502,
+    );
+    const res = await appWith(VERIFIED).request(
+      "http://hosted/api/web/webmcp/sessions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(START),
+      },
+    );
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.code).toBe("hosted-provision-failed");
+    expect(typeof body.requestId).toBe("string");
+    expect(body.error).toContain(body.requestId);
+    expect(JSON.stringify(body)).not.toContain("sbx-4411");
+  });
 });
 
 /**
