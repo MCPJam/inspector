@@ -31,7 +31,7 @@ const UNPROTECTED_ROUTES = [
   "/health", // Health check - no sensitive data
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
-  "/api/session-token", // Token endpoint - protected by localhost check instead
+  "/api/session-token", // Credential confirmation endpoint; validates its own header
   // Public model catalog proxy: guests fetch it to populate the picker. It
   // forwards no auth and returns only the keyless backend /v1/models (no
   // sensitive data). Without this exemption the client's authless fetch 401s
@@ -168,7 +168,7 @@ export async function sessionAuthMiddleware(
   }
 
   // Only protect API routes - static files and HTML pages don't need auth
-  // The HTML page is where the token gets injected, so it must be accessible
+  // Public documents contain no session credentials.
   if (!path.startsWith("/api/")) {
     return next();
   }

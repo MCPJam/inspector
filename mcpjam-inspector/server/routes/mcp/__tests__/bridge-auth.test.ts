@@ -101,7 +101,7 @@ describe("bridge credential boundary", () => {
   it.each(["tunnel", "query", "header"])(
     "completes the SSE exchange with %s authentication",
     async (kind) => {
-      const headers =
+      const headers: Record<string, string> =
         kind === "header" ? { "X-MCP-Session-Auth": `Bearer ${token}` } : {};
       const { reader, endpoint } = await open(
         kind === "tunnel"

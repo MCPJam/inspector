@@ -92,22 +92,26 @@ docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
-The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
+Open the private link printed in the container logs to sign in. The plain address shows instructions to open or paste that link. Keep `-p 127.0.0.1:6274:6274` for local-only access. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
 
 ### Accessing over the network
 
-Network access requires **Docker**. A native (`npx`) install binds to `127.0.0.1` (localhost only) and cannot be reached from another machine. The Docker image binds `0.0.0.0`, so it can.
+A native (`npx`) install binds to localhost. You can reach a remote installation through SSH forwarding (`ssh -L 6274:127.0.0.1:6274 user@host`), then open its terminal link at your forwarded address. Keep the `#token=…` part of the link.
 
-For security, the inspector only issues its session token to `localhost`. When you open a Docker install from another machine (e.g. `http://192.168.1.50:6274`), you'll land on an authentication error. To allow a specific host, set `MCPJAM_ALLOWED_HOSTS` to that hostname and publish the port on your network interface (drop the `127.0.0.1:` prefix from `-p`):
+For direct LAN access, the Docker image binds `0.0.0.0`. Set `MCPJAM_ALLOWED_HOSTS` to the address you use and publish the port on your network interface:
 
 ```bash
 docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
 ```
 
-For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`. Comma-separate multiple hosts. Wildcards like `*.example.com` are supported — if you use a wildcard entry, also set `MCPJAM_ALLOW_WILDCARD_ORIGINS=true` so API calls are accepted (without it, the session token is issued but requests still 403).
+This publishes the port on all interfaces. Open the printed Network link, or paste the terminal link into the access screen. Allowlisting a host accepts it as a request origin; it does not grant access without the link. Cross-tab continuation works only when both tabs use the same host and port.
+
+For a remapped port, keep the link's `#token=…` part and change the address. Set `MCPJAM_INSPECTOR_FRONTEND_URL=http://devbox.local:8080` to print a fixed address. For IPv6, bracket the allowlist entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`. Comma-separate multiple hosts. Wildcards additionally require `MCPJAM_ALLOW_WILDCARD_ORIGINS=true` for request origins.
+
+A restart generates a new link. To keep one across restarts, set `MCPJAM_SESSION_TOKEN` to a strong random URL-safe secret of at least 24 characters. Update `@mcpjam/cli` alongside Inspector; local CLI attachment uses an owner-only runtime file.
 
 <Warning>
-Only add hosts you trust. Allowlisting a host also accepts it as a request origin, which exposes the local shell and agent-browser tools that are on by default in self-hosted mode. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and `MCPJAM_LOCAL_BROWSER_ENABLED=false` if you don't want that. Tunnel and relay domains are never allowed, even if listed.
+Keep access links private: they grant control of the local Inspector and its connected tools. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and `MCPJAM_LOCAL_BROWSER_ENABLED=false` if you do not need the local shell and browser tools.
 </Warning>
 
 ### Docker with Arguments

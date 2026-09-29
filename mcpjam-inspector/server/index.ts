@@ -1,3 +1,4 @@
+import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
@@ -31,15 +32,9 @@ import { cacheEventLogger } from "./utils/cache-events";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
-import {
-  generateSessionToken,
-  getSessionToken,
-} from "./services/session-token";
+import { generateSessionToken, validateToken } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import {
-  mayServeSessionToken,
-  mayServeGuestBootstrap,
-} from "./utils/localhost-check";
+import { isAllowedHost, mayServeGuestBootstrap } from "./utils/localhost-check";
 import { getActiveTunnelDomains } from "./services/tunnel-registry";
 import {
   appendGuestSessionSetCookie,
@@ -725,39 +720,27 @@ app.get("/health", (c) => {
   });
 });
 
-// Session token endpoint (for dev mode where HTML isn't served by this server)
-// Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
-// in BOTH hosted and self-hosted mode) to prevent leakage; tunnels always vetoed
+// Validate a credential delivered by the launcher. Never disclose one over HTTP.
 app.get("/api/session-token", (c) => {
-  if (HOSTED_MODE) {
-    return strictModeResponse(c, "/api/session-token");
-  }
-
-  const host = c.req.header("Host");
-  const forwardedHost = c.req.header("X-Forwarded-Host");
-
-  // SECURITY INVARIANT: tunnel hosts never receive the session token, even
-  // if a tunnel domain is ever allowlisted — see mayServeSessionToken.
+  c.header("Cache-Control", "no-store");
+  if (HOSTED_MODE) return strictModeResponse(c, "/api/session-token");
+  const authorization = c.req.header("X-MCP-Session-Auth");
   if (
-    !mayServeSessionToken({
-      host,
-      forwardedHost,
-      allowedHosts: ALLOWED_HOSTS,
-      activeTunnelDomains: getActiveTunnelDomains(),
-    })
+    authorization?.startsWith("Bearer ") &&
+    validateToken(authorization.slice(7))
   ) {
-    appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${
-        forwardedHost || host
-      }`,
-    );
-    return c.json(
-      { error: "Token only available via localhost or allowed hosts" },
-      403,
-    );
+    return c.json({ ok: true });
   }
-
-  return c.json({ token: getSessionToken() });
+  if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS)) {
+    return c.json({ code: "HOST_NOT_ALLOWED" }, 403);
+  }
+  return c.json(
+    {
+      code: "ACCESS_LINK_REQUIRED",
+      hint: "Open the link printed in your terminal. If you use @mcpjam/cli, update it.",
+    },
+    401,
+  );
 });
 
 // Protected by sessionAuthMiddleware mounted above; the CLI supplies the session token.
@@ -817,7 +800,7 @@ if (process.env.NODE_ENV === "production") {
     return clientStaticFiles(c, next);
   });
 
-  // SPA fallback - serve index.html with token injection for non-API routes
+  // SPA fallback - serve credential-free index.html for non-API routes
   app.get("*", async (c) => {
     const reqPath = c.req.path;
     // Don't intercept API routes
@@ -848,42 +831,11 @@ if (process.env.NODE_ENV === "production") {
         );
       }
 
-      // SECURITY: Only inject token for localhost or hosts in
-      // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
-      // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
-      // NEVER receive the token, even if a tunnel domain is ever
-      // allowlisted — see mayServeSessionToken.
       const host = c.req.header("Host");
       const forwardedHost = c.req.header("X-Forwarded-Host");
       // Every inline script written into the document carries this
       // response's nonce (see middleware/security-headers.ts).
       const scriptNonce = documentScriptNonce(c);
-
-      if (
-        mayServeSessionToken({
-          host,
-          forwardedHost,
-          allowedHosts: ALLOWED_HOSTS,
-          activeTunnelDomains: getActiveTunnelDomains(),
-        })
-      ) {
-        const token = getSessionToken();
-        const tokenScript = withScriptNonce(
-          `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`,
-          scriptNonce,
-        );
-        htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
-      } else {
-        // Non-allowed host access - no token (security measure)
-        appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`,
-        );
-        const warningScript = withScriptNonce(
-          `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`,
-          scriptNonce,
-        );
-        htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
-      }
 
       const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
       if (runtimeConfigScript) {
@@ -897,7 +849,9 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = withScriptNonce(
-          `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`,
+          `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
+            mcpConfig,
+          )};</script>`,
           scriptNonce,
         );
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
@@ -990,11 +944,20 @@ appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
 await computersStartup;
 
 // Start the Hono server
-const server = serve({
-  fetch: app.fetch,
-  port: SERVER_PORT,
-  hostname,
-});
+const server = serve(
+  {
+    fetch: app.fetch,
+    port: SERVER_PORT,
+    hostname,
+  },
+  (info) => {
+    const cleanup = writeInspectorRuntime(info.port, {
+      hosted: HOSTED_MODE,
+      warn: (message) => appLogger.warn(message),
+    });
+    server.once("close", cleanup);
+  },
+);
 registerBrowserController(`http://127.0.0.1:${SERVER_PORT}`);
 // Count socket-level failures. These die before Node parses a request line,
 // so they emit no `http.request.*` event and are otherwise invisible — the

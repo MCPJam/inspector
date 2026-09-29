@@ -1,5 +1,6 @@
 // Must stay the first import; OAuth modules retain window.fetch at load time.
 import "./lib/install-failed-request-tracker";
+import { consumeAccessLinkFromUrl } from "./lib/access-link";
 import { StrictMode } from "react";
 import { appRoot } from "./app-root";
 import LoadingScreen from "./components/LoadingScreen";
@@ -7,6 +8,8 @@ import { Button } from "@mcpjam/design-system/button";
 import "./index.css";
 import { buildElectronMcpCallbackUrl } from "./lib/electron-mcp-callback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
+
+consumeAccessLinkFromUrl();
 
 const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
 if (electronMcpReturnUrl) {
