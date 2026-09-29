@@ -432,3 +432,48 @@ describe("CaseScorecard — read-only", () => {
     ).toBe(false);
   });
 });
+
+describe("CaseScorecard — the route's tool picker", () => {
+  it("says tools are loading instead of leaving a bare text box unexplained", () => {
+    renderCard({ availableTools: [], toolsStatus: "loading" });
+    expect(screen.getByTestId("simple-case-tools-loading")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Add a tool" })).toBeEnabled();
+  });
+
+  it("says a catalogue failed, retries it, and still accepts a typed name", async () => {
+    const user = userEvent.setup();
+    const onRetryTools = vi.fn();
+    const { onAddTool } = renderCard({
+      availableTools: [],
+      toolsStatus: "error",
+      onRetryTools,
+    });
+    const error = screen.getByTestId("simple-case-tools-error");
+    await user.click(within(error).getByRole("button", { name: "Retry" }));
+    expect(onRetryTools).toHaveBeenCalledTimes(1);
+    await user.type(
+      screen.getByRole("textbox", { name: "Add a tool" }),
+      "search_EBSCOhost",
+    );
+    await user.click(screen.getByRole("button", { name: "Add tool" }));
+    expect(onAddTool).toHaveBeenCalledWith("search_EBSCOhost");
+  });
+
+  it("names a failed server even when another server filled the picker", () => {
+    renderCard({ availableTools: ["search_EBSCOhost"], toolsStatus: "error" });
+    expect(
+      screen.getByText("+ Add tool to this assertion").closest("button"),
+    ).toHaveAttribute("role", "combobox");
+    expect(screen.getByTestId("simple-case-tools-error")).toHaveTextContent(
+      "Their tools are missing from this list.",
+    );
+  });
+
+  it("keeps the free-text fallback for a server that advertises no tools", () => {
+    renderCard({ availableTools: [] });
+    expect(screen.getByRole("textbox", { name: "Add a tool" })).toBeVisible();
+    expect(
+      screen.queryByTestId("simple-case-tools-error"),
+    ).not.toBeInTheDocument();
+  });
+});
