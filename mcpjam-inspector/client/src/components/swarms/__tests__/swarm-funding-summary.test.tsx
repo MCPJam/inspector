@@ -84,7 +84,7 @@ describe("SwarmFundingSummary", () => {
     ["error", { status: "error" }],
     [
       "unsupported",
-      ready({ remaining: 0 }) && {
+      {
         status: "ready",
         preview: { supported: false, remaining: 0, granted: 0, runs: [] },
       },

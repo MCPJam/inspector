@@ -2304,7 +2304,6 @@ async function markRemainingTargetAttemptsFailed(
   fromIdx: number,
   toIdx: number,
   errorCode = "host_worker_failed",
-  errorMessage?: string,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -2334,7 +2333,6 @@ async function markRemainingTargetAttemptsFailed(
         status: "failed",
         chatSessionId,
         errorCode,
-        ...(errorMessage ? { errorMessage } : {}),
       });
     } catch (err) {
       logger.warn(
