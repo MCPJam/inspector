@@ -23,6 +23,7 @@
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
@@ -123,7 +124,7 @@ function translateSkillReadError(error: unknown): WebRouteError {
 // Only `sharing: "project"` rows are pinnable into an environment, which is
 // what `pinnability` reports per row.
 skills.get("/projects/:projectId/skills", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.skills");
   const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: SkillListRow[] | null | undefined;
   try {

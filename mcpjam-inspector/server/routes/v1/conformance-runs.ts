@@ -12,6 +12,7 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -212,7 +213,10 @@ conformanceRuns.get(
 );
 
 conformanceRuns.get("/projects/:projectId/conformance-runs", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.conformance-runs",
+  );
   const serverId = c.req.query("serverId");
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   let page: {
