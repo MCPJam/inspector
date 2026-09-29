@@ -661,6 +661,59 @@ describe("project run history metrics", () => {
     });
   });
 
+  it("keeps Suite Health drawn while the next page's history is read", async () => {
+    const first = makeRow({ _id: "first", runNumber: 2, createdAt: 2000 });
+    const older = makeRow({ _id: "older", runNumber: 1, createdAt: 1000 });
+    setRows([first], "CanLoadMore");
+    let releaseOlder!: (value: unknown) => void;
+    const olderRun = new Promise((resolve) => {
+      releaseOlder = resolve;
+    });
+    mocks.query.mockImplementation(async (name: string, args: any) => {
+      if (name === "testSuites:getTestSuiteRun")
+        return args.runId === "older" ? olderRun : first;
+      return {
+        page: [
+          {
+            _id: `${args.runId}-iteration`,
+            suiteRunId: args.runId,
+            status: "completed",
+            result: "passed",
+          },
+        ],
+        isDone: true,
+        continueCursor: "",
+      };
+    });
+    const view = () => (
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+      />
+    );
+    const { rerender } = render(view());
+    expect(await screen.findByTestId("suite-health-average")).toHaveTextContent(
+      "100%",
+    );
+
+    mocks.paginated.current = {
+      ...mocks.paginated.current,
+      results: [first, older],
+    };
+    rerender(view());
+    expect(screen.getByTestId("suite-health-average")).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Loading run history" }),
+    ).toBeNull();
+
+    await act(async () => releaseOlder(older));
+    await waitFor(() =>
+      expect(screen.getByText(/average across 2 runs/)).toBeVisible(),
+    );
+  });
+
   it("renders the grouped table shell on the first page load", () => {
     setRows([], "LoadingFirstPage");
     render(

@@ -31,10 +31,15 @@ export function buildSuiteHealth(
         const run = details.get(row._id)?.run;
         return run && runClientIdentity(run).key === clientKey;
       });
+      // The detail's status too: the chart draws from the previous snapshot
+      // while a refresh is in flight, so a run that just finished can still
+      // carry the partial iterations read while it ran.
       if (
         !members.length ||
         members.some((row) =>
-          ["pending", "running", "grading"].includes(row.status),
+          [row.status, details.get(row._id)!.run.status].some((status) =>
+            ["pending", "running", "grading"].includes(status),
+          ),
         )
       )
         return [];

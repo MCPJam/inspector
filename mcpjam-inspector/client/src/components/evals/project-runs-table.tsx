@@ -115,8 +115,11 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  *
  * Each page costs one run read and one iteration read per run, so an uncapped
  * reach turns a mature project into thousands of queries on every visit.
+ * Two pages (100 runs) can already fill the chart's 60-bar window; at four, a
+ * project with ~200 SDK runs spent ~500 queries and ~45 MB per visit before
+ * the chart finished.
  */
-export const SUITE_HEALTH_AUTO_PAGES = 4;
+export const SUITE_HEALTH_AUTO_PAGES = 1;
 
 /**
  * One row of `testSuites:listProjectRuns` — the backend's explicit
@@ -824,9 +827,10 @@ export function ProjectRunsTable({
           // every page left one unreadable run able to withhold the chart for
           // good, and the retry it offered re-read the whole history to no
           // effect. What is missing is reported beside the chart instead.
-          complete={
-            !history.loading && rows.some((row) => history.details.has(row._id))
-          }
+          // Not gated on `history.loading` either: every auto-loaded page
+          // restarts that read, which put the chart back to its skeleton
+          // until the last page landed.
+          complete={rows.some((row) => history.details.has(row._id))}
           partial={
             status !== "Exhausted" ||
             rows.some((row) => !history.details.has(row._id))
