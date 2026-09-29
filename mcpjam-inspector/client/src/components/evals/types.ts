@@ -973,6 +973,7 @@ export type EvalSuiteRun = {
      * Absent on pre-attribution rows — treat as unknown, not as emulated.
      */
     executionEngine?: string;
+    executionVenue?: "hosted" | "local";
     /**
      * This run is the REWRITE arm of a description experiment. The catalog
      * snapshot stays the original; this marker is the only record of the

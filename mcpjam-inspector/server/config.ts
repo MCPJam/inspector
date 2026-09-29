@@ -47,18 +47,15 @@ export const LOCAL_COMPUTER_ENABLED =
  * supervised process on the machine that runs this inspector) — server-side
  * kill switch, enforced independently of any client flag.
  *
- * Default OFF, unlike `LOCAL_COMPUTER_ENABLED`. The difference is deliberate:
- * a local bash command is discrete and separately approved, while a local
- * harness is a long-lived agent process. It stays off until an operator turns
- * it on for an attended user AND the compatibility manifest carries
- * conformance evidence for that harness/runtime/platform/mode tuple — the flag
- * enables the feature, it does not certify it.
+ * Enabled by default on local deployments, but routing also requires a
+ * released, verified pack, lifecycle conformance, account rollout, and durable
+ * project authorization. Otherwise existing clients retain cloud execution.
  *
  * FORCED off in hosted mode regardless of env: a hosted server must never
  * start a vendor harness on itself.
  */
 export const LOCAL_HARNESS_ENABLED =
-  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED !== "false";
 
 /**
  * Scheduled eval runs — the deployment switch over ENABLING one, enforced on

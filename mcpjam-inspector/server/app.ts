@@ -85,6 +85,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.
 import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
@@ -165,6 +166,7 @@ export async function createHonoApp() {
   // kill switch and a consent grant is installed when the user asks, never
   // at startup and never during a session start.
   reportLocalHarnessRuntimeStatusInBackground();
+  if (!HOSTED_MODE) void startLocalHarnessJanitor();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the

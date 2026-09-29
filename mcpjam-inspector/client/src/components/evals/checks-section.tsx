@@ -2443,7 +2443,7 @@ export function PatternMatchFields({
             </div>
             <p>
               Counts only {unit}s that match every pattern, not all {unit}s. At
-              least 0 and at most 0 means no {unit} matches &mdash; not that{" "}
+              least 0 and at most 0 means no {unit} matches. It does not mean{" "}
               {copy.notZero}.
             </p>
             {countError ? (

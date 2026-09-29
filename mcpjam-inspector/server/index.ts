@@ -65,6 +65,7 @@ import {
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
@@ -361,6 +362,7 @@ startLocalBrowserRenderingSetupInBackground();
 // kill switch and a consent grant is installed when the user asks, never
 // at startup and never during a session start.
 reportLocalHarnessRuntimeStatusInBackground();
+if (!HOSTED_MODE) void startLocalHarnessJanitor();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before

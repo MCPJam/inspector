@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withLocalPackBootstrap } from "../pack-bootstrap.js";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createClaudeCodeHarness } from "../../claude-code-bootstrap.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
@@ -40,7 +41,9 @@ describe("the local pack uses the application's patched Claude Code recipe", () 
     expect(installed).toBe(true);
 
     const names = runtime.files.map((file) => basename(file.path)).sort();
-    expect((await readdir(root)).sort()).toEqual(names);
+    expect((await readdir(root)).sort()).toEqual([...names, "bootstrap.json"].sort());
+    const bundled = await withLocalPackBootstrap({ ...createClaudeCodeHarness(), getBootstrap: async () => { throw new Error("No node_modules in packaged Electron"); } }, root);
+    expect(await bundled.getBootstrap!()).toEqual(runtime);
     expect([...LOCAL_HARNESS_MANIFEST["claude-code"].adapterBootstrapFiles].sort())
       .toEqual(names);
     for (const file of runtime.files) {
