@@ -1722,7 +1722,17 @@ async function runJourneyFanOut(
                 sessionIdx,
               });
             }
-            continue;
+            // A platform limit or an org cap says nothing about this target's
+            // provider. A PROVIDER rate limit does: fall through to the same
+            // per-target short-circuit a credit-funded conversation gets, so
+            // the target's later conversations stop hammering the provider.
+            if (
+              platform ||
+              outcome !== "rate_limited" ||
+              classifyRateLimit(errorMessage, errorRefusal) === "org_spend_cap"
+            ) {
+              continue;
+            }
           }
           const accountLimitFailure =
             outcome === "failed" &&

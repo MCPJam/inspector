@@ -1116,16 +1116,15 @@ export function NewSwarmConfirmStep({
   // new ones. Goals that do not exist yet are the "pending" remainder the
   // summary says so about.
   const previewTargets = createdTargets ?? activeReusedTargets;
-  const previewRuns = useMemo(
-    () =>
-      previewTargets.length > 0
-        ? fundingPreviewRuns(
-            previewTargets,
-            environmentIds.length > 0 ? environmentIds : null,
-          )
-        : null,
-    [environmentIds, previewTargets],
-  );
+  // Not memoized: `previewTargets` is a fresh array each render, and the hook
+  // keys on the serialized runs, so identity does not matter here.
+  const previewRuns =
+    previewTargets.length > 0
+      ? fundingPreviewRuns(
+          previewTargets,
+          environmentIds.length > 0 ? environmentIds : null,
+        )
+      : null;
   const fundingState = useSwarmFundingPreview({
     projectId,
     runs: previewRuns,

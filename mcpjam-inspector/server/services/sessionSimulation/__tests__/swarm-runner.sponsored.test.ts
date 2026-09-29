@@ -377,6 +377,30 @@ describe("sponsored swarm conversations: the org spend cap is scoped to credit-f
   });
 });
 
+describe("sponsored swarm conversations: a provider rate limit still stops the target", () => {
+  it("stops a target's later sponsored conversations after its provider throttles one, without claiming them", async () => {
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage: "429 Too Many Requests from the model provider",
+    });
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+      }) as never,
+    );
+
+    // Only the first conversation ran; the others were left unclaimed (so the
+    // backend refunds them) instead of hammering the throttled provider.
+    expect(claimed()).toHaveLength(1);
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+    expect(terminals().map((t) => `${t.sessionIdx}:${t.status}`)).toEqual([
+      "0:rate_limited",
+    ]);
+  });
+});
+
 describe("sponsored swarm conversations: platform capacity is the platform's problem", () => {
   const capacityFailure = {
     outcome: "failed",

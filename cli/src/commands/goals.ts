@@ -270,8 +270,10 @@ export function registerGoalsCommands(program: Command): Command {
         const globalOptions = getGlobalOptions(command);
         let expectedSponsored: number | undefined;
         if (options.expectedSponsored !== undefined) {
-          expectedSponsored = Number(options.expectedSponsored);
-          if (!Number.isInteger(expectedSponsored) || expectedSponsored < 0) {
+          // Digits only: Number("") and Number("  ") are 0, "0x5" is 5.
+          const raw = options.expectedSponsored.trim();
+          expectedSponsored = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+          if (!Number.isSafeInteger(expectedSponsored)) {
             throw usageError(
               `--expected-sponsored must be a whole number, 0 or more (got "${options.expectedSponsored}")`
             );

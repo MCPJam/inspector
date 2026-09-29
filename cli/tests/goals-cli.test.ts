@@ -125,7 +125,7 @@ test("goals run forwards --expected-sponsored, including 0, into the launch body
 });
 
 test("goals run refuses a malformed --expected-sponsored before launching", async () => {
-  for (const value of ["-1", "2.5", "many"]) {
+  for (const value of ["-1", "2.5", "many", "", "  ", "0x5", "1e1"]) {
     const requests = captureRequests();
     await assert.rejects(
       buildProgram().parseAsync(
