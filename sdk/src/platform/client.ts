@@ -6370,7 +6370,10 @@ export class PlatformApiClient {
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }
-    if (options?.idempotencyKey) {
+    // Any DEFINED key goes out, even an empty one: a route that validates keys
+    // strictly (`/feedback`) has to see a bad key to refuse it, and the lenient
+    // routes already read an empty key as no key.
+    if (options?.idempotencyKey !== undefined) {
       headers["idempotency-key"] = options.idempotencyKey;
     }
 
