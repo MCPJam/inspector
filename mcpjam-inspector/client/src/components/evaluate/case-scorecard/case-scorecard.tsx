@@ -6,14 +6,25 @@
  * groups, one card per check and three separate Add menus. Everything that
  * grades this case is now one list, grouped the way the suite's Scorers table
  * groups it, with one library to add from.
+ *
+ * KEPT MINIMAL: this pane is where a case is authored, so it leads with what
+ * the case itself says. Built-in runner checks are left off (nothing here can
+ * change them, and before a run they have nothing to report; the run
+ * scorecard shows them), and the suite's evaluators fold into one line per
+ * stage that opens to the full rows.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { Predicate } from "@/shared/eval-matching";
 import { blankPredicate } from "@/shared/predicate-kinds";
 import { PASS_OR_FAIL_HINT } from "@/components/evals/suite-pass-or-fail-section";
 import { SuiteScorerLibraryMenu } from "@/components/evals/suite-scorer-library-menu";
-import { ROLE_LEGEND } from "@/components/evals/suite-scorer-table-model";
+import {
+  formatStageConfigLine,
+  ROLE_LEGEND,
+} from "@/components/evals/suite-scorer-table-model";
 import type { SimpleCaseOverlay } from "../simple-case/status-dot";
 import type {
   CaseKind,
@@ -23,6 +34,7 @@ import {
   buildCaseScorecard,
   caseLibraryKinds,
   type CaseScorecardInput,
+  type ScorecardRow,
 } from "./case-scorecard-model";
 import { ScorecardGroupSection } from "./scorecard-group";
 import { ScorecardRowView } from "./scorecard-row";
@@ -122,80 +134,134 @@ export function CaseScorecard({
         </p>
       ) : null}
 
-      {card.groups.map((group) => (
-        <ScorecardGroupSection
-          key={group.stage}
-          stage={group.stage}
-          label={group.label}
-          question={group.question}
-        >
-          {group.rows.map((row) => {
-            // The route question itself. Its arguments row is authored through
-            // it and renders as an ordinary locked row.
-            if (row.provenance === "route" && row.route) {
-              return (
-                <RouteRow
-                  key={row.key}
-                  row={row}
-                  availableTools={availableTools}
-                  readOnly={readOnly}
-                  overlay={overlay}
-                  showUnsetError={showUnsetError}
-                  negativeContradiction={card.negativeContradiction}
-                  onSetTools={onSetTools}
-                  onChooseNoTool={onChooseNoTool}
-                  onChooseTools={onChooseTools}
-                  onAddTool={onAddTool}
-                  onSetKind={onSetKind}
-                />
-              );
-            }
-            if (row.provenance === "judge") {
-              return (
-                <JudgeBlock
-                  key={row.key}
-                  row={row}
-                  readOnly={readOnly}
-                  onExpectedOutputChange={onExpectedOutputChange}
-                  onSkippedChange={onJudgeSkippedChange}
-                  onOpenSuiteSettings={onOpenSuiteSettings}
-                />
-              );
-            }
-            const stepId = row.stepId;
-            const index = row.predicateIndex;
+      {card.groups.map((group) => {
+        const shown = group.rows.filter((row) => row.provenance !== "builtin");
+        if (shown.length === 0) return null;
+        const own = shown.filter((row) => row.provenance !== "suite");
+        const inherited = shown.filter((row) => row.provenance === "suite");
+        const renderRow = (row: ScorecardRow) => {
+          // The route question itself. Its arguments row is authored through
+          // it and renders as an ordinary locked row.
+          if (row.provenance === "route" && row.route) {
             return (
-              <ScorecardRowView
+              <RouteRow
                 key={row.key}
                 row={row}
                 availableTools={availableTools}
                 readOnly={readOnly}
-                checkPolicy={checkPolicy}
                 overlay={overlay}
-                defaultOpen={addedRowKey === row.key}
-                onChangePredicate={
-                  row.provenance === "step" && stepId
-                    ? (next) => onStepPredicateChange(stepId, next)
-                    : row.provenance === "case" && index !== undefined
-                      ? (next) => onCasePredicateChange(index, next)
-                      : undefined
-                }
-                onRemove={
-                  row.provenance === "step" && stepId
-                    ? () => onRemoveStep(stepId)
-                    : row.provenance === "case" && index !== undefined
-                      ? () => onRemoveCasePredicate(index)
-                      : undefined
-                }
-                onSelect={
-                  stepId && onSelectStep ? () => onSelectStep(stepId) : undefined
-                }
+                showUnsetError={showUnsetError}
+                negativeContradiction={card.negativeContradiction}
+                onSetTools={onSetTools}
+                onChooseNoTool={onChooseNoTool}
+                onChooseTools={onChooseTools}
+                onAddTool={onAddTool}
+                onSetKind={onSetKind}
+              />
+            );
+          }
+          if (row.provenance === "judge") {
+            return (
+              <JudgeBlock
+                key={row.key}
+                row={row}
+                readOnly={readOnly}
+                onExpectedOutputChange={onExpectedOutputChange}
+                onSkippedChange={onJudgeSkippedChange}
                 onOpenSuiteSettings={onOpenSuiteSettings}
               />
             );
-          })}
-        </ScorecardGroupSection>
-      ))}
+          }
+          const stepId = row.stepId;
+          const index = row.predicateIndex;
+          return (
+            <ScorecardRowView
+              key={row.key}
+              row={row}
+              availableTools={availableTools}
+              readOnly={readOnly}
+              checkPolicy={checkPolicy}
+              overlay={overlay}
+              defaultOpen={addedRowKey === row.key}
+              onChangePredicate={
+                row.provenance === "step" && stepId
+                  ? (next) => onStepPredicateChange(stepId, next)
+                  : row.provenance === "case" && index !== undefined
+                    ? (next) => onCasePredicateChange(index, next)
+                    : undefined
+              }
+              onRemove={
+                row.provenance === "step" && stepId
+                  ? () => onRemoveStep(stepId)
+                  : row.provenance === "case" && index !== undefined
+                    ? () => onRemoveCasePredicate(index)
+                    : undefined
+              }
+              onSelect={
+                stepId && onSelectStep ? () => onSelectStep(stepId) : undefined
+              }
+              onOpenSuiteSettings={onOpenSuiteSettings}
+            />
+          );
+        };
+        return (
+          <ScorecardGroupSection
+            key={group.stage}
+            stage={group.stage}
+            label={group.label}
+            question={group.question}
+          >
+            {own.map(renderRow)}
+            {inherited.length > 0 ? (
+              <SuiteRowsDisclosure rows={inherited}>
+                {inherited.map(renderRow)}
+              </SuiteRowsDisclosure>
+            ) : null}
+          </ScorecardGroupSection>
+        );
+      })}
     </section>
+  );
+}
+
+/**
+ * The suite's evaluators at one stage, as a single line that opens to the
+ * rows. They are inherited, so the case page reads them rather than authors
+ * them; the count and roles are enough until someone asks for the list.
+ */
+function SuiteRowsDisclosure({
+  rows,
+  children,
+}: {
+  rows: readonly ScorecardRow[];
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const required = rows.filter((row) => row.role === "required").length;
+  const roles = formatStageConfigLine({
+    required,
+    advisory: rows.length - required,
+  });
+  const noun = rows.length === 1 ? "suite evaluator" : "suite evaluators";
+  return (
+    <div className="space-y-1.5" data-testid="case-scorecard-suite-rows">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-1.5 text-left text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        <ChevronRight
+          className={cn(
+            "h-3 w-3 shrink-0 transition-transform",
+            open && "rotate-90",
+          )}
+        />
+        <span>
+          {rows.length} {noun} · {roles}
+        </span>
+      </button>
+      {open ? children : null}
+    </div>
   );
 }

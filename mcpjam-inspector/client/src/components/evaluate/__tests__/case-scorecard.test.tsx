@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
@@ -63,6 +63,16 @@ function renderCard(
 const rows = () => screen.getAllByTestId("case-scorecard-row");
 const rowFor = (label: string) =>
   rows().find((row) => row.textContent?.includes(label))!;
+/** Open every stage's folded suite evaluators. */
+const openSuiteRows = () => {
+  for (const disclosure of screen.queryAllByTestId(
+    "case-scorecard-suite-rows",
+  )) {
+    fireEvent.click(
+      within(disclosure).getByRole("button", { expanded: false }),
+    );
+  }
+};
 
 describe("CaseScorecard", () => {
   it("groups scorers by the link of the chain they measure", () => {
@@ -72,16 +82,10 @@ describe("CaseScorecard", () => {
     ).map((node) => node.getAttribute("data-stage-group"));
     // Response sits between them under analyzer 11: `noToolErrors` grades the
     // answer coming back, not whether the person got what they asked for.
-    // Every other stage the runner measures leads with its built-in runner
-    // check; `firstToolWas` expects a call, so Tool call is among them.
-    expect(groups).toEqual([
-      "connection",
-      "discovery",
-      "selection",
-      "call",
-      "response",
-      "userValue",
-    ]);
+    // Connection, Discovery and Tool call carry only their built-in runner
+    // checks here, which this pane leaves to the run scorecard, so they have
+    // no section.
+    expect(groups).toEqual(["selection", "response", "userValue"]);
     expect(screen.getByText("Selection")).toBeInTheDocument();
     expect(
       screen.getByText("Did the model choose the right tool for the request?"),
@@ -90,6 +94,7 @@ describe("CaseScorecard", () => {
 
   it("says who wrote each scorer", () => {
     renderCard();
+    openSuiteRows();
     expect(rowFor("Require this tool to be reached first")).toHaveAttribute(
       "data-provenance",
       "step",
@@ -104,25 +109,52 @@ describe("CaseScorecard", () => {
     );
   });
 
-  it("shows each runner check as a locked Built-in row, not an evaluator", () => {
+  it("leaves the built-in runner checks to the run scorecard", () => {
+    // Nothing on this page can change them, and before a run they have
+    // nothing to report.
     renderCard();
-    const builtins = rows().filter(
-      (row) => row.getAttribute("data-provenance") === "builtin",
+    expect(
+      rows().filter((row) => row.getAttribute("data-provenance") === "builtin"),
+    ).toEqual([]);
+    expect(screen.queryByText("Built-in")).not.toBeInTheDocument();
+  });
+
+  it("folds the suite's evaluators into one line per stage", () => {
+    renderCard({
+      input: {
+        ...baseInput,
+        suiteDefaultPredicates: [
+          { type: "tokenBudgetUnder", tokens: 4000 } as Predicate,
+          {
+            type: "turnCountUnder",
+            turns: 5,
+            role: "advisory",
+          } as Predicate,
+        ],
+      },
+    });
+    // Folded: the count and roles, not the rows.
+    const disclosure = screen.getByTestId("case-scorecard-suite-rows");
+    const toggle = within(disclosure).getByRole("button");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent(
+      "2 suite evaluators · 1 required · 1 advisory",
     );
-    expect(builtins.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("Successful connection"),
-      expect.stringContaining("Tools listed"),
-      expect.stringContaining("Tool call completed"),
-      expect.stringContaining("Result returned to the model"),
+    expect(
+      rows().filter((row) => row.getAttribute("data-provenance") === "suite"),
+    ).toEqual([]);
+    // The case's own rows stay in view.
+    expect(rowFor("Catch an empty answer")).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(
+      rows()
+        .filter((row) => row.getAttribute("data-provenance") === "suite")
+        .map((row) => row.textContent),
+    ).toEqual([
+      expect.stringContaining("Track increases in token usage"),
+      expect.anything(),
     ]);
-    for (const row of builtins) {
-      expect(within(row).getByText("Built-in")).toBeInTheDocument();
-      // No role to author, nothing to edit or remove.
-      expect(within(row).queryByText("Required")).not.toBeInTheDocument();
-      expect(within(row).queryByText("Advisory")).not.toBeInTheDocument();
-      expect(within(row).queryByRole("button")).not.toBeInTheDocument();
-      expect(row.textContent).not.toMatch(/assertion/i);
-    }
   });
 
   it("shows the route's arguments as their own locked row at Tool call", () => {
@@ -165,6 +197,7 @@ describe("CaseScorecard", () => {
 
   it("sends an inherited scorer to the suite instead of editing it here", () => {
     const { onOpenSuiteSettings } = renderCard();
+    openSuiteRows();
     const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).queryByRole("button", { name: /^Remove/ }),
@@ -190,6 +223,7 @@ describe("CaseScorecard — the left rail", () => {
     // Case and suite checks are graded once, together, over the finished
     // transcript. A number would claim a sequence that was never run.
     renderCard();
+    openSuiteRows();
     for (const provenance of ["case", "suite", "route", "judge"]) {
       const row =
         provenance === "judge"
@@ -206,6 +240,7 @@ describe("CaseScorecard — the left rail", () => {
 
   it("says when each kind of scorer runs", () => {
     renderCard();
+    openSuiteRows();
     const step = rowFor("No tool errors so far");
     expect(
       within(step).getAllByTestId("scorecard-row-marker")[0],
