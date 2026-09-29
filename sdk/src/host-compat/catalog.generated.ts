@@ -1090,7 +1090,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788393600000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1152,13 +1152,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         paginationTraversal: "full",
         toolListChanged: {
           listens: true,
+          refetches: true,
         },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.246",
+            version: "2.1.259",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -3220,7 +3221,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-06-18",
         "2025-11-25",
       ],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1790640000000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
         sourceUrl:
@@ -3567,7 +3568,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         paginationTraversal: "full",
         toolListChanged: {
           listens: false,
-          refetches: true,
         },
         initialize: {
           supportedProtocolVersions: [

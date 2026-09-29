@@ -143,7 +143,7 @@ describe("seedHostTemplate", () => {
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
     // Bumped with the 2026-09-03 re-probe, from 2.1.237.
-    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.246");
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.259");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {

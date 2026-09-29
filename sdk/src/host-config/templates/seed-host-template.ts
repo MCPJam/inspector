@@ -1109,10 +1109,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // followed `nextCursor` to page two of tools/list, and opened
         // `subscriptions/listen` — which is how a client listens on that lane,
         // so the absent standalone GET SSE stream is correct rather than a
-        // miss. `refetches` stays absent: probe-list-changed was never run
-        // against this client, so nothing was published for it to react to.
+        // miss. 2026-09-29: list_changed was delivered on that listen stream
+        // and Claude Code re-issued tools/list 136 ms later.
         paginationTraversal: "full",
-        toolListChanged: { listens: true },
+        toolListChanged: { listens: true, refetches: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Capability provenance above is from the v2.1.176 probe. The
@@ -1123,7 +1123,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.246",
+            version: "2.1.259",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -2265,14 +2265,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         // Probed 2026-08-26: followed `nextCursor` and fetched page two.
         paginationTraversal: "full",
-        // Same capture, and the odd one out: Copilot never opened the GET SSE
-        // stream, yet list_changed still reached it on the tools/call response
-        // stream and a tools/list followed. Hence listens:false + refetches:
-        // true — a real combination, see the note on the field itself.
-        // The re-fetch was 30,496 ms late (VS Code and Cursor: ~200 ms), close
-        // enough to a routine listing that the pairing rule cannot separate
-        // reaction from coincidence.
-        toolListChanged: { listens: false, refetches: true },
+        // Copilot never opens the GET SSE stream, so listens:false.
+        // `refetches` is deliberately absent (unknown): the 2026-08-26
+        // re-fetch came 30,496 ms late (likely routine listing; reacting hosts
+        // take ~250 ms) and the 2026-09-29 run saw none within ~6 s.
+        toolListChanged: { listens: false },
         // Parked: probed but not published (no field, no caniuse row).
         // 2026-08-26: no tools/call carried `_meta.progressToken` (0/3).
         // progressToken: "never",
