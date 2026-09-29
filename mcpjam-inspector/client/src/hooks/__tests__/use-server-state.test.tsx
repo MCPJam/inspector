@@ -20,6 +20,7 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { authFetch } from "@/lib/session-token";
 import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
+import { rememberOAuthCustomHeaders } from "@/lib/oauth/mcp-oauth";
 
 const {
   toastError,
@@ -3554,6 +3555,7 @@ describe("useServerState OAuth callback failures", () => {
       protocolVersion: "2025-11-25",
       registrationStrategy: "preregistered",
     });
+    rememberOAuthCustomHeaders("demo-server", { "X-MCPJam": "yes" });
     localStorage.setItem(
       "mcp-client-demo-server",
       JSON.stringify({
@@ -4083,7 +4085,7 @@ describe("useServerState authenticated fallback persistence", () => {
     );
   });
 
-  it("preserves cached OAuth custom headers when no header patch is sent", async () => {
+  it("does not copy cached OAuth custom headers into browser storage", async () => {
     readStoredOAuthConfigMock.mockReturnValue({
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -4108,7 +4110,10 @@ describe("useServerState authenticated fallback persistence", () => {
     const stored = JSON.parse(
       localStorage.getItem("mcp-oauth-config-demo-server") ?? "{}"
     );
-    expect(stored.customHeaders).toEqual({ "X-MCPJam": "yes" });
+    expect(stored.customHeaders).toBeUndefined();
+    expect(
+      localStorage.getItem("mcp-oauth-config-demo-server") ?? ""
+    ).not.toContain("yes");
   });
 
   it("persists renamed servers into the local project in authenticated fallback mode", async () => {

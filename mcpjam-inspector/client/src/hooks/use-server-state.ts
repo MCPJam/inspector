@@ -52,6 +52,8 @@ import {
   clearPendingOAuthAttempt,
   initiateOAuth,
   readStoredOAuthConfig,
+  rememberOAuthCustomHeaders,
+  resolveOAuthCustomHeaders,
   OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
 import {
@@ -294,7 +296,8 @@ function stripAuthorizationFromHttpConfig(
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
- * This persists server URL, scopes, headers, and non-secret client metadata.
+ * Header values stay in memory and in the encrypted server-secret backend;
+ * browser storage receives only public OAuth routing/configuration metadata.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (HOSTED_MODE) {
@@ -326,14 +329,13 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     formData.secretPatch ?? {},
     "headers",
   );
-  const customHeaders = hasExplicitHeaderPatch
-    ? (formData.secretPatch?.headers ?? {})
-    : {
-        ...(existingOAuthConfig.customHeaders ?? {}),
-        ...(formData.headers ?? {}),
-      };
-  if (Object.keys(customHeaders).length > 0) {
-    oauthConfig.customHeaders = customHeaders;
+  if (hasExplicitHeaderPatch) {
+    rememberOAuthCustomHeaders(
+      formData.name,
+      formData.secretPatch?.headers ?? {},
+    );
+  } else if (formData.headers) {
+    rememberOAuthCustomHeaders(formData.name, formData.headers);
   }
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
@@ -5282,6 +5284,8 @@ export function useServerState({
         const profileHeaders = profileHeadersToRecord(
           server.oauthFlowProfile?.customHeaders,
         );
+        const recoveredCustomHeaders =
+          await resolveOAuthCustomHeaders(serverName);
         const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
         const hostPin =
           typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
@@ -5347,7 +5351,7 @@ export function useServerState({
                   ("requestInit" in server.config
                     ? extractRequestHeaders(server.config.requestInit)
                     : undefined) ??
-                  storedOAuthConfig.customHeaders,
+                  recoveredCustomHeaders,
               ),
               registryServerId: storedOAuthConfig.registryServerId,
               useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
