@@ -4,8 +4,10 @@
  * with only the language model replaced by a deterministic script (through
  * the internal runner seam, never a production switch).
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APICallError } from "ai";
+import { EvalTest } from "../src/EvalTest.js";
+import { posthog } from "../src/telemetry.js";
 import { createSuiteFileRunner } from "../src/suite-file-run/run-suite-file.js";
 import { SuiteFileRunError } from "../src/suite-file-run/errors.js";
 import type { RunSuiteFileOptions } from "../src/suite-file-run/types.js";
@@ -215,6 +217,37 @@ describe("runSuiteFile — passing and failing cases", () => {
     const html = renderStructuredRunHtml(result.report);
     expect(html).toContain("Local run");
     expect(html).toContain("badge-neutral");
+  });
+});
+
+describe("runSuiteFile — telemetry", () => {
+  it("never emits SDK telemetry: the caller owns that decision", async () => {
+    const capture = vi.spyOn(posthog, "capture").mockImplementation(() => {});
+    try {
+      // The control: a plain EvalTest run sends its anonymous ping.
+      const stub = {
+        run: async () => {
+          throw new Error("unused");
+        },
+        resetPromptHistory: () => {},
+        getPromptHistory: () => [],
+        withOptions: () => stub,
+      };
+      await new EvalTest({
+        id: "c_control",
+        name: "control",
+        test: async () => true,
+      }).run(stub as never, { iterations: 1, mcpjam: { enabled: false } });
+      expect(capture).toHaveBeenCalledTimes(1);
+      capture.mockClear();
+
+      const { run } = runner();
+      const result = await run(suite(readCase + deleteCase), options());
+      expect(result.cases).toHaveLength(2);
+      expect(capture).not.toHaveBeenCalled();
+    } finally {
+      capture.mockRestore();
+    }
   });
 });
 

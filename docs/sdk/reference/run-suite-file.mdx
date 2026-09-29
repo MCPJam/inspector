@@ -6,7 +6,7 @@ icon: "book"
 
 `runSuiteFile(sourceText, options)` runs an MCPJam suite file locally and decides it with the v2 verdict policy. It is the engine behind [`mcpjam test`](/cli/local-evals), exposed for code that wants the same run without the CLI.
 
-It takes **explicit** configuration: server bindings, provider keys, and — only if a case needs MCPJam-hosted inference — a callback that returns a platform connection. It does not discover files, read environment variables or a login store, print, write artifacts or exit the process. It never uploads results.
+It takes **explicit** configuration: server bindings, provider keys, and — only if a case needs MCPJam-hosted inference — a callback that returns a platform connection. It does not discover files, read environment variables or a login store, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry — that belongs to the caller.
 
 ```typescript
 import { readFile } from "node:fs/promises";

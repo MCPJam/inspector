@@ -52,10 +52,22 @@ export function readProviderKeys(
   return keys;
 }
 
+/**
+ * `value` without its trailing slashes. `replace(/\/+$/, "")` is the shorter
+ * spelling, but CodeQL rates it `js/polynomial-redos` (high): on input shaped
+ * like `"a" + "/".repeat(n) + "b"` the engine retries `\/+$` from every
+ * position. Same behaviour, linear.
+ */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
 function baseUrlFromEnv(
   env: NodeJS.ProcessEnv,
   name: string,
-  normalize: (url: URL) => string = (url) => url.href.replace(/\/+$/, "")
+  normalize: (url: URL) => string = (url) => trimTrailingSlashes(url.href)
 ): string | undefined {
   const raw = env[name]?.trim();
   if (!raw) return undefined;
@@ -81,7 +93,7 @@ export function readProviderBaseUrls(
 ): NonNullable<SuiteFileInferenceOptions["baseUrls"]> {
   const openai = baseUrlFromEnv(env, "OPENAI_BASE_URL");
   const anthropic = baseUrlFromEnv(env, "ANTHROPIC_BASE_URL", (url) => {
-    const trimmed = url.href.replace(/\/+$/, "");
+    const trimmed = trimTrailingSlashes(url.href);
     return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
   });
   const ollama = baseUrlFromEnv(env, "OLLAMA_BASE_URL");
@@ -98,7 +110,7 @@ export function readProviderBaseUrls(
  * keeps its prefix.
  */
 export function appBaseFromApiBase(apiBaseUrl: string): string {
-  const trimmed = apiBaseUrl.replace(/\/+$/, "");
+  const trimmed = trimTrailingSlashes(apiBaseUrl);
   return trimmed.replace(/\/api\/v1$/, "");
 }
 

@@ -6,7 +6,7 @@ icon: "flask"
 
 `mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and no MCPJam account is required. With MCPJam-hosted inference it uses your existing CLI login and billing.
 
-Results are **never uploaded**. The command writes to your terminal and, if you ask, to a report file — nothing else.
+Results are **never uploaded**. The command writes to your terminal and, if you ask, to a report file — nothing else. Like every command, it sends the CLI's single anonymous [telemetry](/cli/telemetry) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
 
 ## Quick start
 

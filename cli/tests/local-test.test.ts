@@ -434,7 +434,9 @@ test("never uploads, even with MCPJAM_API_KEY set", async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
-  // A BYOK run with a stdio server makes no platform request at all.
+  // A BYOK run with a stdio server makes no platform request at all — and
+  // no telemetry: the SDK's is suppressed for a local run, and the CLI's own
+  // is disabled for this test.
   assert.deepEqual(outbound, []);
 });
 

@@ -943,6 +943,9 @@ async function executeCase(args: {
       timeoutMs: plan.settings.iterationTimeoutMs,
       // Explicit: a local run never reports, whatever MCPJAM_API_KEY says.
       mcpjam: { enabled: false },
+      // Nor phones home: telemetry belongs to the caller, and the CLI's
+      // opt-outs (`--no-telemetry`, a persisted choice) are invisible here.
+      __suppressTelemetry: true,
       signal: caseController.signal,
       onProgress: (completed, total) =>
         args.progress({ type: "iteration", caseId, completed, total }),
