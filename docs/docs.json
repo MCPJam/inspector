@@ -120,6 +120,7 @@
             "pages": [
               "cli/overview",
               "cli/migration",
+              "cli/local-evals",
               "cli/mcp-server",
               "cli/server-inspection",
               "cli/oauth-conformance",
@@ -172,6 +173,7 @@
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
               "sdk/reference/eval-reporting",
+              "sdk/reference/run-suite-file",
               "sdk/reference/validators",
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",

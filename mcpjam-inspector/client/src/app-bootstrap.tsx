@@ -1,5 +1,7 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
+import { AccessRequired } from "./components/AccessRequired";
 import { traceConvexQueries } from "./lib/trace-convex-queries";
 import { StrictMode, type ReactNode } from "react";
 import { appRoot as root } from "./app-root";
@@ -493,5 +495,15 @@ if (isInIframe) {
     );
   }
 
+  if (!HOSTED_MODE) {
+    window.addEventListener(ACCESS_REQUIRED_EVENT, (event) => {
+      root.render(
+        <AccessRequired restarted={(event as CustomEvent).detail?.restarted} />,
+      );
+    });
+    window.addEventListener(ACCESS_GRANTED_EVENT, () => {
+      void bootstrap();
+    });
+  }
   bootstrap();
 }
