@@ -36,6 +36,7 @@ import {
   McpjamLeaseError,
   classifyMcpjamLeaseError,
 } from "../mcpjam-model-lease.js";
+import { isLoopbackHost } from "../oauth/state-machines/shared/client-id-metadata.js";
 import { redactTelemetryString } from "../telemetry-redaction.js";
 import { setupStep } from "./deadline.js";
 import {
@@ -360,6 +361,15 @@ function assertUsableConnection(connection: McpjamInferenceConnection): void {
   if (origin && /\/api\/v1\/?$/.test(origin.pathname)) {
     problems.push(
       "baseUrl must be the MCPJam app origin, not its /api/v1 base (the lease client appends it)"
+    );
+  }
+  if (
+    origin &&
+    origin.protocol !== "https:" &&
+    !(origin.protocol === "http:" && isLoopbackHost(origin.hostname))
+  ) {
+    problems.push(
+      "baseUrl must be https:// — the platform credential is sent to it (a loopback http:// origin is allowed for local development)"
     );
   }
   if (

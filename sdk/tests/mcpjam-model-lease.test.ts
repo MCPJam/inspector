@@ -846,6 +846,64 @@ describe("refreshed auth", () => {
     expect(classifyMcpjamLeaseError(error as McpjamLeaseError)).toBe("auth");
   });
 
+  it("sends a callback credential only to an https:// or loopback origin, and never through a redirect", async () => {
+    const base = { getAuth: async () => "tok_1", project: "p_1", model: MODEL };
+    expect(
+      () =>
+        new McpjamLeaseClient({ ...base, baseUrl: "http://app.example.com" })
+    ).toThrow(/https:\/\//);
+    expect(
+      () => new McpjamLeaseClient({ ...base, baseUrl: "not a url" })
+    ).toThrow(/not a URL/);
+    for (const baseUrl of [
+      "https://app.mcpjam.com",
+      "http://localhost:3000",
+      "http://127.0.0.1:8080",
+    ]) {
+      expect(() => new McpjamLeaseClient({ ...base, baseUrl })).not.toThrow();
+    }
+    // The fixed-key path keeps its historical behaviour.
+    expect(
+      () =>
+        new McpjamLeaseClient({
+          baseUrl: "http://app.example.com",
+          apiKey: "sk_test_key",
+          project: "p_1",
+          model: MODEL,
+        })
+    ).not.toThrow();
+
+    const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
+    const client = new McpjamLeaseClient({
+      ...base,
+      baseUrl: "https://app.mcpjam.com",
+      fetchImpl,
+    });
+    await client.getLease();
+    await client.revoke();
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) expect(call.init.redirect).toBe("error");
+  });
+
+  it("redacts what a failing callback said before it reaches the public error", async () => {
+    const { fetchImpl } = recordingFetch(() => json(leaseBody()));
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => {
+        throw new Error(
+          "refresh rejected: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"
+        );
+      },
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+    const error = await client.getLease().catch((thrown: unknown) => thrown);
+    expect((error as McpjamLeaseError).message).not.toContain(
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"
+    );
+  });
+
   it("refuses an empty token rather than sending `Bearer `", async () => {
     const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
     const client = new McpjamLeaseClient({

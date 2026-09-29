@@ -26,6 +26,9 @@
  */
 
 /** A minted lease and everything needed to spend it. */
+import { isLoopbackHost } from "./oauth/state-machines/shared/client-id-metadata.js";
+import { redactTelemetryString } from "./telemetry-redaction.js";
+
 export interface McpjamModelLease {
   /** Presented as `x-mcpjam-harness-lease`. Never a bearer token. */
   lease: string;
@@ -262,6 +265,28 @@ const CLIENT_OWNED_HEADERS = new Set(["authorization", "content-type"]);
  * Refuse an ambiguous credential. Two sources would make which identity a
  * lease is minted — and billed — as depend on precedence nobody wrote down.
  */
+/**
+ * A refreshed login bearer only ever travels to an `https://` MCPJam origin,
+ * or a loopback `http://` one for a local deployment: over plain HTTP
+ * anywhere else, anyone on the path could read it. (The fixed-key path keeps
+ * its historical behaviour.)
+ */
+function assertSecureCallbackOrigin(baseUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error(
+      `MCPJam lease baseUrl ${JSON.stringify(baseUrl)} is not a URL; an auth callback's credentials are sent only to an https:// origin.`
+    );
+  }
+  if (url.protocol === "https:") return;
+  if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
+  throw new Error(
+    `An auth callback's credentials are sent only to an https:// MCPJam origin (or a loopback http:// one for local development); refusing ${url.origin}.`
+  );
+}
+
 function assertOneCredentialSource(options: {
   apiKey?: string;
   getAuth?: McpjamGetAuth;
@@ -431,6 +456,7 @@ export class McpjamLeaseClient {
 
   constructor(options: McpjamLeaseClientOptions) {
     assertOneCredentialSource(options);
+    if (options.getAuth) assertSecureCallbackOrigin(options.baseUrl);
     this.baseUrl = trimTrailingSlashes(options.baseUrl);
     this.apiKey = options.getAuth ? undefined : options.apiKey;
     this.getAuth = options.getAuth;
@@ -439,6 +465,16 @@ export class McpjamLeaseClient {
     this.model = options.model;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.proxyFetch = this.proxyFetch.bind(this);
+  }
+
+  /**
+   * A request carrying a callback credential never follows a redirect: the
+   * lease API does not redirect, and a bearer must not travel to whatever
+   * origin a response names. (The fixed-key path keeps its historical
+   * behaviour.)
+   */
+  private credentialRedirectPolicy(): { redirect?: RequestRedirect } {
+    return this.getAuth ? { redirect: "error" } : {};
   }
 
   /**
@@ -460,7 +496,11 @@ export class McpjamLeaseClient {
       try {
         token = await this.getAuth();
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
+        // Redacted: a callback's own error may quote the credential it was
+        // refreshing, and this error is public.
+        const detail = redactTelemetryString(
+          error instanceof Error ? error.message : String(error)
+        );
         // An outage while refreshing is the platform being unavailable (read
         // as `unavailable`); anything else is a credential that was refused.
         throw isTransportFailure(error)
@@ -541,6 +581,7 @@ export class McpjamLeaseClient {
           headers: await this.platformHeaders(),
           body: JSON.stringify({ runId: lease.runId }),
           signal,
+          ...this.credentialRedirectPolicy(),
         }
       );
       if (response.ok) this.held.delete(lease.runId);
@@ -571,6 +612,7 @@ export class McpjamLeaseClient {
         headers: await this.platformHeaders(),
         body: JSON.stringify({ model: this.model }),
         signal,
+        ...this.credentialRedirectPolicy(),
       });
 
     let response = await send();

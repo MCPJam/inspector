@@ -371,6 +371,24 @@ describe("MCPJam-hosted inference", () => {
     expect(seen?.aborted).toBe(true);
   });
 
+  it("refuses a plain-HTTP platform origin before sending the credential to it", async () => {
+    const sent = stubPlatform();
+    const error = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "mcpjam",
+        resolveMcpjam: async () => ({
+          baseUrl: "http://platform.example.com",
+          projectId: "proj_123",
+          getAuth: async () => "tok_1",
+        }),
+      },
+    }).catch((caught) => caught);
+    expect(error).toMatchObject({ code: "OPTIONS_INVALID", category: "usage" });
+    expect((error as Error).message).toContain("https://");
+    expect(sent).toEqual([]);
+  });
+
   it("never resolves the platform on a BYOK-only run", async () => {
     stubPlatform();
     const resolveMcpjam = vi.fn();
