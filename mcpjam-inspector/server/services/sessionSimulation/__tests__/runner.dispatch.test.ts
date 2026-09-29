@@ -342,7 +342,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   });
 
   it("sends the output ceiling on the plain hosted /stream rail for a credit-funded step", async () => {
-    // No starter claim: the step bills credits on the default hosted
+    // A credit-funded step bills credits on the default hosted
     // endpoint, which is the rail that reserves against the ceiling.
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
