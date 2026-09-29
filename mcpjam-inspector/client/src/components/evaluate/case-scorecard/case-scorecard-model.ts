@@ -402,18 +402,20 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
  * Whether this check needs a tool call, so a negative case cannot hold beside
  * it.
  *
- * The two pattern checks decide by their count, not their kind: `min`
- * (default 1) counts MATCHING calls or results, and a result needs a call, so
- * `min: 0, max: 0` — "none matches" — holds on a transcript with no calls at
- * all. An advisory one only warns, so it cannot contradict either. The SDK
- * refuses the same pairing on the same rule.
+ * An advisory check of any kind only warns, never fails the iteration, so it
+ * cannot contradict a case that passes with no calls. The two pattern checks
+ * then decide by their count, not their kind: `min` (default 1) counts
+ * MATCHING calls or results, and a result needs a call, so `min: 0, max: 0` —
+ * "none matches" — holds on a transcript with no calls at all. The SDK refuses
+ * the same pairings on the same rules.
  */
 function contradictsNegativeCase(predicate: Predicate): boolean {
+  if (checkRole(predicate) === "advisory") return false;
   if (
     predicate.type === "toolInputMatches" ||
     predicate.type === "toolResultMatches"
   ) {
-    return (predicate.min ?? 1) >= 1 && checkRole(predicate) !== "advisory";
+    return (predicate.min ?? 1) >= 1;
   }
   return NEGATIVE_CONTRADICTING_KINDS.has(predicate.type as PredicateKind);
 }

@@ -1,3 +1,7 @@
+import type { ConvexHttpClient } from "convex/browser";
+import type { SuiteRunRecorder } from "./recorder.js";
+import { logger } from "../../utils/logger.js";
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 /**
  * Admission gate for eval runs whose resolved host config selects a HARNESS
  * (Claude Code | Codex) rather than the emulated engine.
@@ -225,6 +229,7 @@ function harnessCannotObserveWidgetsReason(
  */
 export function resolveEvalCaseModelDefinition(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   /** The model the CASE names, already built into a definition. */
   caseModel: ModelDefinition;
 }): ModelDefinition {
@@ -254,6 +259,7 @@ export function hasSelectedMcpServersForAdmission(args: {
 
 export function checkEvalHarnessStaticAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   /** The run's resolved server set (the manager connects exactly this). */
   serverIds?: readonly string[];
   /** Servers contributed by the environment's pinned plugin versions. They
@@ -280,6 +286,7 @@ export function checkEvalHarnessStaticAdmission(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
+    localExecution: args.localExecution === true && isLocalHarnessVenue(harness),
     requireToolApproval: hostConfig.requireToolApproval === true,
     hasSelectedMcpServers,
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
@@ -321,6 +328,7 @@ export function checkEvalHarnessStaticAdmission(args: {
  */
 export function checkEvalHarnessAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   serverIds?: readonly string[];
   pluginServerIds?: readonly string[];
   /** The run's snapshotted cases (the recorder's `config.tests`). */
@@ -381,6 +389,7 @@ export function checkEvalHarnessAdmission(args: {
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
+    localExecution: args.localExecution === true && isLocalHarnessVenue(harness),
         requireToolApproval,
         hasSelectedMcpServers,
         model: {
@@ -462,6 +471,7 @@ export function checkEvalHarnessAdmission(args: {
   // static half to decide them rather than admitting by default.
   if (modelCases.length === 0) {
     const staticOnly = checkEvalHarnessStaticAdmission({
+      localExecution: args.localExecution,
       hostConfig: args.hostConfig,
       ...(args.serverIds ? { serverIds: args.serverIds } : {}),
       ...(args.pluginServerIds
@@ -528,6 +538,7 @@ const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set([
  */
 export function checkEvalExecutionAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   /**
    * The environment's pinned computer image; `null`/absent means none.
    *
@@ -559,7 +570,7 @@ export function checkEvalExecutionAdmission(args: {
   // Checked BEFORE the built-in tool rule, and regardless of it: a harness on
   // this surface would run on the acting member's personal computer no matter
   // which tools the host grants.
-  if (singleCase && harness) {
+  if (singleCase && harness && !(args.localExecution === true && isLocalHarnessVenue(harness))) {
     return { ok: false, reason: harnessNeedsSuiteRunReason(harness) };
   }
 
@@ -665,4 +676,75 @@ function admitHarness(
     };
   }
   return { ok: true, harness };
+}
+
+export function casesAssertingWidgetRender(
+  tests: ReadonlyArray<Record<string, any>>,
+): string[] {
+  const titles = new Set<string>();
+  for (const test of tests) {
+    const steps = Array.isArray(test.steps) ? test.steps : [];
+    const asserts =
+      steps.some(
+        (step: any) =>
+          step?.kind === "assert" && step?.assertion?.type === "widgetRendered",
+      ) ||
+      (Array.isArray(test.successPredicates) &&
+        test.successPredicates.some(
+          (predicate: any) => predicate?.type === "widgetRendered",
+        ));
+    if (asserts) titles.add(String(test.title ?? "(untitled case)"));
+  }
+  return [...titles];
+}
+
+/**
+ * Terminally fail a run that has a row but has not executed anything.
+ *
+ * `startSuiteRunWithRecorder` creates the run AND precreates its iteration
+ * rows, so finalizing only the run leaves every attempt stuck pending — the
+ * shape an operator sees as a run that never ends. Both writes are best-effort
+ * and their failures are LOGGED, never rethrown: the caller is already
+ * reporting a real cause, and masking it with a cleanup error costs the reason
+ * the run failed.
+ *
+ * Shared by the pinned-skill setup abort and the harness admission gate: they
+ * fail at the same point in the lifecycle and must leave the same wreckage
+ * behind, which is exactly the invariant a second hand-written copy loses.
+ */
+export async function failRunBeforeExecution(
+  convexClient: ConvexHttpClient,
+  recorder: SuiteRunRecorder,
+  runId: string,
+  { reason }: { reason: string },
+): Promise<void> {
+  const cause = reason.slice(0, 500);
+  await convexClient
+    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+      runId,
+      error: cause,
+    })
+    .catch((cleanupError: unknown) =>
+      logger.warn(
+        "[evals] Failed to fail pending iterations after setup abort",
+        {
+          runId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        },
+      ),
+    );
+  await recorder
+    .finalize({ status: "failed", notes: cause })
+    .catch((finalizeError: unknown) =>
+      logger.warn("[evals] Failed to finalize run after setup abort", {
+        runId,
+        error:
+          finalizeError instanceof Error
+            ? finalizeError.message
+            : String(finalizeError),
+      }),
+    );
 }

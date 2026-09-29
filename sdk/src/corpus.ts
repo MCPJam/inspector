@@ -30,6 +30,7 @@
 import { EvalTest, type EvalTestConfig } from "./EvalTest.js";
 import { EvalSuite } from "./EvalSuite.js";
 import type { HostExecutor } from "./HostExecutor.js";
+import type { PromptResult } from "./PromptResult.js";
 import { canonicalDigest } from "./contract/canonical.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { checkRole } from "./predicates/policy.js";
@@ -288,6 +289,19 @@ export type EvalTestFromCaseOptions = {
  * projections — tool-match, predicates, and any scorers — and `test()`'s own
  * legacy score is one input among them. A generated body cannot assert
  * anything the hosted case did not already declare.
+ *
+ * The prompts are ONE conversation, as they are hosted: every prompt after the
+ * first is sent with the iteration's earlier turns as its `context`, so the
+ * agent answers "now cancel it" knowing what "it" is. The turns live in the
+ * body's own closure, so each iteration starts a fresh conversation.
+ *
+ * A turn that errored ends the iteration, again as hosted (`executeSteps`
+ * stops on the first fatal engine error). It THROWS rather than returning:
+ * the later prompts would continue a conversation that never completed, and a
+ * returned body would have its partial transcript graded as though the server
+ * had been asked everything — a provider outage filed as a task failure.
+ * Thrown, the iteration is an execution failure (`failed`, or `timed_out` /
+ * `cancelled` when that is what stopped the turn) carrying the turn's error.
  */
 export function evalTestFromPlatformCase(
   evalCase: PlatformEvalCase,
@@ -458,9 +472,17 @@ export function evalTestFromPlatformCase(
   // suite — used to sail past. Scanning the merged arrays here is what makes
   // the guard total; the per-step throw stays because it can name the step.
   if (evalCase.isNegative) {
-    // Any `toolCalledWith` still standing in `predicates` came from checks:
-    // the step-predicate route threw above.
-    if (predicates.some((predicate) => predicate.type === "toolCalledWith")) {
+    // A gating `toolCalledWith` still standing in `predicates` came from
+    // checks: the step-predicate route threw above. An advisory one — from a
+    // step or from checks — only warns, never fails the iteration, so it
+    // cannot contradict a case that passes with no calls.
+    if (
+      predicates.some(
+        (predicate) =>
+          predicate.type === "toolCalledWith" &&
+          checkRole(predicate) !== "advisory"
+      )
+    ) {
       throw new Error(
         `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
           `(passes only when NO tool is called) but a toolCalledWith check ` +
@@ -497,8 +519,31 @@ export function evalTestFromPlatformCase(
     id: evalCase.id,
     name: options.name ?? evalCase.title,
     test: async (executor: HostExecutor) => {
-      for (const prompt of prompts) {
-        await executor.run(prompt);
+      // Per invocation, never per case: an iteration must not inherit the
+      // previous iteration's conversation.
+      const turns: PromptResult[] = [];
+      for (const [index, prompt] of prompts.entries()) {
+        // A copy, so an executor that keeps the array it was handed never sees
+        // this turn appended to it afterwards. Each earlier turn appears ONCE:
+        // a `PromptResult`'s messages are its own user message and response,
+        // never the context it was sent with, so nothing is repeated.
+        const result =
+          turns.length === 0
+            ? await executor.run(prompt)
+            : await executor.run(prompt, { context: [...turns] });
+        turns.push(result);
+        // Optional-chained because `HostExecutor` is structural: a custom
+        // executor returning something that is not a `PromptResult` keeps
+        // working as it did, and simply never stops early.
+        if (result?.hasError?.()) {
+          throw new Error(
+            `prompt ${index + 1} of ${prompts.length} errored: ` +
+              `${result.getError?.() ?? "unknown error"}` +
+              (index + 1 < prompts.length
+                ? "; the remaining prompts were not sent"
+                : "")
+          );
+        }
       }
       return true;
     },

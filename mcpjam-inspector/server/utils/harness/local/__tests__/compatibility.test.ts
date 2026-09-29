@@ -141,10 +141,10 @@ describe("the shipped manifest", () => {
     }
   });
 
-  it("never offers an unrestricted profile for an approval-capable harness", () => {
+  it("maps unrestricted execution for trusted unattended schedulers", () => {
     expect(
       LOCAL_HARNESS_MANIFEST["claude-code"].permissionProfileMapping,
-    ).not.toHaveProperty("unrestricted");
+    ).toHaveProperty("unrestricted", "allow-all");
   });
 });
 

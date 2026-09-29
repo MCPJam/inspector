@@ -32,7 +32,6 @@
 //
 // Usage:
 //   node scripts/build-local-harness-pack.mjs \
-//     --adapter-bridge node_modules/@ai-sdk/harness-claude-code/dist/bridge \
 //     --node-tarball /tmp/node-v24.20.0-linux-x64.tar.xz \
 //     --platform linux-x64 \
 //     --out .pack-out \
@@ -60,6 +59,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = resolve(scriptDir, "..");
+const toolchain = JSON.parse(readFileSync(join(scriptDir, "local-harness-toolchain.json"), "utf8"));
 
 /**
  * Platforms a pack can be built for, and the vendor platform package whose
@@ -127,6 +127,7 @@ export async function installClaudeCodePackRecipe(packRoot, installDependencies)
       writeFileSync(join(packRoot, file.name), file.content);
     }
   }
+  writeFileSync(join(packRoot, "bootstrap.json"), JSON.stringify(bootstrap));
   await installDependencies();
   writeFileSync(join(packRoot, ".npmrc"), npmrc.content);
   return { bridgeDigest: `sha256:${sha256File(join(packRoot, "bridge.mjs"))}` };
@@ -496,13 +497,8 @@ function assertPnpmVersion() {
   } catch {
     fail("pnpm is not on PATH; the pack build installs the adapter's recipe with it");
   }
-  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-  if (!Number.isFinite(major) || major < 10) {
-    fail(
-      `pnpm ${version} is too old: the adapter's recipe uses \`allowBuilds\` in ` +
-        `pnpm-workspace.yaml, which needs pnpm 10 or newer (pnpm 9 reports ` +
-        `"packages field missing or empty" instead)`,
-    );
+  if (version !== toolchain.pnpm) {
+    fail(`pnpm ${version} differs from the pack pin ${toolchain.pnpm}; install the pinned version before building`);
   }
 }
 
@@ -581,9 +577,7 @@ async function main() {
   // installing under `mcpjam-inspector/node_modules`. A path relative to this
   // script is right on exactly one of those layouts and silently wrong on the
   // other — which is what `check:bundled-runtime-paths` exists to stop.
-  const adapterBridge = resolve(
-    String(args["adapter-bridge"] ?? defaultAdapterBridgeDir()),
-  );
+  const adapterBridge = resolve(defaultAdapterBridgeDir());
   const outRoot = resolve(String(args.out ?? join(inspectorRoot, ".pack-out")));
   const nodeTarball = args["node-tarball"]
     ? resolve(String(args["node-tarball"]))
@@ -592,9 +586,7 @@ async function main() {
   if (!existsSync(adapterBridge)) {
     fail(`no adapter bridge directory at ${adapterBridge}`);
   }
-  if (adapterBridge !== resolve(defaultAdapterBridgeDir())) {
-    fail("--adapter-bridge must name the installed pinned adapter; custom recipes cannot match the runtime bootstrap");
-  }
+
 
   const required = createRequire(import.meta.url);
   const adapterVersion = JSON.parse(
@@ -623,7 +615,7 @@ async function main() {
         "--store-dir",
         join(outRoot, ".pnpm-store"),
       ],
-      { cwd: packRoot, stdio: "inherit" },
+      { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
     );
   });
 
@@ -654,6 +646,9 @@ async function main() {
 
   // 4. The pack's own Node.
   const node = installBundledNode(packRoot, nodeTarball, platformKey);
+  if (node.version !== `v${toolchain.node}`) {
+    fail(`Bundled Node ${node.version} differs from the pack pin v${toolchain.node}`);
+  }
 
   // 4b. Windows only: the Job Object launcher. It goes INSIDE the pack so the
   //     tree digest covers it — the supervisor refuses to enforce whole-tree
@@ -665,8 +660,7 @@ async function main() {
       : null;
     if (helperSource === null || !existsSync(helperSource)) {
       // Not a build failure: a Windows pack without the helper is a pack whose
-      // platform stays ineligible, which is the state Windows is in today and
-      // the state `nativePlatforms` already describes.
+      // platform stays ineligible even when Windows conformance is recorded.
       console.warn(
         "[pack] no --job-launcher given; this Windows pack cannot prove " +
           "whole-tree cleanup and the platform stays refused",
@@ -706,7 +700,10 @@ async function main() {
     }
   }
 
+  const { computePackInputs } = await import("./check-local-harness-inputs.mjs");
+  const { fingerprint: inputsFingerprint } = await computePackInputs();
   const manifest = {
+    inputsFingerprint,
     schema: "mcpjam.local-harness-pack/1",
     harnessId: "claude-code",
     packVersion,
@@ -882,5 +879,5 @@ async function main() {
 // Only build when run as the entry point, so a test can import the digest
 // implementation and prove it agrees with the server's.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => fail(error.message));
+  main().catch((error) => fail(error.stack ?? error.message));
 }

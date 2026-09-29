@@ -885,6 +885,10 @@ export interface MCPJamHandlerOptions {
      *  from the request body. Consent binds to a user, so a user the caller
      *  names is a user the caller chose. */
     actingUserId: string;
+    /** Server scheduler-owned session identity; never parsed from renderer input. */
+    localSessionId?: string;
+    targetId?: string;
+    sessionIdx?: number;
   };
   authHeader?: string;
   scenarioId?: string;
