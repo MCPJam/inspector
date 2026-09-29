@@ -1,0 +1,551 @@
+/**
+ * swarm-runner.sponsored.test.ts: how the fan-out runner honours the backend's
+ * per-conversation funding.
+ *
+ * Same seam as `swarm-runner.test.ts`: the shared host-session core and the
+ * backend client are stubbed, so these tests pin the runner's own contract:
+ * which conversations carry the sponsored claim, and how a spend cap or a
+ * platform limit stops one funding scope without stopping the other.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const setupTurnMock = vi.fn();
+const reportTargetGroundingMock = vi.fn();
+const reportAttemptMock = vi.fn();
+vi.mock("../swarm-setup-turn", async () => ({
+  ...(await vi.importActual<typeof import("../swarm-setup-turn")>(
+    "../swarm-setup-turn",
+  )),
+  runSwarmSetupTurn: (...args: unknown[]) => setupTurnMock(...args),
+}));
+const swarmPersonaNextTurnMock = vi.fn();
+const heartbeatJourneyRunMock = vi.fn();
+const runSyntheticHostSessionMock = vi.fn();
+const finalizePendingAttemptsMock = vi.fn();
+
+vi.mock("../../swarm-agent.js", async () => {
+  const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
+    "../../swarm-agent.js",
+  );
+  return {
+    ...actual,
+    reportTargetGrounding: (...args: unknown[]) =>
+      reportTargetGroundingMock(...args),
+    reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
+    swarmPersonaNextTurn: (...args: unknown[]) =>
+      swarmPersonaNextTurnMock(...args),
+    heartbeatJourneyRun: (...args: unknown[]) =>
+      heartbeatJourneyRunMock(...args),
+    finalizePendingAttempts: (...args: unknown[]) =>
+      finalizePendingAttemptsMock(...args),
+  };
+});
+
+vi.mock("../runner.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../runner.js")>("../runner.js");
+  return {
+    ...actual,
+    runSyntheticHostSession: (...args: unknown[]) =>
+      runSyntheticHostSessionMock(...args),
+    captureAndPersistWidgetSnapshotsForSession: vi.fn(),
+  };
+});
+
+import { startJourneyRun } from "../swarm-runner.js";
+import { SwarmSetupError } from "../swarm-setup-turn.js";
+import {
+  SPONSORED_CAPACITY_MESSAGE,
+  type SwarmSessionFunding,
+} from "../../../../shared/swarm-sponsorship.js";
+
+const target = (name: string) => ({
+  hostId: `host-${name}`,
+  hostName: `Host ${name}`,
+  hostConfigId: `hc-${name}`,
+  targetId: `target-${name}`,
+  modelId: "anthropic/claude-haiku-4.5",
+  systemPrompt: "sys",
+  requireToolApproval: false,
+  serverIds: [`server-${name}`],
+});
+const A = target("a");
+const B = target("b");
+
+const funding = (
+  targetId: string,
+  ...values: Array<"starter" | "credits">
+): SwarmSessionFunding[] =>
+  values.map((value, sessionIdx) => ({
+    targetId,
+    sessionIdx,
+    funding: value,
+  }));
+
+function opts(overrides: Record<string, unknown> = {}) {
+  return {
+    runId: "run-1",
+    projectId: "proj-1",
+    hosts: [A],
+    personaSnapshot: {
+      personaId: "p1",
+      name: "Persona",
+      role: "tester",
+      notes: "",
+    },
+    sessionsPerTarget: 2,
+    maxTurns: 3,
+    convexHttpUrl: "https://convex.site",
+    getBearer: async () => "token",
+    managerFactory: async () => ({
+      manager: {} as never,
+      connectedServerIds: ["server-1"],
+      dispose: async () => {},
+    }),
+    ...overrides,
+  };
+}
+
+const terminals = () =>
+  reportAttemptMock.mock.calls
+    .map((call) => call[2] as any)
+    .filter((args) => args.status !== "running");
+const claimed = () =>
+  reportAttemptMock.mock.calls
+    .map((call) => call[2] as any)
+    .filter((args) => args.status === "running");
+const READY_SETUP = {
+  status: "completed",
+  readiness: "not_needed",
+  createdEntities: [],
+  toolCalls: [],
+  writeCallsDispatched: 0,
+  admittedWriteTools: [],
+  missing: [],
+  unsupportedClaims: 0,
+  observedCreatedEntityCount: 0,
+  excludedToolCount: 0,
+  prefix: "p-",
+  retried: false,
+  startedAt: 0,
+  durationMs: 0,
+  chatSessionId: "setup",
+};
+
+const SPEND_CAP = "Org daily spend cap exceeded";
+
+beforeEach(() => {
+  setupTurnMock.mockReset();
+  reportTargetGroundingMock.mockReset().mockResolvedValue({});
+  reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
+  swarmPersonaNextTurnMock
+    .mockReset()
+    .mockResolvedValue({ message: "hi", endSession: false });
+  heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
+  finalizePendingAttemptsMock.mockReset().mockResolvedValue(undefined);
+  runSyntheticHostSessionMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "succeeded" });
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("sponsored swarm conversations: routing by funding", () => {
+  it("attaches the sponsored claim identity only to conversations the backend funded as starter", async () => {
+    await startJourneyRun(
+      opts({
+        sessionFunding: funding(A.targetId, "starter", "credits"),
+      }) as never,
+    );
+
+    const adapters = runSyntheticHostSessionMock.mock.calls.map(
+      (call) => call[0] as any,
+    );
+    expect(adapters).toHaveLength(2);
+    expect(adapters[0].runtime.sponsorship).toEqual({
+      targetId: "target-a",
+      sessionIdx: 0,
+    });
+    expect(adapters[1].runtime.sponsorship).toBeUndefined();
+  });
+
+  it("sends the service-token proof on persona calls of sponsored conversations only", async () => {
+    await startJourneyRun(
+      opts({
+        sessionFunding: funding(A.targetId, "starter", "credits"),
+      }) as never,
+    );
+
+    for (const call of runSyntheticHostSessionMock.mock.calls) {
+      await (call[0] as any).nextPersonaTurn([]);
+    }
+    const personaArgs = swarmPersonaNextTurnMock.mock.calls.map(
+      (call) => call[2] as any,
+    );
+    expect(personaArgs[0]).toMatchObject({ sessionIdx: 0, sponsored: true });
+    expect(personaArgs[1].sponsored).toBeUndefined();
+  });
+
+  it("treats every conversation as credit-funded when the backend reported no funding", async () => {
+    await startJourneyRun(opts() as never);
+
+    for (const call of runSyntheticHostSessionMock.mock.calls) {
+      expect((call[0] as any).runtime.sponsorship).toBeUndefined();
+    }
+    expect(terminals().map((t) => t.status)).toEqual([
+      "succeeded",
+      "succeeded",
+    ]);
+  });
+
+  it("makes target setup and grounding sponsored when any conversation of the target is", async () => {
+    setupTurnMock.mockResolvedValue(READY_SETUP);
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+        sessionFunding: [
+          ...funding(A.targetId, "starter"),
+          ...funding(B.targetId, "credits"),
+        ],
+      }) as never,
+    );
+
+    const setupByTarget = new Map(
+      setupTurnMock.mock.calls.map((call) => [
+        (call[0] as any).target.targetId,
+        (call[0] as any).sponsored,
+      ]),
+    );
+    expect(setupByTarget.get("target-a")).toBe(true);
+    expect(setupByTarget.get("target-b")).toBeFalsy();
+  });
+});
+
+describe("sponsored swarm conversations: the org spend cap is scoped to credit-funded conversations", () => {
+  // Target A's credit conversation trips the org cap while target B's
+  // sponsored conversation is in flight; B must finish and run its next one.
+  function parkSponsoredUntilCapTrips() {
+    let tripped!: () => void;
+    const capTripped = new Promise<void>((resolve) => (tripped = resolve));
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.targetId === "target-a") {
+        tripped();
+        return { outcome: "rate_limited", errorMessage: SPEND_CAP };
+      }
+      if (adapter.chatSessionId.endsWith("_0")) {
+        await capTripped;
+        // Give the runner time to act on the trip before B resumes.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        // What the real core returns for a session the run-level stop cut off.
+        if (adapter.abortSignal?.aborted) return { outcome: "failed" };
+      }
+      return { outcome: "succeeded" };
+    });
+  }
+
+  it("stops credit-funded conversations and lets sponsored ones in the same run continue", async () => {
+    parkSponsoredUntilCapTrips();
+    const signals: boolean[] = [];
+    const original = runSyntheticHostSessionMock.getMockImplementation()!;
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      const result = await original(adapter);
+      if (adapter.persist.targetId === "target-b") {
+        signals.push(adapter.abortSignal.aborted);
+      }
+      return result;
+    });
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "credits", "credits"),
+          ...funding(B.targetId, "starter", "starter"),
+        ],
+      }) as never,
+    );
+
+    // Both sponsored conversations ran to a succeeded terminal, unaborted.
+    expect(
+      terminals().filter(
+        (t) => t.targetId === "target-b" && t.status === "succeeded",
+      ),
+    ).toHaveLength(2);
+    expect(signals).toEqual([false, false]);
+    // The credit-funded conversation that tripped the cap is rate limited, and
+    // the second one never started; the run-level sweep closes it.
+    expect(claimed().filter((c) => c.targetId === "target-a")).toHaveLength(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+      // The sweep must not touch sponsored attempts.
+      fundingScope: "credits",
+    });
+  });
+
+  it("keeps a sponsored conversation of the SAME target running after its credit sibling trips the cap", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.chatSessionId.endsWith("_0")
+        ? { outcome: "rate_limited", errorMessage: SPEND_CAP }
+        : { outcome: "succeeded" },
+    );
+
+    // Mixed target: index 0 is credit-funded (trips), index 1 is sponsored.
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 2,
+        sessionFunding: funding(A.targetId, "credits", "starter"),
+      }) as never,
+    );
+
+    expect(terminals().map((t) => `${t.sessionIdx}:${t.status}`)).toEqual([
+      "0:rate_limited",
+      "1:succeeded",
+    ]);
+  });
+
+  it("still stops the whole run when no conversation in it is sponsored", async () => {
+    parkSponsoredUntilCapTrips();
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 2,
+        // Old backend semantics: nothing sponsored anywhere.
+        sessionFunding: [
+          ...funding(A.targetId, "credits", "credits"),
+          ...funding(B.targetId, "credits", "credits"),
+        ],
+      }) as never,
+    );
+
+    // B's second conversation never started; B's parked first one was aborted
+    // by the run-level stop and reported as the spend cap, not as a success.
+    expect(claimed().filter((c) => c.targetId === "target-b")).toHaveLength(1);
+    expect(terminals().find((t) => t.targetId === "target-b")).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      errorCode: "spend_cap_exceeded",
+    });
+    // Nothing sponsored, so the sweep is the whole run's, as it always was.
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).not.toHaveProperty(
+      "fundingScope",
+    );
+  });
+
+  it("closes credit-funded and sponsored leftovers separately when a spend cap and a platform limit both hit", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.runtime.sponsorship
+        ? {
+            outcome: "failed",
+            errorMessage: SPONSORED_CAPACITY_MESSAGE,
+            errorReason: "platform_capacity",
+          }
+        : { outcome: "rate_limited", errorMessage: SPEND_CAP },
+    );
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "credits", "credits"),
+          ...funding(B.targetId, "starter", "starter"),
+        ],
+      }) as never,
+    );
+
+    const calls = finalizePendingAttemptsMock.mock.calls.map((c) => c[2]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      errorCode: "spend_cap_exceeded",
+      fundingScope: "credits",
+    });
+    expect(calls[1]).toMatchObject({
+      terminalStatus: "failed",
+      errorCode: "platform_capacity",
+    });
+    expect(calls[1]).not.toHaveProperty("fundingScope");
+  });
+});
+
+describe("sponsored swarm conversations: platform capacity is the platform's problem", () => {
+  const capacityFailure = {
+    outcome: "failed",
+    errorMessage: SPONSORED_CAPACITY_MESSAGE,
+    errorReason: "platform_capacity",
+  };
+
+  it("ends the sponsored conversation as failed with a platform_capacity code, never as an org spend cap", async () => {
+    runSyntheticHostSessionMock.mockResolvedValue(capacityFailure);
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 2,
+        sessionFunding: funding(A.targetId, "starter", "starter"),
+      }) as never,
+    );
+
+    expect(terminals()).toHaveLength(1);
+    expect(terminals()[0]).toMatchObject({
+      sessionIdx: 0,
+      status: "failed",
+      errorCode: "platform_capacity",
+      errorMessage: SPONSORED_CAPACITY_MESSAGE,
+    });
+    // The raw wire form must not be mistaken for an org cap either.
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (call) => call[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not start later sponsored conversations, and closes them in one sweep without claiming them", async () => {
+    runSyntheticHostSessionMock.mockResolvedValue(capacityFailure);
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+      }) as never,
+    );
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+    expect(claimed()).toHaveLength(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "failed",
+      errorCode: "platform_capacity",
+      errorMessage: SPONSORED_CAPACITY_MESSAGE,
+    });
+  });
+
+  it("does not stop credit-funded conversations in the same run", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.runtime.sponsorship ? capacityFailure : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "starter", "starter"),
+          ...funding(B.targetId, "credits", "credits"),
+        ],
+      }) as never,
+    );
+
+    expect(
+      terminals().filter(
+        (t) => t.targetId === "target-b" && t.status === "succeeded",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("classifies the raw wire form of a platform limit on a sponsored conversation as a platform stop", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.runtime.sponsorship
+        ? {
+            outcome: "rate_limited",
+            errorMessage:
+              "MCPJam platform capacity is exhausted (platform_capacity, HTTP 429)",
+          }
+        : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 1,
+        sessionFunding: [
+          ...funding(A.targetId, "starter"),
+          ...funding(B.targetId, "credits"),
+        ],
+      }) as never,
+    );
+
+    // B is credit-funded and still runs: the platform limit did not become a
+    // whole-run stop.
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (call) => call[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps platform_capacity a whole-run stop for credit-funded conversations, as before", async () => {
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage: "capacity exhausted (platform_capacity, HTTP 429)",
+    });
+
+    await startJourneyRun(
+      opts({ sessionsPerTarget: 2, sessionFunding: [] }) as never,
+    );
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      errorCode: "spend_cap_exceeded",
+    });
+  });
+
+  it("ends a target whose sponsored setup the platform refused as a platform problem, not missing prerequisites", async () => {
+    setupTurnMock.mockImplementation(async ({ target }: any) => {
+      if (target.targetId !== "target-a") return READY_SETUP;
+      throw new SwarmSetupError(
+        {
+          status: "failed",
+          readiness: "unavailable",
+          reason: "transport_failed",
+        } as never,
+        {
+          code: "platform_capacity",
+          message: SPONSORED_CAPACITY_MESSAGE,
+        },
+      );
+    });
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        setupWrites: true,
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "starter", "credits"),
+          ...funding(B.targetId, "credits", "credits"),
+        ],
+      }) as never,
+    );
+
+    // A's sponsored attempt is left unclaimed (so it is refunded) and swept as
+    // a platform stop; A's credit attempt fails as missing prerequisites.
+    const aClaims = claimed().filter((c) => c.targetId === "target-a");
+    expect(aClaims.map((c) => c.sessionIdx)).toEqual([1]);
+    expect(
+      terminals().find((t) => t.targetId === "target-a" && t.sessionIdx === 1),
+    ).toMatchObject({
+      status: "failed",
+      errorCode: "prerequisites_unavailable",
+    });
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "failed",
+      errorCode: "platform_capacity",
+    });
+    // Only the credit-funded target B ran; A never reached a session.
+    const ran = runSyntheticHostSessionMock.mock.calls.map(
+      (call) => (call[0] as any).persist.targetId,
+    );
+    expect(ran).toEqual(["target-b", "target-b"]);
+  });
+});

@@ -357,3 +357,73 @@ describe("setup turn integration", () => {
     ).toEqual(["child"]);
   });
 });
+
+describe("sponsored setup turn", () => {
+  const connection = () => ({
+    manager: { listTools: vi.fn(async () => ({ tools: [{ ...tool("create_project", write) }] })) },
+    connectedServerIds: ["s"],
+    dispose: vi.fn(async () => {}),
+  });
+  const setupArgs = (sponsored: boolean) =>
+    ({
+      runId: "run-1",
+      projectId: "p",
+      target: { hostId: "h", targetId: "target-1" },
+      persona: {},
+      modelDefinition: { id: "m" },
+      managerFactory: vi.fn(async () => connection()),
+      authHeader: "Bearer t",
+      sponsored,
+    }) as unknown as Parameters<typeof runSwarmSetupTurn>[0];
+  const prepared = () => {
+    vi.mocked(prepareChatV2).mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "sys",
+      resolvedTemperature: undefined,
+    } as never);
+  };
+
+  it("carries the target-level claim (no sessionIdx) only when the target is sponsored", async () => {
+    prepared();
+    vi.mocked(drainAssistantTurn).mockResolvedValue({
+      history: [{ role: "assistant", content: '{"ready":true,"created":[],"missing":[]}' }],
+    } as never);
+
+    await runSwarmSetupTurn(setupArgs(true));
+    expect(vi.mocked(drainAssistantTurn).mock.calls.at(-1)![0]).toMatchObject({
+      sponsorship: { targetId: "target-1" },
+    });
+    expect(
+      vi.mocked(drainAssistantTurn).mock.calls.at(-1)![0].sponsorship,
+    ).not.toHaveProperty("sessionIdx");
+
+    await runSwarmSetupTurn(setupArgs(false));
+    expect(
+      vi.mocked(drainAssistantTurn).mock.calls.at(-1)![0],
+    ).not.toHaveProperty("sponsorship");
+  });
+
+  it("records a platform refusal of a sponsored setup turn instead of reporting missing prerequisites", async () => {
+    prepared();
+    vi.mocked(drainAssistantTurn).mockRejectedValue(
+      new Error("Platform is at capacity (platform_capacity, HTTP 429)"),
+    );
+
+    const error = await runSwarmSetupTurn(setupArgs(true)).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SwarmSetupError);
+    expect(error.platformFailure).toMatchObject({ code: "platform_capacity" });
+  });
+
+  it("does not attribute a credit-funded setup failure to the platform", async () => {
+    prepared();
+    vi.mocked(drainAssistantTurn).mockRejectedValue(
+      new Error("Platform is at capacity (platform_capacity, HTTP 429)"),
+    );
+
+    const error = await runSwarmSetupTurn(setupArgs(false)).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SwarmSetupError);
+    expect(error.platformFailure).toBeUndefined();
+  });
+});

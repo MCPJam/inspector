@@ -18,6 +18,7 @@ import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { getRunningJourneyStreamHub } from "../../services/sessionSimulation/swarm-runner.js";
 import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
+import { previewSwarmFunding } from "../../services/swarm-agent.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
 import { assertBearerToken } from "./errors.js";
@@ -164,7 +165,53 @@ const startRunSchema = z.object({
    * journey definition write is checked with.
    */
   sessionsPerTarget: z.number().int().optional(),
+  /**
+   * How many of this run's conversations the caller was shown as sponsored.
+   * Optional and shape-checked here; the backend compares it against the real
+   * allocation and answers a typed 409 (`swarm_funding_changed`) on a mismatch.
+   */
+  expectedSponsored: z.number().int().min(0).optional(),
 });
+
+const fundingPreviewSchema = z.object({
+  projectId: z.string().min(1),
+  runs: z
+    .array(
+      z.object({
+        journeyRefId: z.string().min(1),
+        environmentIds: z.array(z.string().min(1)).optional(),
+        sessionsPerTarget: z.number().int().optional(),
+      }),
+    )
+    // Empty is a read of the allowance alone (the usage surfaces use it).
+    .max(50),
+});
+
+/**
+ * How a wave's conversations would be funded: the sponsored allowance versus
+ * the organization's credits. Read-only. The runner capability is asserted by
+ * THIS process (never the caller), and a server without INSPECTOR_SERVICE_TOKEN
+ * answers `supported: false` with nothing sponsored, so the wizard can only
+ * promise what a launch from this same server can deliver.
+ */
+swarmRuns.post("/funding-preview", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = await getConvexBearerForRequest(c);
+    const body = parseWithSchema(
+      fundingPreviewSchema,
+      await readJsonBody<unknown>(c),
+    );
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server missing CONVEX_HTTP_URL configuration",
+      );
+    }
+    return previewSwarmFunding(convexHttpUrl, bearerToken, body);
+  }),
+);
 
 /**
  * Launch a multi-host swarm (journey-execution) run (PR 3d).
@@ -225,6 +272,9 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             : {}),
           ...(body.sessionsPerTarget !== undefined
             ? { sessionsPerTarget: body.sessionsPerTarget }
+            : {}),
+          ...(body.expectedSponsored !== undefined
+            ? { expectedSponsored: body.expectedSponsored }
             : {}),
         }
       );

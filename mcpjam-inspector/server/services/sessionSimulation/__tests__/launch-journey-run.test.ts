@@ -112,6 +112,85 @@ describe("launchJourneyRun", () => {
     expect(startRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("passes expectedSponsored to the create and returns the funding it reports", async () => {
+    createRunMock.mockResolvedValue(
+      created({ funding: { sponsored: 1, credits: 0, total: 1 } }),
+    );
+
+    const result = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 1,
+    });
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).toMatchObject({
+      expectedSponsored: 1,
+    });
+    expect(result).toEqual({
+      runId: "run_1",
+      funding: { sponsored: 1, credits: 0, total: 1 },
+    });
+  });
+
+  it("omits expectedSponsored when the caller did not supply one", async () => {
+    createRunMock.mockResolvedValue(created());
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).not.toHaveProperty(
+      "expectedSponsored",
+    );
+  });
+
+  it("hands the runner the per-conversation funding the backend allocated", async () => {
+    const sessions = [{ targetId: "t1", sessionIdx: 0, funding: "starter" }];
+    createRunMock.mockResolvedValue(created({ sessions }));
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(startRunMock.mock.calls[0]![0]).toMatchObject({
+      sessionFunding: sessions,
+    });
+  });
+
+  it("surfaces a funding mismatch as a typed 409 with its details, before any runner starts", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "swarm_funding_changed",
+          message: "changed",
+          details: {
+            expectedSponsored: 5,
+            actualSponsored: 3,
+            totalConversations: 15,
+          },
+        }),
+        "swarm-agent failed (409)",
+      ),
+    );
+
+    const error = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 5,
+    }).catch((e) => e);
+
+    expect(error).toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      details: {
+        code: "swarm_funding_changed",
+        expectedSponsored: 5,
+        actualSponsored: 3,
+        totalConversations: 15,
+      },
+    });
+    await settle();
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
   it("hands the runner a THUNK, not a captured token", async () => {
     // The run outlives the JWT that authorized it — a delegated token lives
     // about two hours and a wide fan-out runs longer. A captured string here

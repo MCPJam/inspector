@@ -4236,6 +4236,13 @@ export interface PlatformGoalRunSession {
   lastActivityAt: number | null;
 }
 
+/** How a launched run's conversations are funded. */
+export interface PlatformSwarmFunding {
+  sponsored: number;
+  credits: number;
+  total: number;
+}
+
 export interface PlatformGoalRunLaunched {
   /** The run id. Poll `getGoalRun` with it, or stop it with `cancel`. */
   id: string;
@@ -4253,6 +4260,12 @@ export interface PlatformGoalRunLaunched {
    * is how you tell "I launched it" from "it was already going".
    */
   deduped: boolean;
+  /**
+   * How the run's conversations were funded: `sponsored` are paid from MCPJam's
+   * per-user allowance, `credits` from the organization's. Absent when the
+   * server does not report it.
+   */
+  funding?: PlatformSwarmFunding;
 }
 
 export interface PlatformGoalRunCanceled {
@@ -4505,6 +4518,8 @@ export interface PlatformJourneyRunLaunched {
    * is how you tell "I launched it" from "it was already going".
    */
   deduped: boolean;
+  /** See {@link PlatformGoalRunLaunched.funding}. */
+  funding?: PlatformSwarmFunding;
 }
 
 /** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */

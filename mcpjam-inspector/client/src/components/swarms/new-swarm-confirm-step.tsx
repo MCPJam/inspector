@@ -31,6 +31,12 @@ import {
   MIN_SWARM_ITERATIONS,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
+import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
+import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
+import {
+  fundingPreviewRuns,
+  fundingSplitOf,
+} from "@/components/swarms/swarm-funding-plan";
 import {
   describeReusedEnvironmentMove,
   type EnvironmentMoveRow,
@@ -104,6 +110,14 @@ export type ConfirmLaunchPayload = {
   /** Per reused journey: its current rubric. Confirm does not author
    * swarm-level grading, so this is empty from this screen. */
   reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
+  /**
+   * What the person was shown about sponsored conversations when they pressed
+   * launch. `shownSponsored` is the sponsored total across the WHOLE launch as
+   * displayed, or `null` when the display did not cover every run (new goals
+   * that do not exist yet) or showed nothing. The launch compares it with the
+   * split it is about to get and stops for review when they differ.
+   */
+  funding: { shownSponsored: number | null };
 };
 
 type SelectedPersona =
@@ -851,6 +865,10 @@ export function NewSwarmConfirmStep({
   onAddReused,
   onSaveReusedPersona,
   onSaveReusedGoal,
+  projectId,
+  createdTargets = null,
+  fundingRefreshKey = 0,
+  fundingNotice = null,
 }: {
   proposed: ProposedPersona[];
   onProposedChange: (next: ProposedPersona[]) => void;
@@ -890,6 +908,18 @@ export function NewSwarmConfirmStep({
   ) => Promise<void>;
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
+  /** The project the launch runs in; the sponsored split is read against it. */
+  projectId?: string | null;
+  /**
+   * Goals a previous launch attempt already created, in launch order. Once they
+   * exist every run has an id, so the sponsored split can be shown for the
+   * whole launch instead of just the existing goals.
+   */
+  createdTargets?: LaunchTarget[] | null;
+  /** Bump to re-read the sponsored split of an unchanged plan. */
+  fundingRefreshKey?: number;
+  /** Why the last launch stopped for review, when it did. */
+  fundingNotice?: string | null;
 }) {
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
@@ -1077,6 +1107,32 @@ export function NewSwarmConfirmStep({
   const personaTotal = proposed.length + reusedPersonas.length;
   const fanoutEnvironmentCount = Math.max(1, environmentCount);
   const canLaunch = journeyCount > 0 && !launching && !reusedPending;
+
+  // The sponsored split. Every run it can be asked about has a goal id: the
+  // reused goals always, and all of them once a previous attempt created the
+  // new ones. Goals that do not exist yet are the "pending" remainder the
+  // summary says so about.
+  const previewTargets = createdTargets ?? activeReusedTargets;
+  const previewRuns = useMemo(
+    () =>
+      previewTargets.length > 0
+        ? fundingPreviewRuns(
+            previewTargets,
+            environmentIds.length > 0 ? environmentIds : null,
+          )
+        : null,
+    [environmentIds, previewTargets],
+  );
+  const fundingState = useSwarmFundingPreview({
+    projectId,
+    runs: previewRuns,
+    refreshKey: fundingRefreshKey,
+  });
+  const pendingGoals = createdTargets ? 0 : newJourneyCount;
+  const shownSplit =
+    fundingState.status === "ready" && previewRuns
+      ? fundingSplitOf(fundingState.preview, previewRuns.length)
+      : null;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1535,6 +1591,13 @@ export function NewSwarmConfirmStep({
           </p>
         </div>
 
+        <SwarmFundingSummary
+          state={fundingState}
+          requestedRuns={previewRuns?.length ?? 0}
+          pendingGoals={pendingGoals}
+          notice={fundingNotice}
+        />
+
         {errorMessage ? (
           <p role="alert" className="text-sm leading-relaxed text-destructive">
             {errorMessage}
@@ -1559,6 +1622,12 @@ export function NewSwarmConfirmStep({
                 rubric: [],
                 reusedTargets: activeReusedTargets,
                 reusedGrading: [],
+                funding: {
+                  shownSponsored:
+                    shownSplit && pendingGoals === 0
+                      ? shownSplit.sponsored
+                      : null,
+                },
               })
             }
           >
