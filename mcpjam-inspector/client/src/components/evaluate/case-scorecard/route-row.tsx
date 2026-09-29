@@ -308,10 +308,8 @@ function AddToolRow({
           data-testid="simple-case-tools-error"
         >
           <span>
-            Couldn't load tools from the suite's servers.
-            {availableTools.length === 0
-              ? " Retry, or type the exact tool name."
-              : " Their tools are missing from this list."}
+            Couldn't load tools from the suite's servers. Retry, or type the
+            exact tool name.
           </span>
           {onRetryTools ? (
             <Button
@@ -327,20 +325,22 @@ function AddToolRow({
           ) : null}
         </div>
       ) : null}
-      <div className="flex items-center gap-2">
-        {availableTools.length > 0 ? (
-          <Combobox
-            items={availableTools.map((tool) => ({ value: tool, label: tool }))}
-            value=""
-            onValueChange={(tool) => {
-              if (tool) onAdd(tool);
-            }}
-            placeholder="+ Add tool to this assertion"
-            searchPlaceholder="Search tools…"
-            emptyMessage="No matching tools"
-            className="h-8 w-full justify-between text-xs"
-          />
-        ) : (
+      {availableTools.length > 0 ? (
+        <Combobox
+          items={availableTools.map((tool) => ({ value: tool, label: tool }))}
+          value=""
+          onValueChange={(tool) => {
+            if (tool) onAdd(tool);
+          }}
+          placeholder="+ Add tool to this assertion"
+          searchPlaceholder="Search tools…"
+          emptyMessage="No matching tools"
+          className="h-8 w-full justify-between text-xs"
+        />
+      ) : null}
+      {/* A server that owes tools can only be reached by name until it loads. */}
+      {availableTools.length === 0 || toolsStatus ? (
+        <div className="flex items-center gap-2">
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -348,8 +348,6 @@ function AddToolRow({
             aria-label="Add a tool"
             className="h-8 flex-1 text-xs"
           />
-        )}
-        {availableTools.length === 0 && (
           <Button
             type="button"
             variant="outline"
@@ -364,8 +362,8 @@ function AddToolRow({
             <Plus className="h-3.5 w-3.5" />
             Add tool
           </Button>
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

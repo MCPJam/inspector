@@ -1767,6 +1767,9 @@ export function TestTemplateEditor({
         (server) =>
           ids.includes(server.serverId) && server.action === "reconnect",
       );
+      // One server still needing authorization must not stop the others from
+      // refreshing; it is reported after they reload.
+      const unauthorized: string[] = [];
       for (const server of failed) {
         const name =
           projectServers?.find((candidate) => candidate._id === server.serverId)
@@ -1783,16 +1786,21 @@ export function TestTemplateEditor({
             allowInteractiveOAuthFlow: true,
           });
           if (!result.readyServerNames.includes(name))
-            throw new Error(
-              "Server authorization is required. Check the connection and retry.",
-            );
+            unauthorized.push(server.serverId);
         }
       }
       await loadEvalToolMetadata(
-        { ...metadataTarget, serverIds: ids },
+        {
+          ...metadataTarget,
+          serverIds: ids.filter((id) => !unauthorized.includes(id)),
+        },
         loadServerMetadata,
         true,
       );
+      if (unauthorized.length)
+        throw new Error(
+          "Server authorization is required. Check the connection and retry.",
+        );
     },
     [
       metadataTarget,

@@ -459,14 +459,29 @@ describe("CaseScorecard — the route's tool picker", () => {
     expect(onAddTool).toHaveBeenCalledWith("search_EBSCOhost");
   });
 
-  it("names a failed server even when another server filled the picker", () => {
-    renderCard({ availableTools: ["search_EBSCOhost"], toolsStatus: "error" });
+  it("names a failed server and keeps its tools typeable beside the picker", async () => {
+    const user = userEvent.setup();
+    const { onAddTool } = renderCard({
+      availableTools: ["search_EBSCOhost"],
+      toolsStatus: "error",
+    });
     expect(
       screen.getByText("+ Add tool to this assertion").closest("button"),
     ).toHaveAttribute("role", "combobox");
-    expect(screen.getByTestId("simple-case-tools-error")).toHaveTextContent(
-      "Their tools are missing from this list.",
+    expect(screen.getByTestId("simple-case-tools-error")).toBeVisible();
+    await user.type(
+      screen.getByRole("textbox", { name: "Add a tool" }),
+      "other_server_tool",
     );
+    await user.click(screen.getByRole("button", { name: "Add tool" }));
+    expect(onAddTool).toHaveBeenCalledWith("other_server_tool");
+  });
+
+  it("offers only the picker once every server has loaded", () => {
+    renderCard({ availableTools: ["search_EBSCOhost"] });
+    expect(
+      screen.queryByRole("textbox", { name: "Add a tool" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the free-text fallback for a server that advertises no tools", () => {
