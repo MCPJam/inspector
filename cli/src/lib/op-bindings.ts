@@ -429,6 +429,5 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   install_registry_directory_server: { command: "registry install" },
   install_registry_server: { command: "registry install --card" },
   uninstall_registry_server: { command: "registry uninstall" },
-  // Platform feedback: the MCP tool and the REST route ship first.
-  send_feedback: { excluded: "CLI command lands in the follow-up PR" },
+  send_feedback: { command: "cloud feedback" },
 };
