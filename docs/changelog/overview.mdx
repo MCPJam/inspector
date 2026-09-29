@@ -9,6 +9,28 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-29
+
+#### Added
+
+- **`mcpjam test <file>` — run eval suites locally** — the CLI can now run an MCPJam suite file on your machine without uploading anything. Bring your own provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) and no MCPJam account is required; `--inference mcpjam` uses your existing login and billing. Results are never uploaded. See [Local evals](/cli/local-evals) for the full guide and [runSuiteFile](/sdk/reference/run-suite-file) for the SDK equivalent.
+
+- **`mcpjam cloud feedback`** — tell the MCPJam team about a bug, a missing capability, or something confusing from the terminal. `--kind` and `--summary` are required; `--details` (or `--details-file`, `-` for stdin) takes what you were trying to do and what blocked you. When a Cloud command fails with an internal error, its error message ends with a ready-to-run `cloud feedback` command that carries the failing request's id. See [`cloud feedback`](/cli/reference#cloud-feedback) in the command reference.
+
+- **`send_feedback` MCP tool** — the same feedback channel is now available as an MCP tool. When another tool returns an `INTERNAL_ERROR` or `FEATURE_NOT_SUPPORTED`, MCPJam suggests reporting it with its request id. The tool is idempotent: an identical report within a day returns the original receipt instead of filing twice.
+
+#### Changed
+
+- **Swarm audience descriptions now accept up to 10,000 characters** — the previous 2,000-character limit is raised to 10,000. The create flow's Describe box shows a live character count and blocks Continue past the cap. A `.txt` or `.md` file of user research can be attached from a button or dropped on the box; its text is appended under the same count.
+
+#### Fixed
+
+- **BYOK Anthropic model IDs** — models named with the hosted catalog's canonical spelling (for example `anthropic/claude-sonnet-4.5`) now call `api.anthropic.com` with the correct native id (`claude-sonnet-4-5`) instead of an id Anthropic does not serve. Native ids, dated snapshots, and ids outside the reviewed table pass through unchanged. MCPJam-hosted `mcpjam/anthropic/…` routing is unaffected.
+
+- **Multi-prompt eval context** — in `mcpjam test` and `@mcpjam/vitest`, every prompt after the first in a case is now sent with the iteration's earlier turns as its conversation context, matching how a hosted run sends them. Each iteration still starts a fresh conversation. A turn that errors now ends the iteration rather than continuing with the remaining prompts.
+
+- **Advisory checks no longer block negative cases** — an advisory `toolCalledWith` check no longer prevents a negative case from loading. Advisory checks only warn; they cannot contradict a case that passes with no tool calls. The same rule already applied to `toolInputMatches` and `toolResultMatches`.
+
 ### 2026-09-26
 
 #### Changed
