@@ -1671,17 +1671,20 @@ export function NewSwarmCreateFlow({
               expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
             }
           } catch {
-            // Advisory when no split was on screen: an ordinary launch. With
-            // sponsored conversations shown, launching unchecked could move
-            // some onto org credits, so stop and let them try again.
-            if ((payload.funding.shownSponsored ?? 0) > 0) {
-              setFundingNotice(
-                fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
-              );
-              setFundingRefreshKey((key) => key + 1);
-              return;
-            }
+            // Handled below with the "no usable split" case.
           }
+        }
+        // No usable split at launch (the check failed, sponsorship stopped
+        // applying, or it answered for a different number of runs). With no
+        // split on screen that is an ordinary launch. With sponsored
+        // conversations shown, launching unchecked could move some onto org
+        // credits, so stop, refresh what is shown, and let them launch again.
+        if (!fundingSplit && (payload.funding.shownSponsored ?? 0) > 0) {
+          setFundingNotice(
+            fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
+          );
+          setFundingRefreshKey((key) => key + 1);
+          return;
         }
         if (fundingSplit) {
           const shown = payload.funding.shownSponsored;
