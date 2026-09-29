@@ -78,6 +78,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   isElectronMcpCallbackState: (state: string | null | undefined) =>
     Boolean(state?.startsWith("electron_mcp:")),
   readStoredOAuthConfig: readStoredOAuthConfigMock,
+  resolveOAuthCustomHeaders: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
