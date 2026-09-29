@@ -1952,6 +1952,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE, "text/html+skybridge"],
           },
         },
+        // 0.158 also advertises `openai/elicitation` and `openai/form`.
+        // Left out on purpose: they invite OpenAI's custom elicitation
+        // requests, which the inspector does not answer.
         elicitation: { form: {}, url: {} },
       };
       base.hostContext = {
@@ -1979,8 +1982,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            // Bumped with the 2026-09-02 re-probe, from 0.148.0-alpha.15.
-            version: "0.150.0-alpha.12.2",
+            // Bumped with the 2026-09-29 re-probe, from 0.150.0-alpha.12.2.
+            version: "0.158.0-alpha.2.1",
           },
         },
         apps: {
@@ -2003,6 +2006,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
                 "base-uri": ["'none'"],
               },
             },
+            // Paired run 2026-09-29: the widget declared microphone and
+            // clipboardWrite and Codex refused both; its iframe `allow` is a
+            // fixed `fullscreen *`. Camera and geolocation are denied on the
+            // strength of that fixed `allow`, not a declared measurement.
+            permissions: { mode: "custom", allow: {} },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2013,8 +2021,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
-            // The 2026-09-01 and 2026-09-02 captures both omit the key entirely.
-            safeAreaInsets: false,
+            // Correction: absent through 2026-09-02; the 2026-09-29 capture
+            // (Codex 0.158) sends `hostContext.safeAreaInsets`, all zeros.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,

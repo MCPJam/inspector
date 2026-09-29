@@ -2777,7 +2777,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1788307200000,
+      verifiedAt: 1790640000000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -2903,8 +2903,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--color-ring-warning": "rgb(255, 133, 73)",
           "--font-sans": '-apple-system, "system-ui", "Segoe UI", sans-serif',
           "--font-mono":
-            'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-          "--font-weight-normal": "400",
+            'ui-monospace, SFMono-Regular, "SF Mono", menlo, consolas, "Liberation Mono", monospace',
+          "--font-weight-normal": "430",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
           "--font-weight-bold": "700",
@@ -3064,8 +3064,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--color-ring-warning": "rgb(255, 133, 73)",
             "--font-sans": '-apple-system, "system-ui", "Segoe UI", sans-serif',
             "--font-mono":
-              'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-            "--font-weight-normal": "400",
+              'ui-monospace, SFMono-Regular, "SF Mono", menlo, consolas, "Liberation Mono", monospace',
+            "--font-weight-normal": "430",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
             "--font-weight-bold": "700",
@@ -3117,7 +3117,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.150.0-alpha.12.2",
+            version: "0.158.0-alpha.2.1",
           },
         },
         apps: {
@@ -3138,6 +3138,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "base-uri": ["'none'"],
               },
             },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
             browserStorage: {
               localStorage: true,
               sessionStorage: true,
@@ -3145,7 +3149,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
-            safeAreaInsets: false,
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,

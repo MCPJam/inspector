@@ -2136,7 +2136,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "requestTeardown": false,
           "resourcePrefersBorder": true,
           "resourceTeardown": false,
-          "safeAreaInsets": false,
+          "safeAreaInsets": true,
           "sandboxPermissions": false,
           "serverResources": true,
           "serverTools": true,
@@ -2199,13 +2199,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "declared",
           },
+          "permissions": {
+            "allow": {},
+            "mode": "custom",
+          },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.150.0-alpha.12.2",
+          "version": "0.158.0-alpha.2.1",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -2322,7 +2326,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "requestTeardown": false,
           "resourcePrefersBorder": true,
           "resourceTeardown": false,
-          "safeAreaInsets": false,
+          "safeAreaInsets": true,
           "sandboxPermissions": false,
           "serverResources": true,
           "serverTools": true,
@@ -2385,13 +2389,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "declared",
           },
+          "permissions": {
+            "allow": {},
+            "mode": "custom",
+          },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.150.0-alpha.12.2",
+          "version": "0.158.0-alpha.2.1",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
