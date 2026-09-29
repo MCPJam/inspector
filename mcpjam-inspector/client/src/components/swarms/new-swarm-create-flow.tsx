@@ -92,6 +92,7 @@ import {
   fundingChangedNotice,
   fundingPreviewRuns,
   fundingReviewNotice,
+  fundingUnverifiedNotice,
   fundingSplitOf,
   launchRunOverrides,
   type FundingSplit,
@@ -1670,7 +1671,16 @@ export function NewSwarmCreateFlow({
               expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
             }
           } catch {
-            // Advisory only. Falls through to an ordinary launch.
+            // Advisory when no split was on screen: an ordinary launch. With
+            // sponsored conversations shown, launching unchecked could move
+            // some onto org credits, so stop and let them try again.
+            if ((payload.funding.shownSponsored ?? 0) > 0) {
+              setFundingNotice(
+                fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
+              );
+              setFundingRefreshKey((key) => key + 1);
+              return;
+            }
           }
         }
         if (fundingSplit) {
