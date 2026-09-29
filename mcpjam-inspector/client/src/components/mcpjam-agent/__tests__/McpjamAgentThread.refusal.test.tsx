@@ -14,6 +14,7 @@ import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 
 const sessionState = vi.hoisted(() => ({
   error: undefined as Error | undefined,
+  autoResumeNotice: null as string | null,
 }));
 
 vi.mock("@/hooks/use-mcpjam-agent-session", () => ({
@@ -21,6 +22,9 @@ vi.mock("@/hooks/use-mcpjam-agent-session", () => ({
     messages: [],
     get error() {
       return sessionState.error;
+    },
+    get autoResumeNotice() {
+      return sessionState.autoResumeNotice;
     },
     status: "ready",
     model: undefined,
@@ -39,6 +43,10 @@ import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provi
 
 function renderWithError(body: unknown) {
   sessionState.error = new Error(JSON.stringify(body));
+  renderThread();
+}
+
+function renderThread() {
   render(
     <PreferencesStoreProvider themeMode="dark" themePreset="default">
       <McpjamAgentThread
@@ -55,6 +63,7 @@ describe("McpjamAgentThread refusal copy", () => {
   beforeEach(() => {
     useMCPJamLimitDialogStore.setState({ isOpen: false });
     sessionState.error = undefined;
+    sessionState.autoResumeNotice = null;
   });
 
   it("shows one plain line for a spent budget, not the raw body", () => {
@@ -98,5 +107,39 @@ describe("McpjamAgentThread refusal copy", () => {
       expect(notifyMCPJamLimitError({ code })).toBe(false);
     }
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("shows the loop guard's sentence, not its 409 envelope", () => {
+    const body = {
+      code: "AGENT_STEP_LIMIT",
+      message:
+        "This reply reached its step limit, so it was stopped. Send a message to continue.",
+      details: { reason: "step_limit", steps: 16, maxSteps: 16 },
+    };
+    renderWithError(body);
+    expect(
+      screen.getByText(
+        "This reply reached its step limit, so it was stopped. Send a message to continue.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(JSON.stringify(body))).toBeNull();
+  });
+
+  it("says why a turn stopped short of resuming, in one line", () => {
+    sessionState.autoResumeNotice =
+      "The reply was cut off. Send a message to continue.";
+    renderThread();
+    expect(
+      screen.getByText("The reply was cut off. Send a message to continue."),
+    ).toBeTruthy();
+  });
+
+  it("lets an error speak for itself instead of stacking the notice on it", () => {
+    sessionState.autoResumeNotice =
+      "The reply was cut off. Send a message to continue.";
+    renderWithError({ ok: false, code: "agent_billing_rejected" });
+    expect(
+      screen.queryByText("The reply was cut off. Send a message to continue."),
+    ).toBeNull();
   });
 });

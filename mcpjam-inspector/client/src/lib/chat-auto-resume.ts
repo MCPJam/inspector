@@ -13,6 +13,13 @@
  * `requireToolApproval` flag: a pill minted while the toggle was on must still
  * resume the turn if the user flips it off before answering, and the predicate
  * is inert when the message holds no approval requests.
+ *
+ * The tool branch is bounded (`autoResumeStopReason`): it never resumes a
+ * response the output-token limit cut off, nor a turn that has spent its step
+ * budget. Without that bound a turn that reached the server's step ceiling
+ * came back empty but "successful", its last step still looked settled, and
+ * the browser re-posted it every few seconds for as long as the tab was open.
+ * The approval branch needs no bound — each resume there is a user's click.
  */
 import type { UIMessage } from "@ai-sdk/react";
 import {
@@ -21,9 +28,55 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
 import {
+  countAssistantStepsSincePrompt,
+  DEFAULT_TURN_MAX_STEPS,
+} from "@/shared/turn-step-budget";
+import {
   ASK_USER_TOOL_NAME,
   readAskUserAnswerFromOutput,
 } from "./webmcp/ask-user-store";
+
+/**
+ * What the auto-resume decision needs beyond the messages.
+ *
+ * `finishReason` is how the LAST response ended, as the SDK reports it to the
+ * chat's `onFinish` — the one place it reaches the browser; it is not stored on
+ * the message. `maxSteps` is the ceiling the server enforces for this surface's
+ * turns, so the browser stops exactly where the server would refuse.
+ */
+export interface AutoResumeInput {
+  messages: UIMessage[];
+  finishReason?: string;
+  maxSteps?: number;
+}
+
+/** Why a resume that was otherwise due is being withheld. */
+export type AutoResumeStopReason = "cut_off" | "step_limit";
+
+/**
+ * `cut_off` when the last response ended on the output-token limit: whatever
+ * it was doing was truncated, and resuming asks the model to do it again under
+ * the same limit. `step_limit` when the user message has already bought
+ * `maxSteps` steps: the server cannot take another one, so a resume can only
+ * come back empty. `null` when neither applies.
+ */
+export function autoResumeStopReason(
+  input: AutoResumeInput,
+): AutoResumeStopReason | null {
+  if (input.finishReason === "length") return "cut_off";
+  const maxSteps = input.maxSteps ?? DEFAULT_TURN_MAX_STEPS;
+  if (countAssistantStepsSincePrompt(input.messages) >= maxSteps) {
+    return "step_limit";
+  }
+  return null;
+}
+
+/** The one line the chat shows when an automatic resume was withheld. */
+export function describeAutoResumeStop(reason: AutoResumeStopReason): string {
+  return reason === "cut_off"
+    ? "The reply was cut off. Send a message to continue."
+    : "This reply reached its step limit. Send a message to continue.";
+}
 
 /**
  * True while any tool call in the last assistant message's current step is
@@ -119,14 +172,47 @@ export function lastStepDismissedAskUser({
  * `sendAutomaticallyWhen` for the client-driven agent loop: resume the turn
  * once the last step's tool calls settle or its approvals are answered, but
  * NEVER while an approval pill is still pending (BUG-4 — see
- * `lastStepHasPendingApproval`), and never off an abandoned clarifying
- * question (see `lastStepDismissedAskUser`).
+ * `lastStepHasPendingApproval`), never off an abandoned clarifying question
+ * (see `lastStepDismissedAskUser`), and never past a cut-off response or a
+ * spent step budget (see `autoResumeStopReason`).
  */
-export function shouldAutoResumeTurn(options: {
-  messages: UIMessage[];
-}): boolean {
-  if (lastStepHasPendingApproval(options)) return false;
-  if (lastStepDismissedAskUser(options)) return false;
-  if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-  return lastAssistantMessageIsCompleteWithApprovalResponses(options);
+export function shouldAutoResumeTurn(options: AutoResumeInput): boolean {
+  return decideAutoResume(options).resume;
+}
+
+/**
+ * The same decision, plus what it held back: `heldBack` is set when the tool
+ * branch would have resumed but the bound stopped it. One evaluation for
+ * both, so a caller that needs the notice does not ask the SDK twice.
+ */
+export function decideAutoResume(options: AutoResumeInput): {
+  resume: boolean;
+  heldBack: AutoResumeStopReason | null;
+} {
+  if (lastStepHasPendingApproval(options)) {
+    return { resume: false, heldBack: null };
+  }
+  if (lastStepDismissedAskUser(options)) {
+    return { resume: false, heldBack: null };
+  }
+  if (lastAssistantMessageIsCompleteWithToolCalls(options)) {
+    const heldBack = autoResumeStopReason(options);
+    return { resume: heldBack === null, heldBack };
+  }
+  return {
+    resume: lastAssistantMessageIsCompleteWithApprovalResponses(options),
+    heldBack: null,
+  };
+}
+
+/**
+ * The notice for a turn `shouldAutoResumeTurn` would have resumed but held
+ * back, or `null`. Stopping silently reads as the assistant giving up
+ * mid-task; one line saying why, and what to do, is the whole fix.
+ */
+export function autoResumeStoppedNotice(
+  options: AutoResumeInput,
+): string | null {
+  const { heldBack } = decideAutoResume(options);
+  return heldBack ? describeAutoResumeStop(heldBack) : null;
 }

@@ -45,6 +45,7 @@ const mockState = vi.hoisted(() => ({
   nextSessionNumber: 1,
   lastTransportOptions: null as any,
   onFinish: null as null | ((event: any) => void),
+  sendAutomaticallyWhen: null as null | ((options: any) => boolean),
 }));
 
 const baseModel = {
@@ -157,8 +158,17 @@ vi.mock("@ai-sdk/react", async () => {
 
   return {
     useChat: vi.fn(
-      ({ id, onFinish }: { id: string; onFinish?: (event: any) => void }) => {
+      ({
+        id,
+        onFinish,
+        sendAutomaticallyWhen,
+      }: {
+        id: string;
+        onFinish?: (event: any) => void;
+        sendAutomaticallyWhen?: (options: any) => boolean;
+      }) => {
         mockState.onFinish = onFinish ?? null;
+        mockState.sendAutomaticallyWhen = sendAutomaticallyWhen ?? null;
         const currentIdRef = React.useRef(id);
         currentIdRef.current = id;
         const getSnapshot = React.useCallback(
@@ -231,16 +241,24 @@ vi.mock("@ai-sdk/react", async () => {
   };
 });
 
-vi.mock("ai", () => ({
-  DefaultChatTransport: class MockTransport {
-    constructor(options: unknown) {
-      mockState.lastTransportOptions = options;
-    }
-  },
-  generateId: vi.fn(() => `chat-session-${mockState.nextSessionNumber++}`),
-  lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
-  convertToModelMessages: vi.fn(async () => []),
-}));
+vi.mock("ai", async () => {
+  // The auto-resume decision runs the SDK's real step predicates.
+  const actual = await vi.importActual<typeof import("ai")>("ai");
+  return {
+    DefaultChatTransport: class MockTransport {
+      constructor(options: unknown) {
+        mockState.lastTransportOptions = options;
+      }
+    },
+    generateId: vi.fn(() => `chat-session-${mockState.nextSessionNumber++}`),
+    lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
+    lastAssistantMessageIsCompleteWithToolCalls:
+      actual.lastAssistantMessageIsCompleteWithToolCalls,
+    isToolUIPart: actual.isToolUIPart,
+    getToolName: actual.getToolName,
+    convertToModelMessages: vi.fn(async () => []),
+  };
+});
 
 describe("useChatSession fork preservation", () => {
   beforeEach(() => {
@@ -259,7 +277,81 @@ describe("useChatSession fork preservation", () => {
     mockState.nextSessionNumber = 1;
     mockState.lastTransportOptions = null;
     mockState.onFinish = null;
+    mockState.sendAutomaticallyWhen = null;
     mockState.status = "ready";
+  });
+
+  describe("bounded auto-resume", () => {
+    /** The prompt, then a step whose browser-fulfilled call has settled. */
+    const settledClientToolTurn = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "go" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          { type: "step-start" },
+          {
+            type: "tool-ui_snapshot_app",
+            toolCallId: "call-1",
+            state: "output-available",
+            input: {},
+            output: { ok: true },
+          },
+        ],
+      },
+    ] as any[];
+
+    function renderSession() {
+      return renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          hostedContext: { projectId: "project-1", selectedServerIds: [] },
+        }),
+      );
+    }
+
+    it("resumes a settled browser-fulfilled step after a normal finish", () => {
+      const { result } = renderSession();
+      act(() => {
+        mockState.onFinish?.({
+          isAbort: false,
+          message: settledClientToolTurn[1],
+          finishReason: "tool-calls",
+        });
+      });
+
+      expect(
+        mockState.sendAutomaticallyWhen?.({ messages: settledClientToolTurn }),
+      ).toBe(true);
+      expect(result.current.autoResumeNotice).toBeNull();
+    });
+
+    it("holds back after a cut-off reply and says so", async () => {
+      const { result } = renderSession();
+      act(() => result.current.setMessages(settledClientToolTurn));
+      act(() => {
+        mockState.onFinish?.({
+          isAbort: false,
+          message: settledClientToolTurn[1],
+          finishReason: "length",
+        });
+      });
+
+      let resumed: boolean | undefined;
+      act(() => {
+        resumed = mockState.sendAutomaticallyWhen?.({
+          messages: settledClientToolTurn,
+        });
+      });
+      expect(resumed).toBe(false);
+      // The decision recorded the notice; the next render shows it.
+      act(() => result.current.setMessages([...settledClientToolTurn]));
+      await waitFor(() => {
+        expect(result.current.autoResumeNotice).toBe(
+          "The reply was cut off. Send a message to continue.",
+        );
+      });
+    });
   });
 
   it("timestamps a completed assistant without dropping its metadata", async () => {

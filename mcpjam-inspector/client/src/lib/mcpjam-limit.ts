@@ -1,5 +1,9 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { isCreditExhaustion } from "@/shared/credit-exhaustion";
+import {
+  AGENT_STEP_LIMIT_CODE,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -424,6 +428,15 @@ export function describeAgentRefusalMessage(
   if (!message) return null;
   const codes = new Set<string>();
   collectCodes(message, codes);
+  if (codes.has(AGENT_STEP_LIMIT_CODE)) {
+    // The loop guard's refusal carries its own user-facing sentence (which of
+    // the two stops it was); the envelope around it is not for reading.
+    for (const parsed of collectJsonCandidates(message)) {
+      const text = getStringProperty(parsed, "message");
+      if (text) return text;
+    }
+    return STEP_LIMIT_REFUSAL_MESSAGE;
+  }
   // Unconditional, not a fallback for an unparseable body. `collectCodes` only
   // records a `code` PROPERTY, so a refusal nested as plain text under some
   // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —
