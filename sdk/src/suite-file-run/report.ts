@@ -91,6 +91,7 @@ const iterationSchema = z
         .object({
           toolName: z.string(),
           arguments: z.record(z.string(), z.unknown()),
+          rawArguments: z.string().optional(),
         })
         .strict()
     ),

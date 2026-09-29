@@ -19,6 +19,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { MockLanguageModelV3 } from "ai/test";
 import { main } from "../src/index.js";
+import { sha256HexOfBuffer } from "../src/lib/eval-run-file.js";
 import { captureProcessOutput, telemetryDisabled } from "./support/cli-run.js";
 
 const FIXTURE = fileURLToPath(
@@ -395,6 +396,22 @@ test("a provider outage is inconclusive (exit 5), never a failure", async () => 
   });
   assert.equal(run.result.exitCode, 5, run.stderr);
   assert.equal(JSON.parse(run.stdout).verdict, "inconclusive");
+});
+
+test("hashes a file saved with a byte-order mark as its bytes, as a hosted run does", async () => {
+  const ws = workspace(suite(CASES.read));
+  const file = path.join(ws.dir, ".mcpjam", "evals", "example.yaml");
+  const bytes = Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    readFileSync(file),
+  ]);
+  writeFileSync(file, bytes);
+  const run = await runTest(ws, []);
+  assert.equal(run.result.exitCode, 0, run.stderr);
+  const report = JSON.parse(run.stdout) as {
+    metadata: { suite: { sourceHash: string } };
+  };
+  assert.equal(report.metadata.suite.sourceHash, sha256HexOfBuffer(bytes));
 });
 
 test("no credential reaches stdout, stderr or the artifact", async () => {

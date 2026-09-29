@@ -161,8 +161,64 @@ export function classifyMcpjamLeaseError(
  * captured once would expire mid-run. The client calls it before each mint,
  * each mint retry and each revoke, never caches what it returns, and never
  * sends it anywhere but MCPJam's own API.
+ *
+ * A failure is read as a refused credential unless it says the credential
+ * service could not be REACHED: an error with `retryable: true`, or a network
+ * failure (`fetch failed`, `ECONNREFUSED`, a timeout) anywhere in its `cause`
+ * chain. A refresh during an outage is the platform being unavailable, not a
+ * login to fix.
  */
 export type McpjamGetAuth = () => Promise<string>;
+
+/** Node and undici codes for a request that never reached its server. */
+const TRANSPORT_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+const TRANSPORT_FAILURE_TEXT =
+  /fetch failed|socket hang up|could not reach|timed out|\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)\b/i;
+
+/** Whether a `getAuth` failure means "not reached" — see {@link McpjamGetAuth}. */
+function isTransportFailure(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined; depth += 1) {
+    if (typeof current === "string")
+      return TRANSPORT_FAILURE_TEXT.test(current);
+    if (typeof current !== "object" || current === null) return false;
+    const record = current as {
+      retryable?: unknown;
+      name?: unknown;
+      code?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (record.retryable === true) return true;
+    if (record.name === "AbortError" || record.name === "TimeoutError")
+      return true;
+    if (
+      typeof record.code === "string" &&
+      TRANSPORT_FAILURE_CODES.has(record.code)
+    )
+      return true;
+    if (
+      typeof record.message === "string" &&
+      TRANSPORT_FAILURE_TEXT.test(record.message)
+    )
+      return true;
+    current = record.cause;
+  }
+  return false;
+}
 
 /**
  * An explicit MCPJam auth context: where the bearer comes from, and the extra
@@ -404,12 +460,21 @@ export class McpjamLeaseClient {
       try {
         token = await this.getAuth();
       } catch (error) {
-        throw new McpjamLeaseError(
-          `Could not read MCPJam credentials: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          { code: "AUTH_UNAVAILABLE", status: 0 }
-        );
+        const detail = error instanceof Error ? error.message : String(error);
+        // An outage while refreshing is the platform being unavailable (read
+        // as `unavailable`); anything else is a credential that was refused.
+        throw isTransportFailure(error)
+          ? new McpjamLeaseError(
+              `Could not reach MCPJam to refresh credentials: ${detail}`,
+              { code: "AUTH_SERVICE_UNREACHABLE", status: 0 }
+            )
+          : new McpjamLeaseError(
+              `Could not read MCPJam credentials: ${detail}`,
+              {
+                code: "AUTH_UNAVAILABLE",
+                status: 0,
+              }
+            );
       }
       if (typeof token !== "string" || token.trim() === "") {
         throw new McpjamLeaseError(

@@ -290,6 +290,30 @@ test("--url accepts a credentials file for that one server", () => {
   );
 });
 
+test("single-server flags that cannot apply are refused, all named together", () => {
+  const cwd = workspace({
+    ".mcp.json": { mcpServers: { notes: { url: "https://notes.test" } } },
+  });
+  const error = refused(() =>
+    resolve(cwd, ["notes"], {
+      serverOverrides: ["notes=https://flag.test"],
+      singleServer: {
+        header: ["Authorization: Bearer T"],
+        clientCapabilities: "{}",
+        env: ["A=1"],
+        accessToken: "at_x",
+      },
+    })
+  );
+  assert.equal(error.exitCode, 2);
+  assert.match(
+    error.message,
+    /^--access-token, --header, --client-capabilities, --env apply only to the one server bound with --url or --command/
+  );
+  // Unset flags (commander defaults `--header` to []) refuse nothing.
+  assert.ok(resolve(cwd, ["notes"], { singleServer: { header: [] } }).notes);
+});
+
 test("ignores entries for servers the suite does not target", () => {
   const cwd = workspace({
     ".mcp.json": {

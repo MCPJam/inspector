@@ -67,7 +67,7 @@ try {
 | `warnings`, `issues` | Warnings, and run-affecting problems (credentials, billing, integrity, cleanup) by phase and category. |
 | `report` | The validated `eval-local-run` structured report — pass it to `renderStructuredRunJson`, `renderStructuredRunJUnitXml`, `renderStructuredRunHtml`, or `formatLocalEvalRunSummary`. |
 
-Nothing in the result carries a provider key, a platform token, a lease, server headers or environment values. Every such value the run was handed is replaced with `[REDACTED]` wherever observed text repeats it: execution errors, tool-call arguments, evaluator and predicate reasons, issues and warnings. Identifiers (case ids, server and tool names) and fixed vocabularies such as statuses are never rewritten.
+Nothing in the result carries a provider key, a platform token, a lease, server headers or environment objects. Every credential the run was handed — provider keys, platform tokens, server credentials, and any header, environment or URL value whose name or shape marks it as one (`Authorization`, `GITHUB_TOKEN`, `?sig=`, a `ghp_…` token) — is replaced with `[REDACTED]` wherever observed text repeats it: execution errors, tool-call arguments, evaluator and predicate reasons, issues and warnings. Ordinary configuration such as `NODE_ENV=production` is not treated as a secret. Identifiers (case ids, server and tool names) and fixed vocabularies such as statuses are never rewritten.
 
 ## Errors
 
@@ -78,13 +78,13 @@ One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `
 | `category` | Examples |
 |---|---|
 | `usage` | Invalid file, selection or options; conflicting inference intent; an environment-only target |
-| `unsupported` | Direct `toolCall` steps, widget/render/discovery assertions, gating judges |
+| `unsupported` | Direct `toolCall` steps, widget/render/discovery assertions, gating tool-result and latency assertions, gating judges |
 | `import` | An ineligible imported case or an approval that applies to nothing |
 | `policy` | A tool-policy `deny` name that matches no tool |
 | `credentials` | A missing or rejected provider key or platform credential |
-| `billing` | MCPJam refused inference for a billing reason |
+| `billing` | MCPJam or the provider refused inference for a billing reason (credits, quota, a spend budget) |
 | `setup` | A missing binding, a failed connection or tool catalog, duplicate tool names across servers |
 | `cancelled` | The signal fired before execution began |
 | `integrity` | The run's own report failed validation, after the cases ran |
 
-A trial that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion.
+An iteration that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion.

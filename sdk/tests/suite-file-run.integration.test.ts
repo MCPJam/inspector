@@ -501,7 +501,12 @@ describe("runSuiteFile — interruption and refusals during execution", () => {
     const result = await run(suite(readCase + answerCase), options());
     expect(result.termination).toBe("stopped");
     expect(result.verdict).toBe("notEstablished");
-    expect(result.cases[0]?.iterations[0]?.refusal).toBe("credentials");
+    const refused = result.cases[0]!.iterations[0]!;
+    expect(refused.refusal).toBe("credentials");
+    // The refused iteration ran and failed with the provider's own words —
+    // not "cancelled" by the stop it triggered.
+    expect(refused.status).toBe("failed");
+    expect(refused.error).toContain("invalid x-api-key");
     expect(result.cases[1]?.state).toBe("notStarted");
     expect(
       result.issues.some((issue) => issue.category === "credentials")
@@ -509,6 +514,37 @@ describe("runSuiteFile — interruption and refusals during execution", () => {
     // One case's worth of model construction; the second never started.
     expect(built).toHaveLength(1);
   });
+});
+
+describe("runSuiteFile — transient refusals", () => {
+  it("never names a rate limit the retry recovered from as the cause of a later failure", async () => {
+    let calls = 0;
+    const { run } = runner(() => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          error: new APICallError({
+            message: "rate limited",
+            url: "https://api.anthropic.com/v1/messages",
+            requestBodyValues: {},
+            statusCode: 429,
+            isRetryable: true,
+          }),
+        };
+      }
+      if (calls === 2) {
+        return { toolCalls: [{ toolName: "read_note", input: { id: "7" } }] };
+      }
+      return { error: new Error("the model stream broke") };
+    });
+    const result = await run(suite(readCase), options());
+    const iteration = result.cases[0]!.iterations[0]!;
+    expect(calls).toBe(3);
+    expect(iteration.status).toBe("failed");
+    expect(iteration.error).toContain("the model stream broke");
+    expect(iteration.refusal).toBeUndefined();
+    expect(result.termination).toBe("completed");
+  }, 20_000);
 });
 
 describe("runSuiteFile — reports", () => {

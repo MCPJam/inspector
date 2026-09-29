@@ -49,7 +49,7 @@ import {
   parsePositiveInteger,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import { MAX_APPROVAL_REASON_LENGTH } from "../lib/eval-run-file.js";
+import { parseApprovalFlags } from "./eval.js";
 
 /**
  * `mcpjam test <file>` — run a suite file locally.
@@ -95,46 +95,16 @@ function collect(value: string, previous: string[] = []): string[] {
 }
 
 /**
- * The approval flags, with the syntax and selector rules `cloud eval run
- * --file` uses. The SDK enforces eligibility itself; this is only parsing.
+ * The approval flags, parsed by the same rules `cloud eval run --file` uses —
+ * its own parser, so the two cannot drift. (Its `--suite` check never fires:
+ * this command has no `--suite`.) The SDK enforces eligibility itself.
  */
 function parseLocalApprovals(options: {
   allowApproximated?: string[];
   approvalReason?: string;
 }): RunSuiteFileOptions["importApprovals"] {
-  const selectors = options.allowApproximated ?? [];
-  const rawReason = options.approvalReason;
-  if (selectors.length === 0 && rawReason === undefined) return undefined;
-  if (selectors.length === 0) {
-    throw usageError(
-      "--approval-reason needs at least one --allow-approximated <case> to apply to."
-    );
-  }
-  if (rawReason === undefined) {
-    throw usageError(
-      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident."
-    );
-  }
-  const reason = rawReason.trim();
-  if (reason.length === 0 || reason.length > MAX_APPROVAL_REASON_LENGTH) {
-    throw usageError(
-      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`
-    );
-  }
-  const seen = new Set<string>();
-  for (const selector of selectors) {
-    const trimmed = selector.trim();
-    if (trimmed.length === 0) {
-      throw usageError("--allow-approximated does not accept a blank case.");
-    }
-    if (seen.has(trimmed)) {
-      throw usageError(
-        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`
-      );
-    }
-    seen.add(trimmed);
-  }
-  return [...seen].map((caseId) => ({ caseId, reason }));
+  const parsed = parseApprovalFlags(options);
+  return parsed?.cases.map((caseId) => ({ caseId, reason: parsed.reason }));
 }
 
 function parseInferenceMode(
@@ -166,9 +136,13 @@ function readSuiteFile(
     );
   }
   try {
-    // Fatal decoding, so the text hashed downstream IS the file's bytes.
+    // Fatal decoding, and a byte-order mark KEPT, so the text hashed
+    // downstream is exactly the file's bytes — the digest `cloud eval run
+    // --file` takes of the raw buffer. The loader reads past the mark.
     return {
-      text: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        bytes
+      ),
       resolvedPath,
     };
   } catch {

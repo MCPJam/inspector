@@ -63,6 +63,8 @@ import {
 import { assertImportedToolReferences } from "./import-gate.js";
 import {
   attributingModelFactory,
+  isTerminalRefusal,
+  refusalMessage,
   resolveInferenceCredentials,
   type ResolvedInferenceCredentials,
 } from "./inference.js";
@@ -76,6 +78,7 @@ import {
   buildLocalEvalRunReport,
   type LocalEvalRunMetadata,
 } from "./report.js";
+import { setupStep } from "./deadline.js";
 import {
   addServerConfigSecrets,
   createSecretScrubber,
@@ -168,42 +171,6 @@ function cancelledError(phase: "validation" | "setup"): SuiteFileRunError {
   });
 }
 
-/** Run a setup operation under a deadline and the run's abort signal. */
-async function setupStep<T>(
-  what: string,
-  timeoutMs: number,
-  runSignal: AbortSignal,
-  operation: (signal: AbortSignal) => Promise<T>
-): Promise<T> {
-  runSignal.throwIfAborted();
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const stopped = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const error = new SuiteFileRunError({
-        code: "SETUP_TIMEOUT",
-        phase: "setup",
-        category: "setup",
-        message: `${what} did not finish within ${timeoutMs}ms.`,
-      });
-      controller.abort(error);
-      reject(error);
-    }, timeoutMs);
-    onAbort = () => {
-      controller.abort(runSignal.reason);
-      reject(runSignal.reason ?? new Error("aborted"));
-    };
-    runSignal.addEventListener("abort", onAbort, { once: true });
-  });
-  try {
-    return await Promise.race([operation(controller.signal), stopped]);
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (onAbort) runSignal.removeEventListener("abort", onAbort);
-  }
-}
-
 async function bounded(
   what: string,
   work: (() => Promise<unknown>) | undefined
@@ -247,6 +214,8 @@ function transportOf(config: MCPServerConfig): "stdio" | "http" {
 type IterationContext = {
   gate?: LocalToolPolicyGate;
   refusals: SuiteFileRefusalAttribution[];
+  /** What the provider or platform said when it stopped the run. */
+  refusalError?: string;
 };
 
 type CaseOutcome = {
@@ -893,18 +862,26 @@ async function executeCase(args: {
       createLanguageModel: attributingModelFactory(
         baseFactory,
         model.rail,
-        (kind) => {
+        (kind, error) => {
           context.refusals.push(kind);
-          if (kind === "credentials" || kind === "billing") {
+          if (isTerminalRefusal(kind)) {
+            // Kept, because the abort below cancels this iteration's own
+            // promise before its error can be recorded (see the loop below).
+            context.refusalError ??= refusalMessage(error);
             args.onStop(kind);
             caseController.abort(
               new Error(
                 kind === "credentials"
                   ? "stopped: the model credentials were rejected"
-                  : "stopped: MCPJam refused inference for a billing reason"
+                  : "stopped: inference was refused for a billing reason"
               )
             );
           }
+        },
+        // A retry that recovered: the transient refusals before it caused
+        // nothing, and must not be named as the cause of a later failure.
+        () => {
+          context.refusals = context.refusals.filter(isTerminalRefusal);
         }
       ),
     });
@@ -979,8 +956,8 @@ async function executeCase(args: {
   const refusals: SuiteFileRefusalAttribution[] = [];
   for (let index = 0; index < planned.testCase.iterations; index += 1) {
     const iterationNumber = index + 1;
-    const iteration = details[index];
-    if (!iteration) {
+    const recorded = details[index];
+    if (!recorded) {
       // EvalTest itself failed: nothing about this iteration was observed.
       const unstarted = unstartedIteration(iterationNumber, "skipped");
       observations.push({ status: "failed" });
@@ -991,17 +968,32 @@ async function executeCase(args: {
       });
       continue;
     }
-    const firstPrompt = iteration.prompts?.[0];
+    const firstPrompt = recorded.prompts?.[0];
     const context =
       (firstPrompt ? ownerOf.get(firstPrompt) : undefined) ?? contexts[index];
+    // The iteration whose own call was refused ran, and failed with a named
+    // cause — whatever EvalTest recorded. The abort that stopped the case can
+    // cancel its promise first ("Eval run cancelled"), and a refusal a
+    // provider SDK could not parse leaves no message at all, so the refusal's
+    // own words are recorded here.
+    const refusalError = context?.refusals.some(isTerminalRefusal)
+      ? context.refusalError
+      : undefined;
+    const iteration: IterationResult =
+      refusalError !== undefined && recorded.status !== "completed"
+        ? {
+            ...recorded,
+            status:
+              recorded.status === "cancelled" ? "failed" : recorded.status,
+            error: refusalError,
+          }
+        : recorded;
     const iterationBlocks = (context?.gate?.blocks ?? []).map((block) => ({
       ...block,
       iterationNumber,
     }));
     const refusal =
-      context?.refusals.find(
-        (kind) => kind === "credentials" || kind === "billing"
-      ) ?? context?.refusals[0];
+      context?.refusals.find(isTerminalRefusal) ?? context?.refusals[0];
     let stage: Record<string, unknown> | undefined;
     try {
       stage = deriveIterationStageMetadata({
@@ -1018,6 +1010,7 @@ async function executeCase(args: {
             : {}),
         },
         policyBlocks: iterationBlocks,
+        authored: planned.stageCase,
       });
     } catch {
       stage = undefined;
@@ -1082,7 +1075,7 @@ async function executeCase(args: {
         code: "BILLING_REFUSED",
         phase: "execution",
         category: "billing",
-        message: `MCPJam refused inference for ${model.effectiveModel} for a billing reason; the remaining work was not started.`,
+        message: `${model.rail === "mcpjam" ? "MCPJam" : `The ${model.provider} provider`} refused inference for ${model.effectiveModel} for a billing reason (credits, quota or a spend budget); the remaining work was not started.`,
         caseId,
       });
     }

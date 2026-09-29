@@ -65,8 +65,11 @@ export type SuiteFileInferenceOptions = {
   providerKeys?: Readonly<Partial<Record<string, string>>>;
   /** Non-secret provider base URLs (a gateway, a local stub). */
   baseUrls?: Omit<BaseUrls, "mcpjam">;
-  /** Called at most once, and only when the platform rail is needed. */
-  resolveMcpjam?: () => Promise<McpjamInferenceConnection>;
+  /**
+   * Called at most once, and only when the platform rail is needed. The
+   * signal aborts when the setup deadline passes or the run is cancelled.
+   */
+  resolveMcpjam?: (signal: AbortSignal) => Promise<McpjamInferenceConnection>;
 };
 
 /** A run-scoped approval of one `approximated` imported case. */
@@ -164,7 +167,15 @@ export type SuiteFileIterationEvidence = {
   error?: string;
   /** A provider/platform refusal behind `error`, when one was observed. */
   refusal?: SuiteFileRefusalAttribution;
-  toolCalls: Array<{ toolName: string; arguments: Record<string, unknown> }>;
+  toolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+    /**
+     * What the model sent when it was not a JSON object — malformed JSON,
+     * typically. `arguments` is then `{}`. Bounded like `error`.
+     */
+    rawArguments?: string;
+  }>;
   policyBlocks: SuiteFileToolPolicyBlock[];
   /** Gating/advisory score rows, as the evaluators reported them. */
   scores: Array<{

@@ -349,6 +349,31 @@ function configFromEntry(args: {
   return config;
 }
 
+/** The shared single-server flags, as `--flag` names, in help order. */
+const SINGLE_SERVER_FLAGS = [
+  ["transport", "--transport"],
+  ["accessToken", "--access-token"],
+  ["oauthAccessToken", "--oauth-access-token"],
+  ["refreshToken", "--refresh-token"],
+  ["clientId", "--client-id"],
+  ["clientSecret", "--client-secret"],
+  ["credentialsFile", "--credentials-file"],
+  ["header", "--header"],
+  ["clientCapabilities", "--client-capabilities"],
+  ["args", "--args"],
+  ["commandArgs", "--command-args"],
+  ["env", "--env"],
+  ["cwd", "--cwd"],
+] as const satisfies ReadonlyArray<
+  readonly [keyof SharedServerTargetOptions, string]
+>;
+
+function isSet(value: unknown): boolean {
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== undefined && value !== null;
+}
+
 export function resolveLocalServerBindings(
   input: LocalServerBindingInput
 ): Record<string, SuiteFileServerBinding> {
@@ -390,20 +415,20 @@ export function resolveLocalServerBindings(
       source: single?.url?.trim() ? "--url" : "--command",
     };
   } else {
-    for (const flag of [
-      "accessToken",
-      "oauthAccessToken",
-      "refreshToken",
-      "credentialsFile",
-    ] as const) {
-      if (single?.[flag]) {
-        throw usageError(
-          `--${flag.replace(
-            /[A-Z]/g,
-            (letter) => `-${letter.toLowerCase()}`
-          )} applies only together with --url.`
-        );
-      }
+    // Every one of these configures THE server --url/--command binds; with
+    // servers bound by --server or a config file there is none, and a flag
+    // dropped silently (a header, an env var) fails later as a connect error
+    // with no hint of why.
+    const inapplicable = SINGLE_SERVER_FLAGS.filter(([key]) =>
+      isSet(single?.[key])
+    ).map(([, flag]) => flag);
+    if (inapplicable.length > 0) {
+      throw usageError(
+        `${inapplicable.join(", ")} ${
+          inapplicable.length === 1 ? "applies" : "apply"
+        } only to the one server bound with --url or --command. ` +
+          "For servers bound with --server or an MCP config file, put headers, env, cwd, args and credentials in the config entry."
+      );
     }
   }
   for (const [name, url] of overrides) {

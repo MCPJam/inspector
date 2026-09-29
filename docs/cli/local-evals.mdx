@@ -151,6 +151,7 @@ mcpjam test .mcpjam/evals/imported.yaml \
 | Deterministic assertions (steps and `assertions`) | Graded with the hosted assertion engine |
 | Direct `toolCall` steps | Refused before anything runs — use a prompt, or run hosted |
 | `interact` steps, widget/render and tool-discovery assertions | Refused before anything runs |
+| Gating assertions on tool results or per-call latency (`toolResultContains`, `toolResultMatches`, `toolResultMatchesSchema`, `toolResultSizeUnder`, `toolLatencyUnder`) | Refused before anything runs — a local run does not capture tool results or timings yet. An advisory one is reported as not measured |
 | An enabled gating or required judge | Refused before anything runs |
 | An advisory judge (including the hosted default) | Not run; the report says so |
 | `suppressedSuiteStandardCheckIds` | Refused — a local run has no suite-standard registry |
@@ -164,7 +165,7 @@ Every selected case is checked before any model or tool call, so an unsupported 
 - `--reporter json-summary|junit-xml|html` writes that document to stdout; the human summary and progress go to stderr.
 - `--out <path>` writes the report atomically (in the `--reporter` format, else JSON) and prints the path.
 
-Every report identifies the run as local and emulated, carries the source-file sha256, the per-case evaluator hashes, the selection, the effective model and rail per case and each server's binding source, and states that upload was off. Credentials, headers, environment values, command lines and token-bearing URLs never appear in any output.
+Every report identifies the run as local and emulated, carries the source-file sha256, the per-case evaluator hashes, the selection, the effective model and rail per case and each server's binding source, and states that upload was off. Server headers, environment objects, command lines and token-bearing URLs never appear in any output, and every credential the run was given is redacted wherever observed text (an error, a tool argument) repeats it.
 
 The unit of a verdict is the **case**; iterations are evidence. A JUnit consumer receives a `<failure>` only for a measured failure — provider errors, evaluator errors and interrupted work are reported as skipped, never as failed assertions.
 

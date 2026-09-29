@@ -183,6 +183,21 @@ describe("the local report", () => {
     }
   });
 
+  it("keeps the report when the model sends malformed tool-call arguments", async () => {
+    const malformed = '{"id": "7"';
+    const result = await run((context) =>
+      context.afterToolResult
+        ? { text: "Could not read it." }
+        : { toolCalls: [{ toolName: "read_note", rawInput: malformed }] }
+    );
+    expect(isLocalEvalRunReport(result.report)).toBe(true);
+    for (const iteration of result.cases[0]!.iterations) {
+      expect(iteration.toolCalls).toEqual([
+        { toolName: "read_note", arguments: {}, rawArguments: malformed },
+      ]);
+    }
+  });
+
   it("is only narrowed to the local contract when its metadata validates", async () => {
     const result = await run(reads);
     expect(isLocalEvalRunReport(result.report)).toBe(true);
@@ -247,12 +262,13 @@ describe("value-based scrubbing", () => {
   });
 
   it("scrubs observed text only — an ordinary-word secret never rewrites identity or a closed vocabulary", async () => {
-    // Every header value is a known secret, whatever it looks like. These
-    // three are also the case id, a lifecycle status and a tool name.
+    // A credential-named header is a known secret, whatever its value looks
+    // like. These three are also the case id, a lifecycle status and a tool
+    // name.
     const headers = {
-      "x-case": "c_read",
-      "x-state": "completed",
-      "x-tool": "read_note",
+      "x-api-key": "c_read",
+      authorization: "completed",
+      "x-auth-token": "read_note",
     };
     const result = await run(
       callThenAnswer(() => ({
@@ -322,7 +338,7 @@ describe("value-based scrubbing", () => {
         notebook: {
           config: {
             url: "http://127.0.0.1:9/mcp",
-            requestInit: { headers: { "x-team": "notebook" } },
+            requestInit: { headers: { "x-api-key": "notebook" } },
           },
         },
       },

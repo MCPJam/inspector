@@ -37,6 +37,7 @@ import {
   classifyMcpjamLeaseError,
 } from "../mcpjam-model-lease.js";
 import { redactTelemetryString } from "../telemetry-redaction.js";
+import { setupStep } from "./deadline.js";
 import {
   SuiteFileRunError,
   refusal,
@@ -278,46 +279,6 @@ export type ResolvedInferenceCredentials = {
   mcpjam?: McpjamInferenceConnection;
 };
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
-  what: string
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () =>
-        reject(
-          new SuiteFileRunError({
-            code: "SETUP_TIMEOUT",
-            phase: "setup",
-            category: "setup",
-            message: `${what} did not finish within ${timeoutMs}ms.`,
-          })
-        ),
-      timeoutMs
-    );
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason ?? new Error("aborted"));
-    };
-    if (signal?.aborted) return onAbort();
-    signal?.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        reject(error);
-      }
-    );
-  });
-}
-
 /**
  * Check that every planned rail has what it needs — without spending a model
  * call to validate a key. Resolves the platform connection only if a planned
@@ -365,11 +326,12 @@ export async function resolveInferenceCredentials(args: {
 
   let connection: McpjamInferenceConnection;
   try {
-    connection = await withTimeout(
-      Promise.resolve().then(() => args.inference.resolveMcpjam!()),
+    connection = await setupStep(
+      "Resolving the MCPJam connection",
       args.timeoutMs,
-      args.signal,
-      "Resolving the MCPJam connection"
+      args.signal ?? new AbortController().signal,
+      (signal) =>
+        Promise.resolve().then(() => args.inference.resolveMcpjam!(signal))
     );
   } catch (error) {
     if (error instanceof SuiteFileRunError) throw error;
@@ -472,6 +434,38 @@ function fromLeaseKind(
 }
 
 /**
+ * The model proxy's spend refusals carry only prose: an out-of-credit or
+ * over-budget organization gets a 429 with `{ ok: false, error: "Spending
+ * limit reached" }` or `"Organization spend budget reached"`. By status alone
+ * that reads as a transient rate limit, and the run would keep scheduling
+ * work against a proxy that will keep refusing.
+ */
+const PROXY_BILLING_REFUSAL =
+  /spending limit reached|spend budget (?:is )?reached/i;
+
+/**
+ * Provider refusals outside 401/402/403, read from the error body: Gemini and
+ * xAI reject a bad key with a 400, OpenAI reports an exhausted quota as a 429,
+ * and Anthropic an exhausted credit balance as a 400.
+ */
+const PROVIDER_BILLING_REFUSAL =
+  /insufficient_quota|exceeded your current quota|credit balance is too low|insufficient[_ ](?:balance|credits)/i;
+const PROVIDER_CREDENTIAL_REFUSAL =
+  /API_KEY_INVALID|API key not valid|incorrect API key|invalid[_ -]?(?:x-)?api[_ -]?key/i;
+
+/** The prose in a `{ error: "…" }` body, else the body itself. */
+function refusalText(body: string | undefined): string {
+  if (!body) return "";
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown } | null;
+    if (parsed && typeof parsed.error === "string") return parsed.error;
+  } catch {
+    // Not JSON: the text is the body.
+  }
+  return body;
+}
+
+/**
  * Name the refusal behind a model-call failure, if it was one. `undefined`
  * means "not a refusal we can attribute" — the error stays an ordinary
  * execution failure.
@@ -494,6 +488,13 @@ export function classifyInferenceError(
         const kind = fromLeaseKind(classifyMcpjamLeaseError(lease));
         if (kind) return kind;
       }
+      if (PROXY_BILLING_REFUSAL.test(refusalText(current.responseBody)))
+        return "billing";
+    } else if (status >= 400 && status < 500) {
+      // Billing first: a quota refusal is not a key to rotate.
+      const body = current.responseBody ?? "";
+      if (PROVIDER_BILLING_REFUSAL.test(body)) return "billing";
+      if (PROVIDER_CREDENTIAL_REFUSAL.test(body)) return "credentials";
     }
     if (status === 401 || status === 403) return "credentials";
     if (status === 402) return "billing";
@@ -503,6 +504,38 @@ export function classifyInferenceError(
   return undefined;
 }
 
+/** Upper bound on the provider's prose carried into a refusal message. */
+const MAX_REFUSAL_TEXT_CHARS = 500;
+
+/**
+ * What a refused call said, for the iteration it failed: the error's own
+ * message plus the body's prose when the message does not already carry it.
+ * A body a provider SDK could not parse (the MCPJam proxy's `{ ok: false,
+ * error }`, for one) leaves only the status text in the message — "Too Many
+ * Requests" — and the reason the run stopped would never be shown.
+ */
+export function refusalMessage(error: unknown): string {
+  const current = RetryError.isInstance(error) ? error.lastError : error;
+  const message = redactTelemetryString(
+    current instanceof Error ? current.message : String(current)
+  );
+  if (!APICallError.isInstance(current)) return message;
+  const text = redactTelemetryString(refusalText(current.responseBody).trim());
+  if (text === "" || message.includes(text)) return message;
+  const bounded =
+    text.length > MAX_REFUSAL_TEXT_CHARS
+      ? `${text.slice(0, MAX_REFUSAL_TEXT_CHARS)}…`
+      : text;
+  return message.trim() === "" ? bounded : `${message}: ${bounded}`;
+}
+
+/** Credential and billing refusals stop the run; the others are transient. */
+export function isTerminalRefusal(
+  refusal: SuiteFileRefusalAttribution
+): refusal is "credentials" | "billing" {
+  return refusal === "credentials" || refusal === "billing";
+}
+
 type LanguageModelFactory = (
   model: string,
   options: CreateModelOptions
@@ -510,14 +543,17 @@ type LanguageModelFactory = (
 
 /**
  * Wrap a model factory so every model it builds reports provider/platform
- * refusals to `onRefusal` before rethrowing them unchanged. The wrapper keeps
- * the model's own specification version; only `doGenerate`/`doStream` are
- * intercepted.
+ * refusals to `onRefusal`, with the error, before rethrowing them unchanged —
+ * and reports every call that succeeded to `onSuccess`, so a transient
+ * refusal an AI SDK retry recovered from is never named as the cause of a
+ * later failure. The wrapper keeps the model's own specification version;
+ * only `doGenerate`/`doStream` are intercepted.
  */
 export function attributingModelFactory(
   base: LanguageModelFactory,
   rail: SuiteFileInferenceRail,
-  onRefusal: (refusal: SuiteFileRefusalAttribution) => void
+  onRefusal: (refusal: SuiteFileRefusalAttribution, error: unknown) => void,
+  onSuccess?: () => void
 ): LanguageModelFactory {
   return (model, options) => {
     const built = base(model, options);
@@ -528,13 +564,16 @@ export function attributingModelFactory(
             ...args: unknown[]
           ) => Promise<unknown>;
           return async (...args: unknown[]) => {
+            let result: unknown;
             try {
-              return await method.apply(target, args);
+              result = await method.apply(target, args);
             } catch (error) {
               const refusal = classifyInferenceError(error, rail);
-              if (refusal) onRefusal(refusal);
+              if (refusal) onRefusal(refusal, error);
               throw error;
             }
+            onSuccess?.();
+            return result;
           };
         }
         return Reflect.get(target, property, receiver);

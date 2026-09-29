@@ -26,6 +26,7 @@ import {
   isPositiveToolCallPredicateKind,
   isSelectionPredicateKind,
   stageDerivationToMetadata,
+  type StageAuthoredCase,
 } from "./contract/stage-derivation.js";
 import { attachStageMeasurements } from "./contract/stage-measurements.js";
 
@@ -1110,11 +1111,17 @@ function deriveSdkStageResults(args: {
   caseIdentity?: EvalCaseIdentity;
   /** A policy block, when an enforcement point refused one of the calls. */
   policy?: { blocked: boolean; reason?: string };
+  /**
+   * The authored case, when the caller has the case itself — built with
+   * `buildStageAuthoredCase`, as the hosted runner builds it — instead of the
+   * approximation below from what an uploaded result carries.
+   */
+  authored?: StageAuthoredCase;
 }) {
   const { iteration, trace, expectedToolCalls, predicates } = args;
   const caseIdentity = args.caseIdentity;
   return deriveStageResults({
-    authored: {
+    authored: args.authored ?? {
       // An SDK case always drives a HostExecutor with prompts, so there is
       // always a model turn that could select a tool.
       mode: "model_driven",
@@ -1175,6 +1182,8 @@ export function deriveIterationStageMetadata(args: {
   predicates?: Predicate[];
   caseIdentity?: EvalCaseIdentity;
   policyBlocks?: ReadonlyArray<{ reason: string }>;
+  /** See `deriveSdkStageResults`: the hosted runner's own authored case. */
+  authored?: StageAuthoredCase;
 }): Record<string, unknown> {
   const prompts = args.iteration.prompts ?? [];
   const trace = iterationTraceFromPrompts(
@@ -1206,6 +1215,7 @@ export function deriveIterationStageMetadata(args: {
         ...(args.predicates ? { predicates: args.predicates } : {}),
         ...(args.caseIdentity ? { caseIdentity: args.caseIdentity } : {}),
         ...(policy ? { policy } : {}),
+        ...(args.authored ? { authored: args.authored } : {}),
       })
     ),
     spans

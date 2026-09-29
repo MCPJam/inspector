@@ -37,9 +37,15 @@ import {
   type HostTemplateId,
 } from "../host-config/templates/index.js";
 import type { HostConfigInputV2 } from "../host-config/types.js";
+import { checkRole } from "../predicates/index.js";
 import type { Predicate } from "../predicates/types.js";
 import { requiresRenderObservations } from "../predicates/types.js";
-import { isDiscoveryPredicateKind } from "../contract/stage-derivation.js";
+import {
+  isDiscoveryPredicateKind,
+  type StageAuthoredCase,
+} from "../contract/stage-derivation.js";
+import { buildStageAuthoredCase } from "../contract/stage-authored-case.js";
+import type { TestStep } from "../contract/steps.js";
 import type { SuiteJudgeSettings } from "../contract/judge-settings.js";
 import type { EvalSuiteFileToolPolicy } from "../contract/suite-file.js";
 import type { ResolvedEvalValidityPolicy } from "../contract/verdict-policy.js";
@@ -92,6 +98,12 @@ export type PlannedCase = {
   expectedToolNames: string[];
   expectedToolCalls?: EvalExpectedToolCall[];
   predicates?: Predicate[];
+  /**
+   * What the case asserts, for the stage analyzer — built by
+   * `buildStageAuthoredCase`, the function the hosted runner builds it with,
+   * so a local iteration's stage chain is derived as a hosted one would be.
+   */
+  stageCase: StageAuthoredCase;
 };
 
 export type ResolvedLocalHost = {
@@ -182,6 +194,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Checks that read what a tool RETURNED, or how long each call took. A local
+ * run's transcript carries tool calls and usage only — no tool results and no
+ * per-call timings — so a GATING one would grade as an evaluator error on
+ * every iteration and leave the run inconclusive, where a hosted run measures
+ * it. An advisory one never gates, and is reported as not measured.
+ * (`fullPageHasContinuation` reads results too, but can only be advisory.)
+ */
+const TOOL_RESULT_OR_TIMING_KINDS: ReadonlySet<string> = new Set([
+  "toolResultContains",
+  "toolResultMatches",
+  "toolResultMatchesSchema",
+  "toolResultSizeUnder",
+  "toolLatencyUnder",
+]);
+
 /** What a local run cannot execute in one case, found without materializing it. */
 function unsupportedInCase(
   testCase: ResolvedEvalSuiteFileCase
@@ -227,6 +255,18 @@ function unsupportedInCase(
         ...where,
         reason: "discoveryAssertion",
         message: `asserts ${type}, which reads the raw tool declarations a hosted run captures. ${HOSTED_REMEDIATION}`,
+      };
+    }
+    if (
+      type !== undefined &&
+      TOOL_RESULT_OR_TIMING_KINDS.has(type) &&
+      checkRole(assertion) === "gating"
+    ) {
+      return {
+        caseId: testCase.id,
+        ...where,
+        reason: "toolResultAssertion",
+        message: `gates on ${type}, which reads tool results or per-call timings a local run does not capture yet. ${HOSTED_REMEDIATION}`,
       };
     }
     return undefined;
@@ -578,12 +618,6 @@ export function preflightSuiteFile(
     const config = test.getConfig();
     const expectedToolCalls = config.expectedToolCalls;
     const predicates = config.predicates;
-    const toolCallSteps = testCase.steps
-      .map((step) => step as unknown as Record<string, unknown>)
-      .filter(
-        (step) => step.kind === "toolCall" && typeof step.toolName === "string"
-      )
-      .map((step) => step.toolName as string);
     const decision = importDecisions.get(testCase.id);
     cases.push({
       testCase,
@@ -591,14 +625,27 @@ export function preflightSuiteFile(
       model: planned.plan,
       judge: judges.get(testCase.id)!,
       ...(decision ? { importDecision: decision } : {}),
+      // Direct `toolCall` steps were refused above, so the expected calls are
+      // the only tools a case names deterministically.
       expectedToolNames: [
-        ...new Set([
-          ...toolCallSteps,
-          ...(expectedToolCalls ?? []).map((call) => call.toolName),
-        ]),
+        ...new Set((expectedToolCalls ?? []).map((call) => call.toolName)),
       ],
       ...(expectedToolCalls ? { expectedToolCalls } : {}),
       ...(predicates ? { predicates } : {}),
+      stageCase: buildStageAuthoredCase({
+        test: {
+          isNegativeTest: testCase.isNegativeTest,
+          ...(testCase.expectedOutput !== undefined
+            ? { expectedOutput: testCase.expectedOutput }
+            : {}),
+          ...(expectedToolCalls ? { expectedToolCalls } : {}),
+          // What the hosted record stores the case-level assertions as.
+          successPredicates: testCase.assertions,
+        },
+        steps: testCase.steps as unknown as TestStep[],
+        // A local run drives prompt steps only: a model always takes a turn.
+        caseNeedsModel: true,
+      }),
     });
   }
   if (conflictProblems.length > 0 || modelProblems.length > 0) {

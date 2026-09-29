@@ -52,6 +52,37 @@ function sanitizeError(error: string | undefined): string | undefined {
     : redacted;
 }
 
+/**
+ * A tool call's arguments as evidence. A model that sends malformed JSON
+ * leaves the raw text where the object should be (the call is still
+ * recorded, as it was attempted): it is kept, bounded, beside an empty
+ * `arguments` rather than failing the report contract after every case ran.
+ */
+function toolCallArguments(value: unknown): {
+  arguments: Record<string, unknown>;
+  rawArguments?: string;
+} {
+  if (value === undefined || value === null) return { arguments: {} };
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return { arguments: value as Record<string, unknown> };
+  }
+  let raw: string;
+  if (typeof value === "string") {
+    raw = value;
+  } else {
+    try {
+      raw = JSON.stringify(value) ?? String(value);
+    } catch {
+      raw = String(value);
+    }
+  }
+  return {
+    arguments: {},
+    rawArguments:
+      raw.length > MAX_ERROR_CHARS ? `${raw.slice(0, MAX_ERROR_CHARS)}…` : raw,
+  };
+}
+
 export function observeIteration(args: {
   iteration: IterationResult;
   iterationNumber: number;
@@ -96,7 +127,7 @@ export function observeIteration(args: {
       ? []
       : actualToolCallsFromPrompts(prompts).map((call) => ({
           toolName: call.toolName,
-          arguments: (call.arguments ?? {}) as Record<string, unknown>,
+          ...toolCallArguments(call.arguments),
         })),
     policyBlocks: [...args.policyBlocks],
     scores: (iteration.scores ?? []).map((score) => {

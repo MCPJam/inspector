@@ -799,6 +799,53 @@ describe("refreshed auth", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("reports a credential service that could not be reached as unavailable, not refused", async () => {
+    const outages: unknown[] = [
+      new TypeError("fetch failed"),
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), {
+        code: "ECONNREFUSED",
+      }),
+      // The CLI's wording, with the network failure only in the text.
+      new Error(
+        "Token refresh failed. Run `mcpjam cloud login` again. Could not reach https://auth.example.com/token: fetch failed"
+      ),
+      Object.assign(new Error("refresh endpoint down"), { retryable: true }),
+      new Error("refresh failed", { cause: new TypeError("fetch failed") }),
+    ];
+    for (const outage of outages) {
+      const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
+      const client = new McpjamLeaseClient({
+        baseUrl: "https://app.mcpjam.com",
+        getAuth: async () => {
+          throw outage;
+        },
+        project: "p_1",
+        model: MODEL,
+        fetchImpl,
+      });
+      const error = await client.getLease().catch((thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(McpjamLeaseError);
+      expect((error as McpjamLeaseError).code).toBe("AUTH_SERVICE_UNREACHABLE");
+      expect(classifyMcpjamLeaseError(error as McpjamLeaseError)).toBe(
+        "unavailable"
+      );
+      expect(calls).toHaveLength(0);
+    }
+    // A refusal still reads as one.
+    const { fetchImpl } = recordingFetch(() => json(leaseBody()));
+    const refused = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => {
+        throw new Error("Token refresh failed. (invalid_grant)");
+      },
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+    const error = await refused.getLease().catch((thrown: unknown) => thrown);
+    expect(classifyMcpjamLeaseError(error as McpjamLeaseError)).toBe("auth");
+  });
+
   it("refuses an empty token rather than sending `Bearer `", async () => {
     const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
     const client = new McpjamLeaseClient({

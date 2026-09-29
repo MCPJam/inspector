@@ -13,7 +13,14 @@ import { MockLanguageModelV3 } from "ai/test";
 
 export type ScriptedStep =
   | { text: string }
-  | { toolCalls: Array<{ toolName: string; input?: Record<string, unknown> }> }
+  | {
+      toolCalls: Array<{
+        toolName: string;
+        input?: Record<string, unknown>;
+        /** Sent verbatim instead of `input` — e.g. malformed JSON. */
+        rawInput?: string;
+      }>;
+    }
   | { error: unknown };
 
 export type ScriptContext = {
@@ -96,7 +103,7 @@ export function scriptedModel(
             type: "tool-call" as const,
             toolCallId: `call_${++toolCallCounter}`,
             toolName: call.toolName,
-            input: JSON.stringify(call.input ?? {}),
+            input: call.rawInput ?? JSON.stringify(call.input ?? {}),
           })),
           finishReason: { unified: "tool-calls" as const, raw: undefined },
           usage,

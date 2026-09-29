@@ -154,8 +154,11 @@ export function createMcpjamConnectionResolver(
     fetchFn?: typeof fetch;
     warn?: (message: string) => void;
   }
-): () => Promise<McpjamInferenceConnection> {
-  return async () => {
+): (signal?: AbortSignal) => Promise<McpjamInferenceConnection> {
+  // The SDK's signal (its setup deadline, or the run being cancelled) wins
+  // over the command's own; either stops the project lookup in flight.
+  return async (signal?: AbortSignal) => {
+    const active = signal ?? deps.signal;
     const warned = new Set<string>();
     const warn = (message: string) => {
       if (warned.has(message)) return;
@@ -204,7 +207,7 @@ export function createMcpjamConnectionResolver(
     try {
       projects = await built.client.listProjects(
         {},
-        deps.signal ? { signal: deps.signal } : {}
+        active ? { signal: active } : {}
       );
     } catch (error) {
       if (error instanceof CliError) throw refusalFromCliError(error);

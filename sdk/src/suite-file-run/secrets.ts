@@ -14,14 +14,21 @@
  * warnings — so no terminal (JSON, JUnit, HTML, human, an error) can print
  * one.
  *
- * Observed text only. A stdio env value such as `github`, or a header value
- * such as `completed`, is a known secret like any other, so a blanket scrub
- * would rewrite the case id `c_github_search` to `c_[REDACTED]_search` and a
- * lifecycle status to `[REDACTED]`, and the report would no longer satisfy
- * its own contract. Identifiers (case, server, tool, scorer and span ids) and
- * closed vocabularies (statuses, verdicts, stage states, policy reasons) come
- * from the authored file, the server's catalog or this SDK: a secret cannot
- * reach the result through them, so they are never rewritten.
+ * Which config values count: explicit credentials always; a header,
+ * environment or URL-query value when its NAME says it is one
+ * (`Authorization`, `GITHUB_TOKEN`, `?sig=`) or its SHAPE does (a known token
+ * prefix, or a long run of mixed letters and digits). `NODE_ENV=production`
+ * or `x-client: mcpjam` is configuration, and scrubbing it would redact the
+ * word from every error that mentions it.
+ *
+ * Observed text only. A secret value can still be an ordinary word, so a
+ * blanket scrub would rewrite the case id `c_github_search` to
+ * `c_[REDACTED]_search` and a lifecycle status to `[REDACTED]`, and the
+ * report would no longer satisfy its own contract. Identifiers (case,
+ * server, tool, scorer and span ids) and closed vocabularies (statuses,
+ * verdicts, stage states, policy reasons) come from the authored file, the
+ * server's catalog or this SDK: a secret cannot reach the result through
+ * them, so they are never rewritten.
  */
 
 import { redactTelemetryString } from "../telemetry-redaction.js";
@@ -42,21 +49,26 @@ export type SecretScrubber = {
 
 export function createSecretScrubber(): SecretScrubber {
   const values = new Set<string>();
+  // Longest first, so a secret that contains another is removed whole.
+  // Sorted once per new secret, not once per string scrubbed.
+  let ordered: string[] | undefined;
+  const remember = (value: string) => {
+    if (value.length < MIN_SECRET_LENGTH || values.has(value)) return;
+    values.add(value);
+    ordered = undefined;
+  };
   const add = (value: unknown) => {
     if (typeof value !== "string") return;
     const trimmed = value.trim();
-    if (trimmed.length >= MIN_SECRET_LENGTH) values.add(trimmed);
+    remember(trimmed);
     // A bearer header value is also scrubbed without its scheme.
     const bearer = /^bearer\s+(.+)$/i.exec(trimmed);
-    if (bearer?.[1] && bearer[1].length >= MIN_SECRET_LENGTH)
-      values.add(bearer[1]);
+    if (bearer?.[1]) remember(bearer[1]);
   };
   const scrub = (text: string) => {
     let out = redactTelemetryString(text);
-    // Longest first, so a secret that contains another is removed whole.
-    for (const value of [...values].sort(
-      (left, right) => right.length - left.length
-    )) {
+    ordered ??= [...values].sort((left, right) => right.length - left.length);
+    for (const value of ordered) {
       if (out.includes(value)) out = out.split(value).join(REDACTED);
     }
     return out;
@@ -79,6 +91,112 @@ export function createSecretScrubber(): SecretScrubber {
   return { add, scrub, scrubDeep };
 }
 
+/**
+ * Words of a header, variable or parameter name that mark its value as a
+ * credential. Matched whole (`PATH` is not `PAT`, `AUTHOR` is not `AUTH`),
+ * plus the fragments below for names written as one word (`APITOKEN`).
+ */
+const SENSITIVE_NAME_WORDS: ReadonlySet<string> = new Set([
+  "apikey",
+  "auth",
+  "authorization",
+  "bearer",
+  "code",
+  "cookie",
+  "credential",
+  "credentials",
+  "dsn",
+  "jwt",
+  "key",
+  "pass",
+  "passphrase",
+  "passwd",
+  "password",
+  "pat",
+  "private",
+  "pwd",
+  "secret",
+  "secrets",
+  "session",
+  "sid",
+  "sig",
+  "signature",
+  "token",
+  "tokens",
+]);
+const SENSITIVE_NAME_FRAGMENTS = [
+  "apikey",
+  "authorization",
+  "credential",
+  "passwd",
+  "password",
+  "secret",
+  "token",
+];
+
+export function isSensitiveName(name: string): boolean {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
+  if (words.some((word) => SENSITIVE_NAME_WORDS.has(word))) return true;
+  const squashed = words.join("");
+  return SENSITIVE_NAME_FRAGMENTS.some((fragment) =>
+    squashed.includes(fragment)
+  );
+}
+
+/** Prefixes of widely used token formats, whatever the variable is called. */
+const CREDENTIAL_PREFIX =
+  /^(?:(?:sk|pk|rk)[-_]|gh[opsur]_|github_pat_|xox[abposr]-|glpat-|npm_|hf_|AKIA|ASIA|AIza|ya29\.|eyJ[A-Za-z0-9_-]{8,}\.)/;
+
+/**
+ * Whether a value is shaped like a credential: a known token prefix, or a
+ * long unbroken run that mixes letters and digits (hex, base64, a JWT). Not a
+ * URL — the credentials a URL carries are taken from its parts.
+ */
+export function looksLikeCredential(value: string): boolean {
+  if (value.length < MIN_SECRET_LENGTH || /\s/.test(value)) return false;
+  if (value.includes("://")) return false;
+  if (CREDENTIAL_PREFIX.test(value)) return true;
+  return value.length >= 20 && /[A-Za-z]/.test(value) && /\d/.test(value);
+}
+
+/** The credentials a URL carries: its password, and sensitive parameters. */
+function addUrlSecrets(scrubber: SecretScrubber, value: unknown): void {
+  if (typeof value !== "string" || !value.includes("://")) return;
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return;
+  }
+  if (url.password) scrubber.add(decodeURIComponent(url.password));
+  for (const [name, parameter] of url.searchParams) {
+    if (isSensitiveName(name) || looksLikeCredential(parameter))
+      scrubber.add(parameter);
+  }
+}
+
+/** A named config value: a credential by its name, its shape, or its URL. */
+function addNamedValue(
+  scrubber: SecretScrubber,
+  name: string,
+  value: unknown
+): void {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (isSensitiveName(name) || looksLikeCredential(trimmed)) {
+    scrubber.add(trimmed);
+  } else {
+    // `Bearer <token>` under an innocuous name is still a bearer.
+    const bearer = /^bearer\s+(\S+)$/i.exec(trimmed);
+    if (bearer?.[1]) scrubber.add(bearer[1]);
+  }
+  addUrlSecrets(scrubber, trimmed);
+}
+
 /** Collect the secret values an MCP server config carries. */
 export function addServerConfigSecrets(
   scrubber: SecretScrubber,
@@ -91,29 +209,23 @@ export function addServerConfigSecrets(
   const requestInit = record.requestInit as { headers?: unknown } | undefined;
   const headers = requestInit?.headers;
   if (headers && typeof headers === "object" && !Array.isArray(headers)) {
-    for (const value of Object.values(headers as Record<string, unknown>))
-      scrubber.add(value);
+    for (const [name, value] of Object.entries(
+      headers as Record<string, unknown>
+    ))
+      addNamedValue(scrubber, name, value);
   }
   const env = record.env;
   if (env && typeof env === "object" && !Array.isArray(env)) {
-    for (const value of Object.values(env as Record<string, unknown>))
-      scrubber.add(value);
+    for (const [name, value] of Object.entries(env as Record<string, unknown>))
+      addNamedValue(scrubber, name, value);
   }
-  if (typeof record.url === "string") {
-    try {
-      const url = new URL(record.url);
-      for (const value of url.searchParams.values()) scrubber.add(value);
-      if (url.password) scrubber.add(decodeURIComponent(url.password));
-    } catch {
-      // Not a URL; nothing to extract.
-    }
-  }
+  addUrlSecrets(scrubber, record.url);
 }
 
 /**
  * One iteration's evidence with its observed text scrubbed: the execution
- * error, tool-call argument values (never their keys), evaluator reasons and
- * predicate reasons. Everything else is identity or a closed vocabulary.
+ * error, tool-call argument values (never their keys) and raw argument text,
+ * evaluator reasons and predicate reasons. Everything else is identity or a closed vocabulary.
  */
 export function scrubIterationEvidence(
   scrubber: SecretScrubber,
@@ -127,6 +239,9 @@ export function scrubIterationEvidence(
     toolCalls: evidence.toolCalls.map((call) => ({
       ...call,
       arguments: scrubber.scrubDeep(call.arguments),
+      ...(call.rawArguments !== undefined
+        ? { rawArguments: scrubber.scrub(call.rawArguments) }
+        : {}),
     })),
     scores: evidence.scores.map((score) =>
       score.reason !== undefined

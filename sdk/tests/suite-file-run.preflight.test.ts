@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSuiteFileRunner } from "../src/suite-file-run/run-suite-file.js";
 import { SuiteFileRunError } from "../src/suite-file-run/errors.js";
+import { buildStageAuthoredCase } from "../src/contract/stage-authored-case.js";
 import {
   HOSTED_JUDGE_DEFAULTS,
   preflightSuiteFile,
@@ -148,6 +149,47 @@ describe("stage 1 — parse and select", () => {
     ).toBe("CASE_SELECTION_INVALID");
   });
 
+  it("derives each case's stage inputs with the hosted runner's builder", () => {
+    const asserting = `  - id: c_graded
+    title: graded
+    expectedOutput: the note says buy milk
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Read note 7
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: read_note
+    assertions:
+      - type: responseContains
+        needle: milk
+`;
+    const [planned] = preflightSuiteFile(suite(asserting), options()).cases;
+    const testCase = planned!.testCase;
+    expect(planned!.stageCase).toEqual(
+      buildStageAuthoredCase({
+        test: {
+          isNegativeTest: testCase.isNegativeTest,
+          expectedOutput: testCase.expectedOutput,
+          successPredicates: testCase.assertions,
+        },
+        steps: testCase.steps as never,
+        caseNeedsModel: true,
+      })
+    );
+    // A tool-call assertion expects a call and grades selection, not user
+    // value: the response check and the expected output are what grade it.
+    expect(planned!.stageCase).toEqual({
+      mode: "model_driven",
+      isNegativeTest: false,
+      expectsToolCall: true,
+      expectsWidgetRender: false,
+      assertionCount: 2,
+    });
+  });
+
   it("keeps authored order and records what was skipped and why", () => {
     const plan = preflightSuiteFile(
       suite(
@@ -238,6 +280,44 @@ describe("stage 2 — every selected case is validated before anything runs", ()
       "renderAssertion",
       "suppressedSuiteStandardChecks",
     ]);
+  });
+
+  it("refuses gating checks on tool results or per-call latency, which a local run does not capture", async () => {
+    const unmeasured = `  - id: c_results
+    title: results and latency
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Read note 7
+      - id: r1
+        kind: assert
+        assertion:
+          type: toolResultContains
+          needle: milk
+    assertions:
+      - type: toolLatencyUnder
+        ms: 5000
+      - type: toolResultSizeUnder
+        maxBytes: 64000
+        role: advisory
+      - type: fullPageHasContinuation
+        role: advisory
+`;
+    const error = await refused(suite(unmeasured));
+    expect(error).toMatchObject({
+      code: "CASE_UNSUPPORTED",
+      category: "unsupported",
+    });
+    const problems = error.details.problems!;
+    // Only the GATING ones: an advisory check never decides a verdict.
+    expect(problems.map((problem) => problem.reason)).toEqual([
+      "toolResultAssertion",
+      "toolResultAssertion",
+    ]);
+    expect(problems[0]).toMatchObject({ caseId: "c_results", stepId: "r1" });
+    expect(problems[1]).toMatchObject({ pointer: "assertions[0]" });
+    expect(error.message).toContain("mcpjam cloud eval run --file");
+    expect(fixture.methods).toEqual([]);
   });
 
   it("refuses an effective gating judge, honours a case-level disable, and records advisory judges", async () => {

@@ -472,7 +472,7 @@ mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xm
 | `--reporter <format>` | | `json-summary`, `junit-xml` or `html` document on stdout. |
 | `--out <path>` | | Write the report atomically (the `--reporter` format, else JSON). |
 | `--api-key`, `--api-url`, `--api-header`, `--project` | | MCPJam-hosted inference only; resolved only when a case needs it. |
-| `--url`, `--command`, … | | The shared connection flags (see [`server` commands](#server-commands)), for a suite with exactly one target server. |
+| `--url`, `--command`, … | | The shared connection flags (see [`server` commands](#server-commands)), for a suite with exactly one target server. Without `--url` or `--command`, the flags that configure that one server (`--header`, `--env`, `--cwd`, `--args`, `--transport`, `--client-capabilities` and the credential flags) are refused rather than ignored: configure a server bound with `--server` or an MCP config file in its config entry. |
 
 Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted — see [Exit codes](/cli/local-evals#exit-codes).
 

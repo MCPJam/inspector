@@ -30,7 +30,11 @@ type Sent = {
 };
 
 function stubPlatform(
-  options: { refuseMint?: { status: number; body: unknown } } = {}
+  options: {
+    refuseMint?: { status: number; body: unknown };
+    /** The model proxy's answer to every generation, instead of a reply. */
+    refuseGeneration?: { status: number; body: unknown };
+  } = {}
 ): Sent[] {
   const sent: Sent[] = [];
   let mints = 0;
@@ -81,6 +85,11 @@ function stubPlatform(
         return Response.json({ ok: true, revoked: 1 });
       if (url.startsWith(PROXY)) {
         generations += 1;
+        if (options.refuseGeneration) {
+          return Response.json(options.refuseGeneration.body, {
+            status: options.refuseGeneration.status,
+          });
+        }
         const toolTurn = !body.includes("tool_result");
         return Response.json({
           id: `msg_${generations}`,
@@ -200,6 +209,40 @@ describe("MCPJam-hosted inference", () => {
     expect(JSON.stringify(result)).not.toMatch(/tok_\d|lease_\d|run_\d/);
   });
 
+  it("stops on the proxy's prose-only spend refusal (a 429) as billing, not a rate limit", async () => {
+    const sent = stubPlatform({
+      refuseGeneration: {
+        status: 429,
+        body: { ok: false, error: "Spending limit reached" },
+      },
+    });
+    const result = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "auto",
+        resolveMcpjam: async () => ({
+          baseUrl: PLATFORM,
+          projectId: "proj_123",
+          getAuth: async () => "tok_1",
+        }),
+      },
+    });
+    expect(result.termination).toBe("stopped");
+    expect(result.verdict).toBe("notEstablished");
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "BILLING_REFUSED"
+    );
+    const [refused, rest] = result.cases[0]!.iterations;
+    expect(refused!.status).toBe("failed");
+    expect(refused!.refusal).toBe("billing");
+    expect(refused!.error).toContain("Spending limit reached");
+    // The second iteration was never run against a proxy that keeps refusing.
+    expect(rest!.status).not.toBe("failed");
+    expect(
+      sent.filter((entry) => entry.url.startsWith(PROXY)).length
+    ).toBeLessThanOrEqual(1);
+  });
+
   it("refuses a billing refusal at mint — before any model or tool call — and releases resources", async () => {
     const sent = stubPlatform({
       refuseMint: {
@@ -277,6 +320,25 @@ describe("MCPJam-hosted inference", () => {
         category: "usage",
       });
     }
+  });
+
+  it("bounds the platform resolve by the setup deadline, and aborts the work in flight", async () => {
+    stubPlatform();
+    let seen: AbortSignal | undefined;
+    const error = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "mcpjam",
+        resolveMcpjam: (signal) => {
+          seen = signal;
+          return new Promise(() => {});
+        },
+      },
+      setupTimeoutMs: 50,
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(SuiteFileRunError);
+    expect(error).toMatchObject({ code: "SETUP_TIMEOUT", category: "setup" });
+    expect(seen?.aborted).toBe(true);
   });
 
   it("never resolves the platform on a BYOK-only run", async () => {
