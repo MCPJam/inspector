@@ -188,6 +188,7 @@ so results respect the caller's project access.
 | `install_registry_directory_server` | Install writes a project `servers` row and provenance and stops — it is not a live connection. | — |
 | `install_registry_server` | Install a curated registry card into a project. Writes a `servers` row and provenance; not a live connection. | — |
 | `uninstall_registry_server` | Remove a curated or org registry-card install from a project. Directory uninstall is `delete_project_server`. | — |
+| `send_feedback` | Report a bug, a missing capability or something confusing to the MCPJam team. Sends your text outside your organization; kept 180 days. Signed-in accounts only. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by

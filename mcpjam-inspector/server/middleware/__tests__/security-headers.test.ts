@@ -336,7 +336,8 @@ describe.each(["index.ts", "app.ts"])("server/%s document handler", (file) => {
   it("writes every inline script with the response's nonce", () => {
     expect(source).toContain("documentScriptNonce(c)");
     const literals = [...source.matchAll(/`<script>/g)];
-    expect(literals.length).toBeGreaterThanOrEqual(2);
+    // Local session-token scripts were removed; index alone has a CLI config literal.
+    expect(literals.length).toBe(file === "index.ts" ? 1 : 0);
     for (const literal of literals) {
       expect(source.slice(0, literal.index)).toMatch(/withScriptNonce\(\s*$/);
     }

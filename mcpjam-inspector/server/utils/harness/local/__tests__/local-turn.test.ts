@@ -222,7 +222,7 @@ describe("a local setup that fails partway through", () => {
     // A regular FILE where the state root should be: `mkdir -p` under it is
     // ENOTDIR, deterministically, on every platform.
     const blocked = join(stateRoot, "not-a-directory");
-    await writeFile(blocked, "");
+    await writeFile(`${blocked}-sessions`, "");
     stateRoot = blocked;
     await expect(prepareLocalHarnessTurn(turnArgs())).rejects.toThrow();
     expect(startLocalModelGateway).not.toHaveBeenCalled();
@@ -411,7 +411,7 @@ describe("local lane state lifetime", () => {
       ...turnArgs(), scopedEnv: { SERVICE_KEY: "test-value" }, onSecretEnvDelivered: delivered,
     });
     if (!result.ok) throw new Error(result.message);
-    expect(result.prepared.skillsBaseDir).toBe(toAdapterPath(join(stateRoot, "sessions", turnArgs().sessionId, "home", ".claude", "skills")));
+    expect(result.prepared.skillsBaseDir).toBe(toAdapterPath(join(`${stateRoot}-sessions`, turnArgs().sessionId, "home", ".claude", "skills")));
     const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
     expect(providerArgs.scopedEnv).toEqual({ SERVICE_KEY: "test-value" });
     expect(delivered).not.toHaveBeenCalled();
@@ -458,7 +458,7 @@ describe("local lane state lifetime", () => {
     const result = await prepareLocalHarnessTurn(args);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const stateFile = join(stateRoot, "sessions", args.sessionId, "transcript");
+    const stateFile = join(`${stateRoot}-sessions`, args.sessionId, "transcript");
     await writeFile(stateFile, "prior turn");
     await result.prepared.teardown();
     expect(await readFile(stateFile, "utf8")).toBe("prior turn");
@@ -470,7 +470,7 @@ describe("local lane state lifetime", () => {
     const args = turnArgs();
     const result = await prepareLocalHarnessTurn(args);
     if (!result.ok) throw new Error(result.message);
-    const stateFile = join(stateRoot, "sessions", args.sessionId, "transcript");
+    const stateFile = join(`${stateRoot}-sessions`, args.sessionId, "transcript");
     await writeFile(stateFile, "prior turn");
     supervisorFixture.stopOutcome = { stopped: false, escaped: 1 };
     await result.prepared.discardState();

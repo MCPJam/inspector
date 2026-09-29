@@ -141,12 +141,9 @@ const TUNNEL_HOST_SUFFIXES = [
 /**
  * Check whether the Host header belongs to a tunnel (relay) domain.
  *
- * SECURITY INVARIANT: the session token must NEVER be served or injected
- * for a tunnel host — tunnels expose the MCP adapter surface to the public
- * internet, and the bearer secret in the tunnel URL is the only credential
- * remote clients are meant to hold. This check is enforced independently of
- * `isAllowedHost` so a future config that allowlists a tunnel domain cannot
- * silently start leaking the session token through the tunnel.
+ * Guest bootstrap credentials remain unavailable through relay hosts even
+ * when those hosts are allowlisted. Local session credentials are never
+ * delivered over HTTP, regardless of these host checks.
  *
  * COMMA-SEPARATED VALUES. This is called on `X-Forwarded-Host` as well as
  * `Host`, and a forwarded header accumulates one entry per hop: an inner proxy
@@ -185,38 +182,15 @@ export function isTunnelHost(
 }
 
 /**
- * Single decision point for serving/injecting the session token.
- *
- * Tunnel hosts are denied BEFORE the allowlist is consulted, so even a
- * misconfiguration that adds a tunnel domain to MCPJAM_ALLOWED_HOSTS can
- * never leak the session token through a tunnel.
- */
-export function mayServeSessionToken(options: {
-  host: string | undefined;
-  forwardedHost?: string | undefined;
-  allowedHosts: string[];
-  activeTunnelDomains?: string[];
-}): boolean {
-  const tunnelDomains = options.activeTunnelDomains ?? [];
-  if (
-    isTunnelHost(options.host, tunnelDomains) ||
-    isTunnelHost(options.forwardedHost, tunnelDomains)
-  ) {
-    return false;
-  }
-  return isAllowedHost(options.host, options.allowedHosts);
-}
-
-/**
  * Decision point for injecting the guest bootstrap bearer into the SPA
  * document.
  *
- * Like `mayServeSessionToken`, the guest bearer is a credential and must
+ * The guest bearer is a credential and must
  * never be injected for a tunnel/relay `Host`/`X-Forwarded-Host` — tunnels
  * are denied BEFORE the allowlist is consulted so a misconfiguration that
  * adds a tunnel domain to MCPJAM_ALLOWED_HOSTS cannot leak the bearer.
  *
- * UNLIKE the session token (localhost-only), the guest bearer is meant to be
+ * The guest bearer is meant to be
  * served to the hosted app host(s) (e.g. `app.mcpjam.com`). It therefore
  * shares the `isAllowedHost` allowlist, which honors `MCPJAM_ALLOWED_HOSTS`.
  *

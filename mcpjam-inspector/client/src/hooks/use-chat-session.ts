@@ -407,6 +407,7 @@ export interface UseChatSessionOptions {
   localHarnessExecution?: {
     requested: boolean;
     resolveSendTarget: () => {
+      serverAuthorized?: boolean;
       target: LocalHarnessTargetIds;
       token: string;
     } | null;
