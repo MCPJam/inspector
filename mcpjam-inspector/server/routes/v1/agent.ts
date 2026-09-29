@@ -92,6 +92,8 @@ import {
   hasUnresolvedApprovalResponses,
 } from "@/shared/http-tool-calls";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   deriveOperationIdempotencyKey,
@@ -1124,6 +1126,30 @@ agent.get("/agent-ops", async (c) => {
   return v1Resource(c, { operations: listAgentOpCatalog() });
 });
 
+/**
+ * The scoping read behind the job routes. A structured refusal keeps the
+ * backend's own mapping; a plain membership refusal — masked to "Server
+ * Error" in production — answers the same 404 an unknown job id does instead
+ * of escaping to the boundary's 500 (MJ-021).
+ */
+async function readAgentJobStatus(
+  convex: ReturnType<typeof createConvexClient>,
+  jobId: string,
+): Promise<{ projectId?: string } | null> {
+  try {
+    return await convex.query("agentTurnState:status" as any, { jobId });
+  } catch (error) {
+    throw (
+      translateStructuredConvexRefusal(error) ??
+      translateConvexReadError(error, {
+        scope: "v1.agent",
+        notFoundMessage: "Agent job not found.",
+        redactedIsRefusal: true,
+      })
+    );
+  }
+}
+
 agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
   if (!process.env.CONVEX_URL)
     return v1Error(
@@ -1132,9 +1158,7 @@ agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
       "The agent endpoint requires a hosted MCPJam deployment.",
     );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
-  const result = await convex.query("agentTurnState:status" as any, {
-    jobId: c.req.param("jobId"),
-  });
+  const result = await readAgentJobStatus(convex, c.req.param("jobId"));
   if (!result || result.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   return v1Resource(c, result);
@@ -1147,9 +1171,7 @@ agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
       "The agent endpoint requires a hosted MCPJam deployment.",
     );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
-  const status = await convex.query("agentTurnState:status" as any, {
-    jobId: c.req.param("jobId"),
-  });
+  const status = await readAgentJobStatus(convex, c.req.param("jobId"));
   if (!status || status.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   await convex.mutation("agentTurnState:cancel" as any, {

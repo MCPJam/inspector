@@ -19,8 +19,10 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   translateAddressedConvexWriteError,
   translateConvexWriteError,
+  translateStructuredConvexRefusal,
   type TranslateConvexWriteErrorOptions,
 } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const servers = new Hono();
@@ -227,14 +229,29 @@ servers.post("/projects/:projectId/servers", async (c) => {
 // GET /v1/projects/:projectId/servers/:serverId — one saved server.
 servers.get("/projects/:projectId/servers/:serverId", async (c) => {
   const token = await getConvexBearerForRequest(c);
-  return v1Resource(
-    c,
-    await findProjectServer(
-      token,
-      c.req.param("projectId"),
-      c.req.param("serverId")
-    )
-  );
+  try {
+    return v1Resource(
+      c,
+      await findProjectServer(
+        token,
+        c.req.param("projectId"),
+        c.req.param("serverId")
+      )
+    );
+  } catch (error) {
+    // The scoping read. A structured refusal keeps the backend's own mapping;
+    // a plain membership refusal — masked to "Server Error" in production —
+    // answers the same 404 an unknown id does instead of escaping to the
+    // boundary's 500 (MJ-021).
+    throw (
+      translateStructuredConvexRefusal(error) ??
+      translateConvexReadError(error, {
+        scope: "v1.servers",
+        notFoundMessage: "Server not found",
+        redactedIsRefusal: true,
+      })
+    );
+  }
 });
 
 // PATCH /v1/projects/:projectId/servers/:serverId — update metadata/secrets.

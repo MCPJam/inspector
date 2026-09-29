@@ -113,6 +113,9 @@ function translateSkillReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1/skills",
     notFoundMessage: "Skill or project not found, or you do not have access.",
+    // Every read here scopes a caller-supplied id; production masks the plain
+    // refusal to "Server Error", which answered 502 without this (MJ-021).
+    redactedIsRefusal: true,
   });
 }
 

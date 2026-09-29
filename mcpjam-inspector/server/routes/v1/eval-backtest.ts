@@ -112,6 +112,10 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     throw translateConvexReadError(error, {
       scope: "v1.eval-backtest",
       notFoundMessage: "Eval run not found or backtest is not authorized",
+      // The action authorizes the caller-supplied run id itself, and its
+      // refusal is a plain error production Convex masks to "Server Error" —
+      // without this a cross-tenant probe answered 502 (MJ-021).
+      redactedIsRefusal: true,
     });
   }
 });
@@ -169,6 +173,8 @@ router.post(
         scope: "v1.eval-judge-backtest",
         notFoundMessage:
           "Eval run not found or judge backtest is not authorized",
+        // Same masked-refusal reading as the preview route above (MJ-021).
+        redactedIsRefusal: true,
       });
     }
   },

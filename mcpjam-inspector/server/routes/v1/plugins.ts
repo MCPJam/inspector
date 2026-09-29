@@ -135,8 +135,10 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
  * convex/plugins.ts): `NOT_FOUND` for a missing/invalid id, `FORBIDDEN` for
  * a non-member. Both become 404 — confirming that a version id exists to
  * someone outside its project would be a free existence oracle. Everything
- * else goes through the shared read classifier (bad credential → 401,
- * anything of ours → redacted 502).
+ * else goes through the shared read classifier (bad credential → 401, a
+ * production-masked plain refusal → the same 404, anything else of ours →
+ * 502). `redactedIsRefusal` because every read here scopes a caller-supplied
+ * id, and without it a cross-tenant probe answered 502 (MJ-021).
  */
 function translatePluginReadError(error: unknown): WebRouteError {
   const data = (error as { data?: unknown } | null)?.data;
@@ -150,6 +152,7 @@ function translatePluginReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1/plugins",
     notFoundMessage: "Plugin or project not found, or you do not have access.",
+    redactedIsRefusal: true,
   });
 }
 

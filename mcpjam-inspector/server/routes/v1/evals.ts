@@ -1184,6 +1184,26 @@ function isConvexNotVisibleError(error: unknown): boolean {
 }
 
 /**
+ * Read-translator options for the id-resolving read at the top of a route —
+ * the suite/run/iteration/case lookup that authorizes a caller-supplied id.
+ *
+ * `redactedIsRefusal` because those refusals are plain errors production
+ * Convex masks to "Server Error": without it a cross-tenant probe answered
+ * 502 — an existence oracle, and on hosted a bare edge page in place of the
+ * JSON envelope — instead of this 404 (MJ-021). Several call sites share one
+ * try block between the scoping read and the page read behind it; the flag
+ * still applies there, at the documented cost of one misleading 404 should
+ * the post-scoping read itself crash.
+ */
+function scopedEvalReadOptions(notFoundMessage: string) {
+  return {
+    scope: "v1.evals",
+    notFoundMessage,
+    redactedIsRefusal: true,
+  } as const;
+}
+
+/**
  * Every id parameter on this surface is a Convex document id, so each one is
  * read through the shared shape gate rather than `c.req.param` directly — a
  * segment Convex's `v.id(...)` validator cannot parse answers 404 here instead
@@ -1278,10 +1298,10 @@ async function readSuiteInProject(
       { suiteId },
     );
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   return suite!;
@@ -1588,10 +1608,10 @@ export async function fetchSuiteRunServerSelection(
         "This deployment cannot derive the suite's saved servers yet. Pass serverIds explicitly.",
       );
     }
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
 
   // A null read means the suite itself wasn't found — match the file's other
@@ -5447,10 +5467,10 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5556,10 +5576,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5675,10 +5695,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5733,10 +5753,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5798,10 +5818,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
       runId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5977,10 +5997,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
       runId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -6024,10 +6044,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -6075,10 +6095,10 @@ evals.delete(
         runId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval run not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(run, projectId, "Eval run");
 
@@ -6167,10 +6187,10 @@ evals.get(
         },
       );
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval run not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
 
     const complete = decisionSummaryPageIsComplete({
@@ -6222,10 +6242,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   const listVocabulary = vocabularyOf(c);
   return v1PageJson(
@@ -6271,10 +6291,10 @@ evals.get(
         iterationId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval iteration not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval iteration not found"),
+      );
     }
     if (trace === null || trace === undefined) {
       throw new WebRouteError(
@@ -6335,10 +6355,10 @@ evals.get(
         );
       }
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval iteration not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval iteration not found"),
+      );
     }
 
     const snapshot = (iteration.testCaseSnapshot ?? {}) as Record<string, any>;
@@ -6461,10 +6481,10 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
       limit,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   return v1PageJson(c, (runs ?? []).map(toRunDto));
 });
@@ -6557,10 +6577,10 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
 
   return v1PageJson(
@@ -6712,7 +6732,10 @@ evals.get(
             : "Invalid stage analytics window",
         );
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
 
     // Validated at the boundary with the REFINED schema — the structural one
@@ -6813,7 +6836,10 @@ evals.get(
           RUN_ANALYTICS_NOT_FOUND,
         );
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions(RUN_ANALYTICS_NOT_FOUND),
+      );
     }
 
     if (document === null || document === undefined) {
@@ -6922,7 +6948,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_GATE_NOT_FOUND);
     }
-    throw error;
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions(RUN_GATE_NOT_FOUND),
+    );
   }
 
   if (document === null || document === undefined) {
@@ -7020,7 +7049,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
         RUN_ROUTE_FACTS_NOT_FOUND,
       );
     }
-    throw error;
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions(RUN_ROUTE_FACTS_NOT_FOUND),
+    );
   }
 
   if (document === null || document === undefined) {
@@ -7123,7 +7155,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
         RUN_SERVER_FACTS_NOT_FOUND,
       );
     }
-    throw error;
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions(RUN_SERVER_FACTS_NOT_FOUND),
+    );
   }
 
   if (document === null || document === undefined) {
@@ -7480,7 +7515,10 @@ evals.get(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(run, projectId, "Eval run");
 
@@ -7549,7 +7587,10 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(run, projectId, "Eval run");
     // Refused at the door, before the proposal spends: a name two servers
@@ -7613,7 +7654,10 @@ evals.post(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions(DESCRIPTION_EXPERIMENT_NOT_FOUND),
+      );
     }
     if (!experiment) {
       throw new WebRouteError(
@@ -7655,7 +7699,10 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(sourceRun, projectId, "Eval run");
     throwIfDescriptionOverrideUnattributable(
@@ -7978,7 +8025,10 @@ evals.get(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions(DESCRIPTION_EXPERIMENT_NOT_FOUND),
+      );
     }
 
     if (document === null || document === undefined) {
@@ -8056,10 +8106,10 @@ async function readSuiteDetail(
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   let execConfig: any = null;
@@ -8301,10 +8351,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
 
@@ -8754,10 +8804,10 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   const { convexClient } = createConvexClients(token);
@@ -8802,10 +8852,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   // Enabling reuses the suite's saved interval when none is supplied (one-click
@@ -8879,10 +8929,10 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     requireProjectMatch(suite, projectId, "Eval suite");
     cases = await convex.query("testSuites:listTestCases" as any, { suiteId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   const listVocabulary = vocabularyOf(c);
   return v1PageJson(
@@ -8908,10 +8958,10 @@ async function loadCaseInScope(
       testCaseId: caseId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval case not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval case not found"),
+    );
   }
   if (!testCase || String(testCase.testSuiteId ?? "") !== suiteId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval case not found");
@@ -8947,10 +8997,10 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   assertCasePolicyFieldsSupported(
@@ -9036,10 +9086,10 @@ evals.post(
         suiteId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval suite not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
     // Checked for EVERY case before any of them is authored, like
@@ -9296,10 +9346,10 @@ evals.post(
         suiteId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval suite not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
 
@@ -9418,10 +9468,10 @@ evals.post(
         suiteId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval suite not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
 
@@ -9514,9 +9564,17 @@ evals.get(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId",
   async (c) => {
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
-    const job = await convex.query("evalAuthoringState:status" as any, {
-      jobId: evalIdParam(c, "jobId", "Authoring job"),
-    });
+    let job: Record<string, unknown> | null;
+    try {
+      job = await convex.query("evalAuthoringState:status" as any, {
+        jobId: evalIdParam(c, "jobId", "Authoring job"),
+      });
+    } catch (error) {
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Authoring job not found."),
+      );
+    }
     if (
       !job ||
       job.projectId !== c.req.param("projectId") ||
@@ -9536,9 +9594,17 @@ evals.post(
     const { convexClient: convex } = createConvexClients(
       await getConvexBearerForRequest(c),
     );
-    const job = await convex.query("evalAuthoringState:status" as any, {
-      jobId: evalIdParam(c, "jobId", "Authoring job"),
-    });
+    let job: Record<string, unknown> | null;
+    try {
+      job = await convex.query("evalAuthoringState:status" as any, {
+        jobId: evalIdParam(c, "jobId", "Authoring job"),
+      });
+    } catch (error) {
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Generated authoring job not found."),
+      );
+    }
     const suiteId = c.req.param("suiteId");
     // The app's Markdown flow is deliberately not committable from here: its
     // drafts exist so a person reviews them, and an API commit would decide on

@@ -34,6 +34,7 @@ import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 
 const images = new Hono();
 
@@ -146,7 +147,15 @@ async function readEnvironmentInProject(
       } as any
     )) as EnvironmentRow | null;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    // The scoping read. A plain membership refusal — masked to "Server Error"
+    // in production — answers the same neutral 404 instead of the write
+    // translator's terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexWriteError(error)
+    );
   }
   if (!env || env.projectId !== projectId) {
     throw new WebRouteError(
@@ -261,7 +270,13 @@ images.get("/projects/:projectId/images", async (c) => {
       { projectId } as any
     )) as EnvironmentRow[] | null | undefined;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    // Project-scoped list: same masked-refusal reading as the detail read.
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexWriteError(error)
+    );
   }
   return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
 });

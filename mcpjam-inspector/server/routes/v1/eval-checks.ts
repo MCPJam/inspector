@@ -143,7 +143,13 @@ evalChecks.get(
         { organizationId } as any,
       );
     } catch (error) {
-      throw translateConvexReadError(error, { scope: "v1.evalChecks" });
+      // The org-scoped read authorizes the caller-supplied organization id,
+      // and its refusal is a plain error production Convex masks to "Server
+      // Error" — read that as the refusal it is, not a 502 (MJ-021).
+      throw translateConvexReadError(error, {
+        scope: "v1.evalChecks",
+        redactedIsRefusal: true,
+      });
     }
 
     // Availability travels in the response rather than being flattened into an
@@ -167,7 +173,11 @@ evalChecks.get(
         { organizationId } as any,
       )) ?? []) as Array<Record<string, any>>;
     } catch (error) {
-      throw translateConvexReadError(error, { scope: "v1.evalChecks" });
+      // Same masked-refusal reading as the availability read above (MJ-021).
+      throw translateConvexReadError(error, {
+        scope: "v1.evalChecks",
+        redactedIsRefusal: true,
+      });
     }
 
     // The repositories the App can actually reach — the choices a connect has.

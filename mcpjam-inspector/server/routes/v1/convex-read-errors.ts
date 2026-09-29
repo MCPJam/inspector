@@ -78,6 +78,50 @@ const REDACTED_SERVER_ERROR = /\bserver error\b/i;
 const AUTHENTICATION_FAILURE =
   /\b(unauthenticated|invalid token|token (has )?expired|expired token|jwt)\b/i;
 
+/**
+ * The production-masked refusal on a SCOPING READ that otherwise reports
+ * through the WRITE translator, answered as the 404 it is — or `undefined`
+ * for anything else, so the caller's own translator keeps deciding.
+ *
+ * The read paths that translate with `translateConvexWriteError` (clients,
+ * images, environments, conformance and readiness runs, server groups) get
+ * prose refusals mapped to 404 by its fallbacks, but production Convex
+ * redacts a plain "Not a member of this project" to "Server Error", which
+ * matches no branch there and fell to its terminal 500 (MJ-021). Only a
+ * plain error is claimed: a `ConvexError` payload is a deliberate refusal
+ * whose mapping belongs to the write translator, and its message carries the
+ * same "Server Error" framing this would otherwise misread.
+ *
+ * Same caveat as `redactedIsRefusal` below: only for reads that scope a
+ * caller-supplied id, where answering 404 to the rare genuine crash costs one
+ * misleading status on a request that was about to fail anyway.
+ */
+export function redactedReadRefusalError(
+  error: unknown,
+  notFoundMessage: string
+): WebRouteError | undefined {
+  if (error instanceof WebRouteError) return undefined;
+  if (hasConvexErrorData(error)) return undefined;
+  return classifyConvexReadError(error).kind === "redacted"
+    ? new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage)
+    : undefined;
+}
+
+/**
+ * Whether a `ConvexError` payload rides on the error or its `cause` chain —
+ * the same bounded walk `convexErrorData` does in `convex-errors.ts`, asked
+ * as a yes/no so this module keeps not depending on the write translator.
+ */
+function hasConvexErrorData(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const data = (current as { data?: unknown }).data;
+    if (data !== undefined && data !== null) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export type ConvexReadFailure =
   | { kind: "membership" }
   | { kind: "authentication" }

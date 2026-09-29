@@ -26,6 +26,7 @@ import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 
 const serverGroups = new Hono();
@@ -96,7 +97,13 @@ serverGroups.get("/projects/:projectId/server-groups", async (c) => {
       { projectId } as any
     )) as ServerGroupRow[] | null | undefined;
   } catch (error) {
-    throw translateServerGroupError(error);
+    // The project-scoped list read. A plain membership refusal — masked to
+    // "Server Error" in production — answers the same 404 an unknown project
+    // does instead of the write translator's terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(error, "Server group not found") ??
+      translateServerGroupError(error)
+    );
   }
   return v1PageJson(c, (rows ?? []).map(toServerGroupDto));
 });

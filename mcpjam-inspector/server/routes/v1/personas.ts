@@ -44,8 +44,14 @@ import { translateConvexReadError } from "./convex-read-errors.js";
 
 const personas = new Hono();
 
+// `redactedIsRefusal`: every read here scopes the caller-supplied project id,
+// and production Convex masks the plain membership refusal to "Server Error"
+// — without it a cross-tenant probe answered 502 (MJ-021).
 function translateReadError(error: unknown): WebRouteError {
-  return translateConvexReadError(error, { scope: "v1.personas" });
+  return translateConvexReadError(error, {
+    scope: "v1.personas",
+    redactedIsRefusal: true,
+  });
 }
 
 /** Convex `personas:serializePersona` output, hand-mirrored. */

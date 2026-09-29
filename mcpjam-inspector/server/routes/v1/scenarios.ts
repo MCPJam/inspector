@@ -121,7 +121,15 @@ async function requireEnvironmentInProject(
     // and the journey reads cannot drift.
     const failure = classifyConvexReadError(error);
     if (failure.kind !== "membership") {
-      throw translateConvexReadError(error, { scope: "v1.scenarios" });
+      // `redactedIsRefusal`: this is the scoping preflight for the
+      // caller-supplied environment id, and production Convex masks its plain
+      // membership refusal to "Server Error" — answer the 404 below, not a
+      // 502 (MJ-021).
+      throw translateConvexReadError(error, {
+        scope: "v1.scenarios",
+        notFoundMessage: "Environment not found",
+        redactedIsRefusal: true,
+      });
     }
     row = null;
   }
