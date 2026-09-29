@@ -30,7 +30,10 @@ const packageRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: /oauth-debugger\.spec\.ts/,
+  // Both run under their own config. local-access.spec.ts needs a browser that
+  // has NOT been handed the access key seeded below, and a local server, so it
+  // can neither run here nor against a deployed URL.
+  testIgnore: /(oauth-debugger|local-access)\.spec\.ts/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

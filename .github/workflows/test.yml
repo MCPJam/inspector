@@ -352,6 +352,11 @@ jobs:
       - name: Run Playwright smoke
         run: npm run test:e2e -w @mcpjam/inspector
 
+      - name: Run local access e2e
+        # Its own config: the smoke config seeds every page with the access key,
+        # and this spec proves what a browser without one sees.
+        run: npm run test:e2e:local-access -w @mcpjam/inspector
+
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector
 
