@@ -7,6 +7,7 @@ import {
 import {
   handleMCPJamFreeChatModel,
   runChatEngineLoop,
+  STEP_LIMIT_NOTE,
 } from "../mcpjam-stream-handler";
 import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
@@ -3422,6 +3423,94 @@ describe("mcpjam-stream-handler", () => {
       // 4 existing + 2 new = 6 (the cap). Only 2 fetches should fire.
       expect((global.fetch as any).mock.calls).toHaveLength(2);
     });
+    describe("step limit", () => {
+      const runAtStep = async (
+        existingSteps: number,
+        opts: { maxSteps: number; extraBodyFields?: Record<string, unknown> },
+      ) => {
+        const messages = [
+          { role: "user", content: "go" },
+          ...Array.from({ length: existingSteps }, (_, i) => ({
+            role: "assistant",
+            content: [{ type: "text", text: `s${i + 1}` }],
+          })),
+        ] as any;
+        await handleMCPJamFreeChatModel({
+          messages,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          heartbeatIntervalMs: 0,
+          ...opts,
+        });
+        await lastExecution;
+      };
+      const sentBodies = () =>
+        (global.fetch as any).mock.calls.map((call: any) =>
+          JSON.parse(call[1].body),
+        );
+      const turnFinish = () =>
+        writtenChunks
+          .filter((chunk) => chunk?.type === "data-trace-event")
+          .map((chunk) => chunk.data)
+          .find((event: any) => event.type === "turn_finish");
+
+      it("sends only the last allowed step with toolChoice none", async () => {
+        vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+
+        await runAtStep(4, { maxSteps: 6 });
+
+        const bodies = sentBodies();
+        expect(bodies).toHaveLength(2);
+        expect(bodies[0].toolChoice).toBeUndefined();
+        expect(bodies[1].toolChoice).toBe("none");
+      });
+
+      it("lets a caller's own toolChoice win on the last step", async () => {
+        await runAtStep(5, {
+          maxSteps: 6,
+          extraBodyFields: { toolChoice: "required" },
+        });
+
+        expect(sentBodies()[0].toolChoice).toBe("required");
+      });
+
+      it("ends with stop, not length, when the last step writes the reply", async () => {
+        await runAtStep(5, { maxSteps: 6 });
+
+        expect(sentBodies()).toHaveLength(1);
+        expect(turnFinish().finishReason).toBe("stop");
+        expect(
+          writtenChunks.find((chunk) => chunk?.type === "finish").finishReason,
+        ).toBe("stop");
+      });
+
+      it("answers a request already out of steps with a written note and no model call", async () => {
+        await runAtStep(6, { maxSteps: 6 });
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        const uiChunks = writtenChunks.filter(
+          (chunk) => chunk?.type !== "data-trace-event",
+        );
+        const types = uiChunks.map((chunk) => chunk.type);
+        // Its own step, so the browser's resume check weighs only the note.
+        expect(types).toEqual([
+          "start-step",
+          "text-start",
+          "text-delta",
+          "text-end",
+          "finish-step",
+          "finish",
+        ]);
+        expect(uiChunks[2].delta).toBe(STEP_LIMIT_NOTE);
+        expect(uiChunks[5].finishReason).toBe("length");
+        expect(turnFinish().finishReason).toBe("length");
+      });
+    });
+
 
     it("emits the aggregated turn usage via messageMetadata (preserving #2213)", async () => {
       // Single-step turn with non-trivial usage. Must surface as

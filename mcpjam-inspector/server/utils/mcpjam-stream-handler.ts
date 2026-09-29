@@ -1352,6 +1352,12 @@ interface StepContext {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
+  /**
+   * This is the turn's last allowed model call (`stepIndex === maxSteps - 1`).
+   * Sent with `toolChoice: "none"` so it writes the reply: a tool call here
+   * would run with no model call left to read its result.
+   */
+  isFinalStep?: boolean;
   usedToolCallIds: Set<string>;
   traceTurn: LiveTraceTurnContext;
   endpointPath: string;
@@ -1626,6 +1632,31 @@ function readFinishReasonFromChunk(
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
   return normalizeFinishReason(source?.finishReason);
+}
+
+export const STEP_LIMIT_NOTE =
+  "I reached my step limit for this message. Send a message to continue.";
+
+/**
+ * Writes the step-limit note as its own step: `start-step` first, because the
+ * browser's resume predicates only weigh parts after the last `step-start`.
+ * Also appended to the history so the saved chat shows what the browser saw.
+ */
+function writeStepLimitNote(
+  writer: { write: (chunk: UIMessageChunk) => void },
+  messageHistory: ModelMessage[],
+  traceTurn: LiveTraceTurnContext,
+): void {
+  const id = `step-limit-${traceTurn.turnId}`;
+  writer.write({ type: "start-step" });
+  writer.write({ type: "text-start", id });
+  writer.write({ type: "text-delta", id, delta: STEP_LIMIT_NOTE });
+  writer.write({ type: "text-end", id });
+  writer.write({ type: "finish-step" });
+  messageHistory.push({
+    role: "assistant",
+    content: [{ type: "text", text: STEP_LIMIT_NOTE }],
+  });
 }
 
 function createClientFinishChunk(
@@ -3333,6 +3364,7 @@ async function processOneStep(
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
+    isFinalStep,
     usedToolCallIds,
     traceTurn,
     progressivePlan,
@@ -3407,6 +3439,12 @@ async function processOneStep(
     activeToolDefs.some((def) => def.name === META_TOOL_SEARCH)
       ? { type: "tool" as const, toolName: META_TOOL_SEARCH }
       : undefined;
+  // The last allowed step answers instead of calling tools. A turn that ends on
+  // tool results is one the browser's `shouldAutoResumeTurn` resumes, into a
+  // turn with no steps left. Tools stay advertised because the history still
+  // holds tool calls. A caller's own `toolChoice` in `extraBodyFields` (hosted
+  // evals) still wins.
+  const toolChoice = isFinalStep ? ("none" as const) : forcedToolChoice;
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -3563,7 +3601,7 @@ async function processOneStep(
         turnId: traceTurn.turnId,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
-        ...(forcedToolChoice ? { toolChoice: forcedToolChoice } : {}),
+        ...(toolChoice ? { toolChoice } : {}),
         ...(extraBodyFields ?? {}),
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
@@ -5027,6 +5065,9 @@ export async function runChatEngineLoop(
         }
       }
 
+      // Whether a step ended the turn itself (a reply, or an error) rather than
+      // the loop running out of steps. A last step that answered is "stop".
+      let stepEndedTurn = false;
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         await options.durableCheckpoint?.({
@@ -5063,6 +5104,7 @@ export async function runChatEngineLoop(
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
+          isFinalStep: effectiveSteps() === resolvedMaxSteps - 1,
           usedToolCallIds,
           traceTurn,
           endpointPath: resolvedEndpointPath,
@@ -5117,6 +5159,7 @@ export async function runChatEngineLoop(
         );
 
         if (!shouldContinue) {
+          stepEndedTurn = true;
           break;
         }
         if (options.yieldAfterStep) break;
@@ -5180,13 +5223,25 @@ export async function runChatEngineLoop(
         });
       }
 
+      // A request that arrives with the step budget already spent (the browser
+      // auto-continuing after the last step's tools ran) gets a written note
+      // in a new step, not an empty reply. An empty reply changes nothing in
+      // the chat, so `shouldAutoResumeTurn` fires again, forever; a step with
+      // no tool calls is one it does not resume. No model call: the backend
+      // refuses a step past the budget (`step_out_of_range`).
+      if (!mrtrPaused && steps === 0 && hitStepCap()) {
+        writeStepLimitNote(safeWriter, messageHistory, traceTurn);
+      }
+
+      const endedAtStepCap = hitStepCap() && !stepEndedTurn;
+
       // Safety: ensure we always emit a finish event
       if (!finishEmitted) {
         safeWriter.write(
           createClientFinishChunk(
             null,
             traceTurn,
-            hitStepCap() ? "length" : "stop",
+            endedAtStepCap ? "length" : "stop",
           ),
         );
         finishEmitted = true;
@@ -5195,7 +5250,7 @@ export async function runChatEngineLoop(
       // Shared ritual: turn_finish + success flag (finish chunk already
       // emitted by the step or the safety block above).
       driver.usage = traceTurn.turnUsage;
-      driver.finishReason = hitStepCap() ? "length" : "stop";
+      driver.finishReason = endedAtStepCap ? "length" : "stop";
       driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
 
       runSucceeded = true;
