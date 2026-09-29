@@ -212,6 +212,28 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
     expect(brokerArgs.box).not.toHaveProperty("projectId");
   });
 
+  it("hands the broker the host output ceiling, and none when absent", async () => {
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        harnessMaxOutputTokens: 16384,
+      }) as never,
+      "none"
+    );
+    expect(
+      vi.mocked(startHarnessModelBroker).mock.calls[0]![0].maxOutputTokens
+    ).toBe(16384);
+
+    vi.mocked(startHarnessModelBroker).mockClear();
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none"
+    );
+    expect(
+      vi.mocked(startHarnessModelBroker).mock.calls[0]![0]
+    ).not.toHaveProperty("maxOutputTokens");
+  });
+
   it("keeps the PERSONAL path unchanged when no binding is given", async () => {
     await runHarnessTurn(
       baseOptions({ computerWorkdir: "/home/user/personal" }) as never,
