@@ -26,6 +26,7 @@ import {
 } from "./tools/skillsSurface.js";
 import { registerShowServersTool } from "./tools/showServers.js";
 import { DEFAULT_MCPJAM_APP_ORIGIN } from "@mcpjam/sdk/platform";
+import { GUEST_ISSUER } from "./auth.js";
 
 const SERVER_INFO = {
   name: "MCPJam MCP",
@@ -46,6 +47,7 @@ const SERVER_INSTRUCTIONS = [
   "Tool results may include a `permalinks` array; the text output repeats each one as a `Label: https://…` line.",
   "Hand those URLs to the user EXACTLY as written. Never invent, shorten, or rewrite an MCPJam app URL, and never build one from an id — a hand-made link opens whichever project the reader last selected, not the one you are describing.",
   "When a result has no permalink, give the id and say which MCPJam screen it lives on.",
+  "If an MCPJam tool fails with an internal error, or you need a capability these tools do not offer, you can report it once with send_feedback — describe what you were trying to do, what you expected and what blocked you, then carry on with the task.",
 ].join("\n");
 
 /**
@@ -77,6 +79,17 @@ export interface PlatformToolContext {
    * authorization input, and the platform caps it before storing it.
    */
   callerUserAgent?: string;
+  /**
+   * Whether this request runs as an ANONYMOUS guest: no bearer at all (a guest
+   * is minted on first use), or a verified guest-issuer token.
+   *
+   * Read by the error text only, to keep it from suggesting `send_feedback`,
+   * which refuses guests. Keyed on the token's ISSUER rather than on whether a
+   * token was verified, because guest tokens are verified too. Optional so a
+   * context built anywhere else reads as signed in, the state in which the
+   * suggestion is merely unhelpful rather than wrong.
+   */
+  isGuestSession?: boolean;
 }
 
 // Re-mint a minted guest token this far before its expiry. A guest token is
@@ -195,6 +208,8 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
   // one), so an absent header simply leaves the launcher unnamed rather than
   // guessing.
   const callerUserAgent = ctx.requestInfo?.headers.get("user-agent") ?? undefined;
+  const claims = ctx.authInfo?.extra?.claims as { iss?: unknown } | undefined;
+  const isGuestSession = !ctx.authInfo || claims?.iss === GUEST_ISSUER;
 
   const toolContext: PlatformToolContext = {
     getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
@@ -203,6 +218,7 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
       MCPJAM_APP_ORIGIN: resolveAppOrigin(env),
     },
     ...(callerUserAgent ? { callerUserAgent } : {}),
+    isGuestSession,
   };
 
   const registrar = createSessionToolRegistrar(server);

@@ -1,3 +1,7 @@
+import {
+  isCrossServerToolCall,
+  pinMcpManagerToServer,
+} from "../../../services/mcp-tool-call-target.js";
 import { rpcLogBus } from "../../../services/rpc-log-bus.js";
 import type { StreamFailureReporter } from "../../stream-failure-reporter.js";
 /** Session-scoped loopback MCP transport over the caller's authorized manager. */
@@ -50,12 +54,8 @@ export async function startLocalHarnessMcpPlane(args: {
       }
       const parsed = await parseAndValidateJsonRpc(async () => JSON.parse(Buffer.concat(chunks).toString("utf8")));
       if (!parsed.ok) { finish(parsed.status, parsed.response); return; }
-      const toolName = parsed.body.method === "tools/call" ? (parsed.body.params as { name?: unknown } | undefined)?.name : undefined;
-      if (typeof toolName === "string" && toolName.includes(":")) {
-        const prefix = toolName.slice(0, toolName.indexOf(":"));
-        if (prefix !== serverId && args.manager.hasServer(prefix)) {
-          finish(400, { jsonrpc: "2.0", id: parsed.body.id ?? null, error: { code: -32602, message: "Tool is outside this server's scope" } }); return;
-        }
+      if (isCrossServerToolCall(args.manager, serverId, parsed.body)) {
+        finish(400, { jsonrpc: "2.0", id: parsed.body.id ?? null, error: { code: -32602, message: "Tool is outside this server's scope" } }); return;
       }
       const policy = args.toolPolicy?.[serverId];
       if (policy) {
@@ -67,13 +67,7 @@ export async function startLocalHarnessMcpPlane(args: {
       }
       // The bridge accepts prefixed tool names; limit its resolver to this entry
       // so a server's capability cannot route to another configured server.
-      const manager = new Proxy(args.manager, {
-        get(target, key) {
-          if (key === "hasServer") return (id: string) => id === serverId && target.hasServer(id);
-          const value = Reflect.get(target, key);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
+      const manager = pinMcpManagerToServer(args.manager, serverId);
       rpcLogBus.publish({ serverId, direction: "send", timestamp: new Date().toISOString(), message: parsed.body });
       const result = await handleJsonRpc(serverId, parsed.body, manager, "adapter", {
         failureReporter: args.failureReporter,
