@@ -309,6 +309,25 @@ describe("resolveComposerEnvironments — requireServerAttachment (evals)", () =
     expect(result.environmentIds).toEqual(["plugin-only"]);
   });
 
+  it("accepts an explicitly server-free saved environment", async () => {
+    const ensure = ensureReturning([]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: {
+        environmentIds: ["none"],
+        stack: emptyEnvironmentStack(),
+        customized: false,
+      },
+      liveEnvironments: [
+        named({ environmentId: "none", serverSelection: { mode: "none" } }),
+      ],
+      ensureAdhocEnvironments: ensure,
+      requireServerAttachment: true,
+    });
+    expect(result.environmentIds).toEqual(["none"]);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
   it("leaves non-eval surfaces free to compose without a group", async () => {
     const ensure = ensureReturning(["adhoc-1"]);
     await expect(
@@ -1131,7 +1150,10 @@ describe("expandModelChoices — harness × model support", () => {
   it("skips nothing for an emulated client or without a harness", () => {
     for (const harness of [null, undefined]) {
       const { cells, skipped } = expandModelChoices(
-        { includeClientDefaults: false, explicitModelIds: ["openai/gpt-5.6-luna"] },
+        {
+          includeClientDefaults: false,
+          explicitModelIds: ["openai/gpt-5.6-luna"],
+        },
         { clientId: "h", harness },
       );
       expect(cells).toEqual([{ modelId: "openai/gpt-5.6-luna" }]);
@@ -1262,5 +1284,32 @@ describe("clientNameResolver", () => {
     ).toBe(
       "Skipped 1 client × model pair the client can't run: Codex × openai/gpt-5.6-luna (r)",
     );
+  });
+});
+
+describe("large eval matrices", () => {
+  it("prepares all 16 targets in bounded batches and preserves order", async () => {
+    const hosts = Array.from({ length: 16 }, (_, i) => `host-${i}`);
+    const ensure = vi.fn(
+      async ({ stacks }: { stacks: Array<{ hostId: string }> }) =>
+        stacks.map((stack) => ({
+          environment: env({
+            environmentId: `env-${stack.hostId}`,
+            hostId: stack.hostId,
+          }),
+          created: true,
+        })),
+    );
+    const result = await resolveComposerEnvironments({
+      ...base,
+      max: Number.POSITIVE_INFINITY,
+      state: composeState({ hostIds: hosts, serverAttachmentId: "group-1" }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure.mock.calls.map(([args]) => args.stacks.length)).toEqual([
+      10, 6,
+    ]);
+    expect(result.environmentIds).toEqual(hosts.map((id) => `env-${id}`));
   });
 });

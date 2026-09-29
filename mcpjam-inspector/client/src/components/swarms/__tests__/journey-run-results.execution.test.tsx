@@ -106,27 +106,17 @@ describe("swarm session execution provenance", () => {
     cleanup();
   });
 
-  it("shows what the session's model ran on, with the deviation banner", () => {
+  // The record stays on the attempt, but the live pane no longer shows it.
+  it("does not show what the session's model ran on, even with a record", () => {
     render(
       <SwarmLiveStreamPane
         {...props}
         attempt={{ status: "succeeded", execution }}
       />,
     );
-    expect(
-      screen.getByTestId("swarm-live-pane-execution-provenance-line"),
-    ).toHaveTextContent(
-      "Ran on anthropic/claude-sonnet-4.5 via OpenRouter (MCPJam key), max output provider default",
-    );
-    expect(
-      screen.getByTestId("swarm-live-pane-execution-deviation-banner"),
-    ).toHaveTextContent("Deviation: Provider fallback");
-  });
-
-  it("shows nothing for a session recorded before records existed", () => {
-    render(
-      <SwarmLiveStreamPane {...props} attempt={{ status: "succeeded" }} />,
-    );
+    expect(screen.getByTestId("transcript")).toBeInTheDocument();
+    expect(screen.queryByText(/Ran on/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Deviation:/)).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("swarm-live-pane-execution-provenance"),
     ).not.toBeInTheDocument();

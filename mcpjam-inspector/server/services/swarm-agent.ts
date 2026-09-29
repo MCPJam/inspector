@@ -513,6 +513,7 @@ export async function createJourneyRun(
   convexHttpUrl: string,
   bearer: string,
   args: {
+    runtimeVenue?: "hosted" | "local";
     projectId: string;
     journeyRefId: string;
     launchKey: string;
@@ -546,6 +547,7 @@ export async function createJourneyRun(
     {
       // `projectId` is REQUIRED by the backend route (it reads `body.projectId`
       // and 400s without it); it scopes the LAUNCHER + project-member gate.
+      runtimeVenue: args.runtimeVenue ?? "hosted",
       projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,

@@ -1,3 +1,6 @@
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
+import { resolveLocalHarnessActor } from "../../utils/harness/local/acting-user.js";
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 /**
  * Launching a journey run, with no HTTP in it.
  *
@@ -271,6 +274,33 @@ export async function launchJourneyRun(
   input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
   const convexHttpUrl = requireConvexHttpUrl();
+  // Capture the signed-in identity before replacing its bearer with the
+  // background credential. Membership and rollout are rechecked per session.
+  let hasClaudeTarget = false;
+  if (input.waveId) {
+    const client = createConvexClient(deps.bearerToken);
+    const journey = await client.query("journeys:getJourney" as never, {
+      projectId: input.projectId, journeyRefId: input.journeyRefId,
+    } as never) as any;
+    const environmentIds = input.environmentIds?.length ? input.environmentIds : journey?.environmentIds ?? [];
+    const hostIds = environmentIds.length
+      ? await Promise.all(environmentIds.map(async (environmentId: string) => {
+          const environment = await client.query("projectEnvironments:getEnvironment" as never, {
+            projectId: input.projectId, environmentId,
+          } as never) as any;
+          return environment?.hostId;
+        }))
+      : journey?.hostIds ?? [];
+    const hosts = await Promise.all(hostIds.map(async (hostId: string) =>
+      client.query("hosts:getHost" as never, { hostId } as never) as any,
+    ));
+    hasClaudeTarget = hosts.some(host => host?.config?.harness === "claude-code");
+  }
+  const localEnabled = hasClaudeTarget && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
+  if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false });
+  const localActorResult = localEnabled
+    ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
+    : undefined;
 
   // Create the run over the journey's full pinned host set (no maxHosts
   // cap). A backend rejection (a hard host-count ceiling, a journey with no
@@ -279,6 +309,7 @@ export async function launchJourneyRun(
   let created;
   try {
     created = await createJourneyRun(convexHttpUrl, deps.bearerToken, {
+      runtimeVenue: localEnabled ? "local" : "hosted",
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,
@@ -401,6 +432,7 @@ export async function launchJourneyRun(
     );
   }
   const hosts = snapshot.hosts;
+  const localHarnessActor = localActorResult?.ok ? localActorResult.actor : undefined;
 
   // Client for the run's D2 re-gates. Constructed PER CALL and deliberately
   // not memoized: a client bakes its auth token in at construction, so a
@@ -442,6 +474,7 @@ export async function launchJourneyRun(
           0) > 0,
       convexHttpUrl,
       getBearer: deps.getRunBearer,
+      localHarnessActor,
       // Host-aware: each host connects ONLY its own pinned required servers
       // (optionalServerIds stay off, matching a real no-opt-in visitor).
       managerFactory: async (host) => {

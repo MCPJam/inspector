@@ -178,7 +178,10 @@ describe("step-executor", () => {
         id: "click",
         kind: "interact",
         toolName: "view-cart",
-        action: { kind: "click", target: { role: { role: "button", name: "Proceed to checkout" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Proceed to checkout" } },
+        },
       },
       {
         id: "assert",
@@ -608,7 +611,11 @@ describe("step-executor", () => {
       {
         id: "a1",
         kind: "assert",
-        assertion: { type: "toolCalledWith", toolName: "never", args: { args: {} } },
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "never",
+          args: { args: {} },
+        },
       },
       {
         id: "a2",
@@ -673,5 +680,127 @@ describe("step-executor", () => {
     });
     expect(result.iterationError).toBeUndefined();
     expect(browserB.drainFollowUps).not.toHaveBeenCalled();
+  });
+});
+
+// A step check that reads tool RESULTS or per-call timings must see the
+// results and spans the steps before it produced. It used to be scored against
+// a transcript with no result channel at all, so every such check reported "no
+// tool results captured" even when the tool had run and answered.
+describe("step-executor — result and timing checks at an assert step", () => {
+  const weatherTurn = (): StepEngineOutcome => ({
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "get-weather",
+            input: { city: "Paris" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "get-weather",
+            output: { type: "text", value: "12°C and rainy in Paris" },
+            result: {
+              content: [{ type: "text", text: "12°C and rainy in Paris" }],
+              structuredContent: {
+                city: "Paris",
+                temperatureC: 12,
+                conditions: "rainy",
+              },
+            },
+          },
+        ],
+      },
+      { role: "assistant", content: "It is 12°C and rainy in Paris." },
+    ] as never,
+    toolCalls: [{ toolName: "get-weather", arguments: { city: "Paris" } }],
+    spans: [
+      {
+        id: "span-1",
+        name: "get-weather",
+        category: "tool",
+        toolName: "get-weather",
+        toolCallId: "call-1",
+        startMs: 100,
+        endMs: 140,
+        status: "ok",
+      } as never,
+    ],
+  });
+
+  async function runWithAssert(assertion: unknown) {
+    const steps = [
+      { id: "p", kind: "prompt", prompt: "Weather in Paris?" },
+      { id: "a", kind: "assert", assertion },
+    ] as TestStep[];
+    const state = createStepExecutionState();
+    await executeSteps({
+      steps,
+      state,
+      browser: makeBrowser(),
+      handlers: makeHandlers({ onPrompt: vi.fn(async () => weatherTurn()) }),
+    });
+    expect(state.assertionResults).toHaveLength(1);
+    return state.assertionResults[0]!;
+  }
+
+  it("toolResultContains finds text in the tool result", async () => {
+    const result = await runWithAssert({
+      type: "toolResultContains",
+      toolName: "get-weather",
+      needle: "Paris",
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it("toolResultMatchesSchema validates the structured result", async () => {
+    const result = await runWithAssert({
+      type: "toolResultMatchesSchema",
+      toolName: "get-weather",
+      schema: {
+        type: "object",
+        required: ["city", "temperatureC"],
+        properties: {
+          city: { type: "string" },
+          temperatureC: { type: "number" },
+        },
+      },
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it("a schema the result does not meet fails on the schema, not on missing capture", async () => {
+    const result = await runWithAssert({
+      type: "toolResultMatchesSchema",
+      toolName: "get-weather",
+      schema: { type: "object", required: ["humidity"] },
+    });
+    expect(result.passed).toBe(false);
+    expect(result.reason ?? "").not.toMatch(/no tool results captured/);
+  });
+
+  it("toolLatencyUnder reads the step's tool spans", async () => {
+    const fast = await runWithAssert({
+      type: "toolLatencyUnder",
+      toolName: "get-weather",
+      ms: 1000,
+    });
+    expect(fast.passed).toBe(true);
+    const slow = await runWithAssert({
+      type: "toolLatencyUnder",
+      toolName: "get-weather",
+      ms: 10,
+    });
+    expect(slow.passed).toBe(false);
+    expect(slow.reason ?? "").not.toMatch(/captured/);
   });
 });

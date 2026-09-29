@@ -1,3 +1,4 @@
+import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
   AdmissionWaitBudget,
   withAdmissionRetry,
@@ -403,6 +404,7 @@ export interface SyntheticHostRuntime {
    * host config or run snapshot).
    */
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
+  harnessExecutionTarget?: LocalHarnessExecutionTarget;
   harness?: Harness;
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
@@ -556,6 +558,7 @@ export async function runSyntheticHostSession(
     harness,
     sandboxBinding,
     harnessSandboxBinding,
+    harnessExecutionTarget,
     accessVersion,
     scenarioId,
     environmentId,
@@ -1271,6 +1274,7 @@ export async function runSyntheticHostSession(
             // The attempt's own disposable box for the HARNESS turn. Only meaningful
             // when a harness is selected — the emulated engine's shell binds through
             // `resolveHostTools` above instead.
+            ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
             ...(harness && harnessSandboxBinding
               ? { harnessSandboxBinding }
               : {}),
@@ -1998,6 +2002,7 @@ export async function drainAssistantTurn(
     harnessMcpProxy,
     pinnedHarnessSkills,
     harnessSandboxBinding,
+    harnessExecutionTarget,
     environmentId,
     builtInTools: harnessBuiltInTools,
     extraBodyFields,
@@ -2230,6 +2235,7 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The turn's Project Environment — the grant boundary the harness path
     // checks a BROKERED external-account credential against. Inert for the
     // emulated engine, which resolves no such credential.

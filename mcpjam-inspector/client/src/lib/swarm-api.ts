@@ -422,6 +422,7 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  executionVenue?: "hosted" | "local" | "mixed";
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
   runId: string;

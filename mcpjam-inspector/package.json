@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.12.2",
+  "version": "3.12.4",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -101,7 +101,7 @@
     "electron:publish": "cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-forge publish",
     "preelectron:dev": "node scripts/check-dev-env.mjs --task=electron-dev && node scripts/build-sdk-if-stale.mjs && npm run bundle:all",
     "electron:dev": "cross-env NODE_ENV=development electron-forge start",
-    "pretest": "npm run build -w @mcpjam/evaluators && node scripts/bundle-sandbox-proxy-html.js && node scripts/bundle-browser-harness.mjs && node scripts/bundle-plugin-shim.mjs && node scripts/bundle-codex-appserver-bridge.mjs && node scripts/bundle-browserd.mjs --check",
+    "pretest": "npm run build -w @mcpjam/evaluators && npm run bundle:runtimes -w @mcpjam/sdk && node scripts/bundle-sandbox-proxy-html.js && node scripts/bundle-browser-harness.mjs && node scripts/bundle-plugin-shim.mjs && node scripts/bundle-codex-appserver-bridge.mjs && node scripts/bundle-browserd.mjs --check",
     "test": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run",
     "test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest",
     "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",
@@ -120,8 +120,8 @@
     "@ai-sdk/azure": "^3.0.26",
     "@ai-sdk/deepseek": "^2.0.17",
     "@ai-sdk/google": "^3.0.20",
-    "@ai-sdk/harness": "^1.0.96",
-    "@ai-sdk/harness-claude-code": "^1.0.100",
+    "@ai-sdk/harness": "1.0.96",
+    "@ai-sdk/harness-claude-code": "1.0.100",
     "@ai-sdk/harness-codex": "^1.0.98",
     "@ai-sdk/harness-cursor": "^1.0.9",
     "@ai-sdk/mistral": "^3.0.18",
@@ -147,7 +147,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.17.0",
+    "@mcpjam/sdk": "^8.18.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",

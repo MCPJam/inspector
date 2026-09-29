@@ -51,7 +51,11 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
-import { securityHeadersMiddleware } from "./middleware/security-headers";
+import {
+  documentScriptNonce,
+  securityHeadersMiddleware,
+  withScriptNonce,
+} from "./middleware/security-headers";
 import { indexingHeadersMiddleware } from "./middleware/indexing-headers";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 import {
@@ -61,6 +65,7 @@ import {
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
@@ -357,6 +362,7 @@ startLocalBrowserRenderingSetupInBackground();
 // kill switch and a consent grant is installed when the user asks, never
 // at startup and never during a session start.
 reportLocalHarnessRuntimeStatusInBackground();
+if (!HOSTED_MODE) void startLocalHarnessJanitor();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -849,6 +855,9 @@ if (process.env.NODE_ENV === "production") {
       // allowlisted — see mayServeSessionToken.
       const host = c.req.header("Host");
       const forwardedHost = c.req.header("X-Forwarded-Host");
+      // Every inline script written into the document carries this
+      // response's nonce (see middleware/security-headers.ts).
+      const scriptNonce = documentScriptNonce(c);
 
       if (
         mayServeSessionToken({
@@ -859,14 +868,20 @@ if (process.env.NODE_ENV === "production") {
         })
       ) {
         const token = getSessionToken();
-        const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
+        const tokenScript = withScriptNonce(
+          `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`,
+          scriptNonce,
+        );
         htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(
           `[Security] Token not injected - non-allowed Host: ${host}`,
         );
-        const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
+        const warningScript = withScriptNonce(
+          `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`,
+          scriptNonce,
+        );
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
       }
 
@@ -874,16 +889,17 @@ if (process.env.NODE_ENV === "production") {
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`,
+          `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
         );
       }
 
       // Inject MCP server config if provided via CLI
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
-        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig,
-        )};</script>`;
+        const configScript = withScriptNonce(
+          `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`,
+          scriptNonce,
+        );
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
 
@@ -909,7 +925,10 @@ if (process.env.NODE_ENV === "production") {
         try {
           const { session, setCookies } = await mintGuestSessionForDocument(c);
           if (session && session.expiresAt > Date.now()) {
-            const bootstrapScript = buildGuestBootstrapScript(session);
+            const bootstrapScript = withScriptNonce(
+              buildGuestBootstrapScript(session),
+              scriptNonce,
+            );
             htmlContent = htmlContent.replace(
               "</head>",
               `${bootstrapScript}</head>`,

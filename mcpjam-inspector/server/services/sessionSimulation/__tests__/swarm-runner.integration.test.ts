@@ -12,6 +12,21 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// This suite covers hosted boxes; local native execution has separate fixtures.
+vi.mock("../../../config.js", async () => ({
+  ...(await vi.importActual("../../../config.js")), HOSTED_MODE: true,
+}));
+
+const localFixture = vi.hoisted(() => ({ enabled: false, cleanup: vi.fn(async () => {}) }));
+vi.mock("../../../utils/harness/local/run-resources.js", async () => ({
+  ...(await vi.importActual("../../../utils/harness/local/run-resources.js")),
+  isLocalHarnessVenue: (harness: string) => localFixture.enabled && harness === "claude-code",
+  prepareLocalHarnessRun: vi.fn(async () => ({
+    target: { kind: "local-native", localSessionId: "local-swarm-session", grantId: "grant", workspaceGrantId: "workspace", machineId: "machine" },
+    cleanup: localFixture.cleanup,
+  })),
+}));
+
 const runAssistantTurnMock = vi.fn();
 const resolveSyntheticModelSourceMock = vi.fn();
 const persistChatSessionToConvexMock = vi.fn();
@@ -198,6 +213,8 @@ function baseOpts() {
 }
 
 beforeEach(() => {
+  localFixture.enabled = false;
+  localFixture.cleanup.mockClear();
   callOrder.length = 0;
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
@@ -453,4 +470,21 @@ it("ends a starter session at its included limit through the real core: budget_t
   });
   // Nothing a top-up lifts: no spend-cap stop of the run.
   expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+});
+
+it("runs a local Claude swarm through the shared core without reserving a cloud box", async () => {
+  localFixture.enabled = true;
+  const opts = baseOpts();
+  await startJourneyRun({
+    ...opts,
+    hosts: [{ ...opts.hosts[0]!, harness: "claude-code" }],
+    localHarnessActor: { credential: "authkit", subject: "user", userId: "authkit:user" },
+  } as any);
+  expect(runAssistantTurnMock).toHaveBeenCalled();
+  const turn = runAssistantTurnMock.mock.calls[0]![0] as any;
+  expect(turn.harness).toBe("claude-code");
+  expect(turn.harnessExecutionTarget).toMatchObject({ localSessionId: "local-swarm-session" });
+  expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  expect(localFixture.cleanup).toHaveBeenCalledOnce();
+  expect(persistChatSessionToConvexMock).toHaveBeenCalled();
 });

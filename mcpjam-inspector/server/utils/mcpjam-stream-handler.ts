@@ -897,6 +897,10 @@ export interface MCPJamHandlerOptions {
      *  from the request body. Consent binds to a user, so a user the caller
      *  names is a user the caller chose. */
     actingUserId: string;
+    /** Server scheduler-owned session identity; never parsed from renderer input. */
+    localSessionId?: string;
+    targetId?: string;
+    sessionIdx?: number;
   };
   authHeader?: string;
   scenarioId?: string;
@@ -4716,11 +4720,15 @@ export async function runChatEngineLoop(
   const approvalBinding =
     options.approvalBinding ??
     toolApprovalBindingFor({ authHeader, projectId, chatSessionId });
-  // Sign what this turn streams as the server's own (MJ-009): assistant text
-  // as it streams, reasoning at its end, the calls the model issues and the
-  // results they get — never for a call the history marks as not issued. A
-  // no-op where nothing can be signed (local mode, or no signing key).
-  const provenanceContext = historyProvenanceContextFor(projectId);
+  // Sign what this turn streams as the server's own (MJ-009), for this chat:
+  // assistant text and reasoning once each, over their final text, the calls
+  // the model issues and the results they get — never for a call the history
+  // marks as not issued. A no-op where nothing can be signed (local mode, no
+  // signing key, or no chat session).
+  const provenanceContext = historyProvenanceContextFor(
+    projectId,
+    chatSessionId,
+  );
   const signChunk = provenanceContext
     ? createUiChunkProvenanceSigner(
         provenanceContext,
@@ -4797,7 +4805,9 @@ export async function runChatEngineLoop(
         lastWriteAt = Date.now();
         if (streamClosed) return;
         try {
-          writer.write(signChunk ? signChunk(chunk) : chunk);
+          for (const out of signChunk ? signChunk(chunk) : [chunk]) {
+            writer.write(out);
+          }
         } catch (writeError) {
           // The SDK closes the underlying controller on client
           // disconnect; subsequent writes throw. Treat this as a

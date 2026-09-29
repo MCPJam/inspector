@@ -330,7 +330,7 @@ describe("where a pack lives", () => {
       expect(packSourceFor("9", "linux-x64")).toEqual({
         kind: "url",
         location:
-          "https://github.com/MCPJam/inspector/releases/download/v9/" +
+          "https://github.com/MCPJam/inspector/releases/download/local-harness-pack-v9/" +
           "local-harness-pack-linux-x64-9.tar.gz",
       });
     } finally {

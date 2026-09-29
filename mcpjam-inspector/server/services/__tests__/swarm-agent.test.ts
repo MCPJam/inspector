@@ -115,6 +115,7 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
     // The load-bearing assertion: the ACTUAL serialized body the backend parses.
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body).toEqual({
+      runtimeVenue: "hosted",
       projectId: "proj-1",
       journeyRefId: "journey-1",
       launchKey: "lk-1",
