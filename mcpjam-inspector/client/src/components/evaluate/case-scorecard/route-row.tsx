@@ -14,7 +14,7 @@
  */
 
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, RotateCw, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@mcpjam/design-system/input";
@@ -37,9 +37,14 @@ import {
 import { RowMarker } from "./row-marker";
 import type { ScorecardRow } from "./case-scorecard-model";
 
+/** Why a suite server's tools are missing; absent once each has loaded. */
+export type ToolCatalogStatus = "loading" | "error";
+
 export function RouteRow({
   row,
   availableTools,
+  toolsStatus,
+  onRetryTools,
   readOnly,
   overlay,
   showUnsetError,
@@ -52,6 +57,8 @@ export function RouteRow({
 }: {
   row: ScorecardRow;
   availableTools?: string[];
+  toolsStatus?: ToolCatalogStatus;
+  onRetryTools?: () => void;
   readOnly: boolean;
   overlay?: SimpleCaseOverlay | null;
   showUnsetError: boolean;
@@ -248,6 +255,8 @@ export function RouteRow({
             {locked ? null : (
               <AddToolRow
                 availableTools={availableTools ?? []}
+                toolsStatus={toolsStatus}
+                onRetryTools={onRetryTools}
                 onAdd={onAddTool}
               />
             )}
@@ -264,17 +273,58 @@ export function RouteRow({
  * The free-text fallback matters: a suite with no connected server advertises
  * no tools, and a picker with an empty list would make the route unauthorable
  * on exactly the cases someone is writing from scratch.
+ *
+ * A catalogue that is still loading, or failed, is not that case: a server
+ * owes tools the list does not show. Without a word the bare text box reads
+ * as a broken picker, so the row says which, and offers a retry on failure.
+ * The input stays usable either way; the notice explains it, never blocks it.
  */
 function AddToolRow({
   availableTools,
+  toolsStatus,
+  onRetryTools,
   onAdd,
 }: {
   availableTools: string[];
+  toolsStatus?: ToolCatalogStatus;
+  onRetryTools?: () => void;
   onAdd: (toolName: string) => void;
 }) {
   const [name, setName] = useState("");
   return (
-    <div className="flex items-center gap-2">
+    <div className="space-y-2">
+      {toolsStatus === "loading" ? (
+        <p
+          className="flex items-center gap-2 text-[11px] text-muted-foreground"
+          data-testid="simple-case-tools-loading"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading tools from the suite's servers…
+        </p>
+      ) : null}
+      {toolsStatus === "error" ? (
+        <div
+          className="flex flex-wrap items-center gap-2 text-[11px] text-destructive"
+          data-testid="simple-case-tools-error"
+        >
+          <span>
+            Couldn't load tools from the suite's servers. Retry, or type the
+            exact tool name.
+          </span>
+          {onRetryTools ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={onRetryTools}
+            >
+              <RotateCw className="h-3.5 w-3.5" />
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {availableTools.length > 0 ? (
         <Combobox
           items={availableTools.map((tool) => ({ value: tool, label: tool }))}
@@ -287,31 +337,33 @@ function AddToolRow({
           emptyMessage="No matching tools"
           className="h-8 w-full justify-between text-xs"
         />
-      ) : (
-        <Input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Tool name"
-          aria-label="Add a tool"
-          className="h-8 flex-1 text-xs"
-        />
-      )}
-      {availableTools.length === 0 && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 gap-1 text-xs"
-          onClick={() => {
-            onAdd(name);
-            setName("");
-          }}
-          disabled={!name.trim()}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add tool
-        </Button>
-      )}
+      ) : null}
+      {/* A server that owes tools can only be reached by name until it loads. */}
+      {availableTools.length === 0 || toolsStatus ? (
+        <div className="flex items-center gap-2">
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Tool name"
+            aria-label="Add a tool"
+            className="h-8 flex-1 text-xs"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1 text-xs"
+            onClick={() => {
+              onAdd(name);
+              setName("");
+            }}
+            disabled={!name.trim()}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add tool
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
