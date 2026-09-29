@@ -1120,20 +1120,6 @@ describe("eval export", () => {
         pointer: "environment",
       },
       {
-        label: "no minimum accuracy to become passThreshold",
-        state: {
-          detail: {
-            settings: {
-              minimumAccuracy: null,
-              matchOptions: null,
-              checks: [],
-              judge: { enabled: false, model: null },
-            },
-          },
-        },
-        pointer: "settings.minimumAccuracy",
-      },
-      {
         label: "an iterations floor that raises a case",
         state: {
           detail: {
@@ -2148,6 +2134,56 @@ describe("eval export — which policy owns the threshold", () => {
     verdictPolicyVersion: 2,
     verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.9 },
   };
+
+  test("writes the legacy fallback (1) for a legacy suite with no minimum accuracy", async () => {
+    // Every legacy producer grades an unset threshold at
+    // LEGACY_SUITE_WIDE_THRESHOLD_PERCENT (100, "every unit must pass"), so
+    // this is the threshold the suite already runs at, not an invented one.
+    await withTempDir(async () => {
+      const run = await runExport(
+        {
+          detail: {
+            settings: {
+              minimumAccuracy: null,
+              matchOptions: null,
+              checks: [],
+              judge: { enabled: false, model: null },
+            },
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 1);
+    });
+  });
+
+  test("still refuses a legacy minimum accuracy that does not convert", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        {
+          detail: {
+            settings: {
+              minimumAccuracy: 150,
+              matchOptions: null,
+              checks: [],
+              judge: { enabled: false, model: null },
+            },
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.notEqual(run.exitCode, 0);
+      assert.match(run.stdout + run.stderr, /settings\.minimumAccuracy/);
+    });
+  });
 
   test("writes a v2 suite's own passThreshold, not a converted percent", async () => {
     await withTempDir(async () => {
