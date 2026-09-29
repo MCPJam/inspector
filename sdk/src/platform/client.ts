@@ -135,6 +135,8 @@ import type {
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
+  PlatformFeedbackReceipt,
+  PlatformFeedbackRequest,
   PlatformMe,
   PlatformModel,
   PlatformOrganization,
@@ -770,6 +772,31 @@ export class PlatformApiClient {
       "POST",
       `/browser-sessions/${operation}`,
       { body },
+      options
+    );
+  }
+
+  /**
+   * `POST /feedback` — send the MCPJam team a report about MCPJam itself: a
+   * bug, a missing capability, something confusing.
+   *
+   * THE TEXT GOES TO THE MCPJAM TEAM, outside the caller's organization, and
+   * is kept for 180 days. A resolved promise means the report is STORED;
+   * `duplicate: true` means an identical report from the caller already was.
+   * Requires a signed-in account (a guest token is refused with 401).
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, which the route validates strictly:
+   * a replay returns the original receipt, the same key with different content
+   * is a 409, and an empty or over-long key is a 400 rather than ignored.
+   */
+  sendFeedback(
+    params: { body: PlatformFeedbackRequest },
+    options?: RequestOptions
+  ): Promise<PlatformFeedbackReceipt> {
+    return this.request(
+      "POST",
+      "/feedback",
+      { body: params.body, declareLaunch: true },
       options
     );
   }
@@ -6292,6 +6319,10 @@ export class PlatformApiClient {
        * these headers describe a RUN's origin, and stamping them onto every
        * read and every unrelated write would put a claim on requests that
        * create nothing to claim.
+       *
+       * The one non-run caller is `sendFeedback`: a report is stored with the
+       * client that filed it, as a label beside the verified attribution, and
+       * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
     },

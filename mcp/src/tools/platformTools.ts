@@ -181,10 +181,12 @@ import {
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  sendFeedbackOperation,
   ALL_OPERATIONS,
   formatPermalinkLines,
   runOperationWithPermalinks,
   withPermalinkEnvelope,
+  type PlatformApiError,
   type PlatformOperation,
   type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
@@ -455,6 +457,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  // Platform feedback: the agent's channel to the MCPJam team at the moment a
+  // tool fails or a capability is missing. SENDS TEXT OUTSIDE THE CALLER'S
+  // ORGANIZATION, which the description, the `openWorldHint` and the hint
+  // below all say.
+  sendFeedbackOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -719,6 +726,27 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
  */
 const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
   cancelProjectServerConnectionOperation.name,
+  // A repeat lands on the report the first call stored: a replayed key returns
+  // the stored key→receipt row, and identical content without a key dedupes
+  // onto the original (`duplicate: true`). Nothing is filed twice.
+  sendFeedbackOperation.name,
+]);
+
+/**
+ * Writes whose effect reaches people OUTSIDE the caller's organization.
+ *
+ * `openWorldHint: true` is how MCP says a tool interacts with an open world
+ * rather than a closed domain, and sending text to the MCPJam team is exactly
+ * that: the report leaves the organization the caller is working in. Clients
+ * that gate or label such tools read this.
+ *
+ * Its own list, deliberately not derived from `risk: "exposure"`: the other
+ * exposure operations (the secret writes) move data WITHIN the organization's
+ * own project and have not been evaluated for this claim. Opt-in, one name at
+ * a time, like `IDEMPOTENT_WRITE_NAMES`.
+ */
+const EXTERNAL_COMMUNICATION_NAMES: ReadonlySet<string> = new Set([
+  sendFeedbackOperation.name,
 ]);
 
 /**
@@ -750,6 +778,8 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
  * reaches for the only move it knows — send everything again.
  */
 const OPERATION_HINTS: Readonly<Record<string, string>> = {
+  [sendFeedbackOperation.name]:
+    "Call once per distinct problem, tell the user you sent it and that it goes to the MCPJam team, then continue with the user's original task — nobody replies in this session. `duplicate: true` means it is already recorded. Anonymous sessions are refused; ask the user to sign in.",
   [importEvalCasesOperation.name]:
     "Send the whole document as `content` ONCE. If the reply lists `skipped` cases, do not re-send the document: import only that case's corrected text, or give the person `reviewUrl` to finish it in the app. Re-importing the document re-authors and re-bills every case in it, and a reworded case is not recognised as a duplicate.",
 };
@@ -842,6 +872,9 @@ export function operationAnnotations(
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
+    ...(EXTERNAL_COMMUNICATION_NAMES.has(operation.name)
+      ? { openWorldHint: true }
+      : {}),
   };
 }
 
@@ -930,7 +963,10 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     );
   } catch (error) {
     return toolError(
-      describeOperationError(error),
+      describeOperationError(error, {
+        operationName: operation.name,
+        isGuestSession: context.isGuestSession === true,
+      }),
       errorStructuredContent(error)
     );
   }
@@ -964,7 +1000,46 @@ function errorStructuredContent(
   return undefined;
 }
 
-function describeOperationError(error: unknown): string {
+/**
+ * Failures that may be MCPJam's own fault — a platform error, or a capability
+ * the tools do not have — and so worth the agent reporting.
+ */
+const REPORTABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  "INTERNAL_ERROR",
+  "FEATURE_NOT_SUPPORTED",
+]);
+
+/**
+ * The gateway in front of the platform, or the user's own MCP server behind
+ * it, failing. An envelope-less 502/504 still decodes as `INTERNAL_ERROR`, but
+ * it is not a platform bug the agent can usefully report.
+ */
+const GATEWAY_FAILURE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+/**
+ * The nudge toward `send_feedback`, or nothing.
+ *
+ * Never on `send_feedback` itself (a failing report must not suggest filing a
+ * report about the report), and never in an anonymous session, where the tool
+ * refuses and the suggestion would be a dead end.
+ */
+function feedbackHint(
+  error: PlatformApiError,
+  situation: { operationName: string; isGuestSession: boolean }
+): string | undefined {
+  if (situation.isGuestSession) return undefined;
+  if (situation.operationName === sendFeedbackOperation.name) return undefined;
+  if (!REPORTABLE_ERROR_CODES.has(error.code)) return undefined;
+  if (GATEWAY_FAILURE_STATUSES.has(error.status)) return undefined;
+  return error.requestId
+    ? `If this looks like an MCPJam bug, report it with send_feedback (requestId ${error.requestId}).`
+    : "If this looks like an MCPJam bug, report it with send_feedback.";
+}
+
+function describeOperationError(
+  error: unknown,
+  situation: { operationName: string; isGuestSession: boolean }
+): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
@@ -978,7 +1053,13 @@ function describeOperationError(error: unknown): string {
     // Hosts vary in whether the model sees `structuredContent`, so the retry
     // guidance is in the text too.
     const refusal = describePlatformRefusal(error);
-    return refusal ? `${base} ${platformRefusalHint(refusal)}` : base;
+    return [
+      base,
+      refusal ? platformRefusalHint(refusal) : undefined,
+      feedbackHint(error, situation),
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(" ");
   }
   return error instanceof Error ? error.message : String(error);
 }
