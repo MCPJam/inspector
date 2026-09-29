@@ -41,6 +41,43 @@ describe("access links", () => {
     expect(access.readAccessToken()).toBeNull();
     expect(location.hash).toBe("");
   });
+  it("consumes a link pasted into an open tab, which changes only the fragment", async () => {
+    const access = await import("../access-link");
+    const received = vi.fn();
+    const stop = access.watchForAccessLinks();
+    window.addEventListener(access.ACCESS_LINK_RECEIVED_EVENT, received);
+    try {
+      history.replaceState(null, "", `/#token=${token}&tab=tools`);
+      // Browsers fire popstate, then hashchange, for a fragment navigation.
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      expect(received).toHaveBeenCalledOnce();
+      expect(access.readAccessToken()).toBe(token);
+      expect(location.hash).toBe("#tools");
+    } finally {
+      stop();
+      window.removeEventListener(access.ACCESS_LINK_RECEIVED_EVENT, received);
+    }
+  });
+  it("announces nothing for ordinary or malformed fragment navigations", async () => {
+    const access = await import("../access-link");
+    const received = vi.fn();
+    const stop = access.watchForAccessLinks();
+    window.addEventListener(access.ACCESS_LINK_RECEIVED_EVENT, received);
+    try {
+      history.replaceState(null, "", "/#servers");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      expect(location.hash).toBe("#servers");
+      history.replaceState(null, "", "/#token=bad");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      expect(location.hash).toBe("");
+      expect(received).not.toHaveBeenCalled();
+      expect(access.readAccessToken()).toBeNull();
+    } finally {
+      stop();
+      window.removeEventListener(access.ACCESS_LINK_RECEIVED_EVENT, received);
+    }
+  });
   it("accepts a full link or a bare credential without navigating to a pasted host", async () => {
     const access = await import("../access-link");
     expect(

@@ -31,11 +31,14 @@ export function parseAccessLink(value: string): string | null {
     return null;
   }
 }
-export function consumeAccessLinkFromUrl(): void {
+export const ACCESS_LINK_RECEIVED_EVENT = "mcpjam:access-link-received";
+/** Returns the credential it saved, or null when the URL carried none. */
+export function consumeAccessLinkFromUrl(): string | null {
   const hash = new URLSearchParams(window.location.hash.slice(1));
-  if (!hash.has("token")) return;
+  if (!hash.has("token")) return null;
   const token = hash.get("token");
-  if (isAccessToken(token)) rememberAccessToken(token);
+  const accepted = isAccessToken(token) ? token : null;
+  if (accepted) rememberAccessToken(accepted);
   // Even malformed credentials must disappear before telemetry initializes.
   const tab = hash.get("tab");
   history.replaceState(
@@ -45,4 +48,23 @@ export function consumeAccessLinkFromUrl(): void {
       tab ? `#${encodeURIComponent(tab)}` : ""
     }`,
   );
+  return accepted;
+}
+/**
+ * A link pasted into the address bar of an open tab only changes the fragment,
+ * so the page does not reload and startup never sees it. Registered before
+ * error reporting installs its own popstate listener, so navigation
+ * breadcrumbs record the scrubbed URL.
+ */
+export function watchForAccessLinks(): () => void {
+  const receive = () => {
+    if (consumeAccessLinkFromUrl())
+      window.dispatchEvent(new Event(ACCESS_LINK_RECEIVED_EVENT));
+  };
+  window.addEventListener("popstate", receive);
+  window.addEventListener("hashchange", receive);
+  return () => {
+    window.removeEventListener("popstate", receive);
+    window.removeEventListener("hashchange", receive);
+  };
 }
