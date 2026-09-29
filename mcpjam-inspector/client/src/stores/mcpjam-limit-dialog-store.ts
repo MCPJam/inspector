@@ -116,8 +116,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         // Suppressed when ANY key was seen, but every key is still recorded:
         // a run first seen alone (A), then with its wave (A+W), has to teach
         // the store W, or the wave's next run (B+W) would open it again.
+        // The exhaustion latch still follows the notice: a wave's first run
+        // may report a shortfall and a later one real exhaustion.
         if (keys.some((key) => state.notifiedKeys.has(key))) {
-          return notifiedKeys === state.notifiedKeys ? state : { notifiedKeys };
+          const latch = latchFor(state, input);
+          if (notifiedKeys === state.notifiedKeys && !Object.keys(latch).length)
+            return state;
+          return { notifiedKeys, ...latch };
         }
         if (state.authStatus === "loading") {
           return {

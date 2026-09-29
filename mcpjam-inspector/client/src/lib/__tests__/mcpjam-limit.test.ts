@@ -552,6 +552,24 @@ describe("one dialog per swarm wave", () => {
     expect(store.getState().isOpen).toBe(true);
   });
 
+  it("still latches real exhaustion from a suppressed notice in the same wave", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    store.getState().notifyLimitHit({
+      runId: "run-a",
+      swarmRunGroupId: "wave-1",
+      surface: "swarm",
+      shortfall: { creditsRemaining: 4, creditsRequired: 10 },
+    });
+    expect(store.getState().outOfCreditsHit).toBe(false);
+    store.getState().close();
+
+    notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
   it("keeps the wave suppressed across the loading-to-signed-in handoff", () => {
     const store = useMCPJamLimitDialogStore;
     notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
