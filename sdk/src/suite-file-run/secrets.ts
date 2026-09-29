@@ -8,12 +8,25 @@
  * pattern. The runner, unlike a generic redactor, knows the exact secrets it
  * was handed: provider keys, server credentials and headers, stdio env
  * values, token-bearing URL parameters, and every platform bearer its auth
- * callback returns. Those VALUES are scrubbed from every string the result
- * and its errors carry, so no terminal — JSON, JUnit, HTML, human, an error —
- * can print one.
+ * callback returns. Those VALUES are scrubbed from every piece of OBSERVED
+ * text the result and its errors carry — execution errors, tool-call
+ * arguments, evaluator and predicate reasons, issue and refusal messages,
+ * warnings — so no terminal (JSON, JUnit, HTML, human, an error) can print
+ * one.
+ *
+ * Observed text only. A stdio env value such as `github`, or a header value
+ * such as `completed`, is a known secret like any other, so a blanket scrub
+ * would rewrite the case id `c_github_search` to `c_[REDACTED]_search` and a
+ * lifecycle status to `[REDACTED]`, and the report would no longer satisfy
+ * its own contract. Identifiers (case, server, tool, scorer and span ids) and
+ * closed vocabularies (statuses, verdicts, stage states, policy reasons) come
+ * from the authored file, the server's catalog or this SDK: a secret cannot
+ * reach the result through them, so they are never rewritten.
  */
 
 import { redactTelemetryString } from "../telemetry-redaction.js";
+import type { SuiteFileRunErrorDetails } from "./errors.js";
+import type { SuiteFileIterationEvidence, SuiteFileRunIssue } from "./types.js";
 
 /** Shorter values are too likely to be ordinary words to scrub safely. */
 const MIN_SECRET_LENGTH = 6;
@@ -95,4 +108,81 @@ export function addServerConfigSecrets(
       // Not a URL; nothing to extract.
     }
   }
+}
+
+/**
+ * One iteration's evidence with its observed text scrubbed: the execution
+ * error, tool-call argument values (never their keys), evaluator reasons and
+ * predicate reasons. Everything else is identity or a closed vocabulary.
+ */
+export function scrubIterationEvidence(
+  scrubber: SecretScrubber,
+  evidence: SuiteFileIterationEvidence
+): SuiteFileIterationEvidence {
+  return {
+    ...evidence,
+    ...(evidence.error !== undefined
+      ? { error: scrubber.scrub(evidence.error) }
+      : {}),
+    toolCalls: evidence.toolCalls.map((call) => ({
+      ...call,
+      arguments: scrubber.scrubDeep(call.arguments),
+    })),
+    scores: evidence.scores.map((score) =>
+      score.reason !== undefined
+        ? { ...score, reason: scrubber.scrub(score.reason) }
+        : score
+    ),
+    ...(evidence.stage
+      ? { stage: scrubStagePredicateReasons(scrubber, evidence.stage) }
+      : {}),
+  };
+}
+
+/** A stage chain's only observed text is its rows' predicate reasons. */
+function scrubStagePredicateReasons(
+  scrubber: SecretScrubber,
+  stage: Record<string, unknown>
+): Record<string, unknown> {
+  const rows = stage.stageResults;
+  if (!Array.isArray(rows)) return stage;
+  return {
+    ...stage,
+    stageResults: rows.map((row: unknown) => {
+      const evidence = (row as { evidence?: { predicateReasons?: unknown } })
+        ?.evidence;
+      if (!evidence || !Array.isArray(evidence.predicateReasons)) return row;
+      return {
+        ...(row as Record<string, unknown>),
+        evidence: {
+          ...evidence,
+          predicateReasons: evidence.predicateReasons.map((reason: unknown) =>
+            typeof reason === "string" ? scrubber.scrub(reason) : reason
+          ),
+        },
+      };
+    }),
+  };
+}
+
+export function scrubIssue(
+  scrubber: SecretScrubber,
+  issue: SuiteFileRunIssue
+): SuiteFileRunIssue {
+  return { ...issue, message: scrubber.scrub(issue.message) };
+}
+
+/** A refusal's problems keep their structured identity; only prose is scrubbed. */
+export function scrubErrorDetails(
+  scrubber: SecretScrubber,
+  details: SuiteFileRunErrorDetails
+): SuiteFileRunErrorDetails {
+  if (!details.problems) return details;
+  return {
+    ...details,
+    problems: details.problems.map((problem) => ({
+      ...problem,
+      message: scrubber.scrub(problem.message),
+    })),
+  };
 }

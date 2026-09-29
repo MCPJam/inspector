@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSuiteFileRunner } from "../src/suite-file-run/run-suite-file.js";
+import { SuiteFileRunError } from "../src/suite-file-run/errors.js";
 import {
   LocalEvalRunReportError,
   buildLocalEvalRunReport,
@@ -245,6 +246,50 @@ describe("value-based scrubbing", () => {
     expect(text).toContain("[REDACTED]");
   });
 
+  it("scrubs observed text only — an ordinary-word secret never rewrites identity or a closed vocabulary", async () => {
+    // Every header value is a known secret, whatever it looks like. These
+    // three are also the case id, a lifecycle status and a tool name.
+    const headers = {
+      "x-case": "c_read",
+      "x-state": "completed",
+      "x-tool": "read_note",
+    };
+    const result = await run(
+      callThenAnswer(() => ({
+        toolName: "read_note",
+        input: { id: "c_read completed" },
+      })),
+      {
+        servers: {
+          notes: {
+            config: { url: fixture.url, requestInit: { headers } },
+            source: ".mcp.json",
+          },
+        },
+      }
+    );
+    const [testCase] = result.cases;
+    expect(testCase!.caseId).toBe("c_read");
+    expect(testCase!.state).toBe("completed");
+    expect(result.termination).toBe("completed");
+    expect(result.verdict).toBe("passed");
+    for (const iteration of testCase!.iterations) {
+      expect(iteration.status).toBe("completed");
+      expect(iteration.toolCalls[0]!.toolName).toBe("read_note");
+      // The observed argument that repeats them is still scrubbed.
+      expect(iteration.toolCalls[0]!.arguments).toEqual({
+        id: "[REDACTED] [REDACTED]",
+      });
+    }
+    expect(result.report.metadata.selection.selected).toEqual(["c_read"]);
+    expect(result.report.metadata.cases[0]!.caseId).toBe("c_read");
+    // The emitted report is the one its contract validated.
+    expect(isLocalEvalRunReport(result.report)).toBe(true);
+    expect(renderStructuredRunJUnitXml(result.report)).toContain(
+      "<properties>"
+    );
+  });
+
   it("scrubs server credentials from refusals", async () => {
     const { run: runner } = createSuiteFileRunner({
       createLanguageModel: (model) => scriptedModel(model, reads) as never,
@@ -254,7 +299,9 @@ describe("value-based scrubbing", () => {
         notes: {
           config: {
             url: "http://127.0.0.1:9/mcp?token=srv_token_123456",
-            requestInit: { headers: { "x-server-secret": "hdr_secret_abcdef" } },
+            requestInit: {
+              headers: { "x-server-secret": "hdr_secret_abcdef" },
+            },
           },
         },
       },
@@ -264,5 +311,26 @@ describe("value-based scrubbing", () => {
     const text = `${error.message} ${JSON.stringify((error as { details?: unknown }).details)}`;
     expect(text).not.toContain("srv_token_123456");
     expect(text).not.toContain("hdr_secret_abcdef");
+  });
+
+  it("keeps a refusal's structured identity when a secret value repeats it", async () => {
+    const { run: runner } = createSuiteFileRunner({
+      createLanguageModel: (model) => scriptedModel(model, reads) as never,
+    });
+    const error = await runner(SUITE.replace("name: notes", "name: notebook"), {
+      servers: {
+        notebook: {
+          config: {
+            url: "http://127.0.0.1:9/mcp",
+            requestInit: { headers: { "x-team": "notebook" } },
+          },
+        },
+      },
+      inference: { mode: "byok", providerKeys: { anthropic: PROVIDER_KEY } },
+      setupTimeoutMs: 2000,
+    }).catch((caught: SuiteFileRunError) => caught);
+    expect(error).toBeInstanceOf(SuiteFileRunError);
+    expect(error.code).toBe("SERVER_CONNECT_FAILED");
+    expect(error.details.problems?.[0]?.server).toBe("notebook");
   });
 });

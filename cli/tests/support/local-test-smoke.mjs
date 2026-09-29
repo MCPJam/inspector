@@ -121,7 +121,9 @@ function runCli(cliEntry, args, options) {
       reject(new Error(`mcpjam ${args.join(" ")} timed out.\n${stderr}`));
     }, options.timeoutMs ?? 60_000);
     child.on("error", reject);
-    child.on("exit", (code) => {
+    // `close`, not `exit`: only `close` waits for stdio to drain, and the
+    // caller parses stdout as one JSON document.
+    child.on("close", (code) => {
       clearTimeout(timer);
       resolve({ exitCode: code, stdout, stderr });
     });

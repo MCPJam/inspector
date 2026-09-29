@@ -295,10 +295,16 @@ function configFromEntry(args: {
     const declaredType = String(
       entry.type ?? entry.transport ?? ""
     ).toLowerCase();
+    // Expanded BEFORE the unset-variable check, so a variable it references
+    // is named below instead of being read as a truncated path.
+    const credentialsPath =
+      typeof entry.credentialsFile === "string"
+        ? expand(entry.credentialsFile)
+        : undefined;
     const credentials =
-      typeof entry.credentialsFile === "string" && missing.size === 0
+      credentialsPath !== undefined && missing.size === 0
         ? resolveCredentialsFileAuth(
-            path.resolve(configDir, expand(entry.credentialsFile)),
+            path.resolve(configDir, credentialsPath),
             url
           )
         : undefined;

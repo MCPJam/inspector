@@ -67,11 +67,13 @@ try {
 | `warnings`, `issues` | Warnings, and run-affecting problems (credentials, billing, integrity, cleanup) by phase and category. |
 | `report` | The validated `eval-local-run` structured report — pass it to `renderStructuredRunJson`, `renderStructuredRunJUnitXml`, `renderStructuredRunHtml`, or `formatLocalEvalRunSummary`. |
 
-Nothing in the result carries a provider key, a platform token, a lease, server headers or environment values.
+Nothing in the result carries a provider key, a platform token, a lease, server headers or environment values. Every such value the run was handed is replaced with `[REDACTED]` wherever observed text repeats it: execution errors, tool-call arguments, evaluator and predicate reasons, issues and warnings. Identifiers (case ids, server and tool names) and fixed vocabularies such as statuses are never rewritten.
 
 ## Errors
 
-Input that cannot run and environments that cannot be set up throw `SuiteFileRunError` **before any model or tool call**, with a stable `code`, a `phase` (`validation`, `setup`, `execution`, `reporting`), a `category`, and `details.problems` listing every problem found at that stage:
+Input that cannot run and environments that cannot be set up throw `SuiteFileRunError` with a stable `code`, a `phase` (`validation`, `setup`, `execution`, `reporting`) and a `category`. Validation and setup refusals are thrown **before any model or tool call**. A refusal that found concrete problems also lists every one found at that stage in `details.problems`; other errors carry only their message, so treat `problems` as optional.
+
+One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `integrity`) means the cases ran — model calls were made and may have been billed — but the run's own report failed validation, so no result is returned. Retrying repeats that inference.
 
 | `category` | Examples |
 |---|---|
@@ -83,6 +85,6 @@ Input that cannot run and environments that cannot be set up throw `SuiteFileRun
 | `billing` | MCPJam refused inference for a billing reason |
 | `setup` | A missing binding, a failed connection or tool catalog, duplicate tool names across servers |
 | `cancelled` | The signal fired before execution began |
-| `integrity` | The run's own report failed validation |
+| `integrity` | The run's own report failed validation, after the cases ran |
 
 A trial that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion.

@@ -136,6 +136,23 @@ test("only winning entries are interpolated; unset variables are named, never va
   assert.doesNotMatch(error.message, /tok_secret_value/);
 });
 
+test("an unset variable in credentialsFile is named, never read as a truncated path", () => {
+  const cwd = workspace({
+    ".mcp.json": {
+      mcpServers: {
+        notes: {
+          url: "https://notes.test/mcp",
+          credentialsFile: "${CREDS_DIR}/creds.json",
+        },
+      },
+    },
+  });
+  const error = refused(() => resolve(cwd, ["notes"]));
+  assert.equal(error.code, "MCP_CONFIG_INTERPOLATION");
+  assert.equal(error.exitCode, 4);
+  assert.match(error.message, /CREDS_DIR/);
+});
+
 test("a malformed conventional file is read only when a name still needs it", () => {
   const cwd = workspace({
     ".mcp.json": "{ not json",

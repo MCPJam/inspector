@@ -76,7 +76,13 @@ import {
   buildLocalEvalRunReport,
   type LocalEvalRunMetadata,
 } from "./report.js";
-import { addServerConfigSecrets, createSecretScrubber } from "./secrets.js";
+import {
+  addServerConfigSecrets,
+  createSecretScrubber,
+  scrubErrorDetails,
+  scrubIssue,
+  scrubIterationEvidence,
+} from "./secrets.js";
 import {
   createLocalToolPolicyGate,
   type LocalToolPolicyGate,
@@ -138,9 +144,10 @@ export function createSuiteFileRunner(runtime: SuiteFileRunnerRuntime = {}): {
  * Run a suite file locally.
  *
  * Throws {@link SuiteFileRunError} for input that cannot run and environments
- * that cannot be set up — before any model or tool call. Returns evidence for
- * everything after execution began, including an interrupted run (with an
- * explicit `termination`). Never uploads anything.
+ * that cannot be set up — before any model or tool call — and, after the
+ * cases ran, for a report that fails its own contract (`REPORT_INVALID`).
+ * Returns evidence for everything else after execution began, including an
+ * interrupted run (with an explicit `termination`). Never uploads anything.
  */
 export function runSuiteFile(
   sourceText: string,
@@ -613,7 +620,7 @@ async function executeSuiteFile(
         phase: failure.phase,
         category: failure.category,
         message: secrets.scrub(failure.message),
-        details: secrets.scrubDeep(failure.details),
+        details: scrubErrorDetails(secrets, failure.details),
       });
     }
     if (runController.signal.aborted) throw cancelledError("setup");
@@ -626,16 +633,42 @@ async function executeSuiteFile(
   }
 
   // ── 7. aggregate and report ────────────────────────────────────────────────
-  return secrets.scrubDeep(
-    finalize({
+  // The observed text is scrubbed BEFORE the report is built, so its contract
+  // validates exactly what is emitted, and nothing else is: identity and
+  // closed vocabularies cannot carry a secret (see `./secrets.ts`).
+  const observed = executed!;
+  try {
+    return finalize({
       plan,
-      executed: executed!,
+      executed: {
+        ...observed,
+        issues: observed.issues.map((issue) => scrubIssue(secrets, issue)),
+        outcomes: observed.outcomes.map((outcome) => ({
+          ...outcome,
+          run: {
+            ...outcome.run,
+            iterations: outcome.run.iterations.map((iteration) =>
+              scrubIterationEvidence(secrets, iteration)
+            ),
+          },
+          issues: outcome.issues.map((issue) => scrubIssue(secrets, issue)),
+        })),
+      },
       snapshot,
-      warnings,
+      warnings: warnings.map((warning) => secrets.scrub(warning)),
       startedAt,
       now,
-    })
-  );
+    });
+  } catch (error) {
+    if (!(error instanceof SuiteFileRunError)) throw error;
+    throw new SuiteFileRunError({
+      code: error.code,
+      phase: error.phase,
+      category: error.category,
+      message: secrets.scrub(error.message),
+      details: scrubErrorDetails(secrets, error.details),
+    });
+  }
 }
 
 async function executeCases(args: {
