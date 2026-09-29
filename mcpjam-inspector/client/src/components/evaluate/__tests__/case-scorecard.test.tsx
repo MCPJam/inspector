@@ -57,7 +57,7 @@ function renderCard(
   const result = render(
     <CaseScorecard input={baseInput} {...handlers} {...overrides} />,
   );
-  return { ...handlers, ...result };
+  return { ...handlers, ...result, handlers };
 }
 
 const rows = () => screen.getAllByTestId("case-scorecard-row");
@@ -475,6 +475,40 @@ describe("CaseScorecard — the route's tool picker", () => {
     );
     await user.click(screen.getByRole("button", { name: "Add tool" }));
     expect(onAddTool).toHaveBeenCalledWith("other_server_tool");
+  });
+
+  it("warns while a typed name is a wildcard pattern", async () => {
+    const user = userEvent.setup();
+    renderCard({ availableTools: [] });
+    const input = screen.getByRole("textbox", { name: "Add a tool" });
+    await user.type(input, "EBSCO");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    await user.type(input, "*");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Tool names match exactly. Wildcards such as * are not supported.",
+    );
+  });
+
+  it("drops the typed-name warning with the text box once tools load", async () => {
+    const user = userEvent.setup();
+    const { rerender, handlers } = renderCard({
+      availableTools: ["search_EBSCOhost"],
+      toolsStatus: "error",
+    });
+    await user.type(
+      screen.getByRole("textbox", { name: "Add a tool" }),
+      "EBSCO*",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Wildcards");
+    rerender(
+      <CaseScorecard
+        input={baseInput}
+        {...handlers}
+        availableTools={["search_EBSCOhost"]}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/Wildcards/)).toBeNull();
   });
 
   it("offers only the picker once every server has loaded", () => {
