@@ -14,6 +14,7 @@ import {
   projectRunRollup,
 } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
+import { isActiveRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import type { EvalSuiteOverviewEntry } from "../evals/types";
 
@@ -36,10 +37,8 @@ export function buildSuiteHealth(
       // carry the partial iterations read while it ran.
       if (
         !members.length ||
-        members.some((row) =>
-          [row.status, details.get(row._id)!.run.status].some((status) =>
-            ["pending", "running", "grading"].includes(status),
-          ),
+        members.some(
+          (row) => isActiveRun(row) || isActiveRun(details.get(row._id)!.run),
         )
       )
         return [];

@@ -116,9 +116,12 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  *
  * Each page costs one run read and one iteration read per run, so an uncapped
  * reach turns a mature project into thousands of queries on every visit.
- * Two pages (100 runs) can already fill the chart's 60-bar window; at four, a
- * project with ~200 SDK runs spent ~500 queries and ~45 MB per visit before
- * the chart finished.
+ * A Suite Health bar is one launch of one suite, so two pages (100 runs) fill
+ * its 60-bar window only when launches are mostly single runs, as with SDK
+ * runs started one model at a time. A suite that fans each launch out to three
+ * models gets ~33 bars from the same pages and says "read so far". At four
+ * pages, a project with ~200 SDK runs spent ~500 queries and ~45 MB per visit
+ * before the chart finished.
  */
 export const SUITE_HEALTH_AUTO_PAGES = 1;
 
