@@ -2,6 +2,7 @@ import {
   clearOAuthData,
   initiateOAuth,
   readStoredOAuthConfig,
+  resolveOAuthCustomHeaders,
   resolveStoredIssuer,
 } from "@/lib/oauth/mcp-oauth";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
@@ -177,7 +178,7 @@ function profileHeadersToRecord(
     : undefined;
 }
 
-function buildReconnectOAuthOptions(
+async function buildReconnectOAuthOptions(
   server: ServerWithName,
   serverUrl: string,
   /**
@@ -197,7 +198,7 @@ function buildReconnectOAuthOptions(
    */
   resourceMetadataUrl?: string,
   onTraceUpdate?: (trace: OAuthTrace) => void,
-): BuiltOAuthRequest {
+): Promise<BuiltOAuthRequest> {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
   const profile = server.oauthFlowProfile;
@@ -226,6 +227,7 @@ function buildReconnectOAuthOptions(
     oauthConfig.registrationMode ??
     "auto";
   const profileScopes = parseOAuthScopes(profile?.scopes);
+  const recoveredCustomHeaders = await resolveOAuthCustomHeaders(server.name);
 
   return buildOAuthRequest(
     {
@@ -250,7 +252,7 @@ function buildReconnectOAuthOptions(
       customHeaders:
         profileHeadersToRecord(profile?.customHeaders) ??
         normalizeHeaders((server.config as any)?.requestInit?.headers) ??
-        withoutAuthorizationHeader(oauthConfig.customHeaders),
+        recoveredCustomHeaders,
       registryServerId: oauthConfig.registryServerId,
       useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
       clientId:
@@ -365,7 +367,7 @@ export async function ensureAuthorizedForReconnect(
     // a misconfigured server is a configuration problem, not a crash.
     let opts: BuiltOAuthRequest;
     try {
-      opts = buildReconnectOAuthOptions(
+      opts = await buildReconnectOAuthOptions(
         server,
         url,
         options?.stepUpScopes,
