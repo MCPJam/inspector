@@ -117,6 +117,11 @@ import {
 } from "@/lib/app-navigation";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { track } from "@/lib/analytics";
+import {
+  beginOrganizationDeletion,
+  endOrganizationDeletion,
+  useOrganizationDeletionStore,
+} from "@/stores/organization-deletion-store";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -507,6 +512,9 @@ export function OrganizationsTab({
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
     isAuthenticated,
   });
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
+  );
 
   // Find the organization by ID
   const organization = organizationId
@@ -554,6 +562,19 @@ export function OrganizationsTab({
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <RefreshCw className="size-4 animate-spin" />
           Loading organization...
+        </div>
+      </OrganizationStateShell>
+    );
+  }
+
+  // Only while the org is still listed: once its delete lands it falls
+  // through to "not found" instead of waiting here forever.
+  if (organization && deletingOrganizationIds.includes(organization._id)) {
+    return (
+      <OrganizationStateShell>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <RefreshCw className="size-4 animate-spin" />
+          Deleting organization...
         </div>
       </OrganizationStateShell>
     );
@@ -1278,6 +1299,7 @@ function OrganizationPage({
 
   const handleDelete = async () => {
     setIsDeleting(true);
+    beginOrganizationDeletion(organization._id);
     try {
       await deleteOrganization({ organizationId: organization._id });
       toast.success("Organization deleted");
@@ -1287,6 +1309,8 @@ function OrganizationPage({
         appNavigate("/servers");
       }
     } catch (error) {
+      // Only on failure: clearing after success re-renders before the org list drops it.
+      endOrganizationDeletion(organization._id);
       toast.error((error as Error).message || "Failed to delete organization");
     } finally {
       setIsDeleting(false);

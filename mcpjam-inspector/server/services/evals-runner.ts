@@ -1,3 +1,6 @@
+import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
+import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
+import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
 import {
   assertOrgModelAllowed,
@@ -700,6 +703,7 @@ export type RunEvalSuiteOptions = {
    * to read `advancedConfig.system` only and ignore the suite default.
    */
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
   /**
    * The skill delivery this run's PINS resolved to, decided once at the
    * boundary (`prepareEvalRun`) and forwarded verbatim by every iteration
@@ -1810,6 +1814,8 @@ export function buildQuickRunCommitSnapshot(
 async function createIterationDirectly(
   convexClient: ConvexHttpClient,
   params: {
+    namedHostId?: string;
+    runtimeVenue?: "hosted" | "local";
     testCaseId?: string;
     testCaseSnapshot: {
       title: string;
@@ -1839,6 +1845,8 @@ async function createIterationDirectly(
     const result = await convexClient.action(
       "testSuites:startQuickRunIteration" as any,
       {
+        ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
+        ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
           snapshotWithStepsForConvex(params.testCaseSnapshot),
@@ -1851,6 +1859,7 @@ async function createIterationDirectly(
     return result?.iterationId as string | undefined;
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
+    if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
     return undefined;
   }
 }
@@ -2252,6 +2261,7 @@ type RunIterationBaseParams = {
    * use overrides as-is."
    */
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
   /**
    * Run environment snapshot (servers + serverBindings). Consulted to resolve
    * a pinned-tool-call turn's server reference (id first, display-name
@@ -2327,6 +2337,7 @@ type EvalOrgLocalUsageContext = {
 };
 
 type RunIterationBackendParams = RunIterationBaseParams & {
+  harnessExecutionTarget?: LocalHarnessExecutionTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
@@ -2497,6 +2508,7 @@ export function resolveEvalCaseSettings(args: {
   modelDefinition: ModelDefinition;
   route: ModelSettingsRoute;
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
 }): EvalEffectiveSettings {
   const { advancedConfig } = resolveEvalTestCase(args.test);
   const host = resolveExecutionContext({
@@ -2677,6 +2689,13 @@ const runHostedIteration = async (
       : {}),
   });
   try {
+    const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
+    if (params.harnessRuntimeVenue === "local") {
+      if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
+      const resources = await prepareLocalHarnessRun({ bearer: params.convexAuthToken, projectId: project.projectId });
+      try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
+      finally { await resources.cleanup(); }
+    }
     return await runHostedIterationWithBrowser(params, browser);
   } finally {
     await browser.dispose();
@@ -3025,6 +3044,7 @@ const executeTestCase = async (params: {
   setupAudit?: Record<string, unknown>;
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
   /**
    * Run environment snapshot (servers + serverBindings). Consulted to resolve
    * pinned (`toolCall`) server references to a manager key — by the model-free
@@ -3083,6 +3103,7 @@ const executeTestCase = async (params: {
     setupSpans,
     setupAudit,
     suiteHostConfig,
+    harnessRuntimeVenue,
     environment,
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
@@ -3294,6 +3315,7 @@ const executeTestCase = async (params: {
         setupSpans,
         setupAudit,
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
@@ -3422,6 +3444,7 @@ const executeTestCase = async (params: {
               ? "orgCloud"
               : "direct",
           suiteHostConfig,
+          harnessRuntimeVenue,
         })
       : undefined;
   // A local-runtime org connection: the iteration writes its usage (and,
@@ -3463,7 +3486,9 @@ const executeTestCase = async (params: {
     for (let runIndex = 0; runIndex < test.runs; runIndex++) {
       try {
         const iterationParams = {
-          testCaseId: test.testCaseId ?? testCaseId,
+          namedHostId: hostPolicy?.namedHostId,
+    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
             query: resolvedTestForPrecreate.query,
@@ -3571,6 +3596,7 @@ const executeTestCase = async (params: {
         setupSpans,
         setupAudit,
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment,
         // A `projectEnvironments` doc id, not the servers snapshot above and
         // not a sandbox image — see `RunIterationBaseParams`.
@@ -3646,6 +3672,7 @@ const executeTestCase = async (params: {
         setupSpans,
         setupAudit,
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment,
         // A `projectEnvironments` doc id, not the servers snapshot above and
         // not a sandbox image — see `RunIterationBaseParams`.
@@ -3714,6 +3741,7 @@ const executeTestCase = async (params: {
       setupSpans,
       setupAudit,
       suiteHostConfig,
+      harnessRuntimeVenue,
       // `environment` resolves a pinned turn's server (local hybrids); harmless
       // for prompt-only cases.
       environment,
@@ -3795,7 +3823,9 @@ async function executeCommittedTestCase(
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
-) => executeCommittedTestCase(params);
+) => params.harnessRuntimeVenue === "local"
+  ? withLocalHarnessSlot(() => executeCommittedTestCase(params), params.abortSignal)
+  : executeCommittedTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
   gradingMode,
@@ -3818,6 +3848,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
+  harnessRuntimeVenue: requestedHarnessRuntimeVenue,
   projectEnvironmentId,
   projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
@@ -3826,6 +3857,9 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
+    (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
+      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4142,6 +4176,7 @@ export const runEvalSuiteWithAiSdk = async ({
           : {}),
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment: config.environment,
         // The run's PROJECT ENVIRONMENT id — unrelated to `config.environment`
         // above (a servers snapshot) despite the shared word.
@@ -4592,6 +4627,7 @@ const runLocalIteration = async ({
   setupSpans,
   setupAudit,
   suiteHostConfig,
+  harnessRuntimeVenue,
   environment,
   convexAuthToken,
   pinnedSkillSource,
@@ -4772,6 +4808,8 @@ const runLocalIteration = async ({
     hostConfigOverride: test.hostConfigOverride,
   };
   const iterationParamsBase = {
+    namedHostId: hostPolicy?.namedHostId,
+    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -5915,6 +5953,7 @@ const runLocalIteration = async ({
 // runIterationViaBackendWithBrowser + streamIterationViaBackendWithBrowser pair.
 const runHostedIterationWithBrowser = async (
   {
+    harnessExecutionTarget,
     test,
     runIndex,
     budgets,
@@ -5955,6 +5994,7 @@ const runHostedIterationWithBrowser = async (
     setupSpans,
     setupAudit,
     suiteHostConfig,
+    harnessRuntimeVenue,
     orgModelConfigTarget,
     // Pinned reproducible-env id lives on the run environment; drives per-
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
@@ -6102,6 +6142,8 @@ const runHostedIterationWithBrowser = async (
   const resolvedSteps = resolveSteps(test);
 
   const iterationParams = {
+    namedHostId: hostPolicy?.namedHostId,
+    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -6399,7 +6441,15 @@ const runHostedIterationWithBrowser = async (
       hostedBrowserAvailable: hostedBrowserAdvertisable(),
       runId,
     });
-    if (sandboxNeed.needed) {
+    if (harnessExecutionTarget) {
+      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy });
+      if (runId) {
+        const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
+        if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
+        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0) });
+      }
+    }
+    if (sandboxNeed.needed && !harnessExecutionTarget) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
           sandboxNeed.runtimeKind === "desktop-browser"
@@ -6809,6 +6859,7 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The iteration this run's harness turns record evidence against. Sent
     // only on the harness path with a real iteration row: a quick run has no
     // run to attach evidence to, and the emulated engine records firsthand
@@ -7265,8 +7316,17 @@ const runHostedIterationWithBrowser = async (
 
 // Thin streaming wrapper (`emit` required) — preserves the SSE call site in
 // `streamEvalTestCaseWithManager` and the streaming tests.
-export const streamTestCase = (
+export const streamTestCase = async (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit"> & {
     emit: StreamEmit;
   },
-) => executeCommittedTestCase(params);
+) => {
+  const target = params.orgModelConfigTarget;
+  const harnessRuntimeVenue = params.harnessRuntimeVenue ??
+    (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
+      target && "projectId" in target ? target.projectId : undefined) ? "local" : "hosted");
+  const pinned = { ...params, harnessRuntimeVenue };
+  return harnessRuntimeVenue === "local"
+    ? withLocalHarnessSlot(() => executeCommittedTestCase(pinned), params.abortSignal)
+    : executeCommittedTestCase(pinned);
+};

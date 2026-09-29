@@ -105,19 +105,21 @@ export interface LocalHarnessActor {
 
 export function isActorEligibleForLocalHarness(
   actor: LocalHarnessActor,
+  scope: "attended" | "unattended" = "attended",
 ): boolean {
   return (
     !actor.isGuest &&
     !actor.isScenarioSession &&
-    !actor.isJourneySession &&
+    (scope === "unattended" || (!actor.isJourneySession &&
     (actor.executionScopeKind === undefined ||
-      actor.executionScopeKind === "project")
+      actor.executionScopeKind === "project")))
   );
 }
 
 export interface LocalHarnessAvailabilityQuery {
   target: LocalHarnessExecutionTarget;
   actor: LocalHarnessActor;
+  scope?: "attended" | "unattended";
   userId: string;
   projectId: string;
   /** Plaintext capability from the request header; never persisted. */
@@ -180,7 +182,7 @@ export async function resolveLocalHarnessAvailability(
         "(MCPJAM_LOCAL_HARNESS_ENABLED)",
     );
   }
-  if (!isActorEligibleForLocalHarness(query.actor)) {
+  if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {
     return unavailable(
       "actor-not-eligible",
       "local execution requires an attended, signed-in member running their " +
@@ -227,6 +229,7 @@ export async function resolveLocalHarnessAvailability(
   const target = query.target;
   const compatibility = resolveLocalCompatibility(
     {
+      scope: query.scope,
       harnessId: target.harnessId,
       platform: currentLocalPlatform(platform),
       targetKind: target.kind,
@@ -286,6 +289,7 @@ export async function resolveLocalHarnessAvailability(
   }
 
   const binding: HarnessGrantBinding = {
+    scope: query.scope ?? "attended",
     userId: query.userId,
     machineId: target.machineId,
     projectId: query.projectId,

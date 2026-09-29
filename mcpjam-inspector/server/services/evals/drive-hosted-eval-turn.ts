@@ -1,3 +1,4 @@
+import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
@@ -154,6 +155,7 @@ export interface HostedEvalTurnSinkContext {
 }
 
 export interface DriveHostedEvalTurnParams {
+  harnessExecutionTarget?: RunAssistantTurnOptions["harnessExecutionTarget"];
   promptIndex: number;
   prompt: string;
   /** This turn's scripted widget interaction checks. Armed on the harness
@@ -782,6 +784,7 @@ export async function driveHostedEvalTurn(
       ...(params.harness
         ? {
             harness: params.harness,
+            ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }
               : {}),
@@ -944,6 +947,7 @@ export async function driveHostedEvalTurn(
   // disagree if the engine ever mutated the array between them.
   const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
   const evidence = await reconcileTurnEvidence({
+    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(params.evalAuthContext.token) } : {}),
     ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,
