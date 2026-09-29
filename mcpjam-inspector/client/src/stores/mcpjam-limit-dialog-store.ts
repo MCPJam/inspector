@@ -120,9 +120,19 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         // may report a shortfall and a later one real exhaustion.
         if (keys.some((key) => state.notifiedKeys.has(key))) {
           const latch = latchFor(state, input);
-          if (notifiedKeys === state.notifiedKeys && !Object.keys(latch).length)
+          // A notice held for auth keeps the newest exhaustion, or the
+          // replay after sign-in would clear the latch this one just set.
+          const pending =
+            state.hasPendingLimit && !input.shortfall
+              ? { pendingInput: input }
+              : {};
+          if (
+            notifiedKeys === state.notifiedKeys &&
+            !Object.keys(latch).length &&
+            !Object.keys(pending).length
+          )
             return state;
-          return { notifiedKeys, ...latch };
+          return { notifiedKeys, ...latch, ...pending };
         }
         if (state.authStatus === "loading") {
           return {
