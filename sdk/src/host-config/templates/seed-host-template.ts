@@ -842,7 +842,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
         // The 2026-09-02 capture reports a uniform 12px inset on every edge;
@@ -984,6 +984,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
+            // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline"],
             // `toolInputPartial` is deliberately absent, not false: the
             // capture carried no `tool-input-partial`, but that notification

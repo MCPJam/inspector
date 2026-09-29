@@ -756,7 +756,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788393600000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -820,7 +820,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: {
           touch: false,
@@ -1034,6 +1034,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: true,
             availableDisplayModes: ["inline"],
             toolCancelled: true,
             hostContextChanged: true,

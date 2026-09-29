@@ -748,7 +748,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "theme": "dark",
       "timeZone": "America/Los_Angeles",
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
     },
     "hostStyle": "claude-desktop",
     "mcpProfile": {
@@ -780,6 +780,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "resourceCacheTtl": true,
           "resourcePrefersBorder": true,
           "resourceTeardown": true,
+          "safeAreaInsets": true,
           "sandboxPermissions": true,
           "serverResources": true,
           "serverTools": true,
@@ -1102,7 +1103,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "theme": "light",
       "timeZone": "America/Los_Angeles",
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
     },
     "hostStyle": "claude-desktop",
     "mcpProfile": {
@@ -1134,6 +1135,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "resourceCacheTtl": true,
           "resourcePrefersBorder": true,
           "resourceTeardown": true,
+          "safeAreaInsets": true,
           "sandboxPermissions": true,
           "serverResources": true,
           "serverTools": true,
