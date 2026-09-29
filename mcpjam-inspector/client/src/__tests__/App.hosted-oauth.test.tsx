@@ -11,6 +11,10 @@ import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
 import {
+  beginOrganizationDeletion,
+  endOrganizationDeletion,
+} from "@/stores/organization-deletion-store";
+import {
   markSignOutInProgress,
   resetSignOutLatchForTests,
   SIGN_OUT_SUPPRESSION_WINDOW_MS,
@@ -690,6 +694,115 @@ describe("App hosted OAuth callback handling", () => {
     },
   );
 
+  describe("guest whose user row disappears", () => {
+    let currentUser: unknown = null;
+    const reload = vi.fn();
+    const setup = (path = "/servers", { keepScenario = false } = {}) => {
+      clearHostedOAuthPendingState();
+      if (!keepScenario) clearScenarioSession();
+      window.history.replaceState({}, "", path);
+      reload.mockReset();
+      vi.stubGlobal("location", { ...window.location, reload });
+      currentUser = null;
+      mockUseQuery.mockImplementation((ref: string) =>
+        ref === "users:getCurrentUser" ? currentUser : undefined,
+      );
+    };
+
+    it("reloads once instead of showing the setup error", () => {
+      setup();
+      const first = render(<App />);
+      expect(screen.queryByTestId("user-setup-error")).not.toBeInTheDocument();
+      expect(reload).toHaveBeenCalledTimes(1);
+      first.unmount();
+
+      render(<App />);
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-arms the reload once a user row is back", () => {
+      setup();
+      sessionStorage.setItem("mcpjam:guest-row-reload", "1");
+      currentUser = existingConvexUser;
+      const view = render(<App />);
+      expect(sessionStorage.getItem("mcpjam:guest-row-reload")).toBeNull();
+
+      currentUser = null;
+      view.rerender(<App />);
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the setup error when the reload does not go through", () => {
+      vi.useFakeTimers();
+      try {
+        setup();
+        render(<App />);
+        expect(reload).toHaveBeenCalledTimes(1);
+        act(() => {
+          vi.advanceTimersByTime(10_000);
+        });
+        expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shows the setup error when storage cannot record the reload", () => {
+      setup();
+      const setItem = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {
+          throw new Error("QuotaExceededError");
+        });
+      try {
+        render(<App />);
+        expect(reload).not.toHaveBeenCalled();
+        expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      } finally {
+        setItem.mockRestore();
+      }
+    });
+
+    it.each(["/callback", "/oauth/callback"])(
+      "does not reload the one-shot %s page",
+      (path) => {
+        setup(path);
+        render(<App />);
+        expect(reload).not.toHaveBeenCalled();
+      },
+    );
+
+    it("shows the setup error when ensureUser never finished", () => {
+      setup();
+      mockDbUserState.isUserReady = false;
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    });
+
+    it("does not reload while AuthKit is still loading", () => {
+      setup();
+      mockWorkOsAuthState.isLoading = true;
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("does not reload a signed-in tab", () => {
+      setup();
+      mockWorkOsAuthState.user = { id: "user-1" };
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    });
+
+    it("does not reload the hosted chat route", () => {
+      setup("/servers", { keepScenario: true });
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+    });
+  });
+
   it("shows loading before any hosted authorize CTA can render", async () => {
     const view = render(<App />);
 
@@ -1144,6 +1257,66 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
+  });
+
+  it("keeps the synced project while its org's deletion is pending", async () => {
+    const clearConvexActiveProjectSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: true,
+      activeOrganizationId: "org-1",
+      clearConvexActiveProjectSelection,
+      projects: {
+        ws_local: {
+          id: "ws_local",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return existingConvexUser;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-2",
+            name: "Org Two",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    act(() => beginOrganizationDeletion("org-1"));
+
+    try {
+      render(<App />);
+      await act(async () => {});
+
+      // A failed delete gives org-1 back; its project must still be selected.
+      expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
+    } finally {
+      act(() => endOrganizationDeletion("org-1"));
+    }
   });
 
   // (Removed) "passes a billing-safe project id to the scenarios tab" —
@@ -3015,6 +3188,49 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
+  });
+
+  it("redirects Back to an org whose delete already landed", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/organizations/org-gone");
+
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-owned",
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return existingConvexUser;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-owned",
+            name: "Owned Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    // A successful delete leaves its id in the store after Convex drops the org.
+    act(() => beginOrganizationDeletion("org-gone"));
+
+    try {
+      render(<App />);
+
+      await waitFor(() => {
+        expect(window.location.pathname).toBe("/servers");
+      });
+    } finally {
+      act(() => endOrganizationDeletion("org-gone"));
+    }
   });
 
   it("clears deleted-org fallback state without switching away from a different active org", async () => {

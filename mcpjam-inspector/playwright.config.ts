@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 // against that deployed URL and no local server is booted. Otherwise we boot the
 // inspector in production mode and drive it on the default port.
 const deployedBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
+const testSessionToken =
+  process.env.MCPJAM_SESSION_TOKEN ?? "playwright-local-access-credential";
+process.env.MCPJAM_SESSION_TOKEN = testSessionToken;
 const baseURL = deployedBaseUrl ?? "http://localhost:6274";
 
 // staging.mcpjam.com sits behind Cloudflare Access. Without a service token
@@ -27,7 +30,10 @@ const packageRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: /oauth-debugger\.spec\.ts/,
+  // Both run under their own config. local-access.spec.ts needs a browser that
+  // has NOT been handed the access key seeded below, and a local server, so it
+  // can neither run here nor against a deployed URL.
+  testIgnore: /(oauth-debugger|local-access)\.spec\.ts/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -35,6 +41,21 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL,
+    ...(!deployedBaseUrl
+      ? {
+          storageState: {
+            cookies: [],
+            origins: [
+              {
+                origin: new URL(baseURL).origin,
+                localStorage: [
+                  { name: "mcpjam.local-access", value: testSessionToken },
+                ],
+              },
+            ],
+          },
+        }
+      : {}),
     ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -58,6 +79,7 @@ export default defineConfig({
         timeout: 120_000,
         env: {
           NODE_ENV: "production",
+          MCPJAM_SESSION_TOKEN: testSessionToken,
           MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",
         },
       },

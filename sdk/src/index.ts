@@ -402,6 +402,61 @@ export type {
   SuiteFileLocation,
 } from "./suite-file-loader.js";
 
+// ── local suite-file execution ──────────────────────────────────────────────
+/**
+ * `runSuiteFile` executes a suite file locally against explicitly bound MCP
+ * servers and decides it with the v2 verdict policy — the engine behind
+ * `mcpjam test <file>`. Node-only (it connects servers and runs models), so it
+ * is exported here and never from the browser or contract entries.
+ * `createSuiteFileRunner` is the internal seam the SDK's and CLI's own tests
+ * inject model doubles through.
+ */
+export {
+  LOCAL_EVAL_RUN_REPORT_KIND,
+  LOCAL_VERDICT_AUTHORITY,
+  SUITE_FILE_RUN_DEFAULT_CONCURRENCY,
+  SUITE_FILE_RUN_DEFAULT_ITERATION_TIMEOUT_MS,
+  SUITE_FILE_RUN_DEFAULT_MAX_STEPS,
+  SUITE_FILE_RUN_DEFAULT_SETUP_TIMEOUT_MS,
+  SUITE_FILE_RUN_ERROR_CODES,
+  SuiteFileRunError,
+  createSuiteFileRunner,
+  formatLocalEvalRunSummary,
+  isLocalEvalRunReport,
+  isSuiteFileRunError,
+  localEvalRunMetadataSchema,
+  platformCaseFromSuiteFileCase,
+  runSuiteFile,
+  suiteFileSourceHash,
+} from "./suite-file-run/index.js";
+export type {
+  LocalEvalRunMetadata,
+  LocalEvalRunReport,
+  McpjamInferenceConnection,
+  RunSuiteFileOptions,
+  SuiteFileCaseRun,
+  SuiteFileImportApproval,
+  SuiteFileInferenceMode,
+  SuiteFileInferenceOptions,
+  SuiteFileInferenceRail,
+  SuiteFileIterationEvidence,
+  SuiteFileJudgeState,
+  SuiteFileRefusalAttribution,
+  SuiteFileRunErrorCategory,
+  SuiteFileRunErrorCode,
+  SuiteFileRunErrorDetails,
+  SuiteFileRunIssue,
+  SuiteFileRunnerRuntime,
+  SuiteFileRunPhase,
+  SuiteFileRunProblem,
+  SuiteFileRunProgressEvent,
+  SuiteFileRunResult,
+  SuiteFileRunTermination,
+  SuiteFileRunVerdict,
+  SuiteFileServerBinding,
+  SuiteFileToolPolicyBlock,
+} from "./suite-file-run/index.js";
+
 // ── the one grading policy: SDK integration seam ────────────────────────────
 /**
  * How a suite file, a hosted suite read and a reported run each reach the
@@ -1023,6 +1078,14 @@ export type {
   ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
+
+// Reviewed canonical ↔ native model ids (the BYOK Anthropic path sends the
+// native one). Also on `@mcpjam/sdk/model-factory`.
+export {
+  ANTHROPIC_NATIVE_MODEL_IDS,
+  anthropicNativeModelId,
+} from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
 
 // Which sampling parameters a model accepts. Also exported from
 // `@mcpjam/sdk/browser` so client code can gate a temperature control without
@@ -1825,10 +1888,15 @@ export {
   releaseMcpjamModelLeases,
   McpjamLeaseClient,
   McpjamLeaseError,
+  McpjamModelLeaseScope,
+  classifyMcpjamLeaseError,
 } from "./mcpjam-model-lease.js";
 export type {
   McpjamModelLease,
   McpjamLeaseClientOptions,
+  McpjamAuthContext,
+  McpjamGetAuth,
+  McpjamLeaseRefusalKind,
 } from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {

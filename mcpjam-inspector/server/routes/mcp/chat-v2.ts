@@ -945,11 +945,21 @@ chatV2.post("/", async (c) => {
       } else {
         logger.warn(
           "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
-          { hostId: bodyHostId, status: runtime.status, error: runtime.error },
+          {
+            hostId: bodyHostId,
+            status: runtime.status,
+            error: runtime.error,
+            networkCode: runtime.networkCode,
+          },
         );
         return c.json(
           {
             error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
+            // Not shown to the user. Rides the body into the client's
+            // `chat_request_failed` report (`extra.rawMessage`).
+            ...(runtime.networkCode
+              ? { networkCode: runtime.networkCode }
+              : {}),
           },
           runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403),
         );

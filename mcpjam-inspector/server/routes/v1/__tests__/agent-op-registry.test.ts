@@ -1998,6 +1998,11 @@ describe("tier derives from operation.risk", () => {
         "plus a 409 until the window is mined, which a caller must not " +
         "retry in a loop.",
     },
+    send_feedback: {
+      tier: "excluded",
+      reason:
+        "v1 ships MCP/CLI/UI first; the Slack/Discord bot follows once volume is seen",
+    },
   };
 
   const placementOf = (name: string): Placement | "unregistered" => {
