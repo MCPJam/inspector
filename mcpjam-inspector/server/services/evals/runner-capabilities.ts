@@ -37,6 +37,7 @@
  * declares it. The browser-secrets entry below is conditional, not temporary.
  */
 import { browserSecretPlaceholdersEnabled } from "../../config.js";
+import { SWARM_SPONSORSHIP_CAPABILITY } from "../../../shared/swarm-sponsorship.js";
 
 const HARNESS_EXECUTION = "harness-execution";
 
@@ -58,6 +59,23 @@ export function runnerCapabilities(
       ? [BROWSER_MATERIALIZED_SECRETS]
       : []),
   ];
+}
+
+/**
+ * Swarm-only: this server can attest a sponsored (MCPJam-paid) swarm
+ * conversation. Kept out of {@link runnerCapabilities} because evals share that
+ * list and have no sponsored conversations.
+ *
+ * Declared only while INSPECTOR_SERVICE_TOKEN is set. The token is the proof
+ * the backend requires on every sponsored call, so advertising the capability
+ * without it would let the backend allocate sponsored conversations this
+ * process could only fail. An older runner never sends the string, so the
+ * backend allocates it nothing.
+ */
+export function swarmSponsorshipCapabilities(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly string[] {
+  return env.INSPECTOR_SERVICE_TOKEN?.trim() ? [SWARM_SPONSORSHIP_CAPABILITY] : [];
 }
 
 /** @deprecated Use {@link runnerCapabilities}, which reads the flag at call time. */

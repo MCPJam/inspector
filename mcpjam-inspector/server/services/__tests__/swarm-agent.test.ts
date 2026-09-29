@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createJourneyRun,
+  finalizePendingAttempts,
+  previewSwarmFunding,
+  reportTargetGrounding,
+  swarmPersonaNextTurn,
   fetchPinnedSkill,
   PinnedSkillIntegrityError,
   reportAttempt,
@@ -300,5 +304,276 @@ describe("swarm-agent reportAttempt — targetId echo", () => {
       (fetchMock.mock.calls[1]![1] as RequestInit).body as string
     );
     expect("targetId" in withoutTarget).toBe(false);
+  });
+});
+
+describe("swarm-agent sponsored swarm allowance — capability negotiation", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const createBody = () => JSON.parse(fetchMock.mock.calls[0]![1].body);
+  const CREATE_ARGS = {
+    projectId: "proj-1",
+    journeyRefId: "journey-1",
+    launchKey: "lk-1",
+  };
+
+  it("does not advertise swarm-sponsorship-v1 without INSPECTOR_SERVICE_TOKEN", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    fetchMock.mockResolvedValue(Response.json(okCreateResponse()));
+
+    await createJourneyRun(CONVEX_HTTP_URL, "token", CREATE_ARGS);
+
+    expect(createBody().runnerCapabilities).not.toContain(
+      "swarm-sponsorship-v1",
+    );
+  });
+
+  it("advertises swarm-sponsorship-v1 when INSPECTOR_SERVICE_TOKEN is set", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockResolvedValue(Response.json(okCreateResponse()));
+
+    await createJourneyRun(CONVEX_HTTP_URL, "token", CREATE_ARGS);
+
+    expect(createBody().runnerCapabilities).toContain("swarm-sponsorship-v1");
+  });
+
+  it("sends expectedSponsored only when the caller supplied it, including zero", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json(okCreateResponse()),
+    );
+
+    await createJourneyRun(CONVEX_HTTP_URL, "token", CREATE_ARGS);
+    await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      ...CREATE_ARGS,
+      expectedSponsored: 0,
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).not.toHaveProperty(
+      "expectedSponsored",
+    );
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body).expectedSponsored).toBe(
+      0,
+    );
+  });
+
+  it("parses funding and per-session funding off the create response", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...okCreateResponse(),
+        funding: { sponsored: 1, credits: 1, total: 2 },
+        sessions: [
+          { targetId: "t1", sessionIdx: 0, funding: "starter" },
+          { targetId: "t1", sessionIdx: 1, funding: "credits" },
+          { targetId: "t1", sessionIdx: 2, funding: "bogus" },
+        ],
+      }),
+    );
+
+    const created = await createJourneyRun(
+      CONVEX_HTTP_URL,
+      "token",
+      CREATE_ARGS,
+    );
+
+    expect(created.funding).toEqual({ sponsored: 1, credits: 1, total: 2 });
+    expect(created.sessions).toEqual([
+      { targetId: "t1", sessionIdx: 0, funding: "starter" },
+      { targetId: "t1", sessionIdx: 1, funding: "credits" },
+    ]);
+  });
+
+  it("leaves funding absent for a backend that predates sponsorship", async () => {
+    fetchMock.mockResolvedValue(Response.json(okCreateResponse()));
+
+    const created = await createJourneyRun(
+      CONVEX_HTTP_URL,
+      "token",
+      CREATE_ARGS,
+    );
+
+    expect(created.funding).toBeUndefined();
+    expect(created.sessions).toBeUndefined();
+  });
+
+  it("previews as unsupported without asking the backend when the server has no service token", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+
+    const preview = await previewSwarmFunding(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      runs: [{ journeyRefId: "j1" }],
+    });
+
+    expect(preview).toEqual({
+      supported: false,
+      remaining: 0,
+      granted: 0,
+      runs: [],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("previews through the backend with the same capability list a launch declares", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockResolvedValue(
+      Response.json({
+        supported: true,
+        remaining: 12,
+        granted: 500,
+        runs: [
+          {
+            sponsored: 5,
+            credits: 10,
+            total: 15,
+            targets: [{ targetId: "t1", eligible: false, reason: "harness" }],
+          },
+        ],
+      }),
+    );
+
+    const preview = await previewSwarmFunding(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      runs: [{ journeyRefId: "j1", sessionsPerTarget: 3 }],
+    });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe(
+      `${CONVEX_HTTP_URL}/journey-execution/funding-preview`,
+    );
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.runnerCapabilities).toContain("swarm-sponsorship-v1");
+    expect(body.runs).toEqual([{ journeyRefId: "j1", sessionsPerTarget: 3 }]);
+    expect(preview).toEqual({
+      supported: true,
+      remaining: 12,
+      granted: 500,
+      runs: [
+        {
+          sponsored: 5,
+          credits: 10,
+          total: 15,
+          targets: [{ targetId: "t1", eligible: false, reason: "harness" }],
+        },
+      ],
+    });
+  });
+
+  it("reads a backend without the preview route as unsupported", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockResolvedValue(new Response("not found", { status: 404 }));
+
+    await expect(
+      previewSwarmFunding(CONVEX_HTTP_URL, "token", {
+        projectId: "proj-1",
+        runs: [{ journeyRefId: "j1" }],
+      }),
+    ).resolves.toMatchObject({ supported: false, remaining: 0 });
+  });
+});
+
+describe("swarm-agent sponsored swarm allowance — service token on sponsored calls", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () =>
+      Response.json({ ok: true, message: "hi", endSession: false }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const PERSONA = {
+    projectId: "p",
+    runId: "r",
+    hostId: "h",
+    sessionIdx: 0,
+    transcriptSoFar: [],
+  };
+  const headersOf = (call: number) =>
+    fetchMock.mock.calls[call]![1].headers as Record<string, string>;
+
+  it("attaches x-inspector-service-token to a sponsored persona turn", async () => {
+    await swarmPersonaNextTurn(CONVEX_HTTP_URL, "bearer", {
+      ...PERSONA,
+      sponsored: true,
+    });
+    expect(headersOf(0)["x-inspector-service-token"]).toBe("svc-token");
+    expect(headersOf(0).Authorization).toBe("Bearer bearer");
+  });
+
+  it("does not attach it to a credit-funded persona turn", async () => {
+    await swarmPersonaNextTurn(CONVEX_HTTP_URL, "bearer", PERSONA);
+    expect(headersOf(0)).not.toHaveProperty("x-inspector-service-token");
+  });
+
+  it("attaches it to sponsored grounding only", async () => {
+    await reportTargetGrounding(
+      CONVEX_HTTP_URL,
+      "bearer",
+      { runId: "r" } as never,
+      undefined,
+      true,
+    );
+    await reportTargetGrounding(CONVEX_HTTP_URL, "bearer", {
+      runId: "r",
+    } as never);
+    expect(headersOf(0)["x-inspector-service-token"]).toBe("svc-token");
+    expect(headersOf(1)).not.toHaveProperty("x-inspector-service-token");
+  });
+
+  it("refuses a sponsored call it cannot attest instead of sending it bare", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    await expect(
+      swarmPersonaNextTurn(CONVEX_HTTP_URL, "bearer", {
+        ...PERSONA,
+        sponsored: true,
+      }),
+    ).rejects.toThrow(/swarm_sponsorship_rejected/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("swarm-agent finalizePendingAttempts — funding scope", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const bodyOf = () => JSON.parse(fetchMock.mock.calls[0]![1].body);
+
+  it("sends fundingScope only when asked, so a spend cap can leave sponsored attempts alone", async () => {
+    await finalizePendingAttempts(CONVEX_HTTP_URL, "t", {
+      projectId: "p",
+      runId: "r",
+      terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+      fundingScope: "credits",
+    });
+    expect(bodyOf()).toMatchObject({
+      runId: "r",
+      errorCode: "spend_cap_exceeded",
+      fundingScope: "credits",
+    });
+
+    fetchMock.mockClear();
+    await finalizePendingAttempts(CONVEX_HTTP_URL, "t", {
+      projectId: "p",
+      runId: "r",
+    });
+    expect(bodyOf()).not.toHaveProperty("fundingScope");
   });
 });

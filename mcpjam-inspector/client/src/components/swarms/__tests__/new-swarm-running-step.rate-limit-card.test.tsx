@@ -586,3 +586,76 @@ it("does not offer a credit purchase for an organization spend budget", async ()
   expect(banner).toHaveTextContent("raise the organization spend budget");
   expect(screen.queryByRole("button", { name: "View credit options" })).not.toBeInTheDocument();
 });
+
+describe("NewSwarmRunningStep — sponsored conversations the platform could not pay for", () => {
+  const STOP_MESSAGE =
+    "MCPJam's sponsored capacity was unavailable, so this conversation stopped before it finished. Evidence gathered so far is kept. You can run it again later.";
+
+  beforeEach(() => {
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    attempts = [attempt];
+    sessionRows = [sessionRow];
+    snapshotHosts = [HOST_ENV_1];
+    hostSummaries = [{ ...SUMMARY_ENV_1, failed: 1, rateLimited: 0 }];
+    attempt.chatSessionId = CHAT_SESSION_ID;
+    sessionRow.chatSessionId = CHAT_SESSION_ID;
+    attempt.status = "failed";
+    attempt.errorCode = "platform_capacity";
+    attempt.errorMessage = STOP_MESSAGE;
+    runFixture.summary = { total: 1, succeeded: 0, failed: 1, rateLimited: 0 };
+    streamState.cellStatus = { "environment:env-1:0": "failed" };
+    streamState.sessions = {};
+  });
+
+  it("says the platform stopped them, offers no purchase, and never opens the customer limit dialog", () => {
+    renderStep();
+
+    const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+    expect(callout).toHaveTextContent("1 sponsored conversation stopped.");
+    expect(callout).toHaveTextContent(/nothing was moved to your organization/i);
+    expect(callout).not.toHaveTextContent(/upgrade|top.?up|buy|free|guarantee/i);
+    expect(
+      screen.queryByRole("button", { name: /credit options/i }),
+    ).not.toBeInTheDocument();
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("is not counted as an organization usage limit", () => {
+    renderStep();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-account-limit"),
+    ).not.toBeInTheDocument();
+    // Its own callout carries the story, so the failure banner does not repeat it.
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves an organization limit on another session to the account-limit callout", () => {
+    attempts = [
+      attempt,
+      {
+        ...attempt,
+        sessionIdx: 1,
+        chatSessionId: "other",
+        status: "rate_limited",
+        errorCode: "user_rate_limit",
+        errorMessage: "Daily credit limit reached.",
+      },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 1, rateLimited: 1 };
+
+    renderStep();
+
+    expect(
+      screen.getByTestId("new-swarm-running-sponsored-stop"),
+    ).toHaveTextContent("1 sponsored conversation stopped.");
+    expect(
+      screen.getByTestId("new-swarm-running-account-limit"),
+    ).toBeInTheDocument();
+  });
+});

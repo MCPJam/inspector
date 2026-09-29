@@ -8,7 +8,17 @@ import type {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
-import { runnerCapabilities } from "./evals/runner-capabilities.js";
+import {
+  runnerCapabilities,
+  swarmSponsorshipCapabilities,
+} from "./evals/runner-capabilities.js";
+import {
+  parseFundingSummary,
+  parseSessionFunding,
+  SWARM_SPONSORSHIP_REJECTED_CODE,
+  type SwarmFundingSummary,
+  type SwarmSessionFunding,
+} from "../../shared/swarm-sponsorship";
 
 /**
  * Inspector-side adapter for the backend swarm (journey-execution)
@@ -230,6 +240,14 @@ export interface CreateJourneyRunResult {
    * the owner and can kill attempts the owner is still executing.
    */
   deduped: boolean;
+  /**
+   * How the backend funded this run's conversations. Absent from a backend
+   * that predates sponsorship (and from a replay it cannot re-derive), in which
+   * case every conversation is credit-funded exactly as before.
+   */
+  funding?: SwarmFundingSummary;
+  /** Per-conversation funding in planned target/session order. */
+  sessions?: SwarmSessionFunding[];
 }
 
 export type SwarmAttemptStatus =
@@ -303,12 +321,14 @@ async function postJson<T>(
   // Optional caller signal (e.g. the run's abort) composed with the per-call
   // timeout so EITHER a timeout OR a shutdown/cancel aborts the in-flight fetch.
   signal?: AbortSignal,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${bearer}`,
+      ...(extraHeaders ?? {}),
     },
     body: JSON.stringify(body),
     signal: signal
@@ -325,6 +345,26 @@ async function postJson<T>(
     );
   }
   return (await response.json()) as T;
+}
+
+/**
+ * The proof the backend requires, on top of user auth, for a SPONSORED
+ * conversation's control-plane calls. Never attached to a credit-funded one:
+ * the backend decides sponsorship from the attempt's persisted funding, so the
+ * header cannot make a call sponsored, it only lets a sponsored call through.
+ *
+ * Throws a sponsorship-rejected error when the token is missing rather than
+ * sending a call the backend must refuse; the caller ends that conversation as
+ * a platform problem, never as a paid retry.
+ */
+function sponsoredCallHeaders(): Record<string, string> {
+  const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (!token) {
+    throw new Error(
+      `INSPECTOR_SERVICE_TOKEN is not set, so this server cannot attest a sponsored conversation (${SWARM_SPONSORSHIP_REJECTED_CODE}).`,
+    );
+  }
+  return { "x-inspector-service-token": token };
 }
 
 async function getJson<T>(
@@ -433,6 +473,120 @@ export async function fetchPinnedSkill(
 }
 
 /**
+ * What this process declares on `runs/create` and on the funding preview. One
+ * list for both, so the preview describes exactly the allocation the launch
+ * will get.
+ */
+export function swarmRunnerCapabilities(): string[] {
+  return [
+    ...runnerCapabilities(),
+    "swarm-standard-checks-v1",
+    ...swarmSponsorshipCapabilities(),
+  ];
+}
+
+/** One planned run in a funding preview; mirrors the launch parameters. */
+export interface SwarmFundingPreviewRunInput {
+  journeyRefId: string;
+  environmentIds?: string[];
+  sessionsPerTarget?: number;
+}
+
+export interface SwarmFundingPreviewRun extends SwarmFundingSummary {
+  targets: Array<{ targetId: string; eligible: boolean; reason?: string }>;
+}
+
+export interface SwarmFundingPreview {
+  /** False when sponsorship cannot apply to this caller or this server. */
+  supported: boolean;
+  /** Sponsored conversations left in the caller's allowance. */
+  remaining: number;
+  granted: number;
+  runs: SwarmFundingPreviewRun[];
+}
+
+const UNSUPPORTED_FUNDING_PREVIEW: SwarmFundingPreview = {
+  supported: false,
+  remaining: 0,
+  granted: 0,
+  runs: [],
+};
+
+/**
+ * Read-only preview of how a wave's conversations would be funded. Counts are
+ * cumulative across `runs` in order, mirroring the wave's sequential
+ * allocation. A server without INSPECTOR_SERVICE_TOKEN never advertises the
+ * capability, so it answers `supported: false` without asking the backend; a
+ * backend that predates the route (404/405) reads the same way.
+ */
+export async function previewSwarmFunding(
+  convexHttpUrl: string,
+  bearer: string,
+  args: { projectId: string; runs: SwarmFundingPreviewRunInput[] },
+): Promise<SwarmFundingPreview> {
+  if (swarmSponsorshipCapabilities().length === 0) {
+    return UNSUPPORTED_FUNDING_PREVIEW;
+  }
+  let data: Record<string, unknown>;
+  try {
+    data = await postJson<Record<string, unknown>>(
+      `${convexHttpUrl}/journey-execution/funding-preview`,
+      bearer,
+      {
+        projectId: args.projectId,
+        runnerCapabilities: swarmRunnerCapabilities(),
+        runs: args.runs,
+      },
+      NON_LLM_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (
+      error instanceof SwarmAgentError &&
+      (error.status === 404 || error.status === 405)
+    ) {
+      return UNSUPPORTED_FUNDING_PREVIEW;
+    }
+    throw error;
+  }
+  const nonNegative = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : 0;
+  const runs: SwarmFundingPreviewRun[] = Array.isArray(data.runs)
+    ? data.runs.map((entry): SwarmFundingPreviewRun => {
+        const run = (entry ?? {}) as Record<string, unknown>;
+        return {
+          sponsored: nonNegative(run.sponsored),
+          credits: nonNegative(run.credits),
+          total: nonNegative(run.total),
+          targets: Array.isArray(run.targets)
+            ? run.targets.flatMap((t) => {
+                const target = (t ?? {}) as Record<string, unknown>;
+                return typeof target.targetId === "string"
+                  ? [
+                      {
+                        targetId: target.targetId,
+                        eligible: target.eligible === true,
+                        ...(typeof target.reason === "string"
+                          ? { reason: target.reason }
+                          : {}),
+                      },
+                    ]
+                  : [];
+              })
+            : [],
+        };
+      })
+    : [];
+  return {
+    supported: data.supported === true,
+    remaining: nonNegative(data.remaining),
+    granted: nonNegative(data.granted),
+    runs,
+  };
+}
+
+/**
  * Create a journey run and return the pinned execution snapshot.
  *
  * `maxHosts` is an optional upper bound the backend enforces transactionally
@@ -462,6 +616,12 @@ export async function createJourneyRun(
     environmentIds?: string[];
     /** Iterations for THIS run, overriding the journey's stored fan-out. */
     sessionsPerTarget?: number;
+    /**
+     * How many of this request's conversations the caller was told are
+     * sponsored. The backend refuses the launch (409 `swarm_funding_changed`)
+     * instead of silently shifting conversations to the organization's credits.
+     */
+    expectedSponsored?: number;
   },
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -471,6 +631,8 @@ export async function createJourneyRun(
     journeyRefId?: string;
     snapshot?: JourneySnapshot;
     deduped?: boolean;
+    funding?: unknown;
+    sessions?: unknown;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/create`,
@@ -493,9 +655,12 @@ export async function createJourneyRun(
       ...(args.sessionsPerTarget !== undefined
         ? { sessionsPerTarget: args.sessionsPerTarget }
         : {}),
+      ...(args.expectedSponsored !== undefined
+        ? { expectedSponsored: args.expectedSponsored }
+        : {}),
       // Asserted by this process, never a caller: the runner is the only
       // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
+      runnerCapabilities: swarmRunnerCapabilities(),
     },
     NON_LLM_TIMEOUT_MS,
   );
@@ -520,6 +685,14 @@ export async function createJourneyRun(
     // Strict `=== true`: an absent field means a fresh run (never wrongly skip
     // starting the runner for a genuinely new launch).
     deduped: data.deduped === true,
+    ...(() => {
+      const funding = parseFundingSummary(data.funding);
+      const sessions = parseSessionFunding(data.sessions);
+      return {
+        ...(funding ? { funding } : {}),
+        ...(sessions.length > 0 ? { sessions } : {}),
+      };
+    })(),
   };
 }
 
@@ -838,6 +1011,12 @@ export async function finalizePendingAttempts(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
+    /**
+     * `"credits"` finalizes credit-funded attempts only and leaves sponsored
+     * ones pending, so an organization spend cap cannot stop (or refund) a
+     * conversation the platform is paying for.
+     */
+    fundingScope?: "credits";
   },
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
@@ -846,6 +1025,7 @@ export async function finalizePendingAttempts(
     {
       projectId: args.projectId,
       runId: args.runId,
+      ...(args.fundingScope ? { fundingScope: args.fundingScope } : {}),
       ...(args.terminalStatus ? { terminalStatus: args.terminalStatus } : {}),
       ...(args.errorCode ? { errorCode: args.errorCode } : {}),
       ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
@@ -885,6 +1065,8 @@ export async function swarmPersonaNextTurn(
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
     // abort the parked fetch immediately so the session can unwind.
     signal?: AbortSignal;
+    /** True for a sponsored conversation: attaches the service-token proof. */
+    sponsored?: boolean;
   },
 ): Promise<SwarmPersonaNextTurnResponse> {
   const data = await postJson<{
@@ -907,6 +1089,7 @@ export async function swarmPersonaNextTurn(
     },
     LLM_TIMEOUT_MS,
     args.signal,
+    args.sponsored ? sponsoredCallHeaders() : undefined,
   );
   if (!data.ok || typeof data.message !== "string") {
     throw new Error(
@@ -927,6 +1110,8 @@ export async function reportTargetGrounding(
   bearer: string,
   body: GroundingReport,
   signal?: AbortSignal,
+  /** True when the target has sponsored conversations: attaches the token. */
+  sponsored?: boolean,
 ): Promise<{ unavailable?: boolean }> {
   try {
     return await postJson(
@@ -935,6 +1120,7 @@ export async function reportTargetGrounding(
       body,
       LLM_TIMEOUT_MS,
       signal,
+      sponsored ? sponsoredCallHeaders() : undefined,
     );
   } catch (error) {
     if (error instanceof SwarmAgentError && error.status === 404)

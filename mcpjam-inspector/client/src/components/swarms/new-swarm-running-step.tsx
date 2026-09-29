@@ -54,6 +54,7 @@ import {
   humanizeSwarmAttemptError,
   isAccountLimit,
 } from "@/shared/swarm-attempt-error";
+import { isSponsoredStopCode } from "@/shared/swarm-sponsorship";
 import { providerLabelForModelId } from "./session-rate-limit";
 import {
   DEFAULT_PAGE_SIZE,
@@ -1086,6 +1087,10 @@ export function NewSwarmRunningStep({
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed")
           continue;
+        // A sponsored conversation the platform could not pay for is not an
+        // organization limit; it has its own callout below.
+        if (attempt.status === "failed" && isSponsoredStopCode(attempt.errorCode))
+          continue;
         const info = humanizeSwarmAttemptError(
           attempt.errorMessage,
           attempt.errorCode,
@@ -1114,17 +1119,39 @@ export function NewSwarmRunningStep({
     return count === 0 ? null : { count, message, exhausted };
   }, [snapshots]);
 
+  // Sponsored conversations that ended because MCPJam's platform could not pay
+  // for them. Kept apart from the account limit above: nothing here is lifted
+  // with credits, so the callout offers no purchase.
+  const sponsoredStop = useMemo(() => {
+    let count = 0;
+    let message: string | null = null;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "failed" || !isSponsoredStopCode(attempt.errorCode))
+          continue;
+        count += 1;
+        message ??= attempt.errorMessage ?? null;
+      }
+    }
+    return count === 0 ? null : { count, message };
+  }, [snapshots]);
+
   // The account-limit callout owns its cause — count, breakdown and the top-up
   // links — so the grouped banner states every OTHER cause, once. A run whose
   // only cause is the limit shows the callout alone.
   const bannerFailure = useMemo(() => {
     if (!runFailure) return null;
+    // Sponsored stops have their own callout, so the banner never repeats them.
+    const otherCauses = runFailure.causes.filter(
+      (cause) =>
+        !(cause.kind === "failed" && isSponsoredStopCode(cause.code)),
+    );
     const causes = accountLimit
-      ? runFailure.causes.filter(
+      ? otherCauses.filter(
           (cause) =>
             !isAccountLimit(cause.info.message, cause.code ?? cause.info.code),
         )
-      : runFailure.causes;
+      : otherCauses;
     if (!causes.length) return null;
     const lead =
       causes.find(
@@ -1150,6 +1177,7 @@ export function NewSwarmRunningStep({
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
     accountLimit !== null ||
+    sponsoredStop !== null ||
     runFailure !== null;
 
   return (
@@ -1253,6 +1281,25 @@ export function NewSwarmRunningStep({
                       ? "1 session stopped."
                       : `${providerRateLimit.count} sessions stopped.`}{" "}
                     Retry again later or switch models.
+                  </p>
+                </div>
+              ) : null}
+              {sponsoredStop ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-sponsored-stop"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {sponsoredStop.count === 1
+                      ? "1 sponsored conversation stopped."
+                      : `${sponsoredStop.count} sponsored conversations stopped.`}
+                  </p>
+                  <p className="mt-0.5">
+                    MCPJam&apos;s sponsored capacity was unavailable, so they
+                    ended before finishing. Completed results are saved and
+                    nothing was moved to your organization&apos;s credits.
+                    Run them again later.
                   </p>
                 </div>
               ) : null}

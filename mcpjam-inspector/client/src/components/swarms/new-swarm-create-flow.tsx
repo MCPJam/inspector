@@ -78,8 +78,18 @@ import {
   SWARM_QUERIES,
   LaunchJourneyRunError,
   SwarmGenerateError,
+  fetchSwarmFundingPreview,
+  fundingChangeOf,
   generateSwarmPersonaBatch,
 } from "@/lib/swarm-api";
+import {
+  fundingChangedNotice,
+  fundingPreviewRuns,
+  fundingReviewNotice,
+  fundingSplitOf,
+  launchRunOverrides,
+  type FundingSplit,
+} from "@/components/swarms/swarm-funding-plan";
 import {
   MAX_RUBRIC_CRITERIA,
   mergeRubrics,
@@ -104,10 +114,7 @@ import {
   environmentLabel,
   environmentLabelsById,
 } from "@/lib/environment-label";
-import {
-  sameEnvironmentSelection,
-  type EnvironmentMoveRow,
-} from "@/components/swarms/reused-environment-move";
+import { type EnvironmentMoveRow } from "@/components/swarms/reused-environment-move";
 import { ErrorCard } from "@/components/ui/error-card";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -402,7 +409,13 @@ export function NewSwarmCreateFlow({
      * environment id) was therefore invisible to this interface, one rename
      * away from being silently dropped.
      */
-    opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
+    opts?: {
+      swarmRunGroupId?: string;
+      environmentIds?: string[];
+      sessionsPerTarget?: number;
+      /** Sponsored conversations the person was shown for THIS run. */
+      expectedSponsored?: number;
+    },
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -614,6 +627,15 @@ export function NewSwarmCreateFlow({
   const persistedEnvironmentKeyRef = useRef<string | null>(
     restoredDraft?.launch.environmentKey ?? null,
   );
+  // The same rows as state, so Confirm can preview the sponsored split of the
+  // WHOLE launch once its goals exist. Mirrors the ref at each place it moves.
+  const [createdTargets, setCreatedTargets] = useState<LaunchTarget[] | null>(
+    restoredDraft?.launch.targets ?? null,
+  );
+  // Sponsored-split review: bumped to re-read the preview after a launch
+  // stopped on it, and the sentence explaining why it stopped.
+  const [fundingRefreshKey, setFundingRefreshKey] = useState(0);
+  const [fundingNotice, setFundingNotice] = useState<string | null>(null);
   /**
    * The wave id for THIS swarm, minted once and reused across a retry.
    *
@@ -774,6 +796,8 @@ export function NewSwarmCreateFlow({
     if (persistedTargetsRef.current == null) return;
     if (persistedEnvironmentKeyRef.current === environmentSelectionKey) return;
     persistedTargetsRef.current = null;
+    setCreatedTargets(null);
+    setFundingNotice(null);
     persistedEnvironmentKeyRef.current = null;
     // Those rows are no longer the ones we'd relaunch, so the wave they were
     // going to join is void too — the next attempt is a genuinely new swarm.
@@ -1116,6 +1140,8 @@ export function NewSwarmCreateFlow({
       // A fresh slate is a fresh set of rows to create — drop any memory of
       // what a previous attempt persisted.
       persistedTargetsRef.current = null;
+      setCreatedTargets(null);
+      setFundingNotice(null);
       persistedEnvironmentKeyRef.current = null;
       persistedRunGroupIdRef.current = null;
       persistedSwarmIdRef.current = null;
@@ -1233,6 +1259,8 @@ export function NewSwarmCreateFlow({
       inFlightRef.current = false;
     }
     persistedTargetsRef.current = null;
+    setCreatedTargets(null);
+    setFundingNotice(null);
     persistedRunGroupIdRef.current = null;
     persistedSwarmIdRef.current = null;
     flowIdRef.current = null;
@@ -1314,6 +1342,7 @@ export function NewSwarmCreateFlow({
       if (!readyToLaunch) return;
 
       setErrorMessage(null);
+      setFundingNotice(null);
 
       let firstError: string | null = null;
       /**
@@ -1333,6 +1362,8 @@ export function NewSwarmCreateFlow({
        * branch exists to avoid.
        */
       let billingError: string | null = null;
+      /** Set when the backend refused a run because its sponsored split had moved. */
+      let fundingChange = undefined as ReturnType<typeof fundingChangeOf>;
       let targets: LaunchTarget[] = [];
       let launched = 0;
       const runLabels = new Map<string, string>();
@@ -1554,39 +1585,77 @@ export function NewSwarmCreateFlow({
           // selection so adding Cursor later can't relaunch Excal-only rows.
           if (targets.length > 0) {
             persistedTargetsRef.current = targets;
+            setCreatedTargets(targets);
             persistedEnvironmentKeyRef.current = environmentSelectionKey;
           }
         }
 
+        // ── Sponsored split: verify, then launch what was shown ───────────
+        //
+        // Every run has a goal id now, so ask the backend how THIS launch's
+        // conversations would be funded (sponsored versus the organization's
+        // credits) and compare it with what the person was looking at. If it
+        // is not the same, stop BEFORE creating any run and show the new
+        // split: they launch again with it on screen. Otherwise each run is
+        // launched with the sponsored count that was shown, so the backend
+        // refuses it (409) rather than moving conversations onto org credits.
+        //
+        // A preview that fails, or sponsorship not applying here, is the
+        // launch exactly as it was before this existed.
+        let expectedSponsoredByRun: number[] | null = null;
+        let fundingSplit: FundingSplit | null = null;
+        if (targets.length > 0) {
+          try {
+            const preview = await fetchSwarmFundingPreview(
+              projectId,
+              fundingPreviewRuns(targets, envPayload?.environmentIds ?? null),
+            );
+            fundingSplit = fundingSplitOf(preview, targets.length);
+            if (fundingSplit) {
+              expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
+            }
+          } catch {
+            // Advisory only. Falls through to an ordinary launch.
+          }
+        }
+        if (fundingSplit) {
+          const shown = payload.funding.shownSponsored;
+          if ((shown ?? 0) !== fundingSplit.sponsored) {
+            setFundingNotice(
+              fundingReviewNotice({ shown, now: fundingSplit }),
+            );
+            setFundingRefreshKey((key) => key + 1);
+            return;
+          }
+        }
+        // With sponsored conversations in the wave, runs launch one at a time
+        // in the order the preview counted them, so each run's expected count
+        // is exactly what the backend will allocate to it.
+        const launchConcurrency = fundingSplit?.sponsored
+          ? 1
+          : LAUNCH_CONCURRENCY;
+
         await runWithConcurrency(
           targets,
-          LAUNCH_CONCURRENCY,
+          launchConcurrency,
           async (target) => {
             try {
               const result = await launchJourney(target.journeyId, {
                 swarmRunGroupId,
-                // The Describe selection, applied to THIS run only. Sent for
-                // reused journeys whose stored fan-out differs from it —
-                // journeys created above are already born with the selection,
-                // so an override would be a no-op restating their own config.
-                //
-                // `target.environmentIds === undefined` marks a
-                // just-created target; `null` marks a reused legacy journey
-                // with no stored fan-out, which DOES need the override.
-                ...(envPayload &&
-                target.environmentIds !== undefined &&
-                !sameEnvironmentSelection(
-                  target.environmentIds,
-                  envPayload.environmentIds,
-                )
-                  ? { environmentIds: envPayload.environmentIds }
-                  : {}),
-                // Iterations chosen on Confirm for a REUSED persona, applied
-                // to this run only. Absent on just-created targets: they are
-                // born with the chosen count, so an override would restate
-                // their own config.
-                ...(target.sessionsPerTarget != null
-                  ? { sessionsPerTarget: target.sessionsPerTarget }
+                // The Describe selection and the Confirm iterations, applied
+                // to THIS run only (see `launchRunOverrides`, which the
+                // sponsored-split preview shares so it asks about exactly
+                // these runs). Just-created targets send neither: they are
+                // born with both.
+                ...launchRunOverrides(
+                  target,
+                  envPayload?.environmentIds ?? null,
+                ),
+                ...(expectedSponsoredByRun
+                  ? {
+                      expectedSponsored:
+                        expectedSponsoredByRun[targets.indexOf(target)],
+                    }
                   : {}),
               });
               if (result.status === "launched") {
@@ -1613,6 +1682,15 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
+              // The sponsored split moved under this run. Nothing was created
+              // for it, and the rest of the wave stops with it: continuing
+              // would launch runs against a split nobody looked at, and the
+              // only way to make them go through is more org credits.
+              const change = fundingChangeOf(err);
+              if (change) {
+                fundingChange = change;
+                return "stop";
+              }
               // The limit dialog already carries this sentence plus the
               // actions that clear it, so record NO message — an inline copy
               // would say the same thing twice with nothing to act on. The
@@ -1666,6 +1744,29 @@ export function NewSwarmCreateFlow({
         intensity: pushIntensity,
       });
 
+      if (fundingChange) {
+        const notice = fundingChangedNotice({
+          launched,
+          total: targets.length,
+          actualSponsored: fundingChange.actualSponsored,
+          totalConversations: fundingChange.totalConversations,
+        });
+        // Re-read the split so Confirm shows the one a new launch would get.
+        // The remaining runs are NEVER retried here: they would run against a
+        // split nobody looked at.
+        setFundingRefreshKey((key) => key + 1);
+        if (launched === 0 || launchedBatch.length === 0) {
+          setFundingNotice(notice);
+          return;
+        }
+        // Runs that did launch are real and stay on the Running screen.
+        toast.warning(notice);
+        setFundingNotice(null);
+        launchedRunLabelsRef.current = runLabels;
+        setLaunchedRuns(launchedBatch);
+        setStep("running");
+        return;
+      }
       if (
         limitDialogBlocked &&
         (launched === 0 || launchedBatch.length === 0)
@@ -2114,6 +2215,10 @@ export function NewSwarmCreateFlow({
             onSaveReusedGoal={async (journeyRefId, goal) => {
               await onUpdateJourney(journeyRefId, { goal });
             }}
+            projectId={projectId}
+            createdTargets={createdTargets}
+            fundingRefreshKey={fundingRefreshKey}
+            fundingNotice={fundingNotice}
           />
         ) : (
           <div

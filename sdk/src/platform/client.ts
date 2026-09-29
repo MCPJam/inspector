@@ -3969,6 +3969,12 @@ export class PlatformApiClient {
       goalId: string;
       swarmRunId?: string;
       environmentIds?: string[];
+      /**
+       * How many of this launch's conversations you expect to be sponsored.
+       * A different actual split is a 409 `swarm_funding_changed` (see
+       * `describeSwarmFundingChange`) and nothing is created.
+       */
+      expectedSponsored?: number;
     },
     options?: RequestOptions
   ): Promise<PlatformGoalRunLaunched> {
@@ -3982,6 +3988,9 @@ export class PlatformApiClient {
           ...(params.swarmRunId ? { swarmRunId: params.swarmRunId } : {}),
           ...(params.environmentIds?.length
             ? { environmentIds: params.environmentIds }
+            : {}),
+          ...(params.expectedSponsored !== undefined
+            ? { expectedSponsored: params.expectedSponsored }
             : {}),
         },
       },
@@ -4245,6 +4254,7 @@ export class PlatformApiClient {
       journeyId: string;
       waveId?: string;
       environmentIds?: string[];
+      expectedSponsored?: number;
     },
     options?: RequestOptions
   ): Promise<PlatformJourneyRunLaunched> {
@@ -4258,6 +4268,9 @@ export class PlatformApiClient {
           ...(params.waveId ? { waveId: params.waveId } : {}),
           ...(params.environmentIds?.length
             ? { environmentIds: params.environmentIds }
+            : {}),
+          ...(params.expectedSponsored !== undefined
+            ? { expectedSponsored: params.expectedSponsored }
             : {}),
         },
       },

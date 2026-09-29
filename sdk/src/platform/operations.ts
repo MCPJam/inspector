@@ -12780,6 +12780,14 @@ const launchGoalRunInput = z.object({
     .describe(
       "Fan out across these project environments instead of the goal's authored targets."
     ),
+  expectedSponsored: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of the organization's credits). If the actual split differs, the launch is refused with a 409 `swarm_funding_changed` and nothing is created. Omit it to accept whatever split applies."
+    ),
 });
 export type LaunchGoalRunInput = z.infer<typeof launchGoalRunInput>;
 
@@ -12819,6 +12827,9 @@ export const launchGoalRunOperation: PlatformOperation<
         ...(input.swarmRunId ? { swarmRunId: input.swarmRunId } : {}),
         ...(input.environmentIds?.length
           ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.expectedSponsored !== undefined
+          ? { expectedSponsored: input.expectedSponsored }
           : {}),
       },
       {
@@ -13416,6 +13427,14 @@ const launchJourneyRunInput = z.object({
     .describe(
       "Fan out across these project environments instead of the journey's authored targets."
     ),
+  expectedSponsored: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of the organization's credits). If the actual split differs, the launch is refused with a 409 `swarm_funding_changed` and nothing is created. Omit it to accept whatever split applies."
+    ),
 });
 export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
 
@@ -13457,6 +13476,9 @@ export const launchJourneyRunOperation: PlatformOperation<
         ...(input.waveId ? { waveId: input.waveId } : {}),
         ...(input.environmentIds?.length
           ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.expectedSponsored !== undefined
+          ? { expectedSponsored: input.expectedSponsored }
           : {}),
       },
       {

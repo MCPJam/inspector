@@ -72,6 +72,12 @@ import {
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import {
+  sponsoredPlatformFailure,
+  type SponsoredPlatformFailure,
+  type SwarmAttemptFunding,
+  type SwarmSessionFunding,
+} from "../../../shared/swarm-sponsorship.js";
 import { JourneyRunStreamHub } from "./swarm-stream-hub.js";
 import type {
   SwarmStreamEnvelope,
@@ -320,6 +326,13 @@ export interface StartJourneyRunOptions {
    * definition is always the backend's pinned copy.
    */
   hasRubric?: boolean;
+  /**
+   * Per-conversation funding from the create response (stable planned order).
+   * Absent (an older backend, or a runner that advertised no sponsorship) means
+   * every conversation is credit-funded, exactly as before. Only the backend
+   * can mark a conversation sponsored; this list is how the runner learns it.
+   */
+  sessionFunding?: SwarmSessionFunding[];
   convexHttpUrl: string;
   /**
    * Resolves the launching member's bearer for `/journey-execution/*` calls.
@@ -630,6 +643,43 @@ async function runJourneyFanOut(
     runStop.signal,
   ]);
   const sessionSignal = sessionSignals.signal;
+
+  // FUNDING. A sponsored conversation is paid by MCPJam's platform budget, so
+  // an organization spend cap cannot stop it and a platform limit must not stop
+  // a credit-funded one. The run therefore has two stop scopes below the
+  // run-level one: `creditStop` (org spend cap: credit-funded conversations
+  // only) and `sponsoredStop` (platform capacity: sponsored only). A run with no
+  // sponsored conversations never uses either and keeps the whole-run stop.
+  const fundingByConversation = new Map<string, SwarmAttemptFunding>();
+  for (const entry of opts.sessionFunding ?? []) {
+    fundingByConversation.set(
+      `${entry.targetId}\u0000${entry.sessionIdx}`,
+      entry.funding,
+    );
+  }
+  const isSponsored = (
+    target: PinnedHostExecutionSpec,
+    sessionIdx: number,
+  ): boolean =>
+    !!target.targetId &&
+    fundingByConversation.get(`${target.targetId}\u0000${sessionIdx}`) ===
+      "starter";
+  const targetHasSponsored = (target: PinnedHostExecutionSpec): boolean => {
+    for (let i = 0; i < sessionsPerTarget; i++) {
+      if (isSponsored(target, i)) return true;
+    }
+    return false;
+  };
+  const runHasSponsored = hosts.some(targetHasSponsored);
+  const creditStop = new AbortController();
+  const creditSignals = composeAbortSignals([
+    runDeadline.signal,
+    runStop.signal,
+    creditStop.signal,
+  ]);
+  const creditSignal = creditSignals.signal;
+  // Set when MCPJam's platform could not pay for a sponsored conversation.
+  let sponsoredStop: SponsoredPlatformFailure | undefined;
   // Set on an org spend-cap breach — halts scheduling across ALL hosts.
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
@@ -640,6 +690,12 @@ async function runJourneyFanOut(
   // nothing about that bound.
   const stopScheduling = () =>
     runStop.signal.aborted || runDeadline.signal.aborted === true;
+  // Whether a conversation of the given funding may still START. The run-level
+  // stop applies to both; the spend cap stops only credit-funded conversations
+  // and platform capacity only sponsored ones.
+  const canStart = (sponsored: boolean): boolean =>
+    !stopScheduling() &&
+    !(sponsored ? sponsoredStop !== undefined : creditStop.signal.aborted);
 
   // Independent heartbeat: an interval timer (NOT gated on turn/attempt
   // completion) started before the first attempt and stopped in `finally`.
@@ -743,7 +799,23 @@ async function runJourneyFanOut(
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
     let harnessTargetIntent: SandboxIntent | undefined;
+    // Setup and grounding are sponsored when ANY of the target's conversations
+    // is (the backend requires one sponsored attempt to honour the claim), and
+    // then they answer only to the run-level stop.
+    const targetSponsored = targetHasSponsored(target);
+    const targetSignal = targetSponsored ? sessionSignal : creditSignal;
     try {
+      // Nothing left that could start: a spend cap or platform limit already
+      // stopped everything this target has. Its attempts stay pending for the
+      // run-level finalize (never claimed, so sponsored ones are refunded).
+      if (
+        !Array.from({ length: sessionsPerTarget }, (_, i) =>
+          canStart(isSponsored(target, i)),
+        ).some(Boolean) ||
+        (opts.setupWrites && targetSponsored && sponsoredStop !== undefined)
+      ) {
+        return;
+      }
       bearer = await getBearer();
       if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined });
 
@@ -936,7 +1008,7 @@ async function runJourneyFanOut(
         runId,
         convexHttpUrl,
         bearer,
-        signal: sessionSignal,
+        signal: targetSignal,
       });
 
       if (!harnessTargetBlockedReason && !stopScheduling()) {
@@ -951,18 +1023,25 @@ async function runJourneyFanOut(
           managerFactory,
           convexHttpUrl,
           bearer,
-          signal: sessionSignal,
+          signal: targetSignal,
+          sponsored: targetSponsored,
         });
       }
 
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
-        // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
+        // Run-level stop (shutdown/cancel/deadline) halts THIS target too.
         if (stopScheduling()) return;
+        // Funding-scoped stop: a spend cap skips this target's credit-funded
+        // conversations and platform capacity its sponsored ones. Skipped
+        // conversations stay pending and are swept by the run-level finalize.
+        const sponsored = isSponsored(target, sessionIdx);
+        if (!canStart(sponsored)) continue;
+        const attemptSignal = sponsored ? sessionSignal : creditSignal;
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
         const releaseLocalSlot = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness))
-          ? await acquireLocalHarnessSlot(sessionSignal)
+          ? await acquireLocalHarnessSlot(attemptSignal)
           : undefined;
         try {
         // Per-SESSION re-resolution — the granularity that actually bounds
@@ -1190,7 +1269,7 @@ async function runJourneyFanOut(
               ...(intent.runtimeKind === "desktop-browser"
                 ? { runtimeKind: "desktop-browser" as const }
                 : {}),
-              signal: sessionSignal,
+              signal: attemptSignal,
             });
             if (provisioned.ok) {
               attemptSandbox = provisioned.sandbox;
@@ -1205,7 +1284,7 @@ async function runJourneyFanOut(
               // correctly (`rate_limited`/`spend_cap_exceeded` on a cap breach,
               // `runner_shutdown` on a cancel). Any terminal written here would
               // out-race that and record a misleading cause.
-              if (provisioned.code === "aborted" || sessionSignal.aborted) {
+              if (provisioned.code === "aborted" || attemptSignal.aborted) {
                 logEvent("attempt.provision_aborted", {
                   runId,
                   hostId,
@@ -1378,6 +1457,12 @@ async function runJourneyFanOut(
               ...(target.environmentRef?.environmentId
                 ? { environmentId: target.environmentRef.environmentId }
                 : {}),
+              // Sponsored conversation: every host step carries the platform
+              // claim (only on the MCPJam-hosted rail; the turn refuses
+              // anywhere else). Absent for credit-funded conversations.
+              ...(sponsored && targetId
+                ? { sponsorship: { targetId, sessionIdx: attemptSessionIdx } }
+                : {}),
               // Swarm authorizes via project membership — no scenario access
               // version, no scenario id.
             },
@@ -1387,7 +1472,7 @@ async function runJourneyFanOut(
             managerFactory: () => managerFactory(target),
             // Thread the run-level stop signal (composed with shutdown/cancel) so a
             // spend-cap short-circuit cancels this host's in-flight turns.
-            abortSignal: sessionSignal,
+            abortSignal: attemptSignal,
             budgets,
             nextPersonaTurn: (transcriptSoFar) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
@@ -1401,7 +1486,8 @@ async function runJourneyFanOut(
                 // runStop) so a short-circuit aborts a parked persona fetch
                 // immediately and the session unwinds (instead of lingering up to
                 // 120s in the persona call).
-                signal: sessionSignal,
+                signal: attemptSignal,
+                ...(sponsored ? { sponsored: true } : {}),
               }),
             persist: {
               sourceType: "swarm",
@@ -1462,7 +1548,10 @@ async function runJourneyFanOut(
           // reclassify a `failed` outcome whose turns were actually cancelled by the
           // run-stop (`sessionSignal.aborted`).
           const abortedBySpendCap =
-            spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+            !sponsored &&
+            spendCapTripped &&
+            outcome === "failed" &&
+            attemptSignal.aborted;
           // The run clock is the same kind of abort artifact as the spend cap,
           // and needs the same reclassification here rather than only at the
           // run-level finalize.
@@ -1477,7 +1566,7 @@ async function runJourneyFanOut(
           // run that ran out of clock looks like a run whose sessions broke.
           const abortedByRunDeadline =
             outcome === "failed" &&
-            sessionSignal.aborted &&
+            attemptSignal.aborted &&
             runDeadline.firedClock() === "run";
           const terminal = abortedBySpendCap
             ? {
@@ -1614,6 +1703,27 @@ async function runJourneyFanOut(
           // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
           // `rate_limited`, so `wallet_locked` and the billing codes land in
           // `failed` and would never reach the whole-run stop below.
+          //
+          // A SPONSORED conversation is exempt from all of this. MCPJam's
+          // platform budget pays for it, so an organization cap says nothing
+          // about it, and its own limit (platform capacity) is a sponsored-only
+          // stop: the credit-funded conversations of the same run carry on.
+          if (sponsored) {
+            const platform = sponsoredPlatformFailure({
+              code: errorReason,
+              message: errorMessage,
+            });
+            if (platform?.code === "platform_capacity" && !sponsoredStop) {
+              sponsoredStop = platform;
+              logEvent("run.sponsored_capacity_stop", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+              });
+            }
+            continue;
+          }
           const accountLimitFailure =
             outcome === "failed" &&
             !abortedBySpendCap &&
@@ -1631,14 +1741,22 @@ async function runJourneyFanOut(
               spendCapMessage = errorMessage
                 ? humanizeSwarmAttemptErrorMessage(errorMessage)
                 : undefined;
-              runStop.abort();
+              // Stops only credit-funded conversations when the run has
+              // sponsored ones still to run; otherwise the whole run, as ever.
+              if (runHasSponsored) creditStop.abort();
+              else runStop.abort();
               logEvent("run.spend_cap_short_circuit", {
                 stopReason: isCreditExhaustion({ message: errorMessage, code: errorReason }) ? "credits_exhausted" : "organization_usage_limit",
+                scopedToCredits: runHasSponsored,
                 runId,
                 hostId,
                 targetId,
                 sessionIdx,
               });
+              // With sponsored conversations still to run, later sessions of
+              // this target keep going: `canStart` skips the credit-funded
+              // ones and lets the sponsored ones through.
+              if (runHasSponsored) continue;
               return;
             }
             // PROVIDER rate-limit: stop THIS target's remaining sessions and mark
@@ -1651,7 +1769,14 @@ async function runJourneyFanOut(
               remaining: sessionsPerTarget - (sessionIdx + 1),
             });
             await markRemainingTargetAttemptsRateLimited(
-              { convexHttpUrl, bearer, projectId, runId, target },
+              {
+                convexHttpUrl,
+                bearer,
+                projectId,
+                runId,
+                target,
+                skip: (idx) => isSponsored(target, idx),
+              },
               sessionIdx + 1,
               sessionsPerTarget,
               cause === "transient_capacity"
@@ -1740,7 +1865,7 @@ async function runJourneyFanOut(
       // a misleading terminal on a cancelled run. Leave them `pending` and let
       // `finalizeRun` (or the spend-cap path) classify them — the same
       // reasoning as the `stopScheduling()` early return in the session loop.
-      if (sessionSignal.aborted) {
+      if (targetSignal.aborted) {
         logEvent("target.worker_aborted", {
           runId,
           hostId,
@@ -1790,8 +1915,25 @@ async function runJourneyFanOut(
         );
         return;
       }
+      // A sponsored setup that the PLATFORM refused is not missing
+      // prerequisites. Its sponsored attempts are left pending (never claimed,
+      // so the backend refunds them) for the run-level finalize to close as a
+      // platform problem; credit-funded attempts of the same target cannot run
+      // without the setup and fail as before.
+      const platformFailure =
+        err instanceof SwarmSetupError ? err.platformFailure : undefined;
+      if (platformFailure && !sponsoredStop) sponsoredStop = platformFailure;
       await markRemainingTargetAttemptsFailed(
-        { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
+        {
+          convexHttpUrl,
+          bearer: cleanupBearer,
+          projectId,
+          runId,
+          target,
+          ...(platformFailure
+            ? { skip: (idx: number) => isSponsored(target, idx) }
+            : {}),
+        },
         sessionIdx,
         sessionsPerTarget,
         err instanceof SwarmSetupError
@@ -1829,43 +1971,79 @@ async function runJourneyFanOut(
     // true but useless, since the actual event is that a spend-cap or shutdown
     // finalize never ran and the attempts are still `pending`. Naming it makes
     // the operational signal match what happened.
-    const finalizeTerminal = spendCapTripped
+    const spendCapTerminal = spendCapTripped
       ? {
           terminalStatus: "rate_limited" as const,
           errorCode: "spend_cap_exceeded",
           errorMessage: spendCapMessage,
         }
-      : abortSignal?.aborted
-        ? { errorCode: "runner_shutdown" }
-        : // The run's own clock is a run TERMINAL, exactly like the other two.
-          // Without this arm a deadline-only stop finalizes nothing: every
-          // attempt that never started stays `pending` until the backend's
-          // stale-run cron, and the ones the deadline aborted are recorded as
-          // ordinary session failures — a run that ran out of budget looking
-          // like a run whose sessions went wrong.
-          runDeadline.firedClock() === "run"
-          ? {
-              errorCode: "run_timeout",
-              errorMessage: `Run exceeded its ${budgets.runTimeoutMs}ms budget`,
-            }
-          : undefined;
-    if (finalizeTerminal && !stoppedByBackend) {
+      : undefined;
+    // What sweeps everything the spend cap did not. Without sponsored
+    // conversations the spend cap IS the whole-run stop and nothing follows it.
+    const restTerminal =
+      spendCapTripped && !runHasSponsored
+        ? undefined
+        : abortSignal?.aborted
+          ? { errorCode: "runner_shutdown" }
+          : // The run's own clock is a run TERMINAL, exactly like the other
+            // two. Without this arm a deadline-only stop finalizes nothing:
+            // every attempt that never started stays `pending` until the
+            // backend's stale-run cron, and the ones the deadline aborted are
+            // recorded as ordinary session failures — a run that ran out of
+            // budget looking like a run whose sessions went wrong.
+            runDeadline.firedClock() === "run"
+            ? {
+                errorCode: "run_timeout",
+                errorMessage: `Run exceeded its ${budgets.runTimeoutMs}ms budget`,
+              }
+            : // Sponsored conversations the platform could not start: closed
+              // as failed with the platform reason (the backend refunds the
+              // never-started ones).
+              sponsoredStop
+              ? {
+                  terminalStatus: "failed" as const,
+                  errorCode: sponsoredStop.code,
+                  errorMessage: sponsoredStop.message,
+                }
+              : undefined;
+    const finalizeCalls: Array<{
+      terminal: NonNullable<typeof spendCapTerminal | typeof restTerminal>;
+      fundingScope?: "credits";
+    }> = [
+      ...(spendCapTerminal
+        ? [
+            {
+              terminal: spendCapTerminal,
+              // The spend cap stops credit-funded conversations only: leave
+              // the sponsored ones for their own sweep below.
+              ...(runHasSponsored ? { fundingScope: "credits" as const } : {}),
+            },
+          ]
+        : []),
+      ...(restTerminal ? [{ terminal: restTerminal }] : []),
+    ];
+    if (finalizeCalls.length > 0 && !stoppedByBackend) {
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
           "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
           {
             runId,
-            reason: finalizeTerminal.errorCode,
+            reason: finalizeCalls[0]!.terminal.errorCode,
             error: error instanceof Error ? error.message : String(error),
           },
         );
         return undefined;
       });
       if (finalizeBearer) {
-        await finalizeRun(
-          { convexHttpUrl, bearer: finalizeBearer, projectId, runId },
-          finalizeTerminal,
-        );
+        for (const call of finalizeCalls) {
+          await finalizeRun(
+            { convexHttpUrl, bearer: finalizeBearer, projectId, runId },
+            {
+              ...call.terminal,
+              ...(call.fundingScope ? { fundingScope: call.fundingScope } : {}),
+            },
+          );
+        }
       }
     }
   } catch (error) {
@@ -1879,6 +2057,7 @@ async function runJourneyFanOut(
     heartbeatActive = false;
     clearInterval(heartbeat);
     sessionSignals.dispose();
+    creditSignals.dispose();
     // `sessionSignals.dispose()` releases the COMPOSITION; the deadline owns
     // its own timer and its own listener on the caller's signal, and those
     // stay armed until the (possibly two-hour) budget expires unless it is
@@ -1889,6 +2068,10 @@ async function runJourneyFanOut(
       targetCount: hosts.length,
       durationMs: Date.now() - runStartedAt,
       spendCapTripped,
+      sponsoredConversations: (opts.sessionFunding ?? []).filter(
+        (entry) => entry.funding === "starter",
+      ).length,
+      sponsoredStopped: sponsoredStop !== undefined,
       aborted: abortSignal?.aborted === true,
     });
   }
@@ -2045,6 +2228,8 @@ async function markRemainingTargetAttemptsRateLimited(
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    /** Conversations to leave alone (sponsored ones under a credit-side stop). */
+    skip?: (sessionIdx: number) => boolean;
   },
   fromIdx: number,
   toIdx: number,
@@ -2053,6 +2238,7 @@ async function markRemainingTargetAttemptsRateLimited(
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
+    if (ctx.skip?.(sessionIdx)) continue;
     const chatSessionId = swarmAttemptChatSessionId(
       runId,
       targetSessionIdentity(target),
@@ -2112,14 +2298,18 @@ async function markRemainingTargetAttemptsFailed(
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    /** Conversations to leave alone (sponsored ones, swept by the run finalize). */
+    skip?: (sessionIdx: number) => boolean;
   },
   fromIdx: number,
   toIdx: number,
   errorCode = "host_worker_failed",
+  errorMessage?: string,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
+    if (ctx.skip?.(sessionIdx)) continue;
     const chatSessionId = swarmAttemptChatSessionId(
       runId,
       targetSessionIdentity(target),
@@ -2144,6 +2334,7 @@ async function markRemainingTargetAttemptsFailed(
         status: "failed",
         chatSessionId,
         errorCode,
+        ...(errorMessage ? { errorMessage } : {}),
       });
     } catch (err) {
       logger.warn(
@@ -2172,6 +2363,8 @@ async function finalizeRun(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
+    /** Finalize credit-funded attempts only; sponsored ones are left alone. */
+    fundingScope?: "credits";
   },
 ): Promise<void> {
   try {
