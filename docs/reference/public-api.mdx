@@ -176,6 +176,13 @@ Errors always use the canonical body `{ code, message, details? }`. The `code`
 is stable and machine-readable; `message` is human-readable and may change;
 `details` is an optional, unstructured bag.
 
+Every API response also carries an `x-request-id` header — the id the server
+logged the request under. When a call fails, the SDK surfaces it as
+`PlatformApiError.requestId` and the CLI includes it as `details.requestId` in
+JSON error output. Quote it when filing a bug report so the request can be
+found in server logs. Client-side failures (`NETWORK_ERROR`, `TIMEOUT`,
+`status: 0`) never reached the API and carry no id.
+
 | Code | HTTP | Meaning |
 | --- | --- | --- |
 | `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
