@@ -1778,6 +1778,10 @@ async function runJourneyFanOut(
               fromSessionIdx: sessionIdx + 1,
               remaining: sessionsPerTarget - (sessionIdx + 1),
             });
+            const transientMessage =
+              cause === "transient_capacity"
+                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                : undefined;
             await markRemainingTargetAttemptsRateLimited(
               {
                 convexHttpUrl,
@@ -1789,10 +1793,25 @@ async function runJourneyFanOut(
               },
               sessionIdx + 1,
               sessionsPerTarget,
-              cause === "transient_capacity"
-                ? humanizeSwarmAttemptErrorMessage(errorMessage)
-                : undefined,
+              transientMessage,
             );
+            // The sponsored remainder is closed through the backend's terminal
+            // path instead (claiming it would spend the allowance), so it ends
+            // with the provider's limit and its slots go back.
+            if (targetHasSponsored(target)) {
+              await finalizeTargetSponsoredAttempts(
+                { convexHttpUrl, bearer, projectId, runId, target },
+                {
+                  terminalStatus: "rate_limited",
+                  errorCode: transientMessage
+                    ? "user_rate_limit"
+                    : "rate_limited",
+                  ...(transientMessage
+                    ? { errorMessage: transientMessage }
+                    : {}),
+                },
+              );
+            }
             return;
           }
         } finally {
@@ -1933,6 +1952,13 @@ async function runJourneyFanOut(
       const platformFailure =
         err instanceof SwarmSetupError ? err.platformFailure : undefined;
       if (platformFailure && !sponsoredStop) sponsoredStop = platformFailure;
+      const failureCode =
+        err instanceof SwarmSetupError
+          ? "prerequisites_unavailable"
+          : "host_worker_failed";
+      // Sponsored conversations are never claimed here: claiming one counts as
+      // execution and would spend the allowance for a conversation that never
+      // ran. They are closed below instead.
       await markRemainingTargetAttemptsFailed(
         {
           convexHttpUrl,
@@ -1940,16 +1966,28 @@ async function runJourneyFanOut(
           projectId,
           runId,
           target,
-          ...(platformFailure
-            ? { skip: (idx: number) => isSponsored(target, idx) }
-            : {}),
+          skip: (idx: number) => isSponsored(target, idx),
         },
         sessionIdx,
         sessionsPerTarget,
-        err instanceof SwarmSetupError
-          ? "prerequisites_unavailable"
-          : "host_worker_failed",
+        failureCode,
       );
+      // A platform refusal leaves them for the run-level finalize, which closes
+      // them as a platform problem. Any other failure closes this target's
+      // sponsored conversations now, with this failure's reason, and the ones
+      // that never started go back to the allowance.
+      if (!platformFailure && targetHasSponsored(target)) {
+        await finalizeTargetSponsoredAttempts(
+          {
+            convexHttpUrl,
+            bearer: cleanupBearer,
+            projectId,
+            runId,
+            target,
+          },
+          { terminalStatus: "failed", errorCode: failureCode },
+        );
+      }
     }
   };
 
@@ -2221,6 +2259,59 @@ async function resolveTargetPinnedSkills(args: {
     });
   }
   return artifacts;
+}
+
+/**
+ * Close a target's SPONSORED conversations that have not reached a terminal
+ * state, without claiming them. A credit-funded conversation is walked through
+ * the claim (`running`) and then its terminal, but for a sponsored one that
+ * claim counts as execution and spends the launcher's allowance, and the
+ * backend refuses a terminal report on a pending attempt. So this uses the
+ * backend's own terminal path, `finalize-pending` scoped to this target's
+ * sponsored conversations: one that never started is closed with this
+ * target's own reason AND handed back to the allowance; one that had started
+ * ends failed and keeps its unit. Other targets are not touched. Best-effort:
+ * a failure is logged and the stale-run sweep stays the backstop.
+ */
+async function finalizeTargetSponsoredAttempts(
+  ctx: {
+    convexHttpUrl: string;
+    bearer: string;
+    projectId: string;
+    runId: string;
+    target: PinnedHostExecutionSpec;
+  },
+  terminal: {
+    terminalStatus: "failed" | "rate_limited";
+    errorCode: string;
+    errorMessage?: string;
+  },
+): Promise<void> {
+  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  if (!target.targetId) return;
+  try {
+    await finalizePendingAttempts(convexHttpUrl, bearer, {
+      projectId,
+      runId,
+      terminalStatus: terminal.terminalStatus,
+      errorCode: terminal.errorCode,
+      ...(terminal.errorMessage
+        ? { errorMessage: terminal.errorMessage }
+        : {}),
+      fundingScope: "sponsored",
+      targetId: target.targetId,
+    });
+  } catch (err) {
+    logger.warn(
+      "[swarm.runner] failed to close a target's sponsored attempts; leaving them for the stale-run sweep",
+      {
+        runId,
+        hostId: target.hostId,
+        targetId: target.targetId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+  }
 }
 
 /**

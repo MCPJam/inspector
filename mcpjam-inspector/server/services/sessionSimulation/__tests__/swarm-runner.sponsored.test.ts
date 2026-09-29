@@ -391,13 +391,161 @@ describe("sponsored swarm conversations: a provider rate limit still stops the t
       }) as never,
     );
 
-    // Only the first conversation ran; the others were left unclaimed (so the
-    // backend refunds them) instead of hammering the throttled provider.
+    // Only the first conversation ran; the others were never claimed (a claim
+    // would count as execution) instead of hammering the throttled provider.
     expect(claimed()).toHaveLength(1);
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
     expect(terminals().map((t) => `${t.sessionIdx}:${t.status}`)).toEqual([
       "0:rate_limited",
     ]);
+    // They are closed through the backend's terminal path, scoped to this
+    // target's sponsored conversations, so their slots go back and the run
+    // does not wait for the stale-run sweep.
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      runId: "run-1",
+      terminalStatus: "rate_limited",
+      errorCode: "rate_limited",
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+  });
+
+  it("closes only the sponsored remainder when a credit-funded conversation is the one throttled", async () => {
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage: "429 Too Many Requests from the model provider",
+    });
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "credits", "starter", "starter"),
+      }) as never,
+    );
+
+    // The credit-funded conversation is the only one claimed. The sponsored
+    // ones are closed by one scoped call, never by claiming them.
+    expect(claimed().map((c) => c.sessionIdx)).toEqual([0]);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+  });
+
+  it("does not call the scoped close for a target with no sponsored conversations", async () => {
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage: "429 Too Many Requests from the model provider",
+    });
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "credits", "credits", "credits"),
+      }) as never,
+    );
+
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (call) => call[2].fundingScope === "sponsored",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("sponsored swarm conversations: a failure before any conversation starts never spends the allowance", () => {
+  const missingPrerequisites = () =>
+    new SwarmSetupError({
+      status: "failed",
+      readiness: "unavailable",
+      reason: "transport_failed",
+    } as never);
+
+  it("closes every sponsored conversation of a target whose setup failed without claiming any of them", async () => {
+    setupTurnMock.mockRejectedValue(missingPrerequisites());
+
+    await startJourneyRun(
+      opts({
+        setupWrites: true,
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+      }) as never,
+    );
+
+    // Nothing ran, so nothing may look like it started: a `running` claim is
+    // what the backend counts as execution, and it would keep all three units.
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    expect(claimed()).toHaveLength(0);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      runId: "run-1",
+      terminalStatus: "failed",
+      errorCode: "prerequisites_unavailable",
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+  });
+
+  it("still fails the credit-funded conversation of a mixed target the ordinary way", async () => {
+    setupTurnMock.mockRejectedValue(missingPrerequisites());
+
+    await startJourneyRun(
+      opts({
+        setupWrites: true,
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "credits", "starter", "starter"),
+      }) as never,
+    );
+
+    // Only the credit-funded conversation is claimed and failed by the runner.
+    expect(claimed().map((c) => c.sessionIdx)).toEqual([0]);
+    expect(terminals().map((t) => `${t.sessionIdx}:${t.errorCode}`)).toEqual([
+      "0:prerequisites_unavailable",
+    ]);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      fundingScope: "sponsored",
+      targetId: "target-a",
+      errorCode: "prerequisites_unavailable",
+    });
+  });
+
+  it("gives an unexpected worker failure the same treatment, with its own reason", async () => {
+    setupTurnMock.mockRejectedValue(new Error("pinned skill could not load"));
+
+    await startJourneyRun(
+      opts({
+        setupWrites: true,
+        sessionsPerTarget: 2,
+        sessionFunding: funding(A.targetId, "starter", "starter"),
+      }) as never,
+    );
+
+    expect(claimed()).toHaveLength(0);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "failed",
+      errorCode: "host_worker_failed",
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+  });
+
+  it("leaves a target with no sponsored conversations exactly as before", async () => {
+    setupTurnMock.mockRejectedValue(missingPrerequisites());
+
+    await startJourneyRun(
+      opts({
+        setupWrites: true,
+        sessionsPerTarget: 2,
+        sessionFunding: [],
+      }) as never,
+    );
+
+    expect(claimed().map((c) => c.sessionIdx)).toEqual([0, 1]);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 });
 
@@ -552,6 +700,13 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
       }) as never,
     );
 
+    // A platform refusal is not closed per target: the run-level sweep closes
+    // it as a platform stop.
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (call) => call[2].targetId !== undefined,
+      ),
+    ).toBe(false);
     // A's sponsored attempt is left unclaimed (so it is refunded) and swept as
     // a platform stop; A's credit attempt fails as missing prerequisites.
     const aClaims = claimed().filter((c) => c.targetId === "target-a");

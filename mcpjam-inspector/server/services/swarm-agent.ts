@@ -997,10 +997,13 @@ export async function heartbeatJourneyRun(
  *     `errorCode: "spend_cap_exceeded"`
  *   - controlled shutdown / cancel → `errorCode: "runner_shutdown"`
  *
- * A provider rate-limit is per-HOST (it stops one host, not the run), so it does
- * NOT use this — the runner marks that host's remaining attempts via
- * {@link reportAttempt} instead. The backend stale-run cron is the hard backstop
- * for anything this best-effort call misses.
+ * A provider rate-limit is per-HOST (it stops one host, not the run), so a
+ * credit-funded host's remaining attempts are marked via {@link reportAttempt}
+ * instead. A SPONSORED conversation cannot be: claiming it `running` counts as
+ * execution and spends the launcher's allowance. So a target's unstarted
+ * sponsored conversations are closed here, scoped with `fundingScope:
+ * "sponsored"` and `targetId`, which the backend refunds. The backend stale-run
+ * cron is the hard backstop for anything this best-effort call misses.
  */
 export async function finalizePendingAttempts(
   convexHttpUrl: string,
@@ -1014,9 +1017,16 @@ export async function finalizePendingAttempts(
     /**
      * `"credits"` finalizes credit-funded attempts only and leaves sponsored
      * ones pending, so an organization spend cap cannot stop (or refund) a
-     * conversation the platform is paying for.
+     * conversation the platform is paying for. `"sponsored"` finalizes the
+     * sponsored ones only; pair it with `targetId` to close one target's.
      */
-    fundingScope?: "credits";
+    fundingScope?: "credits" | "sponsored";
+    /**
+     * Only this target's attempts. Always pair it with a `fundingScope` the
+     * runner means: without one the backend would close the target's
+     * credit-funded conversations too.
+     */
+    targetId?: string;
   },
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
@@ -1026,6 +1036,7 @@ export async function finalizePendingAttempts(
       projectId: args.projectId,
       runId: args.runId,
       ...(args.fundingScope ? { fundingScope: args.fundingScope } : {}),
+      ...(args.targetId ? { targetId: args.targetId } : {}),
       ...(args.terminalStatus ? { terminalStatus: args.terminalStatus } : {}),
       ...(args.errorCode ? { errorCode: args.errorCode } : {}),
       ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),

@@ -576,4 +576,29 @@ describe("swarm-agent finalizePendingAttempts — funding scope", () => {
     });
     expect(bodyOf()).not.toHaveProperty("fundingScope");
   });
+
+  it("sends the sponsored scope with its target, and no target unless asked", async () => {
+    await finalizePendingAttempts(CONVEX_HTTP_URL, "t", {
+      projectId: "p",
+      runId: "r",
+      terminalStatus: "failed",
+      errorCode: "prerequisites_unavailable",
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+    expect(bodyOf()).toMatchObject({
+      runId: "r",
+      terminalStatus: "failed",
+      errorCode: "prerequisites_unavailable",
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+
+    fetchMock.mockClear();
+    await finalizePendingAttempts(CONVEX_HTTP_URL, "t", {
+      projectId: "p",
+      runId: "r",
+    });
+    expect(bodyOf()).not.toHaveProperty("targetId");
+  });
 });
