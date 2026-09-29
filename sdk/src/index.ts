@@ -1698,6 +1698,21 @@ export {
   selectionKey,
   defaultFallbackForPurpose,
 } from "./host-config/index.js";
+export {
+  ANTHROPIC_REASONING_EFFORTS,
+  GOOGLE_REASONING_EFFORTS,
+  HARNESS_REASONING_EFFORTS,
+  OPENAI_REASONING_EFFORTS,
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+  supportedReasoningEfforts,
+} from "./host-config/index.js";
+export type {
+  ReasoningEffortProviderOptions,
+  ReasoningEffortRoute,
+  SupportedReasoningEffortsInput,
+} from "./host-config/index.js";
 export type {
   ModelSelection,
   ModelSelectionSource,
