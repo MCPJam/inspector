@@ -667,8 +667,8 @@ export type EvalIteration = {
    * What this iteration actually ran on (backend `lib/executionRecord.ts`):
    * resolved model, rail and connection, harness runtime, effective settings,
    * routing attempts and any deviation. Absent on rows recorded before the
-   * record existed — render "not recorded", never a guess. Read it through
-   * `readExecutionRecord` (the `ExecutionProvenance` component does).
+   * record existed. Read it through `readExecutionRecord`. Not shown in the
+   * UI; kept on the row for other readers.
    */
   execution?: unknown;
   error?: string;

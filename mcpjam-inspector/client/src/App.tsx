@@ -3,6 +3,7 @@ import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
 import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { useOrganizationDeletionStore } from "@/stores/organization-deletion-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -2861,13 +2862,21 @@ export default function App() {
         : nextIds;
     });
   }, [isLoadingOrganizations, sortedOrganizations]);
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
+  );
   const effectiveOrganizations = useMemo(
     () =>
       sortedOrganizations.filter(
         (organization) =>
+          !deletingOrganizationIds.includes(organization._id) &&
           !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+    [
+      deletingOrganizationIds,
+      optimisticallyDeletedOrganizationIds,
+      sortedOrganizations,
+    ],
   );
   // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
   // whose membership hasn't linked yet, so every org-scoped query for it is
@@ -4132,12 +4141,22 @@ export default function App() {
     shellBillingStatus?.isOwner === false;
 
   useEffect(() => {
+    // A pending delete hides the org, which nulls billingProjectId; keep the
+    // project so a failed delete gives it back.
+    const activeProjectOrganizationId = activeProject?.organizationId;
+    const isActiveProjectDeletionPending =
+      !!activeProjectOrganizationId &&
+      deletingOrganizationIds.includes(activeProjectOrganizationId) &&
+      !optimisticallyDeletedOrganizationIds.includes(
+        activeProjectOrganizationId,
+      );
     const hasStaleCloudProjectSelection =
       isCloudSyncActive &&
       !isLoadingOrganizations &&
       !isLoadingRemoteProjects &&
       activeProjectId !== "none" &&
       (!!convexProjectId || !activeProject) &&
+      !isActiveProjectDeletionPending &&
       !billingProjectId;
 
     if (!hasStaleCloudProjectSelection) {
@@ -4151,9 +4170,11 @@ export default function App() {
     billingProjectId,
     clearConvexActiveProjectSelection,
     convexProjectId,
+    deletingOrganizationIds,
     isCloudSyncActive,
     isLoadingOrganizations,
     isLoadingRemoteProjects,
+    optimisticallyDeletedOrganizationIds,
   ]);
 
   // Fetch project servers to map server IDs to names
@@ -4990,9 +5011,13 @@ export default function App() {
       return;
     }
 
+    // A pending delete holds the route only while the org is still listed, so
+    // Back to an org that is already gone still redirects.
     if (
       routeOrganizationId &&
-      optimisticallyDeletedOrganizationIds.includes(routeOrganizationId)
+      ((deletingOrganizationIds.includes(routeOrganizationId) &&
+        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
+        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
     }
@@ -5015,6 +5040,7 @@ export default function App() {
     }
   }, [
     activeTab,
+    deletingOrganizationIds,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
@@ -5023,6 +5049,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
     setActiveOrganizationId,
+    sortedOrganizations,
   ]);
 
   const handleOrganizationDeleted = useCallback(
