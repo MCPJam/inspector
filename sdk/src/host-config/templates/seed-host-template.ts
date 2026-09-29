@@ -1863,10 +1863,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
-            // need this to take that path. The 3.14.27 version is identity
-            // metadata only; the capability notes above remain attributed to
-            // their named probes until a fresh probe updates both.
-            hostInfo: { name: "Cursor", version: "3.14.27" },
+            // need this to take that path. The version is identity metadata
+            // only; bumped with the 2026-09-29 re-probe (was 3.14.27), which
+            // re-confirmed every capability note above.
+            hostInfo: { name: "Cursor", version: "3.21.16" },
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.

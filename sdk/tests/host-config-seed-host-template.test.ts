@@ -248,7 +248,7 @@ describe("seedHostTemplate", () => {
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
     const config = seedHostTemplate("cursor", { theme: "dark" });
     expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
-      "3.14.27"
+      "3.21.16"
     );
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },

@@ -119,7 +119,7 @@ export const MCP_APPS_MISTRAL: McpAppsCapabilities = frozen({
   safeAreaInsets: false,
 });
 
-/** Cursor 3.14.27 probe — full minus updateModelContext + message. */
+/** Cursor probe (3.14.27; re-confirmed on 3.21.16) — full minus updateModelContext + message. */
 export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   availableDisplayModes: ["inline"],

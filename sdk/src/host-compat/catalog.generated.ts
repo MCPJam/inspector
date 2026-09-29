@@ -2515,7 +2515,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2605,7 +2605,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "Cursor",
-              version: "3.14.27",
+              version: "3.21.16",
             },
           },
           sandbox: {

@@ -2876,7 +2876,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.14.27",
+            "version": "3.21.16",
           },
         },
       },
@@ -3006,7 +3006,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.14.27",
+            "version": "3.21.16",
           },
         },
       },
