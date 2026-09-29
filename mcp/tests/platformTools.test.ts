@@ -1048,6 +1048,73 @@ describe("runPlatformOperation", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+    // No x-request-id on the response, so nothing to quote.
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Denied",
+    });
+  });
+
+  it("quotes the failing request's id in both channels", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "INTERNAL_ERROR", message: "Something broke" },
+          {
+            status: 500,
+            headers: { "x-request-id": "req_0123456789abcdef" },
+          }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      "INTERNAL_ERROR: Something broke (request id: req_0123456789abcdef)"
+    );
+    expect(result.structuredContent?.error).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Something broke",
+      requestId: "req_0123456789abcdef",
+    });
+  });
+
+  it("keeps the request id beside a refusal's retry guidance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "RATE_LIMITED", message: "Slow down." },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": "30",
+              "x-request-id": "req_0123456789abcdef",
+            },
+          }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.content[0]?.text).toBe(
+      "RATE_LIMITED: Slow down. (request id: req_0123456789abcdef) Retry after 30s, not sooner."
+    );
+    expect(
+      (result.structuredContent?.error as { requestId?: string }).requestId
+    ).toBe("req_0123456789abcdef");
   });
 
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {

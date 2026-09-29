@@ -226,3 +226,56 @@ test("a usage-limit refusal keeps its code and exit, and carries when to retry",
     retryAfterSeconds: 120,
   });
 });
+
+test("a failing request's id rides in details, beside the server's own", () => {
+  const error = toCliError(
+    new PlatformApiError("Something broke.", "INTERNAL_ERROR", {
+      status: 500,
+      details: { reason: "upstream" },
+      requestId: "req_0123456789abcdef",
+    }),
+  );
+  assert.equal(error.code, "INTERNAL_ERROR");
+  assert.equal(error.message, "Something broke.");
+  assert.deepEqual(error.details, {
+    reason: "upstream",
+    requestId: "req_0123456789abcdef",
+  });
+});
+
+test("a request id with no server details still lands in details", () => {
+  const error = toCliError(
+    new PlatformApiError("Not found.", "NOT_FOUND", {
+      status: 404,
+      requestId: "req_0123456789abcdef",
+    }),
+  );
+  assert.deepEqual(error.details, { requestId: "req_0123456789abcdef" });
+});
+
+test("a refusal carries its request id next to the retry guidance", () => {
+  const error = toCliError(
+    new PlatformApiError("Slow down.", "RATE_LIMITED", {
+      status: 429,
+      retryAfter: 30,
+      requestId: "req_0123456789abcdef",
+    }),
+  );
+  const details = error.details as Record<string, unknown>;
+  assert.equal(details.requestId, "req_0123456789abcdef");
+  assert.deepEqual(details.refusal, {
+    status: 429,
+    code: "RATE_LIMITED",
+    retryAfterSeconds: 30,
+  });
+});
+
+test("an error without a request id keeps its details untouched", () => {
+  // Client-side failures never reached the API; nothing is invented.
+  const error = toCliError(
+    new PlatformApiError("Failed to reach the MCPJam API.", "NETWORK_ERROR", {
+      status: 0,
+    }),
+  );
+  assert.equal(error.details, undefined);
+});
