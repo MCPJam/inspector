@@ -3712,7 +3712,8 @@ test("eval run --format human --reporter redirects the disclosure block to stder
   }
 });
 
-test("eval run --wait prints what each iteration ran on, after the receipt", async () => {
+// The record stays on the iteration, but `--wait` no longer prints it.
+test("eval run --wait does not print what each iteration ran on", async () => {
   const fixture = await startEvalFixture({
     runCaseExecution: {
       requested: { source: "legacy", modelId: "anthropic/claude-sonnet-4.5" },
@@ -3748,46 +3749,11 @@ test("eval run --wait prints what each iteration ran on, after the receipt", asy
     );
 
     assert.equal(run.result.exitCode, 0);
-    assert.match(
-      run.stdout,
-      /echo works #1: Ran on anthropic\/claude-sonnet-4\.5 via OpenRouter \(MCPJam key\), max output provider default/
-    );
-    assert.match(
-      run.stdout,
-      /Deviation: Provider fallback — The openrouter fallback served the request\./
-    );
-    assert.ok(
-      run.stdout.indexOf("View:") < run.stdout.indexOf("Iteration provenance")
-    );
-  } finally {
-    process.exitCode = 0;
-    await fixture.close();
-  }
-});
-
-test("eval run --wait says an iteration without a record is not recorded", async () => {
-  const fixture = await startEvalFixture();
-  try {
-    const run = await captureProcessOutput(() =>
-      main(
-        evalArgv(
-          fixture.baseUrl,
-          "run",
-          "--project",
-          "proj-alpha",
-          "--suite",
-          "suite-1",
-          "--wait",
-          "--format",
-          "human"
-        ),
-        { telemetry: telemetryDisabled }
-      )
-    );
-
-    assert.equal(run.result.exitCode, 0);
-    assert.match(run.stdout, /echo works #1: not recorded/);
+    assert.match(run.stdout, /View:/);
+    assert.doesNotMatch(run.stdout, /Iteration provenance/);
     assert.doesNotMatch(run.stdout, /Ran on/);
+    assert.doesNotMatch(run.stdout, /Deviation:/);
+    assert.doesNotMatch(run.stderr, /Iteration provenance|Ran on/);
   } finally {
     process.exitCode = 0;
     await fixture.close();
