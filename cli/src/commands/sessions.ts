@@ -43,6 +43,10 @@ import {
   resolveCloudProjectArgs,
 } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
+import {
+  EFFORT_FLAG_DESCRIPTION,
+  parseEffortFlag,
+} from "../lib/model-selection-flags.js";
 
 type SearchOptions = PlatformOptions & {
   project?: string;
@@ -278,6 +282,10 @@ export function registerSessionsCommands(program: Command): void {
             "Cap the tool calls this turn may make. 0 answers without tools."
           )
           .option("--temperature <n>", "Sampling temperature (0-2)")
+          .option(
+            "--effort <level>",
+            `${EFFORT_FLAG_DESCRIPTION} First turn only: pinned to the session, refused on a continuation. Replaces the temperature, so it cannot be combined with --temperature.`
+          )
       )
     ),
     {
@@ -310,6 +318,10 @@ export function registerSessionsCommands(program: Command): void {
         { min: 0, max: 16 }
       ),
       temperature: parseFloatOption(options.temperature),
+      reasoningEffort:
+        options.effort !== undefined
+          ? parseEffortFlag(options.effort)
+          : undefined,
     }),
     // A Playground turn runs a model, and often tools with it. The 30s program
     // default expired mid-turn while the turn kept running and spending, which
@@ -391,6 +403,7 @@ type SendOptions = BrowserOptions & {
   maxSteps?: string;
   maxToolCalls?: string;
   temperature?: string;
+  effort?: string;
 };
 
 type ShowOptions = PlatformOptions & {

@@ -716,6 +716,61 @@ describe("saved client model selection", () => {
     expect(JSON.stringify(hosted)).not.toContain("modelSelection");
   });
 
+  it("applies a hosted selection's reasoning effort instead of deleting it with the selection", async () => {
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelId: "anthropic/claude-opus-4.7",
+        modelSelection: {
+          modelId: "anthropic/claude-opus-4.7",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    });
+    const { executor } = await run();
+    // The runner applies it (and so drops the temperature it would replace).
+    expect(
+      (executor as unknown as { getReasoningEffort(): string }).getReasoningEffort()
+    ).toBe("high");
+  });
+
+  it("a saved effort on a model with no effort control refuses before any spend", async () => {
+    // The mcpjam-hosted runner only serves Claude and GPT-5, both of which take
+    // an effort; an unsupported one must be an error, never a silent default.
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelId: "anthropic/claude-3-5-haiku-20241022",
+        modelSelection: {
+          modelId: "anthropic/claude-3-5-haiku-20241022",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    });
+    await expect(run()).rejects.toThrow(/not supported/);
+  });
+
+  it("a saved selection temperature beats the host default", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "hosted",
+        settings: { temperature: 0.1 },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const { executor } = await run();
+    expect(executor.getTemperature()).toBe(0.1);
+  });
+
   it("leaves a client without a selection unchanged", async () => {
     vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
       detail()

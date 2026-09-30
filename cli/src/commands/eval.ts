@@ -224,6 +224,11 @@ import {
   detectInlineImageProtocol,
   encodeInlineImage,
 } from "../lib/terminal-image.js";
+import {
+  EFFORT_FLAG_DESCRIPTION,
+  effortShorthand,
+  parseModelSelectionFlag,
+} from "../lib/model-selection-flags.js";
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -343,6 +348,7 @@ function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
+  composeModelSelection?: string | string[];
   composeServer?: string[];
   composeServerGroup?: string;
   composeHostServers?: boolean;
@@ -357,6 +363,7 @@ function composeField(options: {
     server?: string;
     servers?: string[];
     models?: string[];
+    modelSelections?: Record<string, unknown>[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
@@ -384,9 +391,17 @@ function composeField(options: {
     : options.composeModel
     ? [options.composeModel]
     : undefined;
+  const modelSelections = (
+    Array.isArray(options.composeModelSelection)
+      ? options.composeModelSelection
+      : options.composeModelSelection
+      ? [options.composeModelSelection]
+      : []
+  ).map((raw) => parseModelSelectionFlag(raw, "--compose-model-selection"));
   const refinements =
     options.composeComputer !== undefined ||
     models !== undefined ||
+    modelSelections.length > 0 ||
     (options.composeServer?.length ?? 0) > 0 ||
     options.composeServerGroup !== undefined ||
     options.composeHostServers === true ||
@@ -439,6 +454,7 @@ function composeField(options: {
         : {}),
       ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
+      ...(modelSelections.length > 0 ? { modelSelections } : {}),
       ...(options.withClientDefault === true
         ? { includeClientDefault: true }
         : {}),
@@ -1148,6 +1164,10 @@ function buildSuiteUpdateInput(options: Record<string, any>): {
     exec.systemPrompt = options.systemPrompt;
   if (options.temperature !== undefined)
     exec.temperature = Number(options.temperature);
+  if (options.modelSelection !== undefined)
+    exec.modelSelection = parseModelSelectionFlag(options.modelSelection);
+  const reasoningEffort = effortShorthand(options);
+  if (reasoningEffort !== undefined) exec.reasoningEffort = reasoningEffort;
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
@@ -3545,6 +3565,10 @@ export function registerEvalCommands(program: Command): void {
       "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set."
     )
     .option(
+      "--compose-model-selection <json...>",
+      "A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model; one selection per model."
+    )
+    .option(
       "--with-client-default",
       "Also launch an inherit cell that uses each client's pinned model, alongside --compose-model"
     )
@@ -3589,6 +3613,7 @@ export function registerEvalCommands(program: Command): void {
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string[];
+          composeModelSelection?: string[];
           withClientDefault?: boolean;
           saveTargets?: boolean;
           composeServer?: string[];
@@ -5707,6 +5732,15 @@ export function registerEvalCommands(program: Command): void {
     )
     .option("--host <id-or-name...>", "Deprecated alias for --client")
     .option("--model <id>", "Execution model id")
+    .option(
+      "--model-selection <json>",
+      "Whole saved model selection for the suite (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Must be for --model when both are given."
+    )
+    .option("--effort <level>", EFFORT_FLAG_DESCRIPTION)
+    .option(
+      "--clear-effort",
+      "Remove the reasoning effort from the suite's model selection"
+    )
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
     // The criterion, in the units its scope takes. A suite has ONE of these,
@@ -6030,6 +6064,10 @@ export function registerEvalCommands(program: Command): void {
       "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
     )
     .option(
+      "--compose-model-selection <json>",
+      "One whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -) to run this case on, at its effort."
+    )
+    .option(
       "--compose-server <id-or-name...>",
       "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
     )
@@ -6056,6 +6094,7 @@ export function registerEvalCommands(program: Command): void {
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string;
+          composeModelSelection?: string;
           composeServer?: string[];
           composeServerGroup?: string;
           composeHostServers?: boolean;

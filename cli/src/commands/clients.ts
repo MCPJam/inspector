@@ -27,6 +27,10 @@ import {
   type PlatformOptions,
 } from "../lib/platform-command.js";
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
+import {
+  EFFORT_FLAG_DESCRIPTION,
+  effortShorthand,
+} from "../lib/model-selection-flags.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -136,6 +140,10 @@ const SETTABLE_FIELDS: Readonly<
     unsettable: false,
     note: "a client cannot be edited into one that pins no model",
   },
+  // A whole selection as JSON (source, connection, settings.reasoningEffort).
+  // `--unset modelSelection` drops the saved selection and keeps the bare
+  // `modelId`. For just the effort on an existing selection use --effort.
+  modelSelection: { kind: "json", unsettable: true },
   // Required-resettable: --unset resets to the canonical default.
   systemPrompt: { kind: "string", unsettable: true },
   temperature: { kind: "number", unsettable: true },
@@ -424,6 +432,11 @@ export function registerClientsCommands(program: Command): void {
       "--unset <key...>",
       "Clear an optional field to absent, or reset a required one to its default. Repeatable"
     )
+    .option("--effort <level>", EFFORT_FLAG_DESCRIPTION)
+    .option(
+      "--clear-effort",
+      "Remove the reasoning effort from the client's model selection"
+    )
     .option(
       "--file <path>",
       "Replacement client config v2 JSON (or - for stdin)"
@@ -440,6 +453,8 @@ export function registerClientsCommands(program: Command): void {
             name?: string;
             expectedName?: string;
             expectedConfigId?: string;
+            effort?: string;
+            clearEffort?: boolean;
             set?: string[];
             unset?: string[];
             file?: string;
@@ -450,6 +465,7 @@ export function registerClientsCommands(program: Command): void {
         const globalOptions = getGlobalOptions(command);
         const config = loadConfigObject(options);
         const set = buildSetBlock(options.set, options.unset);
+        const reasoningEffort = effortShorthand(options);
         if (config !== undefined && set !== undefined) {
           throw usageError(
             "Use either --set/--unset (named fields) or --file/--json (whole-config replacement), not both."
@@ -467,6 +483,7 @@ export function registerClientsCommands(program: Command): void {
             : {}),
           ...(config !== undefined ? { config } : {}),
           ...(set !== undefined ? { set } : {}),
+          ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         });
         const result = await runPlatformCommand(
           platformOptionsOf(command),

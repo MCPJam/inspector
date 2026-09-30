@@ -279,6 +279,8 @@ interface EvalFixtureOptions {
    * validator.
    */
   environmentSecretGrants?: boolean;
+  /** Publish `modelSelections: true`; absent is a deployment that predates it. */
+  environmentModelSelections?: boolean;
   suiteDetail?: {
     settings?: Record<string, unknown>;
     revisionNumber?: number;
@@ -554,6 +556,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           modelMatrix: true,
           ephemeralEnvironmentLaunch: true,
           ...(options.environmentSecretGrants ? { secretGrants: true } : {}),
+          ...(options.environmentModelSelections
+            ? { modelSelections: true }
+            : {}),
         })
       );
       return;
@@ -7333,6 +7338,83 @@ test("eval run --compose-model variadic launches one group without attaching", a
     };
     assert.equal(payload.runGroupId, "grp-1");
     assert.equal(payload.startedCount, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+const EFFORT_SELECTION = {
+  modelId: "openai/gpt-5",
+  source: "hosted",
+  settings: { reasoningEffort: "high" },
+  fallback: { provider: "none", model: "none" },
+};
+
+test("eval run --compose-model-selection mints a cell carrying the selection", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-server-group",
+            "group-pinned",
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION)
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
+      modelId: "openai/gpt-5",
+      modelSelection: EFFORT_SELECTION,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model-selection is refused on a deployment that predates selections", async () => {
+  // Without the preflight the selection reaches a backend validator that names
+  // nothing, and the user is told INTERNAL_ERROR for a version skew.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code",
+          "--compose-server-group",
+          "group-pinned",
+          "--compose-model-selection",
+          JSON.stringify(EFFORT_SELECTION)
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support saved model selections/);
+    assert.equal(fixture.composeBodies.length, 0);
   } finally {
     await fixture.close();
   }
