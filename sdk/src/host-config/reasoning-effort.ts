@@ -77,11 +77,13 @@ function bareModelName(modelId: string): string {
  * OpenAI levels are model-specific (the provider package documents that
  * `none` is GPT-5.1+ only and `xhigh` GPT-5.2+/Codex-Max only, and a wrong
  * level is an API error). Families this does not know return none: the
- * control is hidden rather than guessed. `-pro` models are hidden the same
- * way (their accepted levels are narrower and not documented by the package).
+ * control is hidden rather than guessed. `-pro` and `-chat` models are hidden
+ * the same way.
  */
 function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
-  if (/-pro(?:[.-]|$)/.test(name)) return [];
+  // `-pro` and `-chat` variants: pro takes narrower levels, and the provider
+  // classes `gpt-5*-chat*` as non-reasoning models.
+  if (/-(?:pro|chat)(?:[.-]|$)/.test(name)) return [];
   if (/^o[1-9](?:[.-]|$)/.test(name)) return ["low", "medium", "high"];
   if (/^gpt-5\.1-codex-max(?:[.-]|$)/.test(name)) {
     return ["low", "medium", "high", "xhigh"];

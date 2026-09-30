@@ -66,6 +66,13 @@ describe("supportedReasoningEfforts", () => {
     ]);
     expect(efforts("openai", "gpt-5.1-codex-max")).toContain("xhigh");
     expect(efforts("openai", "gpt-5.2-pro")).toEqual([]);
+    for (const chat of [
+      "gpt-5-chat-latest",
+      "gpt-5.1-chat-latest",
+      "openai/gpt-5-chat",
+    ]) {
+      expect(efforts("openai", chat), chat).toEqual([]);
+    }
     expect(efforts("openai", "openai/o3-mini", "org")).toEqual([
       "low",
       "medium",
