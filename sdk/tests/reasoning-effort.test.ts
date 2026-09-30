@@ -176,19 +176,35 @@ describe("supportedReasoningEfforts", () => {
     expect(efforts("ollama", "llama3")).toEqual([]);
   });
 
-  it("org-cloud has none until the backend applies an effort there", () => {
+  it("org-cloud offers the provider tables (the backend maps them per provider)", () => {
     expect(
       supportedReasoningEfforts({
         route: "orgCloud",
         providerKey: "anthropic",
-        modelId: "claude-sonnet-4-5",
+        modelId: "claude-sonnet-4-6",
+      })
+    ).toEqual(["low", "medium", "high", "max"]);
+    expect(
+      supportedReasoningEfforts({
+        route: "orgCloud",
+        providerKey: "xai",
+        modelId: "grok-4",
       })
     ).toEqual([]);
   });
 
-  it("a harness uses its adapter table, which is empty until verified", () => {
+  it("a harness uses its adapter table, verified rows only", () => {
+    // Claude Code stays empty: mapping code exists but the live check that
+    // would verify it has not run, so an effort there is still refused.
+    expect(HARNESS_REASONING_EFFORTS["claude-code"]).toEqual([]);
+    expect(HARNESS_REASONING_EFFORTS.cursor).toEqual([]);
+    expect(HARNESS_REASONING_EFFORTS.codex).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
     for (const harness of ["claude-code", "codex", "cursor"] as const) {
-      expect(HARNESS_REASONING_EFFORTS[harness]).toEqual([]);
       expect(
         supportedReasoningEfforts({
           route: "hosted",
@@ -197,7 +213,7 @@ describe("supportedReasoningEfforts", () => {
           catalogEfforts: ["high"],
           harness,
         })
-      ).toEqual([]);
+      ).toEqual([...HARNESS_REASONING_EFFORTS[harness]]);
     }
   });
 

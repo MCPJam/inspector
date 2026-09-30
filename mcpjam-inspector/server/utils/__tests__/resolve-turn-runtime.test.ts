@@ -399,6 +399,39 @@ describe("resolveTurnRuntime: saved selection forwarding", () => {
     expect(hosted.runtime).toEqual({ kind: "hosted", endpointPath: "/stream" });
   });
 
+  it("org cloud no longer refuses an effort: the selection carries it, a per-run one rides top-level", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    // On the selection already: nothing extra on the body.
+    const saved = { ...ORG_SELECTION, settings: { reasoningEffort: "high" } };
+    const same = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: saved as never,
+        settings: { reasoningEffort: "high" },
+      }),
+    );
+    const sameBody = (
+      same.runtime as { extraBodyFields?: Record<string, unknown> }
+    ).extraBodyFields;
+    expect(sameBody).not.toHaveProperty("reasoningEffort");
+    expect(sameBody).toHaveProperty("modelSelection", saved);
+    // A per-run effort the selection lacks is forwarded, not refused.
+    const override = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: ORG_SELECTION,
+        settings: { reasoningEffort: "low" },
+      }),
+    );
+    expect(
+      (override.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).toHaveProperty("reasoningEffort", "low");
+  });
+
   it("no selection leaves every body as it was", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "byok",

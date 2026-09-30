@@ -838,22 +838,23 @@ describe("eval runner reads saved model selections", () => {
       expect(body.modelSelection).toEqual(orgWithTemperature);
     });
 
-    it("org cloud: a saved reasoning effort is refused (the route cannot apply it)", async () => {
-      await expectRefused(
-        run(
-          {
-            model: SAME_ID,
-            provider: "openrouter",
-            selection: {
-              ...ORG_OPENROUTER,
-              settings: { reasoningEffort: "low" },
-            },
-          },
-          { orgModelConfigTarget: { projectId: "project-1" } },
-        ),
-        "capability_missing",
+    it("org cloud: a saved reasoning effort is forwarded on the selection for the backend to apply", async () => {
+      const orgWithEffort: ModelSelection = {
+        ...ORG_OPENROUTER,
+        settings: { reasoningEffort: "low" },
+      };
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: orgWithEffort,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
       );
-      expect(requestTo("/stream/org")).toBeNull();
+      const body = requestTo("/stream/org");
+      expect(body).not.toBeNull();
+      expect(body.modelSelection).toEqual(orgWithEffort);
+      expect(body).not.toHaveProperty("temperature");
     });
   });
 

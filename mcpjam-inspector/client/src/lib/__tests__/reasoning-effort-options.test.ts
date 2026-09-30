@@ -33,10 +33,21 @@ describe("reasoningEffortOptions", () => {
     ).toEqual([]);
   });
 
-  it("org routes and harnesses offer nothing until verified", () => {
+  it("an unresolved org route offers nothing; org-cloud reads the tables; harnesses use adapter rows", () => {
     const row = { id: "gpt-5.1", provider: "openai" as const };
     expect(reasoningEffortOptions(row, "org")).toEqual([]);
-    expect(reasoningEffortOptions(row, "orgCloud")).toEqual([]);
-    expect(reasoningEffortOptions(row, "hosted", "codex")).toEqual([]);
+    expect(reasoningEffortOptions(row, "orgCloud")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(reasoningEffortOptions(row, "hosted", "codex")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(reasoningEffortOptions(row, "hosted", "claude-code")).toEqual([]);
   });
 });

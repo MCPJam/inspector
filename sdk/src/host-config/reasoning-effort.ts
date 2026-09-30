@@ -57,8 +57,15 @@ export const GOOGLE_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
 export const HARNESS_REASONING_EFFORTS: Readonly<
   Record<Harness, readonly ModelReasoningEffort[]>
 > = {
+  // Mapping code exists (the adapter's `effort` option + adaptive thinking) but
+  // stays inert: the live check against the AI Gateway that gates these rows
+  // has not been run, so an effort on Claude Code is still REFUSED. Fill this
+  // row only from that check's evidence.
   "claude-code": [],
-  codex: [],
+  // Both transports apply it through their own option (exec `reasoningEffort`,
+  // app-server `turn/start effort`). none / minimal / max stay refused until
+  // verified.
+  codex: ["low", "medium", "high", "xhigh"],
   cursor: [],
 };
 
@@ -212,8 +219,9 @@ function orderedEfforts(values: readonly string[]): ModelReasoningEffort[] {
  *  - hosted   → the catalog's list, nothing else.
  *  - direct   → the provider tables above.
  *  - org      → none: the concrete runtime is unknown (see the route type).
- *  - orgCloud → none yet: the org-cloud stream does not apply an effort
- *    (flip when it does, in the same change as the backend).
+ *  - orgCloud → the provider tables, like direct: the backend's org-cloud
+ *    stream maps an effort per org provider key and refuses one it cannot
+ *    map. Providers this module has no table for offer nothing.
  */
 export function supportedReasoningEfforts(
   input: SupportedReasoningEffortsInput
@@ -225,8 +233,8 @@ export function supportedReasoningEfforts(
     case "hosted":
       return orderedEfforts(input.catalogEfforts ?? []);
     case "org":
-    case "orgCloud":
       return [];
+    case "orgCloud":
     case "direct":
       return orderedEfforts(directEfforts(input.providerKey, input.modelId));
   }

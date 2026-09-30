@@ -7,8 +7,8 @@
  * turn reads the adapter's verified table (empty until verified). Empty means
  * "hide the control" — an unknown capability is never guessed.
  *
- * Pass the CONCRETE route: `org` (runtime not yet known) and `orgCloud` (the
- * cloud stream does not apply an effort yet) both answer "none".
+ * Pass the CONCRETE route: `org` (runtime not yet known) answers "none"; `orgCloud`
+ * reads the provider tables like `direct`.
  */
 import {
   supportedReasoningEfforts,

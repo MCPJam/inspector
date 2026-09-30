@@ -759,24 +759,41 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
   });
 
   it.each([
-    ["claude-code", "anthropic/claude-haiku-4.5"],
-    ["codex", "openai/gpt-5-nano"],
+    ["claude-code", "anthropic/claude-haiku-4.5", "high"],
+    ["codex", "openai/gpt-5-nano", "max"],
+    ["codex", "openai/gpt-5-nano", "none"],
   ] as const)(
     "refuses an effort %s has not verified, before any model rule",
-    (harnessId, modelId) => {
+    (harnessId, modelId, reasoningEffort) => {
       setFullyAvailable();
       const verdict = checkHarnessRuntimeAvailable(
         args({
           harnessId,
           model: { id: modelId },
-          reasoningEffort: "high",
+          reasoningEffort,
         }),
       );
       expect(verdict.ok).toBe(false);
       if (verdict.ok) throw new Error("unreachable");
       expect(verdict.kind).toBe("setting-unsupported");
       expect(verdict.reason).toContain(getHarnessAdapter(harnessId).displayName);
-      expect(verdict.reason).toContain('"high"');
+      expect(verdict.reason).toContain(`"${reasoningEffort}"`);
+    },
+  );
+
+  it.each(["low", "medium", "high", "xhigh"] as const)(
+    "admits the verified Codex effort %s",
+    (reasoningEffort) => {
+      setFullyAvailable();
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "codex",
+            model: { id: "openai/gpt-5-nano" },
+            reasoningEffort,
+          }),
+        ),
+      ).toEqual({ ok: true });
     },
   );
 

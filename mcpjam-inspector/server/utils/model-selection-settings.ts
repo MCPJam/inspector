@@ -32,8 +32,9 @@
  *    the effective temperature as the top-level field, which the backend
  *    prefers over the selection's, so the two can never disagree.
  *  - `orgCloud`: backend `/stream/org`. Applies the selection's temperature
- *    (top-level first, as on `/stream`) but not a reasoning effort, so an
- *    effort is refused on this route.
+ *    (top-level first, as on `/stream`) and its reasoning effort (mapped per
+ *    org provider; the backend refuses one it cannot map), so an effort is
+ *    kept for it to apply, as on `hosted`.
  *  - `org`: an org selection before its runtime is known (the org config
  *    decides cloud vs local at call time). Temperature is resolved now; the
  *    effort is checked on the concrete rail by the caller that learns it.
@@ -132,12 +133,6 @@ export function resolveEffectiveModelSettings(
   let providerOptions: DirectProviderOptions | undefined;
 
   if (effort) {
-    if (route === "orgCloud") {
-      return refuse(
-        `reasoning effort "${effort.value}" cannot be applied on an organization cloud connection; remove it from the saved model or run the connection on the local runtime`,
-        { setting: "reasoningEffort", route, modelId },
-      );
-    }
     if (route === "direct") {
       const options = reasoningEffortProviderOptions({
         providerKey: String(modelDefinition.provider),
