@@ -6,7 +6,11 @@ import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
 import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
 import { createFixedWindowMap } from "../middleware/passthrough-rate-limit.js";
-import { getAttestedClientIp, getClientIp } from "../utils/client-ip.js";
+import {
+  edgeAttestationConfigured,
+  getAttestedClientIp,
+  getClientIp,
+} from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 
 /**
@@ -121,7 +125,7 @@ function percentile(sorted: number[], p: number): number {
 }
 
 export function flushRelayStats(): void {
-  if (stats.requests === 0) return;
+  if (stats.requests === 0 && stats.rateLimitRejects === 0) return;
   const sorted = [...stats.latenciesMs].sort((a, b) => a - b);
   relayLogger.event("relay.stats", {
     requests: stats.requests,
@@ -160,11 +164,10 @@ setInterval(flushRelayStats, STATS_FLUSH_INTERVAL_MS).unref();
 
 // ---------------------------------------------------------------------------
 // Rate limits (hosted only). Local installs are single-user; hosted is a
-// public unauthenticated endpoint. Keyed on getAttestedClientIp: the address
-// a trusted edge vouched for. Requests without one share a single bucket, so
-// forwarding headers a client writes itself never select a bucket (the same
-// keying as GET /api/web/flags). Fixed windows from the MJ-012 limiter, two
-// budgets:
+// public unauthenticated endpoint. Per-IP budgets require a configured edge
+// secret and an attested address. Otherwise callers share a single bucket,
+// so client-written ingress headers cannot select a fresh budget. Fixed
+// windows from the MJ-012 limiter, two budgets:
 //
 // - RATE_LIMIT_PER_MIN covers everything the relay serves; 600/min is ~10x
 //   the busiest real posthog-js client, mostly asset and config reads.
@@ -199,13 +202,18 @@ function isIngestSubpath(subpath: string): boolean {
   return /^\/(?:e|i\/v0\/e|s|i\/v1\/(?:logs|metrics))\/?$/.test(subpath);
 }
 
+function relayClientIp(c: Context): string | null {
+  // Without a configured secret, direct-origin callers can forge ingress headers.
+  return edgeAttestationConfigured() ? getAttestedClientIp(c) : null;
+}
+
 function relayClientKey(c: Context): string {
-  return getAttestedClientIp(c) ?? UNATTESTED_CLIENT_KEY;
+  return relayClientIp(c) ?? UNATTESTED_CLIENT_KEY;
 }
 
 function relayRateLimit(c: Context, subpath: string): Response | null {
   if (!HOSTED_MODE) return null;
-  const attestedIp = getAttestedClientIp(c);
+  const attestedIp = relayClientIp(c);
   let refusedMs = relayWindows.charge(attestedIp ?? UNATTESTED_CLIENT_KEY);
   if (refusedMs === null && isIngestSubpath(subpath)) {
     refusedMs = attestedIp

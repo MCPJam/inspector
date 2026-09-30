@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
+const { relayEvent } = vi.hoisted(() => ({ relayEvent: vi.fn() }));
+
+vi.mock("../../utils/request-logger.js", () => ({
+  getSystemLogger: () => ({ event: relayEvent }),
+}));
+
 // The relay rate limiter only runs in hosted mode; HOSTED_MODE is a
 // module-load-time const, so it has to be mocked before importing the route.
 // Kept in its own file so the main relay tests run with the real (local)
@@ -63,6 +69,7 @@ function attested(ip: string, extra: Record<string, string> = {}) {
 
 describe("posthog relay rate limit (hosted mode)", () => {
   beforeEach(() => {
+    relayEvent.mockClear();
     vi.stubEnv("MCPJAM_EDGE_SECRET", EDGE_SECRET);
     global.fetch = vi.fn().mockResolvedValue(new Response("ok"));
   });
@@ -127,6 +134,60 @@ describe("posthog relay rate limit (hosted mode)", () => {
     // An attested caller keeps its own bucket.
     const ok = await capture(app, attested("203.0.113.9"));
     expect(ok.status).toBe(200);
+  });
+
+  it.each([undefined, "x-real-ip"])(
+    "pools forged ingress headers without an edge secret (trusted header: %s)",
+    async (trustedHeader) => {
+      vi.stubEnv("MCPJAM_EDGE_SECRET", "");
+      vi.stubEnv("MCPJAM_EDGE_SECRET_PREVIOUS", "");
+      vi.stubEnv("MCPJAM_TRUSTED_CLIENT_IP_HEADER", trustedHeader);
+      const app = await createTestApp();
+
+      for (let i = 0; i < UNATTESTED_INGEST_LIMIT; i++) {
+        const claimedIp = `198.51.${Math.floor(i / 250)}.${i % 250}`;
+        expect(
+          (
+            await capture(app, {
+              "cf-connecting-ip": claimedIp,
+              "x-real-ip": claimedIp,
+            })
+          ).status,
+        ).toBe(200);
+      }
+      const refused = await capture(app, {
+        "cf-connecting-ip": "203.0.113.254",
+        "x-real-ip": "203.0.113.254",
+      });
+      expect(refused.status).toBe(429);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(UNATTESTED_INGEST_LIMIT);
+    },
+  );
+
+  it("flushes and resets intervals containing only rate-limit rejections", async () => {
+    const app = await createTestApp();
+    const { flushRelayStats } = await import("../relay.js");
+    const headers = attested("203.0.113.31");
+
+    for (let i = 0; i < INGEST_LIMIT; i++) {
+      expect((await capture(app, headers)).status).toBe(200);
+    }
+    flushRelayStats();
+    relayEvent.mockClear();
+
+    for (let i = 0; i < 3; i++) {
+      expect((await capture(app, headers)).status).toBe(429);
+    }
+    flushRelayStats();
+
+    expect(relayEvent).toHaveBeenCalledOnce();
+    expect(relayEvent).toHaveBeenCalledWith(
+      "relay.stats",
+      expect.objectContaining({ requests: 0, rateLimitRejects: 3 }),
+    );
+    relayEvent.mockClear();
+    flushRelayStats();
+    expect(relayEvent).not.toHaveBeenCalled();
   });
 
   it("keeps the coarser overall budget on non-ingest paths", async () => {

@@ -141,7 +141,7 @@ export interface FixedWindowMap {
 
 export function createFixedWindowMap(
   limit: number,
-  windowMs: number
+  windowMs: number,
 ): FixedWindowMap {
   const windows = new Map<string, Window>();
 
@@ -197,7 +197,7 @@ const tokenWindows = createFixedWindowMap(TOKEN_LIMIT, TOKEN_WINDOW_MS);
 const ipWindows = createFixedWindowMap(IP_LIMIT, IP_WINDOW_MS);
 const unattestedWindows = createFixedWindowMap(
   UNATTESTED_IP_LIMIT,
-  IP_WINDOW_MS
+  IP_WINDOW_MS,
 );
 
 /** The map key for a bearer. Hashed — see the header. */
@@ -214,7 +214,7 @@ function tooMany(c: Context, retryAfterMs: number) {
     429,
     {
       "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
-    }
+    },
   );
 }
 
@@ -231,7 +231,7 @@ const METERED_AUTH_METHODS: ReadonlySet<string> = new Set([
  */
 export async function passthroughRateLimitMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
   const authMethod = c.get("authMethod");
