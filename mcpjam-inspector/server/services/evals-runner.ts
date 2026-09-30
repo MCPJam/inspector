@@ -1554,6 +1554,26 @@ type ResolvedEvalTestCase = {
   advancedConfig?: Record<string, unknown>;
 };
 
+/**
+ * `advancedConfig.reasoningEffort` was a claim nothing ever applied (the runner
+ * reads only `temperature`), and the v1 API no longer accepts it. A value still
+ * stored on an older case is REFUSED rather than run as if it had been applied:
+ * the effort a case runs at is `models[].selection.settings.reasoningEffort`.
+ */
+export function assertNoStoredAdvancedReasoningEffort(
+  advancedConfig: Record<string, unknown> | undefined,
+): void {
+  if (advancedConfig?.reasoningEffort === undefined) return;
+  throw new ModelResolutionRefusalError([
+    {
+      code: "capability_missing",
+      reason:
+        "advancedConfig.reasoningEffort is not applied by the runner. Save the effort on the case's model instead (models[].selection.settings.reasoningEffort).",
+      evidence: { setting: "reasoningEffort", source: "advancedConfig" },
+    },
+  ]);
+}
+
 function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
   // Backend + route now emit `steps` (no promptTurns). The legacy per-turn
   // execution loops still consume `PromptTurn[]`, so bridge steps → turns here
@@ -2497,8 +2517,10 @@ type EvalEffectiveSettings = EffectiveModelSettings & {
 /**
  * The settings a case with a saved selection runs with, resolved ONCE for
  * all of its iterations, on the route it takes. Precedence, highest first:
- * the case's own `advancedConfig` (per-run override) > the saved selection's
- * `settings` > the suite host's defaults. A setting the route cannot honour
+ * the case's own `advancedConfig` temperature (per-run override) > the saved
+ * selection's `settings` > the suite host's defaults. `advancedConfig` carries
+ * no effort: a stored `advancedConfig.reasoningEffort` is refused, and the
+ * effort is only ever the selection's `settings.reasoningEffort`. A setting the route cannot honour
  * throws the refusal (the case fails with that reason) instead of running a
  * different configuration.
  */
@@ -2511,6 +2533,7 @@ export function resolveEvalCaseSettings(args: {
   harnessRuntimeVenue?: "local" | "hosted";
 }): EvalEffectiveSettings {
   const { advancedConfig } = resolveEvalTestCase(args.test);
+  assertNoStoredAdvancedReasoningEffort(advancedConfig);
   const host = resolveExecutionContext({
     hostConfig: args.suiteHostConfig ?? null,
     precedence: "override-wins",
@@ -4641,6 +4664,7 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
@@ -6016,6 +6040,7 @@ const runHostedIterationWithBrowser = async (
   browser: BrowserSessionContext,
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),

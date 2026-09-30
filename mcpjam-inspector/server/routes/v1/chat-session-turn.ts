@@ -83,6 +83,10 @@ import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  MODEL_REASONING_EFFORTS,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk";
 import type { ModelMessage, ToolSet } from "ai";
 import {
   MODEL_ID_PREFIX_TO_PROVIDER,
@@ -210,6 +214,10 @@ const CONFIG_FIELDS = [
   // boundary's `resumeConfig` projection, so a continuation reloads the
   // session's own value instead of silently reverting to the model default.
   "temperature",
+  // Pinned like `temperature`: the first turn's effort is recorded in the
+  // session's `resumeConfig` (which the ingest boundary carries), so a
+  // continuation reloads it and a restated one is refused.
+  "reasoningEffort",
   "toolMode",
 ] as const;
 
@@ -283,6 +291,15 @@ const turnSchema = z
     serverIds: z.array(z.string().min(1)).min(1).max(20).optional(),
     systemPrompt: z.string().max(8_000).optional(),
     temperature: z.number().min(0).max(2).optional(),
+    /**
+     * Reasoning effort for the session, pinned on the FIRST turn like
+     * `temperature` (a continuation reloads it; restating one is refused). It
+     * wins over the effort a `hostId`'s saved selection carries, and is
+     * applied or refused by the rail the model runs on, never dropped.
+     * Sending one also drops the temperature the model would otherwise run
+     * at, so an explicit `temperature` beside it is refused.
+     */
+    reasoningEffort: z.enum(MODEL_REASONING_EFFORTS).optional(),
     maxSteps: z.number().int().min(1).max(MAX_STEPS_CEILING).optional(),
     toolMode: z.enum(["read_only", "auto"]).optional(),
     allowedServerIds: z.array(z.string().min(1)).max(20).optional(),
@@ -292,7 +309,15 @@ const turnSchema = z
   .refine((value) => !(value.environmentId && value.serverIds), {
     message:
       "Pass at most one of environmentId or serverIds — an environment already resolves its own servers.",
-  });
+  })
+  .refine(
+    (value) =>
+      !(value.reasoningEffort !== undefined && value.temperature !== undefined),
+    {
+      message:
+        "Pass at most one of reasoningEffort or temperature — a reasoning effort replaces the sampling temperature.",
+    },
+  );
 
 type TurnBody = z.infer<typeof turnSchema>;
 
@@ -1037,6 +1062,11 @@ async function handleTurn(c: Context): Promise<Response> {
     environmentId?: string;
     serverIds?: string[];
   };
+  // The session's pinned effort: the first turn's top-level field, reloaded
+  // from `resumeConfig` on a continuation. Kept out of `pins`, which is sent
+  // to the lease/ingest calls whose agent-pin projection does not carry it;
+  // the full `resumeConfig` persisted at the end does.
+  let pinnedReasoningEffort: ModelReasoningEffort | undefined;
 
   if (body.sessionId) {
     existing = await resolveScopedSession(
@@ -1103,6 +1133,9 @@ async function handleTurn(c: Context): Promise<Response> {
     }
     runtimeChatSessionId = runtimeId;
     expectedVersion = existing.version;
+    pinnedReasoningEffort = configuring
+      ? body.reasoningEffort
+      : (existing.resumeConfig?.reasoningEffort ?? undefined);
     pins = {
       modelId: resume.modelId,
       toolMode: resume.toolMode ?? "read_only",
@@ -1163,6 +1196,7 @@ async function handleTurn(c: Context): Promise<Response> {
     assertUnambiguousModelId(body.modelId);
     projectId = body.projectId;
     runtimeChatSessionId = randomUUID();
+    pinnedReasoningEffort = body.reasoningEffort;
     pins = {
       modelId: body.modelId,
       toolMode: body.toolMode ?? "read_only",
@@ -1395,7 +1429,13 @@ async function handleTurn(c: Context): Promise<Response> {
       target.host?.runtimeConfig,
       String(modelDefinition.id),
     );
-    const turnReasoningEffort = hostSelection?.settings?.reasoningEffort;
+    // The session's pinned effort (first turn's request, reloaded from
+    // `resumeConfig` on a continuation) wins over the host's saved one, the
+    // same order `/stream` applies a top-level effort over a selection. A
+    // session keeps the effort it ran at: what the first turn recorded is what
+    // continuations reload, including one that came from the host.
+    const turnReasoningEffort =
+      pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
 
     // --- Engine pre-flight ------------------------------------------------
     //

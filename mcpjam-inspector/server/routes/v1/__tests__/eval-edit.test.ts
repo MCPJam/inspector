@@ -4845,3 +4845,218 @@ describe("authoring job ID validation", () => {
     expect(convexQueryMock).not.toHaveBeenCalled();
   });
 });
+
+// ── Saved model selections and reasoning effort ─────────────────────────────
+
+const SUITE_URL =
+  "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+const CASE_URL = `${SUITE_URL}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`;
+
+const HAIKU = "anthropic/claude-haiku-4.5";
+const HAIKU_SELECTION = {
+  modelId: HAIKU,
+  source: "hosted",
+  settings: { reasoningEffort: "high" },
+  fallback: { provider: "none", model: "none" },
+};
+
+function setSuiteConfigInput(): any {
+  const calls = convexMutationMock.mock.calls.filter(
+    (c) => c[0] === "hostConfigsV2:setSuiteConfig",
+  );
+  return calls[calls.length - 1]?.[1]?.input;
+}
+
+describe("v1 eval routes: model selections and reasoning effort", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args),
+    );
+  });
+
+  describe("suite executionConfig.modelSelection", () => {
+    function withSuiteSelection() {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "hostConfigsV2:getSuiteConfig"
+          ? Promise.resolve({ ...EXEC_CONFIG, modelSelection: HAIKU_SELECTION })
+          : defaultQueryImpl(name),
+      );
+    }
+
+    it("saves a selection and pins its model when only the selection is sent", async () => {
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { modelSelection: HAIKU_SELECTION },
+      });
+      expect(res.status).toBe(200);
+      const input = setSuiteConfigInput();
+      expect(input.modelSelection).toEqual(HAIKU_SELECTION);
+      expect(input.modelId).toBe(HAIKU);
+    });
+
+    it("refuses a selection for a different model than `model`", async () => {
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { model: "openai/gpt-5", modelSelection: HAIKU_SELECTION },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain("must match model");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names the bad field on an invalid effort", async () => {
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: {
+          modelSelection: {
+            ...HAIKU_SELECTION,
+            settings: { reasoningEffort: "ludicrous" },
+          },
+        },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain(
+        "modelSelection.settings.reasoningEffort",
+      );
+    });
+
+    it("keeps the selection across a same-model edit", async () => {
+      withSuiteSelection();
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { temperature: 0.9 },
+      });
+      expect(res.status).toBe(200);
+      expect(setSuiteConfigInput().modelSelection).toEqual(HAIKU_SELECTION);
+    });
+
+    it("a bare model change drops the old selection instead of sending a disagreeing pair", async () => {
+      withSuiteSelection();
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { model: "openai/gpt-5" },
+      });
+      expect(res.status).toBe(200);
+      const input = setSuiteConfigInput();
+      expect(input.modelId).toBe("openai/gpt-5");
+      expect("modelSelection" in input).toBe(false);
+    });
+
+    it("`null` clears the selection and keeps the bare model", async () => {
+      withSuiteSelection();
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { modelSelection: null },
+      });
+      expect(res.status).toBe(200);
+      const input = setSuiteConfigInput();
+      expect("modelSelection" in input).toBe(false);
+      expect(input.modelId).toBe(HAIKU);
+    });
+
+    it("reads the selection back on the suite DTO", async () => {
+      withSuiteSelection();
+      const res = await request("GET", SUITE_URL);
+      expect(((await res.json()) as any).executionConfig.modelSelection).toEqual(
+        HAIKU_SELECTION,
+      );
+    });
+  });
+
+  describe("case models[].selection", () => {
+    const SAVED = {
+      ...CASE_DOC,
+      models: [
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+        { model: "openai/gpt-5", provider: "openai" },
+      ],
+    };
+
+    function withSavedCase() {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestCase"
+          ? Promise.resolve(SAVED)
+          : defaultQueryImpl(name),
+      );
+    }
+
+    it("persists a selection on create", async () => {
+      const res = await request("POST", `${SUITE_URL}/cases`, {
+        title: "with effort",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [{ model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION }],
+      });
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().models).toEqual([
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+      ]);
+    });
+
+    it("refuses a selection that is for another model", async () => {
+      const res = await request("POST", `${SUITE_URL}/cases`, {
+        title: "mismatch",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [{ model: "openai/gpt-5", selection: HAIKU_SELECTION }],
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain("models[].selection");
+    });
+
+    it("reads the stored selection back", async () => {
+      withSavedCase();
+      const res = await request("GET", CASE_URL);
+      expect(((await res.json()) as any).models).toEqual([
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+        { model: "openai/gpt-5", provider: "openai" },
+      ]);
+    });
+
+    it("a `models` PATCH keeps the existing selection for a model that omits one", async () => {
+      withSavedCase();
+      const res = await request("PATCH", CASE_URL, {
+        models: [{ model: HAIKU, provider: "anthropic" }, { model: "openai/gpt-5" }],
+      });
+      expect(res.status).toBe(200);
+      expect(updateArgs().models).toEqual([
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+        { model: "openai/gpt-5", provider: "openai" },
+      ]);
+    });
+
+    it("`selection: null` drops it, and a new selection replaces it", async () => {
+      withSavedCase();
+      const dropped = await request("PATCH", CASE_URL, {
+        models: [{ model: HAIKU, selection: null }],
+      });
+      expect(dropped.status).toBe(200);
+      expect(updateArgs().models).toEqual([
+        { model: HAIKU, provider: "anthropic" },
+      ]);
+
+      const replaced = await request("PATCH", CASE_URL, {
+        models: [
+          {
+            model: HAIKU,
+            selection: { ...HAIKU_SELECTION, settings: { reasoningEffort: "low" } },
+          },
+        ],
+      });
+      expect(replaced.status).toBe(200);
+      expect(updateArgs().models[0].selection.settings).toEqual({
+        reasoningEffort: "low",
+      });
+    });
+
+    it("does not attach a stored selection to a model it was not saved for", async () => {
+      withSavedCase();
+      const res = await request("PATCH", CASE_URL, {
+        models: [{ model: "google/gemini-2.5-pro" }],
+      });
+      expect(res.status).toBe(200);
+      expect(updateArgs().models).toEqual([
+        { model: "google/gemini-2.5-pro", provider: "google" },
+      ]);
+    });
+  });
+});

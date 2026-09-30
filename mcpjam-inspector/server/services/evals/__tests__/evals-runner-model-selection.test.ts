@@ -802,6 +802,22 @@ describe("eval runner reads saved model selections", () => {
       expect(streamTextMock).not.toHaveBeenCalled();
     });
 
+    it("a stored advancedConfig.reasoningEffort is refused, never run as if applied", async () => {
+      await expectRefused(
+        run(
+          {
+            model: "openai/gpt-5",
+            provider: "openai",
+            selection: LOCAL_GPT5_EFFORT,
+            advancedConfig: { reasoningEffort: "low" },
+          },
+          localOptions,
+        ),
+        "capability_missing",
+      );
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
     it("hosted: the top-level temperature is the saved one, not the host default", async () => {
       const hostedWithTemperature: ModelSelection = {
         ...HOSTED,

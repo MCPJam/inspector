@@ -10,7 +10,9 @@
  *
  * PRECEDENCE, per setting, highest first:
  *
- *   1. per-run override  (the eval case's `advancedConfig`)
+ *   1. per-run override  (the eval case's `advancedConfig` TEMPERATURE only;
+ *      `advancedConfig` carries no effort, and a stored
+ *      `advancedConfig.reasoningEffort` is refused by the eval runner)
  *   2. saved selection   (`selection.settings`)
  *   3. host defaults     (the host config's `temperature`)
  *
@@ -79,7 +81,11 @@ export type ResolveEffectiveModelSettingsInput = {
   /** The model the call runs (its provider and temperature support). */
   modelDefinition: Pick<ModelDefinition, "id" | "provider"> &
     Partial<ModelDefinition>;
-  /** Precedence 1: this run's own settings (eval `advancedConfig`). */
+  /**
+   * Precedence 1: this run's own settings. The eval runner passes only a
+   * `temperature` here (from `advancedConfig`); `reasoningEffort` exists for
+   * per-request carriers such as a chat turn's top-level field.
+   */
   override?: { temperature?: number; reasoningEffort?: ModelReasoningEffort };
   /** Precedence 2: the saved selection. */
   selection?: Pick<ModelSelection, "modelId" | "settings">;
