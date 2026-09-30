@@ -20,6 +20,7 @@ import {
   modelSelectionFromDefinition,
   selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
+import { selectionKey } from "@mcpjam/sdk/browser";
 import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
 
 export function selectionReasoningEffort(
@@ -170,10 +171,22 @@ export function environmentsForModelCell<
       (environment.modelId ?? undefined) === cell.modelId,
   );
   if (cell.modelId === undefined || !cell.efforts) return sameCell;
+  // Same identity first (source, connection, native id): an environment on a
+  // different connection of the same model id is not this pick's sibling, and
+  // its effort must not count as "already represented". An environment with no
+  // saved selection stays (it matches on the model id alone).
+  const identity = cell.picked ? selectionKey(cell.picked) : undefined;
+  const candidates = identity
+    ? sameCell.filter(
+        (environment) =>
+          !environment.modelSelection ||
+          selectionKey(environment.modelSelection) === identity,
+      )
+    : sameCell;
   const wanted = selectionReasoningEffort(cell.picked);
-  return sameCell.some(
+  return candidates.some(
     (environment) => selectionReasoningEffort(environment.modelSelection) === wanted,
   )
-    ? sameCell
+    ? candidates
     : [];
 }

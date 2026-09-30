@@ -12052,12 +12052,15 @@ export const updateEnvironmentOperation: PlatformOperation<
       // model's selection and refused as a mismatch (or dropped); say so up
       // front and ask for the whole selection.
       if (
-        typeof input.modelId === "string" &&
+        input.modelId !== undefined &&
         environment.modelSelection !== undefined &&
-        environment.modelSelection.modelId !== input.modelId.trim()
+        (input.modelId === null ||
+          environment.modelSelection.modelId !== input.modelId.trim())
       ) {
         throw operationInputError(
-          "`reasoningEffort` edits the existing model selection, which is for a different model than `modelId`. Send `modelSelection` (modelId, source, fallback and settings.reasoningEffort) to change the model and its effort together."
+          input.modelId === null
+            ? "`reasoningEffort` edits the existing model selection, but `modelId: null` clears the model override it belongs to. Drop one of them, or send `modelSelection` to set the model and its effort together."
+            : "`reasoningEffort` edits the existing model selection, which is for a different model than `modelId`. Send `modelSelection` (modelId, source, fallback and settings.reasoningEffort) to change the model and its effort together."
         );
       }
       // EDITS the environment's existing selection. The row was read above

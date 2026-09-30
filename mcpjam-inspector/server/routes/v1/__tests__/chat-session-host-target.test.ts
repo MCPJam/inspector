@@ -1258,6 +1258,13 @@ describe("browser turn integration", () => {
     expect(BrowserSessionService.prototype.agentRequest).toHaveBeenCalledWith("close", expect.objectContaining({ body: { sessionId: "logical", expectedBootId: "boot" } }));
     expect(mutationMock).toHaveBeenCalledWith("chatSessions:transitionTurnLease", expect.objectContaining({ op: "fail", executionOwnerToken: "owner" }));
   });
+  it("records the turn's effort on begin_model so a failed turn still leaves its pin", async () => {
+    const input = browserFixture();
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ builtInToolIds: ["browser"], browserToolPolicy: { mode: "allow_all" }, modelId: MODEL, modelSelection: { modelId: MODEL, source: "hosted", settings: { reasoningEffort: "high" }, fallback: { provider: "none", model: "none" } } }));
+    runUnifiedAssistantTurnMock.mockRejectedValueOnce(new Error("engine failed"));
+    await turn(input);
+    expect(BrowserSessionService.prototype.agentRequest).toHaveBeenCalledWith("begin_model", expect.objectContaining({ body: expect.objectContaining({ resumeConfig: expect.objectContaining({ reasoningEffort: "high" }) }) }));
+  });
   it("flushes screenshot writes again at turn settlement", async () => {
     const input = browserFixture();
     await turn(input);

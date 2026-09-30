@@ -4,6 +4,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import {
   carryEffortToModel,
+  environmentsForModelCell,
   selectionReasoningEffort,
   setEffortForRow,
   withReasoningEffort,
@@ -163,5 +164,58 @@ describe("setEffortForRow", () => {
     });
     expect(out?.modelId).toBe("openai/gpt-5");
     expect(out?.selection?.settings?.reasoningEffort).toBe("low");
+  });
+});
+
+describe("environmentsForModelCell", () => {
+  const org = (settings?: ModelSelection["settings"]): ModelSelection => ({
+    modelId: "openai/gpt-5",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "org-key-1" },
+    fallback,
+    ...(settings ? { settings } : {}),
+  });
+  const env = (hostId: string, modelSelection?: ModelSelection) => ({
+    hostId,
+    modelId: "openai/gpt-5",
+    modelSelection,
+  });
+
+  it("keeps effort-only siblings of the picked selection", () => {
+    const high = env("h1", hostedSel({ reasoningEffort: "high" }));
+    const plain = env("h1", hostedSel());
+    const out = environmentsForModelCell([high, plain], {
+      hostId: "h1",
+      modelId: "openai/gpt-5",
+      picked: hostedSel({ reasoningEffort: "high" }),
+      efforts: true,
+    });
+    expect(out).toEqual([high, plain]);
+  });
+
+  it("does not count an environment on a different connection as a sibling", () => {
+    const hosted = env("h1", hostedSel({ reasoningEffort: "high" }));
+    const byok = env("h1", org());
+    const out = environmentsForModelCell([hosted, byok], {
+      hostId: "h1",
+      modelId: "openai/gpt-5",
+      picked: org({ reasoningEffort: "high" }),
+      efforts: true,
+    });
+    // The org pick's effort (high) is only run by the HOSTED environment, which
+    // is not the same selection identity, so nothing is reused.
+    expect(out).toEqual([]);
+  });
+
+  it("returns none when no sibling of the same identity runs the picked effort", () => {
+    const plain = env("h1", hostedSel());
+    expect(
+      environmentsForModelCell([plain], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: hostedSel({ reasoningEffort: "high" }),
+        efforts: true,
+      }),
+    ).toEqual([]);
   });
 });

@@ -1443,8 +1443,14 @@ async function handleTurn(c: Context): Promise<Response> {
     const turnTemperature =
       turnReasoningEffort !== undefined ? undefined : pins.temperature;
     const { temperature: _unusedTemperature, ...pinsWithoutTemperature } = pins;
-    const turnPins =
-      turnTemperature === undefined ? pinsWithoutTemperature : pins;
+    // The effort the turn runs at is recorded with it (begin_model and failure
+    // persistence included), so a failed turn still leaves its pin.
+    const turnPins = {
+      ...(turnTemperature === undefined ? pinsWithoutTemperature : pins),
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
+    };
 
     // --- Engine pre-flight ------------------------------------------------
     //
