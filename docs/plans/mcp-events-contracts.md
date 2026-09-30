@@ -188,9 +188,11 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 | Issue viewer token | inspector: project `member` now; token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
 | Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing |
 | Author a trigger (create, edit, enable) | Convex: the caller is the subscription's **owner**. A run acts with the owner's credentials, so no one else (a project admin included) decides what it does |
-| Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing |
+| Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing, and a run already in flight stops at its next checkpoint or tool call |
 | Simulate an event | inspector: project `member`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
 | Dispatch a run | enqueue mutation: subscription not removed, trigger enabled, owner still a member |
+| Start a run | claim mutation: trigger enabled, subscription neither removed nor paused, owner still authorized (a refusal parks the subscription `paused_auth`), then the rate limit and spend cap |
+| Keep a run acting | `runs/checkpoint` and `runs/begin-call`: the claim's authority checks again, before the step or tool call. A refusal ends the run `failed` with the reason and takes back its lease, so the executor gets `409 lease_lost` and stops |
 | Execute tools | executor: delegated bearer for the owner, `createAuthorizedManager` re-authorizes each server |
 
 The feed connection closes at token expiry; the client reconnects with a fresh token, which re-runs the membership check.

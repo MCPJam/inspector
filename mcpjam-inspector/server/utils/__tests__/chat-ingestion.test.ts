@@ -519,6 +519,59 @@ describe("chat-ingestion", () => {
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
+  // An unattended MCP Events trigger run persists its transcript like any
+  // other turn; its failures and skips must stay attributable to it.
+  const eventTurn = {
+    modelId: "m",
+    modelSource: "mcpjam" as const,
+    authHeader: "Bearer t",
+    startedAt: 1,
+    sourceType: "event" as const,
+    origin: "event" as const,
+  };
+
+  it("carries an event turn's sourceType and origin on chat.session.persist.failed", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response("Server Error", { status: 503 }));
+
+    await persistChatSessionToConvex(
+      { ...eventTurn, chatSessionId: "evt-run-1" },
+      makeTestContext()
+    );
+
+    expect(mockLogger.event).toHaveBeenCalledWith(
+      "chat.session.persist.failed",
+      expect.any(Object),
+      expect.objectContaining({ sourceType: "event", origin: "event" }),
+      undefined
+    );
+  });
+
+  it("carries an event turn's sourceType and origin on chat.session.persist.skipped", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ skipped: true, version: 3 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const outcome = await persistChatSessionToConvex(
+      { ...eventTurn, chatSessionId: "evt-run-2" },
+      makeTestContext()
+    );
+
+    expect(outcome).toMatchObject({ outcome: "skipped" });
+    const skipped = mockLogger.event.mock.calls.find(
+      ([name]) => name === "chat.session.persist.skipped"
+    );
+    expect(skipped?.[2]).toMatchObject({
+      sourceType: "event",
+      origin: "event",
+      hasTurnId: false,
+    });
+  });
+
   it("emits chat.session.persist.failed(timeout) via typed event when c is provided", async () => {
     vi.useFakeTimers();
     global.fetch = vi.fn().mockImplementation(
