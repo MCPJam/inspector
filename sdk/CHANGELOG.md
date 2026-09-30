@@ -1,5 +1,19 @@
 # `@mcpjam/sdk` changelog
 
+## 8.20.0
+
+### Minor Changes
+
+- [#5749](https://github.com/MCPJam/inspector/pull/5749) [`d38ca05`](https://github.com/MCPJam/inspector/commit/d38ca055b280293f043578f643b399e0ce0e30c0) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add the reasoning-effort helpers to `@mcpjam/sdk/browser`: `supportedReasoningEfforts` (what a control may offer for a model on a route or harness), `reasoningEffortProviderOptions` (moved from the inspector), `selectionConfigKey` (selection identity including settings) and `selectionIfMatches`. The level tables stay on `@mcpjam/sdk/host-config/internal`.
+
+  Behaviour change on the direct route: `reasoningEffortProviderOptions` now refuses model/level pairs the provider documents as unsupported instead of forwarding them, so a saved direct selection that used to reach the provider and fail there now gets `capability_missing` up front. This covers Opus 4.5 with `max`, Haiku and Sonnet 4.5 and earlier, `gpt-5` with `none`, `gpt-5.1` with `minimal`, Codex with `none`, `-pro` and `-chat` models, `o1-mini`/`o1-preview`, and Gemini 3 Pro with `minimal`.
+
+### Patch Changes
+
+- [#5773](https://github.com/MCPJam/inspector/pull/5773) [`63c7ce8`](https://github.com/MCPJam/inspector/commit/63c7ce81022fbfed75fd12dfb7390a7daac64447) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
 ## 8.19.0
 
 ### Minor Changes
