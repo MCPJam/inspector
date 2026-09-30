@@ -7217,6 +7217,40 @@ test("eval cases run --compose-secret refuses a deployment that cannot grant", a
   }
 });
 
+test("eval cases run --compose-model-selection with an empty value is refused before launch", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "cases",
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--case",
+          "echo works",
+          "--compose-host",
+          "Claude Code",
+          "--compose-server-group",
+          "group-pinned",
+          "--compose-model-selection",
+          ""
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run --compose-secret spends no EXTRA round trip to check", async () => {
   // The cost objection, answered by measurement. A composed launch ALREADY
   // reads `/environments/capabilities` — `probeComposeCapabilities` needs

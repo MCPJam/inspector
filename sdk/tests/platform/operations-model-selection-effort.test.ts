@@ -356,6 +356,23 @@ describe("update_project_environment", () => {
     });
   });
 
+  it("clearing the model override (modelId: null) clears the saved selection too", async () => {
+    const { context, writes } = makeRouter({ environment: ENV_ROW });
+    await updateEnvironmentOperation.execute(
+      {
+        project: "Acme",
+        environment: "env-1",
+        expectedRevision: 3,
+        modelId: null,
+      },
+      context
+    );
+    expect(writes[0]!.body).toMatchObject({
+      modelId: null,
+      modelSelection: null,
+    });
+  });
+
   it("refuses to send a selection to a deployment that predates them", async () => {
     const { context, writes } = makeRouter({
       environment: ENV_ROW,
@@ -428,6 +445,21 @@ describe("composed stacks", () => {
       { modelId: "anthropic/claude-sonnet-4.5" },
       { modelId: "openai/gpt-5", selection: SELECTION },
     ]);
+  });
+
+  it("trims the selection's model id and compares selections key-order independently", () => {
+    const reordered = {
+      fallback: SELECTION.fallback,
+      settings: {
+        temperature: SELECTION.settings.temperature,
+        reasoningEffort: SELECTION.settings.reasoningEffort,
+      },
+      source: SELECTION.source,
+      modelId: ` ${SELECTION.modelId} `,
+    };
+    expect(
+      expandComposeModelChoices({ modelSelections: [SELECTION, reordered] })
+    ).toEqual([{ modelId: "openai/gpt-5", selection: SELECTION }]);
   });
 
   it("refuses two different selections for one model (an effort axis is a later phase)", () => {

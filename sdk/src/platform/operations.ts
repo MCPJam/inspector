@@ -26,6 +26,7 @@ import type { PlatformSessionBrowserOperationResult } from "./types.js";
  * product catalog unchanged.
  */
 import { z } from "zod";
+import { stableStringifyJson } from "../widget-runtime/json-utils.js";
 import { opaqueIdSchema } from "../contract/identity.js";
 import {
   GATE_WAIVER_MAX_REASON_LENGTH,
@@ -3150,13 +3151,17 @@ export function expandComposeModelChoices(stack: {
     ...(stack.modelSelection ? [stack.modelSelection] : []),
   ]) {
     const id = selection.modelId.trim();
+    // Stored with the trimmed id, so the cell carries the id the map is keyed by.
+    const normalized: ModelSelection = { ...selection, modelId: id };
     const seen = selections.get(id);
-    if (seen && JSON.stringify(seen) !== JSON.stringify(selection)) {
+    // Canonical (key-order independent) comparison: the same selection spelled
+    // with its keys in another order is one selection, not a conflict.
+    if (seen && stableStringifyJson(seen) !== stableStringifyJson(normalized)) {
       throw operationInputError(
         `Two different model selections were given for "${id}". A composed run takes one selection per model (comparing efforts of one model is not supported yet).`
       );
     }
-    selections.set(id, selection);
+    selections.set(id, normalized);
   }
   const explicit = [
     ...new Set([
@@ -12057,6 +12062,13 @@ export const updateEnvironmentOperation: PlatformOperation<
       // A bare model change must not keep a selection saved for the OLD model:
       // the bare id and the selection would disagree and the write would be
       // refused. The selection belonged to the old model, so it goes with it.
+      body.modelSelection = null;
+    } else if (
+      input.modelId === null &&
+      environment.modelSelection !== undefined
+    ) {
+      // Clearing the model override must not leave a selection saved for it:
+      // the selection names a model the environment no longer pins.
       body.modelSelection = null;
     }
     if (body.modelSelection !== undefined && body.modelSelection !== null) {

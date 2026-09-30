@@ -153,6 +153,23 @@ export type ChatSessionEngineResult =
   | ({ ok: false } & ChatSessionEngineRefusal);
 
 /**
+ * The host's saved model selection, only when it is for `modelId`.
+ *
+ * A saved selection (and the reasoning effort in its settings) belongs to one
+ * model; a turn that names a different model must not inherit it. Read with the
+ * SDK validator, so a malformed stored selection reads as none.
+ */
+export function hostSelectionForModel(
+  runtimeConfig: Record<string, unknown> | undefined,
+  modelId: string,
+): ModelSelection | undefined {
+  return selectionIfMatches(
+    readStoredModelSelection(runtimeConfig?.modelSelection),
+    modelId,
+  );
+}
+
+/**
  * Decide the engine, or refuse with a named reason. Never falls back.
  *
  * The harness half delegates to `checkHarnessRuntimeAvailable` — the SAME gate
@@ -205,22 +222,6 @@ export type ChatSessionEngineResult =
  *     The escapes are both lossless: `environmentId` pins a host durably, and
  *     `hostId` alone plus per-turn `allowedServerIds` narrows the same set.
  */
-/**
- * The host's saved model selection, only when it is for `modelId`.
- *
- * A saved selection (and the reasoning effort in its settings) belongs to one
- * model; a turn that names a different model must not inherit it. Read with the
- * SDK validator, so a malformed stored selection reads as none.
- */
-export function hostSelectionForModel(
-  runtimeConfig: Record<string, unknown> | undefined,
-  modelId: string,
-): ModelSelection | undefined {
-  return selectionIfMatches(
-    readStoredModelSelection(runtimeConfig?.modelSelection),
-    modelId,
-  );
-}
 
 export function resolveChatSessionEngine(args: {
   /** Server-fetched host, or absent for a bare `serverIds` turn. */
@@ -253,13 +254,9 @@ export function resolveChatSessionEngine(args: {
   // The host's own approval gate, read server-side like everything else here.
   const requireToolApproval = hostConfig.requireToolApproval === true;
 
-  const hostSelection = hostConfig.modelSelection as
-    | { modelId?: unknown }
-    | undefined;
-  const hostEffort =
-    hostSelection?.modelId === args.model.id
-      ? selectionReasoningEffort(hostSelection)
-      : undefined;
+  const hostEffort = selectionReasoningEffort(
+    hostSelectionForModel(hostConfig, args.model.id),
+  );
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,

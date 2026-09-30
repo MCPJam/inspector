@@ -4664,7 +4664,16 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
+  // A stored effort matters only to a case that invokes a model: a pinned-only
+  // case never does, so a legacy value on it is inert, not refused.
+  if (
+    turnsNeedModel({
+      caseType: test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    })
+  ) {
+    assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
+  }
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),

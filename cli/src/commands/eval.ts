@@ -395,7 +395,7 @@ function composeField(options: {
   const modelSelections = (
     Array.isArray(options.composeModelSelection)
       ? options.composeModelSelection
-      : options.composeModelSelection
+      : options.composeModelSelection !== undefined
       ? [options.composeModelSelection]
       : []
   ).map(

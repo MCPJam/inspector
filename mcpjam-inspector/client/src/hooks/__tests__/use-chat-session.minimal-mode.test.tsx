@@ -1508,6 +1508,36 @@ describe("useChatSession minimal mode parity", () => {
       expect(off.result.current.reasoningEffort).toBeUndefined();
     });
 
+    it("seeds a restored session's pinned effort for its model, not the current pick", async () => {
+      const restoredModel = {
+        ...effortModel,
+        id: "openai/gpt-5-restored",
+        name: "Restored",
+      };
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        void result.current.loadChatSession(
+          {
+            chatSessionId: "pinned-session",
+            messagesBlobUrl: null,
+            resumeConfig: { reasoningEffort: "high" },
+            version: 1,
+          },
+          { restoredModel: restoredModel as any }
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.chatSessionId).toBe("pinned-session");
+      });
+      // The picker is still on `effortModel`: the pin is not seeded onto it.
+      expect(result.current.reasoningEffort).toBeUndefined();
+    });
+
     it("seeds a host default without remembering it", () => {
       const { result } = renderHook(() =>
         useChatSession({

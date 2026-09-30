@@ -4456,6 +4456,10 @@ export function TestTemplateEditor({
                                 quickRunClientIds(attachedEnvironments)[0] ??
                                 "",
                               modelId,
+                              (hostId) =>
+                                projectHosts
+                                  .find((host) => host.hostId === hostId)
+                                  ?.modelId?.trim() || undefined,
                             ),
                         }
                       : {})}

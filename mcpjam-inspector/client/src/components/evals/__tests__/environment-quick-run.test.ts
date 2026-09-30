@@ -68,6 +68,25 @@ describe("quickRunEnvironmentEffort", () => {
     ).toBe("high");
   });
 
+  it("reads the effort of an environment that inherits its client's model", () => {
+    const inherited = [
+      env("c", { hostId: "host-3", modelSelection: selection("high") }),
+    ];
+    const clientModelId = (hostId: string) =>
+      hostId === "host-3" ? "openai/gpt-5" : undefined;
+    expect(
+      quickRunEnvironmentEffort(inherited, "host-3", "openai/gpt-5"),
+    ).toBeUndefined();
+    expect(
+      quickRunEnvironmentEffort(
+        inherited,
+        "host-3",
+        "openai/gpt-5",
+        clientModelId,
+      ),
+    ).toBe("high");
+  });
+
   it("is undefined for another client, another model, or an unpinned environment", () => {
     expect(
       quickRunEnvironmentEffort(attached, "host-2", "openai/gpt-5"),

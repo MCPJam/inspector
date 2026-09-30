@@ -233,6 +233,7 @@ describe("eval runner reads saved model selections", () => {
       provider: string;
       selection?: ModelSelection;
       advancedConfig?: Record<string, unknown>;
+      promptTurns?: unknown[];
     },
     options: Record<string, unknown> = {},
   ) {
@@ -247,7 +248,7 @@ describe("eval runner reads saved model selections", () => {
             runs: 1,
             ...test,
             expectedToolCalls: [],
-            promptTurns: [
+            promptTurns: test.promptTurns ?? [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
             testCaseId: "case-1",
@@ -815,6 +816,37 @@ describe("eval runner reads saved model selections", () => {
         ),
         "capability_missing",
       );
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
+    it("a legacy advancedConfig.reasoningEffort on a pinned-only case is not refused (no model runs)", async () => {
+      mcpClientManager.executeTool.mockResolvedValue({ content: [] });
+      const errorSpy = vi.spyOn(logger, "error");
+      await run(
+        {
+          model: "openai/gpt-5",
+          provider: "openai",
+          advancedConfig: { reasoningEffort: "low" },
+          promptTurns: [
+            {
+              id: "turn-1",
+              prompt: "",
+              expectedToolCalls: [],
+              pinnedToolCall: {
+                serverName: "srv-1",
+                toolName: "show_map",
+                arguments: { city: "SF" },
+              },
+            },
+          ],
+        },
+        localOptions,
+      );
+      const refusal = errorSpy.mock.calls.find(
+        ([message]) => message === "[evals] Test case failed:",
+      )?.[1] as { name?: string } | undefined;
+      errorSpy.mockRestore();
+      expect(refusal?.name).not.toBe("ModelResolutionRefusalError");
       expect(streamTextMock).not.toHaveBeenCalled();
     });
 

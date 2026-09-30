@@ -773,6 +773,11 @@ export interface UseChatSessionReturn {
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
+      /**
+       * The model the caller is about to select for this session. The pinned
+       * reasoning effort is seeded for it (not for the pre-restore selection).
+       */
+      restoredModel?: ModelDefinition;
     },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
@@ -4901,6 +4906,7 @@ export function useChatSession(
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
+        restoredModel?: ModelDefinition;
       },
     ) => {
       // The resume pointer is only a destination hint. Read the existing
@@ -4985,13 +4991,16 @@ export function useChatSession(
         }
         {
           // The chat pinned its effort: a reopened chat keeps it (for the
-          // model the picker is on; a level it does not offer is not sent).
+          // model the session restores; a level it does not offer is not sent).
           const pinned = session.resumeConfig?.reasoningEffort;
           if (
             typeof pinned === "string" &&
             (MODEL_REASONING_EFFORTS as readonly string[]).includes(pinned)
           ) {
-            seedReasoningEffort(selectedModel, pinned as ModelReasoningEffort);
+            seedReasoningEffort(
+              options?.restoredModel ?? selectedModel,
+              pinned as ModelReasoningEffort,
+            );
           }
         }
         if (session.resumeConfig?.requireToolApproval !== undefined) {
