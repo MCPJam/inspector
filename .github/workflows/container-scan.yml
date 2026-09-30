@@ -68,6 +68,9 @@ jobs:
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
           severity: CRITICAL,HIGH
+          # Without this, trivy-action drops the severity filter for SARIF
+          # output and reports every level.
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: "0"
 
@@ -89,6 +92,10 @@ jobs:
           image-ref: local/${{ matrix.image }}:scan
           format: table
           severity: CRITICAL
+          # Secret scanning is on by default and ignore-unfixed does not apply
+          # to it; a CRITICAL secret would fail this gate against its stated
+          # policy. Secrets still surface via the report step above.
+          scanners: vuln
           ignore-unfixed: true
           exit-code: "1"
           skip-setup-trivy: true
