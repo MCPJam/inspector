@@ -106,6 +106,94 @@ it("keeps inherited models and preserves server scope for a new model", () => {
   });
 });
 
+describe("reasoning effort in the run matrix", () => {
+  const selectionWith = (effort?: string) => ({
+    modelId: "sonnet",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+  const withEffort = [
+    {
+      ...environments[0],
+      modelSelection: selectionWith("high"),
+    },
+  ] as typeof environments;
+
+  it("seeds the matrix from the environment's own selection", () => {
+    expect(
+      seedRunMatrix(suite, withEffort as never).claude.explicitModelSelections
+        ?.sonnet?.settings?.reasoningEffort,
+    ).toBe("high");
+  });
+
+  it("reuses the environment while its effort is unchanged", () => {
+    const selection = seedRunMatrix(suite, withEffort as never);
+    const [cell] = planRunMatrix(suite, withEffort as never, selection, {
+      modelSelections: true,
+    });
+    expect(cell.environmentId).toBe("env");
+  });
+
+  it("plans a new cell, carrying the selection, when the effort changes", () => {
+    const [cell] = planRunMatrix(
+      suite,
+      withEffort as never,
+      {
+        claude: {
+          includeClientDefaults: false,
+          explicitModelIds: ["sonnet"],
+          explicitModelSelections: { sonnet: selectionWith("low") as never },
+        },
+      },
+      { modelSelections: true },
+    );
+    expect(cell.environmentId).toBeUndefined();
+    expect(cell.stack).toMatchObject({
+      hostId: "claude",
+      modelId: "sonnet",
+      modelSelection: { settings: { reasoningEffort: "low" } },
+    });
+  });
+
+  it("sends the selection on a derived cell's overrides", () => {
+    const [cell] = planRunMatrix(
+      suite,
+      withEffort as never,
+      {
+        claude: {
+          includeClientDefaults: false,
+          explicitModelIds: ["sonnet"],
+          explicitModelSelections: { sonnet: selectionWith() as never },
+        },
+      },
+      { modelSelections: true, lossless: true },
+    );
+    expect(cell.derive?.overrides).toMatchObject({
+      hostId: "claude",
+      modelId: "sonnet",
+      modelSelection: { modelId: "sonnet" },
+    });
+    expect(cell.derive?.overrides.modelSelection?.settings).toBeUndefined();
+  });
+
+  it("ignores efforts where the deployment stores no selections", () => {
+    const [cell] = planRunMatrix(
+      suite,
+      withEffort as never,
+      {
+        claude: {
+          includeClientDefaults: false,
+          explicitModelIds: ["sonnet"],
+          explicitModelSelections: { sonnet: selectionWith("low") as never },
+        },
+      },
+      {},
+    );
+    expect(cell.environmentId).toBe("env");
+  });
+});
+
 it("never derives a new cell's servers from the suite's legacy group", () => {
   // The environment has no group; the suite's legacy field does. An
   // environment suite does not read that field, so copying it would be a

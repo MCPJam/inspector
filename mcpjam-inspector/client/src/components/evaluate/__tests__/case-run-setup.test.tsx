@@ -99,3 +99,30 @@ it("shows the suite-style controls and preserves provider-qualified model select
     .click(screen.getByRole("button", { name: "Remove GPT A model" }));
   expect(onModelsChange).toHaveBeenCalledWith(["anthropic/claude-b"]);
 });
+
+describe("Case run setup reasoning effort", () => {
+  it("shows the environment's effort read-only and offers no effort control", () => {
+    render(
+      <CaseRunSetup
+        {...props}
+        models={["openai/gpt-5"]}
+        availableModels={[
+          {
+            id: "gpt-5",
+            name: "GPT-5",
+            provider: "openai",
+            supportedReasoningEfforts: ["low", "high"],
+          } as never,
+        ]}
+        environmentEffort={(modelId) =>
+          modelId === "gpt-5" ? "high" : undefined
+        }
+      />,
+    );
+    expect(screen.getByTestId("case-run-environment-effort")).toHaveTextContent(
+      "High reasoning effort, set by the environment",
+    );
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+  });
+});
+
