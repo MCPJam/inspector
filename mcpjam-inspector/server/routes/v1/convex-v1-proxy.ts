@@ -67,11 +67,16 @@ function sanitizeProxiedFailure(
     convexPath,
     status,
     requestId,
-    detail: redactForLog(serialized),
+    detail: redactForLog(
+      JSON.stringify(body, (_key, value: unknown) =>
+        typeof value === "string" ? redactForLog(value) : value,
+      ),
+    ),
   });
   const upstreamCode = (body as { code?: unknown } | null)?.code;
   const code =
-    typeof upstreamCode === "string" && !CONVEX_INTERNAL_DETAIL.test(upstreamCode)
+    typeof upstreamCode === "string" &&
+    !CONVEX_INTERNAL_DETAIL.test(upstreamCode)
       ? upstreamCode
       : status >= 500
         ? ErrorCode.INTERNAL_ERROR

@@ -138,6 +138,33 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     expect(logged).toContain(body.details!.requestId!);
   });
 
+  it.each([
+    ['token="double quoted sentinel"', "double quoted sentinel"],
+    ["password='single quoted sentinel'", "single quoted sentinel"],
+  ])(
+    "redacts decoded credentials before logging %s",
+    async (diagnostic, secret) => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(
+          {
+            code: "VALIDATION_ERROR",
+            message: `ArgumentValidationError: ${diagnostic}`,
+            details: { token: "nested credential sentinel" },
+          },
+          400,
+        ),
+      );
+      const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+
+      expect(res.status).toBe(400);
+      const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+      expect(logged).toContain("ArgumentValidationError");
+      expect(logged).toContain("[redacted]");
+      expect(logged).not.toContain(secret);
+      expect(logged).not.toContain("nested credential sentinel");
+    },
+  );
+
   it("keeps passing upstream-authored error envelopes through verbatim", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "NOT_FOUND", message: "Project not found" }, 404),
