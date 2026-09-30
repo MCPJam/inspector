@@ -57,7 +57,10 @@ import {
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
-import { tryResolveProjectServer } from "@/lib/apis/web/context";
+import {
+  getHostedProjectId,
+  tryResolveProjectServer
+} from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
 import {
@@ -182,6 +185,41 @@ export interface StoredOAuthConfig {
 
 const runtimeOAuthCustomHeaders = new Map<string, Record<string, string>>();
 
+function headerScopeKey(binding: {
+  projectId: string;
+  serverId: string;
+}): string {
+  return JSON.stringify([binding.projectId, binding.serverId]);
+}
+
+function stripStoredClientSecrets(raw: string | null): string | null {
+  if (!raw) return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    const strip = (value: unknown) =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.entries(value).filter(([key]) => key !== "client_secret")
+          )
+        : value;
+    return JSON.stringify(
+      isIssuerKeyedStore(parsed)
+        ? {
+            ...parsed,
+            byIssuer: Object.fromEntries(
+              Object.entries(parsed.byIssuer).map(([issuer, value]) => [
+                issuer,
+                strip(value)
+              ])
+            )
+          }
+        : strip(parsed)
+    );
+  } catch {
+    return null;
+  }
+}
+
 function withoutAuthorizationHeader(
   headers?: Record<string, string> | null
 ): Record<string, string> | undefined {
@@ -201,8 +239,11 @@ export function rememberOAuthCustomHeaders(
   headers?: Record<string, string> | null
 ): void {
   const sanitized = withoutAuthorizationHeader(headers);
-  if (sanitized) runtimeOAuthCustomHeaders.set(serverName, sanitized);
-  else runtimeOAuthCustomHeaders.delete(serverName);
+  const binding = tryResolveProjectServer(serverName);
+  if (!binding) return;
+  const key = headerScopeKey(binding);
+  if (sanitized) runtimeOAuthCustomHeaders.set(key, sanitized);
+  else runtimeOAuthCustomHeaders.delete(key);
 }
 
 interface OAuthRoutingConfig {
@@ -1117,12 +1158,8 @@ export function readStoredOAuthConfig(
       typeof parsed.customHeaders === "object" &&
       !Array.isArray(parsed.customHeaders)
     ) {
-      const legacyHeaders = Object.fromEntries(
-        Object.entries(parsed.customHeaders).filter(
-          ([, value]) => typeof value === "string"
-        ) as Array<[string, string]>
-      );
-      rememberOAuthCustomHeaders(serverName, legacyHeaders);
+      // Name-only legacy headers have no trustworthy project/server ownership.
+      // Purge them rather than assigning them to whichever project is active.
       // One-time migration: retain only public OAuth configuration.
       localStorage.setItem(
         `mcp-oauth-config-${serverName}`,
@@ -2037,7 +2074,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   private readStoredClientInformation(): Record<string, any> | undefined {
-    const raw = localStorage.getItem(`mcp-client-${this.serverName}`);
+    const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
+    const raw = stripStoredClientSecrets(stored);
+    if (raw && raw !== stored) {
+      localStorage.setItem(`mcp-client-${this.serverName}`, raw);
+    }
     const issuer = this.currentIssuer();
     const { value } = readIssuerKeyed<Record<string, any>>(
       raw,
@@ -2049,21 +2090,6 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     );
     if (!value || typeof value !== "object") {
       return undefined;
-    }
-    // Defense-in-depth: a client_secret must never persist on disk. If a legacy
-    // record still carries one, strip and re-persist (keyed when the issuer is
-    // known, else unkeyed until the next issuer-stamped save promotes it).
-    if ("client_secret" in value) {
-      const stripped = Object.fromEntries(
-        Object.entries(value).filter(([key]) => key !== "client_secret")
-      );
-      localStorage.setItem(
-        `mcp-client-${this.serverName}`,
-        JSON.stringify(
-          issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped
-        )
-      );
-      return stripped;
     }
     return value;
   }
@@ -2162,7 +2188,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // gets its own bucket — an AS-A client id is never reused for AS B). Before
     // any AS discovery, store unkeyed; the next issuer-stamped save promotes it.
     const issuer = this.currentIssuer();
-    const raw = localStorage.getItem(`mcp-client-${this.serverName}`);
+    const raw = stripStoredClientSecrets(
+      localStorage.getItem(`mcp-client-${this.serverName}`)
+    );
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
       JSON.stringify(
@@ -2493,12 +2521,17 @@ function buildConvexBindingForServer(input: {
   const previousBinding = oauthBindingStorage.get(input.serverName);
   const resolved = tryResolveProjectServer(input.serverName);
   if (resolved) {
+    const matchingPrevious =
+      previousBinding &&
+      headerScopeKey(previousBinding) === headerScopeKey(resolved)
+        ? previousBinding
+        : undefined;
     const isRegistry =
       !!input.registryServerId && input.useRegistryOAuthProxy === true;
     const hasClientSecret =
-      input.hasClientSecret ?? previousBinding?.hasClientSecret;
+      input.hasClientSecret ?? matchingPrevious?.hasClientSecret;
     const hasCustomHeaders =
-      input.hasCustomHeaders ?? previousBinding?.hasCustomHeaders;
+      input.hasCustomHeaders ?? matchingPrevious?.hasCustomHeaders;
     const binding: MCPOAuthProviderConvexBinding = {
       projectId: resolved.projectId,
       serverId: resolved.serverId,
@@ -2520,7 +2553,13 @@ function buildConvexBindingForServer(input: {
     oauthBindingStorage.set(input.serverName, binding);
     return binding;
   }
-  return previousBinding;
+  try {
+    return previousBinding?.projectId === getHostedProjectId()
+      ? previousBinding
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Recover OAuth headers from memory or the encrypted server-secret store. */
@@ -2528,10 +2567,17 @@ export async function resolveOAuthCustomHeaders(
   serverName: string,
   options: { required?: boolean } = {}
 ): Promise<Record<string, string> | undefined> {
-  const runtime = runtimeOAuthCustomHeaders.get(serverName);
-  if (runtime) return { ...runtime };
-
-  const binding = oauthBindingStorage.get(serverName);
+  const resolved = tryResolveProjectServer(serverName);
+  const persisted = oauthBindingStorage.get(serverName);
+  let binding: MCPOAuthProviderConvexBinding | undefined;
+  if (resolved) {
+    binding =
+      persisted && headerScopeKey(persisted) === headerScopeKey(resolved)
+        ? persisted
+        : { ...resolved, kind: "generic" };
+  }
+  // A persisted name-only binding is not proof of current server ownership.
+  // Wait for the active project/server mapping before recovering secrets.
   if (!binding) {
     if (options.required) {
       throw new Error(
@@ -2540,6 +2586,9 @@ export async function resolveOAuthCustomHeaders(
     }
     return undefined;
   }
+  const scopeKey = headerScopeKey(binding);
+  const runtime = runtimeOAuthCustomHeaders.get(scopeKey);
+  if (runtime) return { ...runtime };
   if (!options.required && !binding.hasCustomHeaders) return undefined;
 
   try {
@@ -2548,7 +2597,14 @@ export async function resolveOAuthCustomHeaders(
       serverId: binding.serverId,
     });
     const headers = withoutAuthorizationHeader(result.headers);
-    if (headers) runtimeOAuthCustomHeaders.set(serverName, headers);
+    const current = tryResolveProjectServer(serverName);
+    if (!current || headerScopeKey(current) !== scopeKey) {
+      throw new Error("OAuth project/server changed during header recovery.");
+    }
+    if (getHostedProjectId() !== binding.projectId) {
+      throw new Error("OAuth project changed during header recovery.");
+    }
+    if (headers) runtimeOAuthCustomHeaders.set(scopeKey, headers);
     if (!headers && (options.required || binding.hasCustomHeaders)) {
       throw new Error("Stored OAuth custom headers were not available.");
     }
@@ -2849,7 +2905,9 @@ export async function initiateOAuth(
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
     if (options.clientId) {
-      const raw = localStorage.getItem(`mcp-client-${options.serverName}`);
+      const raw = stripStoredClientSecrets(
+        localStorage.getItem(`mcp-client-${options.serverName}`)
+      );
       // Key the write to the CURRENT resolved issuer (discovery has run by the
       // time initiate persists a configured client id). Using the envelope's
       // previous `activeIssuer` would write the configured id into AS A's bucket
@@ -4083,7 +4141,7 @@ export async function waitForTokens(
  * added here too.
  */
 export function clearOAuthData(serverName: string): void {
-  runtimeOAuthCustomHeaders.delete(serverName);
+  rememberOAuthCustomHeaders(serverName, null);
   localStorage.removeItem(`mcp-tokens-${serverName}`);
   localStorage.removeItem(`mcp-client-${serverName}`);
   localStorage.removeItem(`mcp-verifier-${serverName}`);
