@@ -69,6 +69,14 @@ export class NotificationManager {
    * @param method - The notification method
    * @returns A handler that dispatches to all registered handlers
    */
+  removeHandler(
+    serverId: string,
+    method: NotificationMethodName,
+    handler: NotificationHandler
+  ): void {
+    this.handlers.get(serverId)?.get(method)?.delete(handler);
+  }
+
   createDispatcher(
     serverId: string,
     method: NotificationMethodName
