@@ -288,7 +288,7 @@ describe("securityHeadersMiddleware document policies", () => {
     const unsampledPolicy = unsampled.headers.get(
       "Content-Security-Policy-Report-Only",
     );
-    // The header is always there (MJ-016 retest #3); only the report
+    // The header is always there (MJ-016); only the report
     // endpoint is sampled.
     expect(unsampledPolicy).toMatch(/^default-src 'self'; /);
     expect(unsampledPolicy).not.toMatch(/report-uri /);

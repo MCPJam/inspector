@@ -19,7 +19,7 @@
  *   integrates with many external services (WorkOS, PostHog, Sentry, Convex,
  *   Stripe, MCP servers with OAuth), which is why it is not enforced yet.
  *   The header goes on every hosted response, documents and assets alike
- *   (MJ-016 retest #3 checks both), but only a sampled share of responses
+ *   (MJ-016), but only a sampled share of responses
  *   carries the report-uri directive (CSP_REPORT_SAMPLE_RATE), which is what
  *   bounds how many violation reports page views produce — a report-only
  *   policy without a report endpoint only logs to the console. On documents,
