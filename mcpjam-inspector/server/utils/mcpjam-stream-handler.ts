@@ -24,6 +24,7 @@ import type {
   ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
@@ -818,6 +819,12 @@ export interface MCPJamHandlerOptions {
   provider?: string;
   systemPrompt: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn asked for. Read by `runHarnessTurn`, which
+   * refuses an effort its adapter has not verified (refuse, never drop); the
+   * hosted `/stream` path takes its effort from `extraBodyFields` today.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
