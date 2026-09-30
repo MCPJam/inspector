@@ -763,6 +763,9 @@ if (process.env.NODE_ENV === "production") {
 
   // Serve static assets (JS, CSS, images) - no token injection needed
   app.use("/assets/*", serveStatic({ root: clientRoot }));
+  // A hashed asset that no longer exists must not fall through to the SPA
+  // document: a stale tab importing it would get HTML with a 200.
+  app.use("/assets/*", async (c) => c.notFound());
 
   // In-app browser redirect (before SPA fallback)
   app.use("/*", inAppBrowserMiddleware);

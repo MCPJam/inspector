@@ -25,6 +25,7 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { isChunkLoadError } from "@/lib/stale-chunk-recovery";
 import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
 import { PreparedEvalServerPage } from "./evaluate/prepared-eval-server-page";
 import { savePreparedEvalSuites } from "./evaluate/launch-prepared-evals";
@@ -144,11 +145,34 @@ export function EvaluateTab({
 }
 
 function EvalTabErrorFallback({
+  error,
   onRetry,
 }: {
   error: Error | null;
   onRetry: () => void;
 }) {
+  // React caches a rejected lazy import, so resetting the boundary re-throws
+  // it; only a page reload picks up the served build's chunks.
+  if (isChunkLoadError(error)) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={FlaskConical}
+          title="Reload the page"
+          description="Testing didn't finish loading. Reload the page to open it."
+          className="h-[calc(100vh-200px)]"
+        >
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </Button>
+        </EmptyState>
+      </div>
+    );
+  }
   return (
     <div className="p-6">
       <EmptyState

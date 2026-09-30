@@ -2,7 +2,13 @@ import { buildEvalServerPreview } from "../evaluate/eval-server-preview-model";
 import { readEvalServerPreviewDraft } from "../evaluate/eval-server-preview-state";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -49,7 +55,9 @@ vi.mock("../evaluate/suite-list-run-review", () => ({
   SuiteListRunReview: ({ suite, onClose, onStart }: any) => (
     <div role="dialog" aria-label={`Run ${suite.name}`}>
       <button onClick={onClose}>Close run review</button>
-      <button onClick={() => onStart(suite, { iterationOverride: 3 })}>Start reviewed run</button>
+      <button onClick={() => onStart(suite, { iterationOverride: 3 })}>
+        Start reviewed run
+      </button>
     </div>
   ),
 }));
@@ -450,12 +458,18 @@ describe("EvaluateTab", () => {
     mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
-    expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Setup Run Suite suite-a" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Run Suite suite-a" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Close run review" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Close run review" }),
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
   });
@@ -493,42 +507,48 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it.each([false, true])("leaves grading of launched case runs to the backend (skipJudge: %s)", async (skipJudge) => {
-    mocks.handleRerun.mockResolvedValueOnce({
-      status: "started",
-      runIds: ["new-a", "new-b"],
-      failedCount: 0,
-    });
-    const view = render(<EvaluateTab projectId="ws-1" />);
-    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
-    await act(async () => {
-      await props.onRerun(props.suite, { caseIds: ["case-a"], skipJudge });
-    });
-    const runQueries = () => mocks.useQuery.mock.calls
-      .filter(([name]) => name === "testSuites:getTestSuiteRun")
-      .map(([, args]) => (args as { runId: string }).runId);
-    expect(runQueries()).toEqual([]);
-    mocks.useQuery.mockClear();
-    mocks.route.current = { type: "list" };
-    view.rerender(<EvaluateTab projectId="ws-1" />);
-    expect(runQueries()).toEqual([]);
-  });
-
-  it("does not request judging for a refused launch or ordinary suite rerun", async () => {
-    mocks.handleRerun
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce({
+  it.each([false, true])(
+    "leaves grading of launched case runs to the backend (skipJudge: %s)",
+    async (skipJudge) => {
+      mocks.handleRerun.mockResolvedValueOnce({
         status: "started",
-        runIds: ["full-suite-run"],
+        runIds: ["new-a", "new-b"],
         failedCount: 0,
       });
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
+      await act(async () => {
+        await props.onRerun(props.suite, { caseIds: ["case-a"], skipJudge });
+      });
+      const runQueries = () =>
+        mocks.useQuery.mock.calls
+          .filter(([name]) => name === "testSuites:getTestSuiteRun")
+          .map(([, args]) => (args as { runId: string }).runId);
+      expect(runQueries()).toEqual([]);
+      mocks.useQuery.mockClear();
+      mocks.route.current = { type: "list" };
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+      expect(runQueries()).toEqual([]);
+    },
+  );
+
+  it("does not request judging for a refused launch or ordinary suite rerun", async () => {
+    mocks.handleRerun.mockResolvedValueOnce(undefined).mockResolvedValueOnce({
+      status: "started",
+      runIds: ["full-suite-run"],
+      failedCount: 0,
+    });
     render(<EvaluateTab projectId="ws-1" />);
     const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
     await act(async () => {
       await props.onRerun(props.suite, { caseIds: ["case-a"] });
       await props.onRerun(props.suite);
     });
-    expect(mocks.useQuery.mock.calls.some(([name]) => name === "testSuites:getTestSuiteRun")).toBe(false);
+    expect(
+      mocks.useQuery.mock.calls.some(
+        ([name]) => name === "testSuites:getTestSuiteRun",
+      ),
+    ).toBe(false);
   });
 
   it("keeps handler-driven navigation on /evaluate", () => {
@@ -548,7 +568,10 @@ describe("EvaluateTab", () => {
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     const tabs = screen.getByRole("navigation", { name: "Evaluate view" });
     expect(tabs.querySelector("button")).toHaveTextContent("Overview");
-    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   describe("public decision summaries", () => {
@@ -654,10 +677,14 @@ describe("EvaluateTab", () => {
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    await user.click(
+      screen.getByRole("button", { name: "Setup Run Suite suite-a" }),
+    );
     expect(mocks.handleRerun).not.toHaveBeenCalled();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start reviewed run" }),
+    );
     expect(mocks.handleRerun).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-a" }),
       { iterationOverride: 3 },
@@ -682,9 +709,7 @@ describe("EvaluateTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     expect(screen.queryByTestId("project-runs-table")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
     expect(screen.getByRole("button", { name: /^suites$/i })).toHaveAttribute(
       "aria-current",
       "page",
@@ -1058,6 +1083,38 @@ describe("EvaluateTab", () => {
       ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("offers a page reload when a code-split chunk from an older build fails", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const reload = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, reload },
+    });
+    try {
+      mocks.useEvalQueries.mockImplementation(() => {
+        throw new TypeError(
+          "Failed to fetch dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-CtNEAoFZ.js",
+        );
+      });
+
+      render(<EvaluateTab projectId="project-1" />);
+
+      expect(screen.getByText("Reload the page")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: originalLocation,
+      });
       consoleError.mockRestore();
     }
   });
