@@ -55,6 +55,11 @@ jobs:
       - name: Build image
         run: docker build -f "${{ matrix.dockerfile }}" -t "local/${{ matrix.image }}:scan" .
 
+      # ignore-unfixed on the report too: every SARIF result becomes an
+      # SLA-tracked code-scanning alert, and an alert nobody can act on (no
+      # patched version exists) only ages past its SLA. The first unrestricted
+      # run put 528 findings on the web image, almost all unfixable Debian
+      # HIGHs.
       - name: Scan image (report)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -63,6 +68,7 @@ jobs:
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
           exit-code: "0"
 
       # Fork PRs run with a read-only token that cannot write security events;
