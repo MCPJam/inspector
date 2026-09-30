@@ -25,6 +25,7 @@ import {
   normalizeOAuthRegistrationStrategy,
   type OAuthTestProfile,
 } from "@/lib/oauth/profile";
+import { Button } from "@mcpjam/design-system/button";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -308,6 +309,20 @@ export const OAuthFlowTab = ({
   const protocolVersion = profile.protocolVersion;
   const registrationStrategy = profile.registrationStrategy;
 
+  // A pre-registered flow skips dynamic registration, so it has no way to
+  // obtain a client id: without one it walks the user through discovery and
+  // then dies at the registration step (INSPECTOR-CLIENT-2J3). The profile
+  // modal refuses to save that shape, but a server saved by an older build,
+  // or one whose stored client record did not survive a migration, still
+  // arrives here with it. `profile.clientId` already folds in the config and
+  // the stored `mcp-client-*` record — the same sources the machine's
+  // `loadPreregisteredCredentials` reads — so an empty value here means the
+  // registration step will find nothing either.
+  const missingPreregisteredClientId =
+    hasProfile &&
+    registrationStrategy === "preregistered" &&
+    !profile.clientId.trim();
+
   // Synced SYNCHRONOUSLY by every writer below (not only via this effect):
   // the state machine's getState, the agent advance handler, and the surface
   // snapshot all read the ref right after an awaited step, where an
@@ -523,7 +538,23 @@ export const OAuthFlowTab = ({
     return ready;
   }, [proceedToNextStep, updateOAuthFlowState]);
 
+  // The next click would run client registration. With no client id it can
+  // only fail, so ask for the id instead of stepping into a known failure.
+  const blockedAtRegistration =
+    missingPreregisteredClientId &&
+    oauthFlowState.currentStep === "received_authorization_server_metadata" &&
+    !oauthFlowState.error;
+
   const handleAdvance = useCallback(async () => {
+    if (blockedAtRegistration) {
+      track("oauth_flow_preregistered_client_id_prompted", {
+        location: "oauth_flow_tab",
+        protocolVersion,
+        hasClientSecret: Boolean(activeServer?.hasClientSecret),
+      });
+      openProfileModal("edit");
+      return;
+    }
     setIsAdvancing(true);
     track("oauth_flow_tab_next_step_button_clicked", {
       location: "oauth_flow_tab",
@@ -566,8 +597,11 @@ export const OAuthFlowTab = ({
       setIsAdvancing(false);
     }
   }, [
+    activeServer?.hasClientSecret,
+    blockedAtRegistration,
     hasProfile,
     oauthFlowState.currentStep,
+    openProfileModal,
     proceedToNextStep,
     profile.serverUrl,
     protocolVersion,
@@ -577,7 +611,9 @@ export const OAuthFlowTab = ({
 
   const continueLabel = !hasProfile
     ? "Configure Target"
-    : oauthFlowState.currentStep === "complete"
+    : blockedAtRegistration
+      ? "Add client ID"
+      : oauthFlowState.currentStep === "complete"
       ? "Flow Complete"
       : oauthFlowState.isInitiatingAuth
         ? "Continue"
@@ -678,6 +714,18 @@ export const OAuthFlowTab = ({
           throw createInspectorCommandClientError(
             "invalid_request",
             "The flow is already complete — use ui_reset_oauth_flow to run it again.",
+          );
+        }
+        // Same stop the Continue button makes: registration cannot succeed
+        // without a client id, so do not step the machine into that failure.
+        if (
+          missingPreregisteredClientId &&
+          before.currentStep === "received_authorization_server_metadata" &&
+          !before.error
+        ) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "This target uses a pre-registered client but has no client ID saved — open ui_open_oauth_server_config so the user can add one, or switch registration to dcr.",
           );
         }
         const previousStep = before.currentStep;
@@ -1004,6 +1052,28 @@ export const OAuthFlowTab = ({
 
   return (
     <div className="h-full flex flex-col bg-background">
+      {missingPreregisteredClientId ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-foreground"
+          data-testid="oauth-preregistered-missing-client-id"
+        >
+          <span className="min-w-0">
+            This server is set to use a pre-registered OAuth client, but no
+            client ID is saved. The flow will stop at client registration until
+            you add one, or switch Registration to Dynamic (DCR).
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0"
+            onClick={() => openProfileModal("edit")}
+          >
+            Add client ID
+          </Button>
+        </div>
+      ) : null}
       <div className="flex-1 overflow-hidden">
         {hasProfile ? (
           <ResizablePanelGroup direction="horizontal" className="h-full">
