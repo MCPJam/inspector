@@ -155,7 +155,12 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
             serverIds: environmentServerIds(environment),
             serverNames: environmentServerNames(environment),
           }
-        : await fetchSuiteRunServerSelection(token, input.suiteId, undefined);
+        : await fetchSuiteRunServerSelection(
+            token,
+            input.suiteId,
+            undefined,
+            "authorized",
+          );
       const { manager } = await createAuthorizedManager(
         callerContextFromHono(c),
         token,

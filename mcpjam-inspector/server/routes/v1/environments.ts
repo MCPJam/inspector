@@ -45,6 +45,7 @@ import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 
 const environments = new Hono();
@@ -376,7 +377,15 @@ async function readEnvironment(
       { projectId, environmentId } as any,
     )) as EnvironmentRow | null;
   } catch (error) {
-    throw translateConvexError(error);
+    // The scoping read. A plain membership refusal — masked to "Server Error"
+    // in production — answers the same neutral 404 instead of the write
+    // translator's terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexError(error)
+    );
   }
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found");
@@ -610,7 +619,13 @@ environments.get("/projects/:projectId/environments", async (c) => {
       { projectId, includeArchived } as any,
     )) as EnvironmentRow[] | null | undefined;
   } catch (error) {
-    throw translateConvexError(error);
+    // Project-scoped list: same masked-refusal reading as `readEnvironment`.
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexError(error)
+    );
   }
   return v1PageJson(
     c,

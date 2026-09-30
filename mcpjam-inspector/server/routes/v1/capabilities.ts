@@ -255,7 +255,14 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
       { projectId } as never,
     )) as CapabilitiesRow | null;
   } catch (error) {
-    throw translateConvexReadError(error, { scope: "v1.capabilities" });
+    // This read authorizes the caller-supplied project id, and its refusal is
+    // a plain error production Convex masks to "Server Error" — read that as
+    // the same 404 an unknown project answers, not a 502 (MJ-021).
+    throw translateConvexReadError(error, {
+      scope: "v1.capabilities",
+      notFoundMessage: "Project not found",
+      redactedIsRefusal: true,
+    });
   }
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found");
