@@ -84,11 +84,27 @@ describe("harnessControlState — loop-owned controls", () => {
   });
 });
 
+describe("harnessControlState — reasoning effort", () => {
+  it("follows the SDK's verified per-adapter table", () => {
+    expect(harnessControlState("codex", "reasoningEffort")).toEqual({
+      enforced: true,
+    });
+    for (const harness of ["claude-code", "cursor"] as const) {
+      const state = harnessControlState(harness, "reasoningEffort");
+      expect(state.enforced, harness).toBe(false);
+      expect(state.enforced === false && state.note).toMatch(
+        /reasoning effort/,
+      );
+    }
+  });
+});
+
 describe("harnessControlState — emulated engine", () => {
   it("enforces every control when there is no harness", () => {
     const controls: HarnessGatedControl[] = [
       "modelId",
       "temperature",
+      "reasoningEffort",
       "requireToolApproval",
       "respectToolVisibility",
       "progressiveToolDiscovery",

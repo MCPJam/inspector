@@ -341,6 +341,74 @@ describe("planSuiteClients", () => {
   });
 });
 
+describe("planSuiteClients with reasoning effort", () => {
+  const selectionFor = (modelId: string, effort?: string) => ({
+    modelId,
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+  const withEffort = [
+    { ...envs[0], modelSelection: selectionFor("gpt", "high") },
+    envs[1],
+  ] as ProjectEnvironmentView[];
+  const pick = (effort?: string) => ({
+    chat: {
+      includeClientDefaults: false,
+      explicitModelIds: ["gpt"],
+      explicitModelSelections: { gpt: selectionFor("gpt", effort) as never },
+    },
+    cursor: { includeClientDefaults: false, explicitModelIds: ["sonnet"] },
+  });
+
+  it("keeps an environment whose effort is unchanged", () => {
+    expect(
+      planSuiteClients(suite, withEffort, pick("high"), {
+        group: "servers",
+        modelSelections: true,
+      })[0],
+    ).toEqual({ environmentId: "chat-env" });
+  });
+
+  it("composes a new environment carrying the whole selection when the effort changes", () => {
+    const [item] = planSuiteClients(suite, withEffort, pick("low"), {
+      group: "servers",
+      modelSelections: true,
+    });
+    expect(item.environmentId).toBeUndefined();
+    expect(item.stack?.modelSelection).toEqual(selectionFor("gpt", "low"));
+  });
+
+  it("derives it with the selection in the overrides on a lossless backend", () => {
+    const [item] = planSuiteClients(
+      suite,
+      withEffort.map((row) => ({ ...row, revision: 1 })) as never,
+      pick("low"),
+      { group: "servers", modelSelections: true, lossless: true },
+    );
+    expect(item.derive?.overrides).toMatchObject({
+      hostId: "chat",
+      modelId: "gpt",
+      modelSelection: selectionFor("gpt", "low"),
+    });
+  });
+
+  it("clearing the effort is a change too", () => {
+    const [item] = planSuiteClients(suite, withEffort, pick(undefined), {
+      group: "servers",
+      modelSelections: true,
+    });
+    expect(item.environmentId).toBeUndefined();
+    expect(item.stack?.modelSelection?.settings).toBeUndefined();
+  });
+
+  it("keeps the old behavior where the deployment stores no selections", () => {
+    expect(
+      planSuiteClients(suite, withEffort, pick("low"), { group: "servers" })[0],
+    ).toEqual({ environmentId: "chat-env" });
+  });
+});
+
 describe("SuiteClientsSettings", () => {
   it("loads saved model choices and persists only after an edit", async () => {
     render(<SuiteClientsSettings suite={suite} projectId="project" />);

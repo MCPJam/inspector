@@ -1142,6 +1142,10 @@ export function PlaygroundMain({
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
+    seedReasoningEffort,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -1179,6 +1183,9 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
+    reasoningEffortEnabled: true,
+    // A harness turn offers only what its adapter verified (none today).
+    reasoningEffortHarness: previewedHost?.config?.harness,
     // Opt-in from the Tools panel's Page tools section. Off unless the user
     // ticked it for the page they currently have open in the WebMCP tab.
     usePageTools: webmcpPageToolsEnabled,
@@ -1403,6 +1410,10 @@ export function PlaygroundMain({
       );
       if (match) {
         setSelectedModel(match);
+        // A selected host's saved effort is the default for its own model
+        // (a later pick on the chip wins and is remembered per model).
+        const hostEffort = cfg.modelSelection?.settings?.reasoningEffort;
+        if (hostEffort) seedReasoningEffort(match, hostEffort);
       }
     }
     // availableModels intentionally omitted: re-seeding when the model
@@ -1419,6 +1430,7 @@ export function PlaygroundMain({
     setTemperature,
     setRequireToolApproval,
     setSelectedModel,
+    seedReasoningEffort,
   ]);
 
   // Currently selected protocol — derived from the selected tool's metadata
@@ -4966,6 +4978,9 @@ export function PlaygroundMain({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    onReasoningEffortChange: setReasoningEffort,
     onResetChat: handleResetAllChats,
     submitDisabled:
       disableChatInput ||

@@ -78,3 +78,38 @@ describe("judgeModelPatch", () => {
     });
   });
 });
+
+describe("judgeModelPatch — reasoning effort", () => {
+  const supporting: ModelDefinition = {
+    ...hosted,
+    supportedReasoningEfforts: ["low", "high"],
+  };
+  const plain: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "GPT-4o",
+    provider: "openai",
+    hosted: true,
+  };
+
+  it("keeps the previous effort on a judge that lists it", () => {
+    const patch = judgeModelPatch(
+      "anthropic/claude-haiku-4.5",
+      [supporting],
+      true,
+      "high",
+    );
+    expect(patch.judgeSelection?.settings?.reasoningEffort).toBe("high");
+  });
+
+  it("drops it on a judge that does not, and never invents one", () => {
+    expect(
+      judgeModelPatch("openai/gpt-4o", [plain], true, "high").judgeSelection
+        ?.settings,
+    ).toBeUndefined();
+    expect(
+      judgeModelPatch("anthropic/claude-haiku-4.5", [supporting], true)
+        .judgeSelection?.settings,
+    ).toBeUndefined();
+  });
+});
+

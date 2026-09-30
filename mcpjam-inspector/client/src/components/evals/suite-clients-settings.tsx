@@ -11,6 +11,8 @@ import { useEvalComposeCapable } from "@/components/environment-composer/use-eva
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import type { ModelSelection } from "@/components/environment-composer/environment-stack";
+import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
+import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
 import { EvalTargetMatrix } from "../evaluate/eval-target-matrix";
 import { seedRunMatrix } from "../evaluate/suite-run-matrix";
 import {
@@ -45,6 +47,8 @@ export type SuiteClientsDerivation = {
   overrides: {
     hostId?: string;
     modelId?: string | null;
+    /** The picked model's saved selection (source, connection, effort). */
+    modelSelection?: SavedModelSelection;
     serverAttachmentId?: string;
   };
   /** The attached environment this one takes the place of (schedule pin). */
@@ -113,6 +117,12 @@ export function planSuiteClients(
     lossless?: boolean;
     /** The setup the person picked to copy when the candidates differ. */
     sourceEnvironmentId?: string;
+    /**
+     * The deployment stores model selections: a new cell carries the picked
+     * model's selection (source, connection AND effort) instead of the bare
+     * id, and an environment is reused only while its effort is unchanged.
+     */
+    modelSelections?: boolean;
   } = {},
 ): SuiteClientsPlanItem[] {
   const group = options.group ?? null;
@@ -155,8 +165,22 @@ export function planSuiteClients(
       ...new Set(selection.explicitModelIds),
     ];
     for (const modelId of models) {
+      const picked =
+        modelId !== undefined
+          ? selection.explicitModelSelections?.[modelId]
+          : undefined;
+      const pickedSelection =
+        options.modelSelections && picked?.modelId === modelId
+          ? picked
+          : undefined;
       const matches = attached.filter(
-        (row) => row.hostId === hostId && row.modelId === modelId,
+        (row) =>
+          row.hostId === hostId &&
+          row.modelId === modelId &&
+          (modelId === undefined ||
+            !options.modelSelections ||
+            selectionReasoningEffort(row.modelSelection) ===
+              selectionReasoningEffort(picked)),
       );
       if (matches.length) {
         for (const row of matches) {
@@ -174,7 +198,20 @@ export function planSuiteClients(
               },
             });
           } else {
-            push({ stack: deriveStack(row, { hostId, modelId, group }) });
+            push({
+              stack: deriveStack(row, {
+                hostId,
+                modelId,
+                group,
+                // Keep the environment's own selection (source, connection,
+                // effort) instead of dropping it to a bare id.
+                modelSelection:
+                  options.modelSelections &&
+                  row.modelSelection?.modelId === modelId
+                    ? row.modelSelection
+                    : undefined,
+              }),
+            });
           }
         }
         continue;
@@ -216,6 +253,7 @@ export function planSuiteClients(
             overrides: {
               hostId,
               modelId: modelId ?? null,
+              ...(pickedSelection ? { modelSelection: pickedSelection } : {}),
               ...(group !== null ? { serverAttachmentId: group } : {}),
             },
           },
@@ -225,7 +263,7 @@ export function planSuiteClients(
       push({
         stack: deriveStack(
           choice.kind === "template" ? choice.composition : {},
-          { hostId, modelId, group },
+          { hostId, modelId, group, modelSelection: pickedSelection },
         ),
       });
     }
@@ -265,7 +303,12 @@ export function planSuiteClients(
  */
 function deriveStack(
   template: EnvironmentComposition,
-  cell: { hostId: string; modelId: string | undefined; group: string | null },
+  cell: {
+    hostId: string;
+    modelId: string | undefined;
+    group: string | null;
+    modelSelection?: SavedModelSelection;
+  },
 ): Stack {
   const composition = environmentComposition(template);
   const reason = unpreservableReason(composition);
@@ -284,6 +327,7 @@ function deriveStack(
   return {
     hostId: cell.hostId,
     ...(cell.modelId !== undefined ? { modelId: cell.modelId } : {}),
+    ...(cell.modelSelection ? { modelSelection: cell.modelSelection } : {}),
     serverAttachmentId,
     ...(skillSelection ? { skillSelection } : {}),
     ...(composition.computerEnvironmentId
@@ -325,7 +369,9 @@ export function SuiteClientsSettings({
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, modelSelectionsSupported } = useAvailableModels({
+    projectId,
+  });
   const environments = useProjectEnvironments(projectId, {
     includeAdhoc: true,
   });
@@ -422,6 +468,7 @@ export function SuiteClientsSettings({
           sourceHosts: options.sourceHosts,
           lossless,
           sourceEnvironmentId: options.sourceEnvironmentId,
+          modelSelections: modelSelectionsSupported,
         });
       } catch (error) {
         if (error instanceof AmbiguousSuiteTemplateError) {

@@ -1,3 +1,4 @@
+import { supportedReasoningEfforts } from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   harnessMcpDelivery,
@@ -68,6 +69,7 @@ export const HARNESS_DISPLAY_NAME: Record<HostConfigHarnessV2, string> = {
 export type HarnessGatedControl =
   | "modelId"
   | "temperature"
+  | "reasoningEffort"
   | "requireToolApproval"
   | "respectToolVisibility"
   | "progressiveToolDiscovery";
@@ -84,7 +86,10 @@ const ENFORCED = ENFORCED_CONTROL;
 
 /** Controls owned by the harness's own agent loop — no MCPJam-side mediation
  *  can change these answers, so they are declared per harness. */
-type HarnessLoopControl = Exclude<HarnessGatedControl, "respectToolVisibility">;
+type HarnessLoopControl = Exclude<
+  HarnessGatedControl,
+  "respectToolVisibility" | "reasoningEffort"
+>;
 
 // Keyed by harness id. A host with no harness (emulated engine) enforces
 // everything — callers pass `undefined` and get ENFORCED for every control.
@@ -203,6 +208,21 @@ export function harnessControlState(
   control: HarnessGatedControl,
 ): HarnessControlState {
   if (!harness) return ENFORCED;
+  if (control === "reasoningEffort") {
+    // Derived, not restated: an adapter enforces an effort exactly when the
+    // SDK's evidence table lists at least one verified level for it.
+    return supportedReasoningEfforts({
+      route: "direct",
+      providerKey: "",
+      modelId: "",
+      harness,
+    }).length > 0
+      ? ENFORCED
+      : {
+          enforced: false,
+          note: `${HARNESS_DISPLAY_NAME[harness] ?? "This harness"} doesn't support a reasoning effort yet, so a saved one would be refused.`,
+        };
+  }
   if (control === "respectToolVisibility") {
     const delivery = harnessMcpDelivery(harness);
     // Same fail-open contract as below: an id with no delivery declaration is

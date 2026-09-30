@@ -1413,4 +1413,113 @@ describe("useChatSession minimal mode parity", () => {
       chatSessionId: initialChatSessionId,
     });
   });
+  describe("reasoning effort", () => {
+    const effortModel = {
+      ...mcpJamModel,
+      hosted: true,
+      supportedReasoningEfforts: ["low", "high"],
+    };
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      mockModelState.availableModels = [effortModel];
+      mockModelState.selectedModelId = String(effortModel.id);
+    });
+
+    it("sends a picked effort as a top-level field and omits temperature", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      expect(result.current.reasoningEffortLevels).toEqual(["low", "high"]);
+
+      act(() => {
+        result.current.setReasoningEffort("high");
+      });
+      expect(result.current.reasoningEffort).toBe("high");
+
+      act(() => {
+        result.current.sendMessage({ text: "hi" });
+      });
+      await waitFor(() => {
+        expect(getTransportRequests().length).toBeGreaterThan(0);
+      });
+      const body = getTransportRequests().at(-1);
+      expect(body.reasoningEffort).toBe("high");
+      expect(body).not.toHaveProperty("temperature");
+    });
+
+    it("sends temperature and no effort when none is set", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        result.current.sendMessage({ text: "hi" });
+      });
+      await waitFor(() => {
+        expect(getTransportRequests().length).toBeGreaterThan(0);
+      });
+      const body = getTransportRequests().at(-1);
+      expect(body).not.toHaveProperty("reasoningEffort");
+      expect(body.temperature).toBe(0.7);
+    });
+
+    it("remembers the pick per model and restores it on a new session", () => {
+      const first = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        first.result.current.setReasoningEffort("low");
+      });
+      first.unmount();
+
+      const second = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      expect(second.result.current.reasoningEffort).toBe("low");
+    });
+
+    it("never reports an effort the model does not offer, or when disabled", () => {
+      window.localStorage.setItem(
+        "mcp-inspector-reasoning-efforts",
+        JSON.stringify({ "hosted:openai/gpt-5-mini": "max" })
+      );
+      const supported = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      expect(supported.result.current.reasoningEffort).toBeUndefined();
+
+      const off = renderHook(() => useChatSession({ selectedServers: [] }));
+      expect(off.result.current.reasoningEffortLevels).toEqual([]);
+      expect(off.result.current.reasoningEffort).toBeUndefined();
+    });
+
+    it("seeds a host default without remembering it", () => {
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        result.current.seedReasoningEffort(effortModel as any, "high");
+      });
+      expect(result.current.reasoningEffort).toBe("high");
+      expect(window.localStorage.getItem("mcp-inspector-reasoning-efforts")).toBeNull();
+    });
+  });
 });

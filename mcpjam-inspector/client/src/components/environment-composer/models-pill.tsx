@@ -38,6 +38,7 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import {
   harnessModelLockReason,
   type HarnessModelTarget,
@@ -98,7 +99,9 @@ export function ModelsPill({
    */
   workload?: ModelWorkload;
 }) {
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, modelSelectionsSupported } = useAvailableModels({
+    projectId,
+  });
   const harnessLockReasons = useMemo(() => {
     const byId = new Map<string, string>();
     if (!harnessTargets || harnessTargets.length === 0) return byId;
@@ -320,7 +323,39 @@ export function ModelsPill({
       </button>
     );
 
-  return (
+  // One effort per picked model. The saved selection is keyed by the row's own
+  // id, so a bare-id BYOK row is disabled with a tooltip rather than re-keyed.
+  const effortChips = pickedRows.flatMap(({ id, row }) =>
+    row ? (
+      <SelectionEffortControl
+        key={id}
+        variant="chip"
+        row={row}
+        selection={value.explicitModelSelections?.[id]}
+        purpose="evalTarget"
+        selectionsSupported={modelSelectionsSupported}
+        disabled={disabled}
+        disabledReason="Editing is disabled."
+        hint={`Applies to ${compactModelLabel(row.name)}`}
+        onChange={(write) => {
+          const selections = { ...value.explicitModelSelections };
+          delete selections[id];
+          if (write.selection) selections[write.modelId] = write.selection;
+          emit({
+            ...value,
+            explicitModelIds: explicit.map((existing) =>
+              existing === id ? write.modelId : existing,
+            ),
+            explicitModelSelections: selections,
+          });
+        }}
+      />
+    ) : (
+      []
+    ),
+  );
+
+  const selector = (
     <ModelSelector
       trigger={trigger}
       inModal={inModal}
@@ -338,6 +373,18 @@ export function ModelsPill({
       extraOptions={extraOptions}
       rowDisabledReason={rowDisabledReason}
     />
+  );
+  if (effortChips.length === 0) return selector;
+  return variant === "table" ? (
+    <div className="flex w-full flex-wrap items-center gap-1">
+      {selector}
+      {effortChips}
+    </div>
+  ) : (
+    <>
+      {selector}
+      {effortChips}
+    </>
   );
 }
 

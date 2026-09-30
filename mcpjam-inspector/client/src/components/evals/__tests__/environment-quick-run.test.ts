@@ -8,6 +8,7 @@ import {
   ensureLocalEnvironmentServers,
   planQuickRunTargets,
   quickRunClientIds,
+  quickRunEnvironmentEffort,
   resolveQuickRunEnvironments,
 } from "../environment-quick-run";
 
@@ -41,6 +42,39 @@ describe("attachedSuiteEnvironments", () => {
     expect(
       attachedSuiteEnvironments({ environmentIds: ["a"] }, undefined),
     ).toBeNull();
+  });
+});
+
+describe("quickRunEnvironmentEffort", () => {
+  const selection = (effort: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      settings: { reasoningEffort: effort },
+    }) as never;
+  const attached = [
+    env("a", {
+      hostId: "host-1",
+      modelId: "openai/gpt-5",
+      modelSelection: selection("high"),
+    }),
+    env("b", { hostId: "host-2", modelId: "openai/gpt-5" }),
+  ];
+
+  it("reads the effort the environment on that client and model pins", () => {
+    expect(
+      quickRunEnvironmentEffort(attached, "host-1", "openai/gpt-5"),
+    ).toBe("high");
+  });
+
+  it("is undefined for another client, another model, or an unpinned environment", () => {
+    expect(
+      quickRunEnvironmentEffort(attached, "host-2", "openai/gpt-5"),
+    ).toBeUndefined();
+    expect(
+      quickRunEnvironmentEffort(attached, "host-1", "openai/gpt-4o"),
+    ).toBeUndefined();
   });
 });
 

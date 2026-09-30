@@ -47,6 +47,8 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import { EffortControl } from "@/components/effort/effort-control";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   ClientSelector,
   type ClientSelectorData,
@@ -315,6 +317,15 @@ interface ChatInputProps {
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
+  /**
+   * Reasoning effort chip beside the model picker (single-model chat only).
+   * `reasoningEffortLevels` is the row's supported list; empty hides the chip.
+   * While an effort is set the temperature slider is disabled and the turn
+   * omits temperature.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffortLevels?: readonly ModelReasoningEffort[];
+  onReasoningEffortChange?: (effort: ModelReasoningEffort | undefined) => void;
   hasMessages?: boolean;
   onResetChat: () => void;
   tokenUsage?: {
@@ -451,6 +462,9 @@ export function ChatInput({
   onSystemPromptChange,
   temperature,
   onTemperatureChange,
+  reasoningEffort,
+  reasoningEffortLevels,
+  onReasoningEffortChange,
   onResetChat,
   hasMessages = false,
   tokenUsage,
@@ -2009,6 +2023,18 @@ export function ChatInput({
                   }
                 />
               )}
+              {!minimalMode &&
+              onReasoningEffortChange &&
+              !(multiModelEnabled && effectiveSelectedModels.length > 1) ? (
+                <EffortControl
+                  variant="chip"
+                  options={reasoningEffortLevels ?? []}
+                  value={reasoningEffort}
+                  onChange={onReasoningEffortChange}
+                  disabled={isLoading}
+                  disabledReason="Reasoning effort can't change while a reply is streaming"
+                />
+              ) : null}
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -2226,6 +2252,7 @@ export function ChatInput({
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
+          reasoningEffort={reasoningEffort}
           isLoading={isLoading}
           hasMessages={hasMessages}
           onResetChat={onResetChat}
