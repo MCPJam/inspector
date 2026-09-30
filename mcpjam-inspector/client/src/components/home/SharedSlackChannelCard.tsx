@@ -7,7 +7,7 @@ import {
 } from "react";
 import { useAction, useQuery } from "convex/react";
 import { ExternalLink, Loader2 } from "lucide-react";
-import slackLogo from "/slack_logo.png";
+import slackMark from "@/assets/why-mcp/slack.png";
 import { useSharedSlackChannelEnabled } from "@/hooks/useSharedSlackChannelEnabled";
 import { track } from "@/lib/analytics";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -114,7 +114,7 @@ function errorCopy(
     case "rate_limited":
       return "Slack setup is busy. Try again in a minute.";
     case "possible_existing_channel":
-      return "Your organization may already have a shared Slack channel with MCPJam, so we paused setup to avoid creating a second one. We've emailed your organization owner, and our team will connect you.";
+      return "Your organization may already have a shared Slack channel with MCPJam, so we paused setup to avoid creating a second one. Our team will reach out to connect you.";
     default:
       return "Could not set up the shared Slack channel. Try again.";
   }
@@ -145,18 +145,19 @@ function SharedSlackSkeleton() {
   );
 }
 
-// The real Slack mark, in the same muted tile the other home cards use.
+// Slack's four-color mark (not `/slack_logo.png`, which is Slackbot) on a
+// transparent background, so it reads as Slack's own logo.
 function SlackMark() {
   return (
-    <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60">
-      <img src={slackLogo} alt="" className="size-3.5 object-contain" />
+    <div className="grid size-6 shrink-0 place-items-center">
+      <img src={slackMark} alt="" className="size-5 object-contain" />
     </div>
   );
 }
 
 function CardShell({
   children,
-  title = "Shared Slack channel",
+  title = "Slack Connect",
 }: {
   children: ReactNode;
   title?: string;
@@ -301,11 +302,11 @@ export function SharedSlackChannelCard({
           <SlackMark />
           <div className="min-w-0 flex-1">
             <p className="text-[13px] text-foreground">
-              Set up your shared Slack channel
+              Set up Slack Connect with the MCPJam team
             </p>
             <p className="text-[11px] text-muted-foreground">
-              A Slack Connect channel with the MCPJam team, invited to your
-              login email.
+              Slack sends the invite to your login email. Your Slack admin may
+              need to approve it.
             </p>
           </div>
           {dto.canProvision ? (
