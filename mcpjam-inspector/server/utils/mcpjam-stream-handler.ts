@@ -3339,9 +3339,12 @@ async function settleUnapprovedHistoryToolCalls(args: {
  * Process a single step of the agentic loop.
  * Calls Convex, streams the response, and executes tools if needed.
  */
-async function processOneStep(
-  ctx: StepContext,
-): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
+async function processOneStep(ctx: StepContext): Promise<{
+  shouldContinue: boolean;
+  didEmitFinish: boolean;
+  /** The model's own finish reason, on a step that ended the turn with a reply. */
+  modelFinishReason?: string;
+}> {
   const {
     writer,
     messageHistory,
@@ -4579,7 +4582,11 @@ async function processOneStep(
   }
 
   // We're done with this conversation turn
-  return { shouldContinue: false, didEmitFinish };
+  return {
+    shouldContinue: false,
+    didEmitFinish,
+    modelFinishReason: harnessSpanMeta.finishReason,
+  };
 }
 
 /**
@@ -5066,8 +5073,11 @@ export async function runChatEngineLoop(
       }
 
       // Whether a step ended the turn itself (a reply, or an error) rather than
-      // the loop running out of steps. A last step that answered is "stop".
+      // the loop running out of steps, and the model's own reason when it did:
+      // a last step that answered is "stop", one cut off by its output cap
+      // stays "length".
       let stepEndedTurn = false;
+      let endingModelFinishReason: string | undefined;
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         await options.durableCheckpoint?.({
@@ -5075,60 +5085,61 @@ export async function runChatEngineLoop(
           messages: messageHistory,
           step: effectiveSteps(),
         });
-        const { shouldContinue, didEmitFinish } = await processOneStep({
-          durableCheckpoint: options.durableCheckpoint,
-          writer: safeWriter,
-          messageHistory,
-          toolDefs,
-          toolDefsByName,
-          tools,
-          progressivePlan,
-          discoveryState,
-          authHeader,
-          scenarioId,
-          accessVersion,
-          projectId,
-          chatSessionId,
-          sourceType,
-          modelId,
-          provider,
-          systemPrompt,
-          temperature,
-          mcpClientManager,
-          selectedServers,
-          approvalDecisions,
-          approvalBinding,
-          ...(options.historyPresentation
-            ? { historyPresentation: options.historyPresentation }
-            : {}),
-          modelVisibleMcpToolResults,
-          approvalMode,
-          stepIndex: effectiveSteps(),
-          isFinalStep: effectiveSteps() === resolvedMaxSteps - 1,
-          usedToolCallIds,
-          traceTurn,
-          endpointPath: resolvedEndpointPath,
-          extraHeaders,
-          extraBodyFields,
-          clientIp,
-          onLiveTextDelta,
-          // PR 5b-pre: chunk-level callbacks. Passed through to the
-          // step processor where the chunk-switch (onToolCall) +
-          // tool-result emission (onToolResult) sites fire them.
-          onToolCall,
-          onToolResult,
-          // PR 5b-followup-2: structured-error callback. Fires from
-          // the two `processOneStep` error sites (non-OK Convex
-          // response + processStream/tool catch).
-          onEngineError,
-          onModelHandover: () => {
-            modelInvoked = true;
-          },
-          failureReporter,
-          // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
-          prepareAdvertisedTools,
-          abortSignal,
-        });
+        const { shouldContinue, didEmitFinish, modelFinishReason } =
+          await processOneStep({
+            durableCheckpoint: options.durableCheckpoint,
+            writer: safeWriter,
+            messageHistory,
+            toolDefs,
+            toolDefsByName,
+            tools,
+            progressivePlan,
+            discoveryState,
+            authHeader,
+            scenarioId,
+            accessVersion,
+            projectId,
+            chatSessionId,
+            sourceType,
+            modelId,
+            provider,
+            systemPrompt,
+            temperature,
+            mcpClientManager,
+            selectedServers,
+            approvalDecisions,
+            approvalBinding,
+            ...(options.historyPresentation
+              ? { historyPresentation: options.historyPresentation }
+              : {}),
+            modelVisibleMcpToolResults,
+            approvalMode,
+            stepIndex: effectiveSteps(),
+            isFinalStep: effectiveSteps() === resolvedMaxSteps - 1,
+            usedToolCallIds,
+            traceTurn,
+            endpointPath: resolvedEndpointPath,
+            extraHeaders,
+            extraBodyFields,
+            clientIp,
+            onLiveTextDelta,
+            // PR 5b-pre: chunk-level callbacks. Passed through to the
+            // step processor where the chunk-switch (onToolCall) +
+            // tool-result emission (onToolResult) sites fire them.
+            onToolCall,
+            onToolResult,
+            // PR 5b-followup-2: structured-error callback. Fires from
+            // the two `processOneStep` error sites (non-OK Convex
+            // response + processStream/tool catch).
+            onEngineError,
+            onModelHandover: () => {
+              modelInvoked = true;
+            },
+            failureReporter,
+            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+            prepareAdvertisedTools,
+            abortSignal,
+          });
 
         steps++;
         await options.durableCheckpoint?.({
@@ -5160,6 +5171,7 @@ export async function runChatEngineLoop(
 
         if (!shouldContinue) {
           stepEndedTurn = true;
+          endingModelFinishReason = modelFinishReason;
           break;
         }
         if (options.yieldAfterStep) break;
@@ -5233,7 +5245,9 @@ export async function runChatEngineLoop(
         writeStepLimitNote(safeWriter, messageHistory, traceTurn);
       }
 
-      const endedAtStepCap = hitStepCap() && !stepEndedTurn;
+      const turnEndedByLength =
+        (hitStepCap() && !stepEndedTurn) ||
+        endingModelFinishReason === "length";
 
       // Safety: ensure we always emit a finish event
       if (!finishEmitted) {
@@ -5241,7 +5255,7 @@ export async function runChatEngineLoop(
           createClientFinishChunk(
             null,
             traceTurn,
-            endedAtStepCap ? "length" : "stop",
+            turnEndedByLength ? "length" : "stop",
           ),
         );
         finishEmitted = true;
@@ -5250,7 +5264,7 @@ export async function runChatEngineLoop(
       // Shared ritual: turn_finish + success flag (finish chunk already
       // emitted by the step or the safety block above).
       driver.usage = traceTurn.turnUsage;
-      driver.finishReason = endedAtStepCap ? "length" : "stop";
+      driver.finishReason = turnEndedByLength ? "length" : "stop";
       driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
 
       runSucceeded = true;

@@ -3488,6 +3488,25 @@ describe("mcpjam-stream-handler", () => {
         ).toBe("stop");
       });
 
+      it("keeps length when the last step's model reply was cut off by its output cap", async () => {
+        (global.fetch as any).mockResolvedValue(
+          createSseResponse([
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "Here is part of" },
+            { type: "text-end", id: "t1" },
+            {
+              type: "finish",
+              finishReason: "length",
+              totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]),
+        );
+
+        await runAtStep(5, { maxSteps: 6 });
+
+        expect(turnFinish().finishReason).toBe("length");
+      });
+
       it("answers a request already out of steps with a written note and no model call", async () => {
         await runAtStep(6, { maxSteps: 6 });
 
