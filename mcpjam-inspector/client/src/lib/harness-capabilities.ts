@@ -1,4 +1,4 @@
-import { supportedReasoningEfforts } from "@mcpjam/sdk/browser";
+import { harnessReasoningEfforts } from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   harnessMcpDelivery,
@@ -211,12 +211,7 @@ export function harnessControlState(
   if (control === "reasoningEffort") {
     // Derived, not restated: an adapter enforces an effort exactly when the
     // SDK's evidence table lists at least one verified level for it.
-    return supportedReasoningEfforts({
-      route: "direct",
-      providerKey: "",
-      modelId: "",
-      harness,
-    }).length > 0
+    return harnessReasoningEfforts(harness).length > 0
       ? ENFORCED
       : {
           enforced: false,

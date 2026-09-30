@@ -29,6 +29,7 @@ import {
 import {
   selectionReasoningEffort,
   setEffortForRow,
+  withReasoningEffort,
 } from "@/lib/reasoning-effort-selection";
 import { EffortControl, type EffortControlProps } from "./effort-control";
 
@@ -109,7 +110,17 @@ export function SelectionEffortControl({
       disabled={inert}
       disabledReason={inertReason}
       onChange={(effort) => {
-        if (!row) return;
+        if (!row) {
+          // A saved effort can always be cleared, even when the model no
+          // longer resolves to a row.
+          if (effort === undefined && selection) {
+            onChange({
+              modelId: selection.modelId,
+              selection: withReasoningEffort(selection, undefined),
+            });
+          }
+          return;
+        }
         const write = setEffortForRow({
           row,
           selection,

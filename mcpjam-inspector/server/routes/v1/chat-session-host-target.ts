@@ -231,7 +231,11 @@ export function resolveChatSessionEngine(args: {
   /** Server-fetched host, or absent for a bare `serverIds` turn. */
   hostTarget?: ChatSessionHostTarget;
   /** The turn's RESOLVED model definition (id + provider), never the raw pin. */
-  model: { id: string; provider?: string };
+  model: {
+    id: string;
+    provider?: string;
+    supportedReasoningEfforts?: readonly string[];
+  };
   /** The server set this turn will actually connect. */
   hasSelectedMcpServers: boolean;
   /** The turn's effective tool policy, exactly as the route will apply it. */

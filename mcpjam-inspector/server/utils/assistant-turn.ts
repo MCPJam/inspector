@@ -694,6 +694,9 @@ export async function runAssistantTurn(
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
       ...(harnessEffort !== undefined ? { reasoningEffort: harnessEffort } : {}),
+      ...(opts.modelDefinition.supportedReasoningEfforts
+        ? { modelEfforts: opts.modelDefinition.supportedReasoningEfforts }
+        : {}),
     });
     if (effortRefusal) {
       throw new Error(

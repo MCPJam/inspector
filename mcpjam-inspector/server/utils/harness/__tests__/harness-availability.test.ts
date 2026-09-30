@@ -857,6 +857,30 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
   });
 });
 
+describe("an effort the adapter applies but the model does not list", () => {
+  it("is refused up front, before any sandbox is reserved", () => {
+    const adapter = getHarnessAdapter("codex");
+    expect(
+      harnessReasoningEffortRefusalReason({
+        adapter,
+        reasoningEffort: "xhigh",
+        modelEfforts: ["minimal", "low", "medium", "high"],
+      }),
+    ).toContain('doesn\'t accept the "xhigh"');
+    expect(
+      harnessReasoningEffortRefusalReason({
+        adapter,
+        reasoningEffort: "high",
+        modelEfforts: ["minimal", "low", "medium", "high"],
+      }),
+    ).toBeUndefined();
+    // Unknown model levels are not checked here (the SDK picker fails closed).
+    expect(
+      harnessReasoningEffortRefusalReason({ adapter, reasoningEffort: "xhigh" }),
+    ).toBeUndefined();
+  });
+});
+
 describe("reading an effort off untyped input", () => {
   it("accepts only the SDK's levels", () => {
     expect(readReasoningEffort("xhigh")).toBe("xhigh");

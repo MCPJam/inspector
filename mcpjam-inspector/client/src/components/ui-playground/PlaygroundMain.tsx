@@ -1323,6 +1323,9 @@ export function PlaygroundMain({
   const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
     null,
   );
+  // Whether the last host switch seeded an effort (so a switch to a host
+  // with none knows to clear it).
+  const hostSeededEffortRef = useRef(false);
   // Declared early so the previewed-host reseed effect can early-return
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
@@ -1418,8 +1421,13 @@ export function PlaygroundMain({
         setSelectedModel(match);
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
+        // A host with none clears what the previous host seeded (High must
+        // not stick across a switch to a host that saved nothing).
         const hostEffort = cfg.modelSelection?.settings?.reasoningEffort;
-        if (hostEffort) seedReasoningEffort(match, hostEffort);
+        if (hostEffort || hostSeededEffortRef.current) {
+          seedReasoningEffort(match, hostEffort);
+        }
+        hostSeededEffortRef.current = hostEffort !== undefined;
       }
     }
     // availableModels intentionally omitted: re-seeding when the model

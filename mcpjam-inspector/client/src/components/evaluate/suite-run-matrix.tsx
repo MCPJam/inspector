@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { compactModelIdTail } from "@/lib/environment-label";
 import type { ModelSelection } from "@/components/environment-composer/environment-stack";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
-import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
+import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { EvalTargetMatrix } from "./eval-target-matrix";
 import {
@@ -138,17 +138,14 @@ export function planRunMatrix(
         options.modelSelections && picked?.modelId === modelId
           ? picked
           : undefined;
-      // An environment is reused only when it runs the same effort: two
-      // efforts of one model are different environments.
-      const existing = attached.filter(
-        (environment) =>
-          environment.hostId === hostId &&
-          environment.modelId === modelId &&
-          (modelId === undefined ||
-            !options.modelSelections ||
-            selectionReasoningEffort(environment.modelSelection) ===
-              selectionReasoningEffort(picked)),
-      );
+      // An environment is reused only while the cell's effort is one it runs;
+      // siblings that differ only by effort stay (see the helper).
+      const existing = environmentsForModelCell(attached, {
+        hostId,
+        modelId,
+        picked,
+        efforts: options.modelSelections === true,
+      });
       if (existing.length)
         return existing.map((environment) => ({
           environmentId: environment.environmentId,

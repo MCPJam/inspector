@@ -12,7 +12,7 @@ import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import type { ModelSelection } from "@/components/environment-composer/environment-stack";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
-import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
+import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { EvalTargetMatrix } from "../evaluate/eval-target-matrix";
 import { seedRunMatrix } from "../evaluate/suite-run-matrix";
 import {
@@ -173,15 +173,12 @@ export function planSuiteClients(
         options.modelSelections && picked?.modelId === modelId
           ? picked
           : undefined;
-      const matches = attached.filter(
-        (row) =>
-          row.hostId === hostId &&
-          row.modelId === modelId &&
-          (modelId === undefined ||
-            !options.modelSelections ||
-            selectionReasoningEffort(row.modelSelection) ===
-              selectionReasoningEffort(picked)),
-      );
+      const matches = environmentsForModelCell(attached, {
+        hostId,
+        modelId,
+        picked,
+        efforts: options.modelSelections === true,
+      });
       if (matches.length) {
         for (const row of matches) {
           if (group === null || row.serverAttachmentId === group) {

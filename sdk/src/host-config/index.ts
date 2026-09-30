@@ -97,6 +97,7 @@ export {
   selectionConfigKey,
   selectionIfMatches,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
 } from "./reasoning-effort.js";
 export type {
   ReasoningEffortProviderOptions,

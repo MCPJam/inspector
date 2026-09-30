@@ -135,6 +135,22 @@ describe("reasoning effort in the run matrix", () => {
     expect(cell.environmentId).toBe("env");
   });
 
+  it("keeps both environments that differ only by effort (High and default)", () => {
+    const siblings = [
+      { ...environments[0], environmentId: "env-high", modelSelection: selectionWith("high") },
+      { ...environments[0], environmentId: "env-default" },
+    ] as typeof environments;
+    const siblingSuite = { ...suite, environmentIds: ["env-high", "env-default"] };
+    const selection = seedRunMatrix(siblingSuite, siblings as never);
+    const cells = planRunMatrix(siblingSuite, siblings as never, selection, {
+      modelSelections: true,
+    });
+    expect(cells.map((cell) => cell.environmentId)).toEqual([
+      "env-high",
+      "env-default",
+    ]);
+  });
+
   it("plans a new cell, carrying the selection, when the effort changes", () => {
     const [cell] = planRunMatrix(
       suite,

@@ -2023,9 +2023,9 @@ export function ChatInput({
                   }
                 />
               )}
-              {!minimalMode &&
-              onReasoningEffortChange &&
-              !(multiModelEnabled && effectiveSelectedModels.length > 1) ? (
+              {/* Compare mode sends to per-model cards that never carry the
+                  effort, so the chip is hidden whenever it is on. */}
+              {!minimalMode && onReasoningEffortChange && !multiModelEnabled ? (
                 <EffortControl
                   variant="chip"
                   options={reasoningEffortLevels ?? []}
@@ -2252,7 +2252,7 @@ export function ChatInput({
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
-          reasoningEffort={reasoningEffort}
+          reasoningEffort={multiModelEnabled ? undefined : reasoningEffort}
           isLoading={isLoading}
           hasMessages={hasMessages}
           onResetChat={onResetChat}

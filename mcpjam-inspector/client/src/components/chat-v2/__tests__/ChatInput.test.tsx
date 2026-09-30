@@ -1335,6 +1335,31 @@ describe("ChatInput", () => {
     });
   });
 
+  describe("reasoning effort chip", () => {
+    const effortProps = {
+      reasoningEffortLevels: ["low", "high"] as const,
+      reasoningEffort: "high" as const,
+      onReasoningEffortChange: vi.fn(),
+    };
+
+    it("shows beside the model picker", () => {
+      render(<ChatInput {...defaultProps} {...effortProps} />);
+      expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
+    });
+
+    it("is hidden whenever compare mode is on, even with one model picked", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          {...effortProps}
+          multiModelEnabled
+          selectedModels={[defaultModel]}
+        />
+      );
+      expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    });
+  });
+
   describe("minimal mode", () => {
     it("hides plus dropdown, model selector, and context in minimal mode", () => {
       render(<ChatInput {...defaultProps} minimalMode={true} />);

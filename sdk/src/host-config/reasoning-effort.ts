@@ -212,11 +212,23 @@ function orderedEfforts(values: readonly string[]): ModelReasoningEffort[] {
 }
 
 /**
+ * The efforts a harness adapter is verified to apply, whatever the model. For
+ * "does this harness enforce an effort at all" questions; the levels a control
+ * may offer for a model are {@link supportedReasoningEfforts}.
+ */
+export function harnessReasoningEfforts(
+  harness: Harness
+): ModelReasoningEffort[] {
+  return orderedEfforts(HARNESS_REASONING_EFFORTS[harness] ?? []);
+}
+
+/**
  * The efforts a control may offer for this model on this route, in canonical
  * low-to-high order. Empty means "hide the control": the capability is
  * unknown or absent.
  *
- *  - harness  → the adapter's verified table (empty until verified).
+ *  - harness  → the adapter's verified table intersected with the model's
+ *    own levels (empty until verified, or when the model's are unknown).
  *  - hosted   → the catalog's list, nothing else.
  *  - direct   → the provider tables above.
  *  - org      → none: the concrete runtime is unknown (see the route type).
@@ -228,7 +240,18 @@ export function supportedReasoningEfforts(
   input: SupportedReasoningEffortsInput
 ): ModelReasoningEffort[] {
   if (input.harness !== undefined) {
-    return orderedEfforts(HARNESS_REASONING_EFFORTS[input.harness] ?? []);
+    // The adapter's table says what the RUNTIME can apply; the model's own
+    // levels say what the MODEL accepts (`xhigh` on `gpt-5-nano` passes the
+    // first and fails at the lease mint). Offer only what both allow, and
+    // nothing when the model's levels are unknown (fail closed).
+    const modelLevels = new Set<string>(
+      supportedReasoningEfforts({ ...input, harness: undefined })
+    );
+    return orderedEfforts(
+      (HARNESS_REASONING_EFFORTS[input.harness] ?? []).filter((level) =>
+        modelLevels.has(level)
+      )
+    );
   }
   switch (input.route) {
     case "hosted":

@@ -18,6 +18,7 @@
  * push the product over `maxTargets` is disabled with the product
  * explanation. A static `max=10` inside this pill is not sufficient.
  */
+import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { useMemo } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -325,6 +326,12 @@ export function ModelsPill({
 
   // One effort per picked model. The saved selection is keyed by the row's own
   // id, so a bare-id BYOK row is disabled with a tooltip rather than re-keyed.
+  // A harness host offers only the levels its adapter applies (Claude Code
+  // none yet), so the chip matches the refusal a run would give. With several
+  // targets the first harness decides: a level it refuses fails there.
+  const effortHarness = harnessTargets?.find(Boolean)?.harnessId as
+    | Harness
+    | undefined;
   const effortChips = pickedRows.flatMap(({ id, row }) =>
     row ? (
       <SelectionEffortControl
@@ -334,6 +341,7 @@ export function ModelsPill({
         selection={value.explicitModelSelections?.[id]}
         purpose="evalTarget"
         selectionsSupported={modelSelectionsSupported}
+        harness={effortHarness}
         disabled={disabled}
         disabledReason="Editing is disabled."
         hint={`Applies to ${compactModelLabel(row.name)}`}

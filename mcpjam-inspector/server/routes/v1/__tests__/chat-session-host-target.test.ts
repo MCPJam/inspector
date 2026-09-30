@@ -351,6 +351,25 @@ describe("the host's saved effort reaches the runtime", () => {
     );
   });
 
+  it("drops an explicit temperature from the prepare call AND the resume config when the effort is the host's", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelSelection: selection(MODEL) }),
+    );
+
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, temperature: 0.3 }),
+    );
+    expect(response.status).toBe(200);
+    expect(prepareChatV2Mock.mock.calls.at(-1)![0]).not.toHaveProperty(
+      "temperature",
+    );
+    const [args] = persistChatSessionToConvexMock.mock.calls.at(-1) as [
+      { resumeConfig: Record<string, unknown> },
+    ];
+    expect(args.resumeConfig).not.toHaveProperty("temperature");
+    expect(args.resumeConfig.reasoningEffort).toBe("high");
+  });
+
   it("never carries the saved effort onto a different model", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ modelSelection: selection("openai/gpt-5") }),

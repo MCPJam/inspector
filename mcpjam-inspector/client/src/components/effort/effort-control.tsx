@@ -186,7 +186,14 @@ export function EffortControl({
           variant="outline"
           size="sm"
           className="flex-wrap"
-          value={value && options.includes(value) ? value : DEFAULT_ITEM}
+          // A stale saved level selects nothing, so pressing Default clears it.
+          value={
+            value && options.includes(value)
+              ? value
+              : isStale
+                ? ""
+                : DEFAULT_ITEM
+          }
           onValueChange={(next) => {
             // Radix reports "" when the pressed item is pressed again; treat
             // that as no change rather than clearing by accident.

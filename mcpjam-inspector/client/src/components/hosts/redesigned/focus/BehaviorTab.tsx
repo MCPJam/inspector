@@ -49,6 +49,10 @@ import {
   selectionReasoningEffort,
 } from "@/lib/reasoning-effort-selection";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import {
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -276,6 +280,18 @@ export function BehaviorTab({
   const modelState = harnessControlState(draft.harness, "modelId");
   const tempState = harnessControlState(draft.harness, "temperature");
   const effortState = harnessControlState(draft.harness, "reasoningEffort");
+  // The row shows only when there is something to pick or a saved value to
+  // see or clear (a harness that refuses efforts still shows, and lets the
+  // user clear, one that was saved before).
+  const savedEffort = selectionReasoningEffort(draft.modelSelection);
+  const hasEffortRow =
+    savedEffort !== undefined ||
+    (resolvedModelRow !== undefined &&
+      reasoningEffortOptions(
+        resolvedModelRow,
+        reasoningEffortRouteForRow(resolvedModelRow),
+        draft.harness,
+      ).length > 0);
   const [effortNotice, setEffortNotice] = useState<string | null>(null);
   /*
    * Tool approval is the one control whose answer is NOT a property of the
@@ -373,7 +389,7 @@ export function BehaviorTab({
           }
         />
 
-        {effortState.enforced ? (
+        {hasEffortRow ? (
           <FieldRow
             label="Reasoning effort"
             description={
@@ -403,11 +419,12 @@ export function BehaviorTab({
               </div>
             }
           />
-        ) : (
+        ) : null}
+        {savedEffort && !effortState.enforced ? (
           <p className="text-[11px] text-muted-foreground">
             {effortState.note}
           </p>
-        )}
+        ) : null}
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">

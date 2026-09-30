@@ -141,3 +141,39 @@ export function setEffortForRow(args: {
   const next = withReasoningEffort(base, effort);
   return { modelId: next.modelId, selection: next };
 }
+
+/**
+ * The saved environments a matrix cell (one client + one model) reuses.
+ *
+ * A cell's picker holds one selection per model id, so environments that differ
+ * ONLY by effort (Sonnet·High and Sonnet·default on one client) share a cell.
+ * While the cell's effort is one the attached environments already run, all of
+ * them are kept — seeding and saving must not skip or detach a sibling the
+ * picker cannot show. Once the pick names an effort none of them run, the
+ * effort was changed on purpose and none is reused (a new one is derived).
+ * `efforts` off (a deployment without saved selections) matches on id alone.
+ */
+export function environmentsForModelCell<
+  T extends { hostId: string; modelId?: string | null; modelSelection?: ModelSelection | null },
+>(
+  attached: readonly T[],
+  cell: {
+    hostId: string;
+    modelId: string | undefined;
+    picked: ModelSelection | undefined;
+    efforts: boolean;
+  },
+): T[] {
+  const sameCell = attached.filter(
+    (environment) =>
+      environment.hostId === cell.hostId &&
+      (environment.modelId ?? undefined) === cell.modelId,
+  );
+  if (cell.modelId === undefined || !cell.efforts) return sameCell;
+  const wanted = selectionReasoningEffort(cell.picked);
+  return sameCell.some(
+    (environment) => selectionReasoningEffort(environment.modelSelection) === wanted,
+  )
+    ? sameCell
+    : [];
+}

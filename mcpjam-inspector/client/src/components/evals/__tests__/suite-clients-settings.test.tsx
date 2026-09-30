@@ -370,6 +370,26 @@ describe("planSuiteClients with reasoning effort", () => {
     ).toEqual({ environmentId: "chat-env" });
   });
 
+  it("keeps both environments that differ only by effort on a save", () => {
+    const siblings = [
+      { ...envs[0], environmentId: "chat-high", modelSelection: selectionFor("gpt", "high") },
+      { ...envs[0], environmentId: "chat-default" },
+      envs[1],
+    ] as ProjectEnvironmentView[];
+    const siblingSuite = {
+      ...suite,
+      environmentIds: ["chat-high", "chat-default", envs[1].environmentId],
+    };
+    const plan = planSuiteClients(siblingSuite, siblings, pick("high"), {
+      group: "servers",
+      modelSelections: true,
+    });
+    expect(plan.slice(0, 2)).toEqual([
+      { environmentId: "chat-high" },
+      { environmentId: "chat-default" },
+    ]);
+  });
+
   it("composes a new environment carrying the whole selection when the effort changes", () => {
     const [item] = planSuiteClients(suite, withEffort, pick("low"), {
       group: "servers",

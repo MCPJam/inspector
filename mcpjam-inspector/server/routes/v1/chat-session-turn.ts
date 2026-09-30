@@ -1436,6 +1436,15 @@ async function handleTurn(c: Context): Promise<Response> {
     // continuations reload, including one that came from the host.
     const turnReasoningEffort =
       pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
+    // An effort replaces the sampling temperature (`prepareChatV2` drops it).
+    // One with a host-sourced effort must be dropped from what is recorded too,
+    // or the resume config would claim a temperature the turn never ran at. An
+    // effort sent in the body is already refused beside a temperature.
+    const turnTemperature =
+      turnReasoningEffort !== undefined ? undefined : pins.temperature;
+    const { temperature: _unusedTemperature, ...pinsWithoutTemperature } = pins;
+    const turnPins =
+      turnTemperature === undefined ? pinsWithoutTemperature : pins;
 
     // --- Engine pre-flight ------------------------------------------------
     //
@@ -1450,6 +1459,12 @@ async function handleTurn(c: Context): Promise<Response> {
         id: String(modelDefinition.id),
         ...(modelDefinition.provider
           ? { provider: modelDefinition.provider }
+          : {}),
+        ...(modelDefinition.supportedReasoningEfforts
+          ? {
+              supportedReasoningEfforts:
+                modelDefinition.supportedReasoningEfforts,
+            }
           : {}),
       },
       hasSelectedMcpServers: selectedServerIds.length > 0,
@@ -1737,8 +1752,8 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(pins.temperature !== undefined
-        ? { temperature: pins.temperature }
+      ...(turnTemperature !== undefined
+        ? { temperature: turnTemperature }
         : {}),
       // Under an effort the resolved temperature is omitted (see prepareChatV2).
       ...(turnReasoningEffort !== undefined
@@ -1817,7 +1832,7 @@ async function handleTurn(c: Context): Promise<Response> {
         bearer: authHeader,
         projectId,
         signal: abortController.signal,
-        body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: pins },
+        body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: turnPins },
       });
     modelCallStarted = true;
     const result = await runUnifiedAssistantTurn({
@@ -1918,7 +1933,7 @@ async function handleTurn(c: Context): Promise<Response> {
           sessionMessages: result.messages,
           startedAt: existing?.startedAt ?? startedAt,
           lastActivityAt: Date.now(),
-          resumeConfig: pins,
+          resumeConfig: turnPins,
           turnLeaseOwnerToken: executionOwnerToken,
           turnTrace: {
             ...(result.turnTrace ?? {
@@ -1999,8 +2014,8 @@ async function handleTurn(c: Context): Promise<Response> {
     // --- Persist ----------------------------------------------------------
     const resumeConfig: ResumeConfig = {
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(pins.temperature !== undefined
-        ? { temperature: pins.temperature }
+      ...(turnTemperature !== undefined
+        ? { temperature: turnTemperature }
         : {}),
       // What the conversation ran at (from the host's saved selection), so a
       // reopened chat shows it. Absent when the turn had none.

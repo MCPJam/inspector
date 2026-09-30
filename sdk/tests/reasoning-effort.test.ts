@@ -10,6 +10,7 @@ import {
   selectionIfMatches,
   selectionKey,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
   type ModelSelection,
 } from "../src/host-config/index.js";
 import * as browser from "../src/browser.js";
@@ -205,16 +206,38 @@ describe("supportedReasoningEfforts", () => {
       "xhigh",
     ]);
     for (const harness of ["claude-code", "codex", "cursor"] as const) {
+      expect(harnessReasoningEfforts(harness)).toEqual([
+        ...HARNESS_REASONING_EFFORTS[harness],
+      ]);
+      // A model that lists every level: the adapter's table decides.
       expect(
         supportedReasoningEfforts({
           route: "hosted",
           providerKey: "openai",
           modelId: "openai/gpt-5",
-          catalogEfforts: ["high"],
+          catalogEfforts: [...MODEL_REASONING_EFFORTS],
           harness,
         })
       ).toEqual([...HARNESS_REASONING_EFFORTS[harness]]);
     }
+  });
+
+  it("a harness offers only levels its model also lists (fail closed when unknown)", () => {
+    const codex = (catalogEfforts?: string[]) =>
+      supportedReasoningEfforts({
+        route: "hosted",
+        providerKey: "openai",
+        modelId: "openai/gpt-5-nano",
+        catalogEfforts,
+        harness: "codex",
+      });
+    expect(codex(["minimal", "low", "medium", "high"])).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(codex([])).toEqual([]);
+    expect(codex(undefined)).toEqual([]);
   });
 
   it("every table level is a known effort", () => {

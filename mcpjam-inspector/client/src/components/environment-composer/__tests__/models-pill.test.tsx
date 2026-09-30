@@ -505,6 +505,50 @@ describe("ModelsPill — reasoning effort", () => {
     ).toBe("high");
   });
 
+  it("offers a Claude Code target no level (its adapter verifies none), but a Codex target its own", async () => {
+    mockModels.availableModels = [
+      { ...GPT5, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"] },
+    ];
+    const value = {
+      includeClientDefaults: false,
+      explicitModelIds: ["openai/gpt-5"],
+      explicitModelSelections: {
+        "openai/gpt-5": {
+          modelId: "openai/gpt-5",
+          source: "hosted",
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    } as ModelSelection;
+    const { unmount } = render(
+      <ModelsPill
+        projectId="proj-1"
+        value={value}
+        onChange={vi.fn()}
+        mode="multiple"
+        testId="models"
+        harnessTargets={[{ harnessId: "claude-code" }]}
+      />
+    );
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    unmount();
+    render(
+      <ModelsPill
+        projectId="proj-1"
+        value={value}
+        onChange={vi.fn()}
+        mode="multiple"
+        testId="models"
+        harnessTargets={[{ harnessId: "codex" }]}
+      />
+    );
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    expect(
+      await screen.findByRole("radio", { name: "X-High" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Max" })).toBeNull();
+  });
+
   it("shows no chip for a model with no known capability", () => {
     mockModels.availableModels = [{ ...GPT5, supportedReasoningEfforts: [] }];
     renderPill({

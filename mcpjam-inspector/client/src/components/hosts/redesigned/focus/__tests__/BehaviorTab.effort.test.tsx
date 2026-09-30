@@ -146,13 +146,41 @@ describe("BehaviorTab reasoning effort", () => {
     );
   });
 
-  it("greys the control with the harness note when the adapter has none verified", () => {
+  it("shows nothing on a harness host with no effort saved", () => {
     models.supported = true;
     setup({ modelId: "openai/gpt-5", harness: "claude-code" });
     expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    expect(screen.queryByText("Reasoning effort")).toBeNull();
+    expect(screen.queryByText(/doesn't support a reasoning effort/)).toBeNull();
+  });
+
+  it("shows a saved effort a harness refuses, with the note, and lets it be cleared", async () => {
+    models.supported = true;
+    const { applied } = setup({
+      modelId: "openai/gpt-5",
+      harness: "claude-code",
+      modelSelection: {
+        ...GPT5_SELECTION,
+        settings: { reasoningEffort: "high" },
+      } as never,
+    });
+    expect(screen.getByTestId("effort-control-trigger")).toHaveTextContent(
+      "no longer supported",
+    );
     expect(
       screen.getByText(/Claude Code doesn't support a reasoning effort yet/),
     ).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    await userEvent.click(
+      await screen.findByRole("radio", { name: "Default" }),
+    );
+    expect(applied().modelSelection?.settings).toBeUndefined();
+  });
+
+  it("renders no row for a model with no effort levels and nothing saved", () => {
+    models.supported = true;
+    setup({ modelId: "openai/gpt-4o" });
+    expect(screen.queryByText("Reasoning effort")).toBeNull();
   });
 
   it("is disabled where the deployment stores no selections", () => {
