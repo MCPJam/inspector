@@ -1,0 +1,299 @@
+---
+title: "Reasoning effort"
+description: "API reference for @mcpjam/sdk reasoning-effort helpers — query supported effort levels and build provider options for direct AI SDK calls."
+icon: "book"
+---
+
+Use the reasoning-effort helpers to determine which effort levels a model accepts on a given route, build the correct `providerOptions` for a direct AI SDK call, and compare or validate saved model selections.
+
+## Import
+
+```typescript
+// Main entry point
+import {
+  supportedReasoningEfforts,
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+} from "@mcpjam/sdk";
+
+// Browser-safe entry point (same exports)
+import {
+  supportedReasoningEfforts,
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+} from "@mcpjam/sdk/browser";
+
+// host-config entry point (same exports)
+import {
+  supportedReasoningEfforts,
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+} from "@mcpjam/sdk/host-config";
+```
+
+The raw per-provider level arrays (`OPENAI_REASONING_EFFORTS`, `ANTHROPIC_REASONING_EFFORTS`, `GOOGLE_REASONING_EFFORTS`, `HARNESS_REASONING_EFFORTS`) are available only from `@mcpjam/sdk/host-config/internal` and are not part of the public API.
+
+---
+
+## supportedReasoningEfforts()
+
+Returns the effort levels a picker may offer for a model on a given route, in canonical low-to-high order. An empty array means the control should be hidden — the capability is unknown or absent for that model/route combination.
+
+```typescript
+supportedReasoningEfforts(input: SupportedReasoningEffortsInput): ModelReasoningEffort[]
+```
+
+### SupportedReasoningEffortsInput
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `route` | `ReasoningEffortRoute` | Yes | Where the call runs. |
+| `providerKey` | `string` | Yes | The model's provider key (e.g. `"openai"`, `"anthropic"`, `"google"`). |
+| `modelId` | `string` | Yes | The model id, with or without a `provider/` prefix. |
+| `catalogEfforts` | `readonly string[]` | No | The hosted catalog's `supportedReasoningEfforts` for this model. Required when `route` is `"hosted"`. |
+| `harness` | `Harness` | No | When the turn runs inside a harness, its adapter table decides the available levels. |
+
+### ReasoningEffortRoute
+
+| Value | Meaning |
+|-------|---------|
+| `"direct"` | BYOK / bring-your-own-key call directly to the provider. Levels come from the per-model provider tables. |
+| `"hosted"` | MCPJam-hosted inference. Levels come from the catalog's `supportedReasoningEfforts` list. |
+| `"orgCloud"` | Org-cloud stream. Returns no levels until the backend applies an effort there. |
+| `"org"` | Org runtime — concrete route (cloud vs local) is not yet known. Returns no levels. |
+
+### Behaviour by route
+
+- **`harness`** — the adapter's verified table (empty until an adapter's mapping is verified).
+- **`hosted`** — the catalog list only, filtered to known effort values and sorted canonically.
+- **`direct`** — per-model provider tables (see [supported models](#supported-models-direct-route)).
+- **`org` / `orgCloud`** — always empty; resolve to `direct` or `orgCloud` first.
+
+### Example
+
+```typescript
+import { supportedReasoningEfforts } from "@mcpjam/sdk";
+
+// Direct BYOK call
+const levels = supportedReasoningEfforts({
+  route: "direct",
+  providerKey: "anthropic",
+  modelId: "claude-sonnet-4-6",
+});
+// ["low", "medium", "high", "max"]
+
+// Hosted call — pass the catalog list
+const hostedLevels = supportedReasoningEfforts({
+  route: "hosted",
+  providerKey: "openai",
+  modelId: "openai/gpt-5",
+  catalogEfforts: ["low", "medium", "high"],
+});
+// ["low", "medium", "high"]
+
+// Unknown model — hide the control
+const none = supportedReasoningEfforts({
+  route: "direct",
+  providerKey: "openai",
+  modelId: "gpt-4o",
+});
+// []
+```
+
+---
+
+## reasoningEffortProviderOptions()
+
+Returns the `providerOptions` object to pass to an AI SDK `streamText` / `generateText` call for a direct provider call, or `undefined` when the model/level pair is not supported (the caller should surface `capability_missing` rather than forwarding the request).
+
+```typescript
+reasoningEffortProviderOptions(args: {
+  providerKey: string;
+  modelId: string;
+  effort: ModelReasoningEffort;
+}): ReasoningEffortProviderOptions | undefined
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `providerKey` | `string` | Provider key (`"openai"`, `"anthropic"`, `"google"`). |
+| `modelId` | `string` | Model id, with or without a `provider/` prefix. |
+| `effort` | `ModelReasoningEffort` | The effort level to apply. |
+
+### Returns
+
+`undefined` when the model/level pair is unsupported — this includes previously-valid combinations that are now refused up front (see [behaviour change](#behaviour-change-on-the-direct-route)). Otherwise returns a `Record<string, Record<string, unknown>>` shaped for the AI SDK's `providerOptions`.
+
+### Example
+
+```typescript
+import { reasoningEffortProviderOptions } from "@mcpjam/sdk";
+import { streamText } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const options = reasoningEffortProviderOptions({
+  providerKey: "anthropic",
+  modelId: "claude-sonnet-4-6",
+  effort: "medium",
+});
+
+if (options === undefined) {
+  // surface capability_missing to the caller
+} else {
+  await streamText({
+    model: createAnthropic({ apiKey })("claude-sonnet-4-6"),
+    prompt,
+    providerOptions: options,
+  });
+}
+```
+
+### Provider option shapes
+
+| Provider | Field set |
+|----------|-----------|
+| `openai` | `{ openai: { reasoningEffort: effort } }` |
+| `anthropic` | `{ anthropic: { effort, thinking: { type: "adaptive" } } }` (most models); `{ anthropic: { effort } }` for Opus 4.5 |
+| `google` | `{ google: { thinkingConfig: { thinkingLevel: effort } } }` |
+
+---
+
+## selectionConfigKey()
+
+Returns a stable string identity for a `ModelSelection` **including** its settings (reasoning effort and temperature). Use it for change detection ("did the user edit anything?") and reuse checks ("is this the row I already have?").
+
+```typescript
+selectionConfigKey(selection: ModelSelection): string
+```
+
+This is distinct from `selectionKey`, which deliberately ignores settings so that different effort levels do not split picker rows. Use `selectionConfigKey` when you need to detect that two selections differ only by effort or temperature.
+
+The returned string is byte-identical (as JSON) to the backend's `canonicalModelSelection`, so a client and server can agree on whether a selection changed.
+
+### Example
+
+```typescript
+import { selectionKey, selectionConfigKey } from "@mcpjam/sdk";
+
+const base = { modelId: "openai/gpt-5", source: "hosted", fallback: { provider: "none", model: "none" } };
+const withEffort = { ...base, settings: { reasoningEffort: "high" } };
+
+selectionKey(base) === selectionKey(withEffort);       // true  — same picker row
+selectionConfigKey(base) === selectionConfigKey(withEffort); // false — different config
+```
+
+---
+
+## selectionIfMatches()
+
+Returns the selection only when it belongs to `modelId`. A saved selection was chosen for a specific model; after the model changes it must be dropped rather than carried onto a model it was never validated for.
+
+```typescript
+selectionIfMatches(
+  selection: ModelSelection | undefined,
+  modelId: string | undefined,
+): ModelSelection | undefined
+```
+
+Returns `undefined` when either argument is `undefined`, or when `selection.modelId` does not equal `modelId` (after trimming).
+
+### Example
+
+```typescript
+import { selectionIfMatches } from "@mcpjam/sdk";
+
+const saved = { modelId: "openai/gpt-5", source: "hosted", fallback: { provider: "none", model: "none" } };
+
+selectionIfMatches(saved, "openai/gpt-5");      // saved — same model
+selectionIfMatches(saved, "openai/gpt-5-mini"); // undefined — model changed
+selectionIfMatches(undefined, "openai/gpt-5");  // undefined
+```
+
+---
+
+## Supported models (direct route)
+
+`supportedReasoningEfforts` and `reasoningEffortProviderOptions` only offer levels for models whose effort control the provider documents. Unknown models return an empty array and `undefined` respectively — the control is hidden rather than guessed.
+
+### OpenAI
+
+Levels are model-specific. `-pro` and `-chat` model variants, `o1-mini`, `o1-preview`, and undocumented Codex variants return no levels.
+
+| Model | Levels |
+|-------|--------|
+| `gpt-5` | `minimal`, `low`, `medium`, `high` |
+| `gpt-5.1` | `none`, `low`, `medium`, `high` |
+| `gpt-5.2` and later | `none`, `low`, `medium`, `high`, `xhigh` |
+| `gpt-5.2-codex`, `gpt-5.1-codex-max` | `low`, `medium`, `high`, `xhigh` |
+| `o1`, `o3`, `o4-mini` | `low`, `medium`, `high` |
+
+### Anthropic
+
+Effort arrived with Opus 4.5. Haiku and older Claude (3.x, 4.0/4.1) return no levels.
+
+| Model | Levels |
+|-------|--------|
+| `claude-opus-4-5` | `low`, `medium`, `high` |
+| `claude-opus-4-6`, `claude-sonnet-4-6` | `low`, `medium`, `high`, `max` |
+| `claude-opus-4-7` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude 5.x (Opus, Sonnet, Fable) | `low`, `medium`, `high`, `xhigh`, `max` |
+
+### Google
+
+Gemini 3+ only. Other families return no levels.
+
+| Model | Levels |
+|-------|--------|
+| `gemini-3-pro` | `low`, `high` |
+| `gemini-3.x-pro` (e.g. `gemini-3.1-pro-preview`) | `low`, `medium`, `high` |
+| `gemini-3-flash`, `gemini-3.x-flash` | `minimal`, `low`, `medium`, `high` |
+
+---
+
+## Behaviour change on the direct route
+
+`reasoningEffortProviderOptions` now refuses model/level pairs the provider documents as unsupported, returning `undefined` instead of forwarding the request. A saved direct-route selection that previously reached the provider and failed there now gets `capability_missing` up front. Affected combinations include:
+
+- Opus 4.5 with `max`
+- Haiku and Sonnet 4.5 and earlier (all levels)
+- `gpt-5` with `none`
+- `gpt-5.1` with `minimal`
+- Codex models with `none`
+- `-pro` and `-chat` model variants
+- `o1-mini` and `o1-preview`
+- Gemini 3 Pro with `minimal`
+
+---
+
+## Types
+
+### ModelReasoningEffort
+
+```typescript
+type ModelReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+```
+
+### ReasoningEffortProviderOptions
+
+```typescript
+type ReasoningEffortProviderOptions = Record<string, Record<string, unknown>>;
+```
+
+---
+
+## Related
+
+- [LLM Providers](/sdk/reference/llm-providers) — provider configuration and model strings
+- [HostRunner Reference](/sdk/reference/host-runner) — agent configuration
