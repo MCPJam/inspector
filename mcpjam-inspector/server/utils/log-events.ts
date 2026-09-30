@@ -150,6 +150,11 @@ type RouteOperationFailedFields = {
 };
 
 export type RequestEventMap = {
+  "eval.import.environment_selection.failed": {
+    projectId: string;
+    suiteId: string;
+    reason: "ENVIRONMENT_REQUIRED";
+  };
   /**
    * 4xx responses land here, not on `http.request.failed` — a 4xx is a
    * declared client outcome, not a server failure. But "declared outcome"
