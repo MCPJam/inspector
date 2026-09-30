@@ -54,6 +54,8 @@ import {
 } from "./run-verdict-hero-deltas";
 import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
+import { RunErrorBreakdown } from "./run-error-breakdown";
+import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -187,6 +189,20 @@ export function SingleRunContent({
     run,
     enabled: active,
   });
+
+  // Terminal runs only: a running run's errors are still arriving, and a
+  // banner that grows row by row reads as the run getting worse.
+  const errorBreakdown = useMemo(
+    () =>
+      isTerminalEvalRunStatus(run.status)
+        ? buildRunErrorBreakdown({
+            iterations,
+            diagnostics: detail.diagnostics,
+            chains: chains.chains,
+          })
+        : null,
+    [run.status, iterations, detail.diagnostics, chains.chains],
+  );
 
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({
@@ -377,6 +393,11 @@ export function SingleRunContent({
             </Button>
           ) : null
         }
+      />
+
+      <RunErrorBreakdown
+        breakdown={errorBreakdown}
+        {...(onOpenIteration ? { onOpenIteration: openEvidenceIteration } : {})}
       />
 
       {changeSummary ? (
