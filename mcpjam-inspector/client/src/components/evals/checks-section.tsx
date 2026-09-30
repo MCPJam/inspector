@@ -82,6 +82,7 @@ import {
   type Kind,
 } from "./predicate-kind-meta";
 import { AddGlobalGateMenu } from "./global-gate-menu";
+import { toolNameWarning } from "./tool-name-warning";
 import {
   GlobalGateKindInfoHint,
   GlobalGatesSectionInfoHint,
@@ -1139,6 +1140,14 @@ function ToolNameField({
     path,
     useDropdown ? "Pick a tool" : "Enter a tool name",
   );
+  const warningId = `${id}-warning`;
+  const warning = error
+    ? undefined
+    : toolNameWarning(value, useDropdown ? availableTools : undefined);
+  // A saved name the list does not carry must still read as itself: an
+  // empty trigger would present a broken assertion as an unset one.
+  const unlistedValue =
+    useDropdown && value && !availableTools!.includes(value) ? value : null;
   return (
     <div
       className={
@@ -1171,11 +1180,16 @@ function ToolNameField({
             }
             aria-label={label}
             aria-invalid={error ? true : undefined}
-            aria-describedby={error ? errorId : undefined}
+            aria-describedby={error ? errorId : warning ? warningId : undefined}
           >
             <SelectValue placeholder="Pick a tool…" />
           </SelectTrigger>
           <SelectContent>
+            {unlistedValue ? (
+              <SelectItem value={unlistedValue} className="text-xs">
+                {unlistedValue}
+              </SelectItem>
+            ) : null}
             {availableTools!.map((t) => (
               <SelectItem key={t} value={t} className="text-xs">
                 {t}
@@ -1189,7 +1203,7 @@ function ToolNameField({
           value={value}
           aria-label={label}
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={error ? errorId : warning ? warningId : undefined}
           onChange={(e) => {
             markTouched();
             onChange(e.target.value);
@@ -1209,6 +1223,13 @@ function ToolNameField({
           )}
         >
           {error}
+        </p>
+      ) : warning ? (
+        <p
+          id={warningId}
+          className={cn("text-[11px] text-warning", compact && "col-start-2")}
+        >
+          {warning}
         </p>
       ) : null}
     </div>

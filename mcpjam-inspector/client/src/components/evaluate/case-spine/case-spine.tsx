@@ -57,7 +57,7 @@ import {
 } from "@/components/evals/step-fields";
 import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
-import { RouteRow } from "../case-scorecard/route-row";
+import { RouteRow, type ToolCatalogStatus } from "../case-scorecard/route-row";
 import {
   initialToolsChoice,
   isPromptFirst,
@@ -97,6 +97,8 @@ export type CaseSpineProps = {
   suppressedSuiteStandardCheckIds?: string[];
   snapshotPredicates?: Predicate[];
   availableTools?: AvailableTool[];
+  toolsStatus?: ToolCatalogStatus;
+  onRetryTools?: () => void;
   suiteServers?: string[];
   projectServers?: RemoteServer[];
   isNegativeTest?: boolean;
@@ -149,6 +151,8 @@ export function CaseSpine({
   suppressedSuiteStandardCheckIds,
   snapshotPredicates,
   availableTools = [],
+  toolsStatus,
+  onRetryTools,
   suiteServers = [],
   projectServers,
   isNegativeTest,
@@ -559,6 +563,8 @@ export function CaseSpine({
                   <RouteRow
                     row={card.route}
                     availableTools={availableTools.map((tool) => tool.name)}
+                    toolsStatus={toolsStatus}
+                    onRetryTools={onRetryTools}
                     readOnly={readOnly}
                     showUnsetError={showUnsetError}
                     negativeContradiction={card.negativeContradiction}
