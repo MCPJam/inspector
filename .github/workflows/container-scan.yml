@@ -1,0 +1,88 @@
+name: Container Scan
+
+# Vulnerability-scans the three container images this repo ships to Railway
+# (the hosted inspector, the Slack bot, the Discord bot). Each image is built
+# exactly as Railway builds it — same Dockerfile, monorepo root as context —
+# then scanned with Trivy for OS-package and bundled-dependency CVEs.
+#
+# Findings are uploaded as SARIF so they land in GitHub code scanning (one
+# category per image) with dated, attributable history. The build only FAILS
+# on CRITICAL vulnerabilities that have a fix available: unfixable CVEs are
+# reported but cannot be acted on, and gating on them would make every
+# unrelated pull request red.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "mcpjam-inspector/Dockerfile"
+      - "slack-app/Dockerfile"
+      - "discord-app/Dockerfile"
+      - ".github/workflows/container-scan.yml"
+  schedule:
+    # Weekly, independent of code changes: new CVEs are published against the
+    # base images we already ship, so the scan needs a recorded cadence of its
+    # own rather than only running when a Dockerfile happens to change.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    name: Scan ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: inspector-web
+            dockerfile: mcpjam-inspector/Dockerfile
+          - image: slack-app
+            dockerfile: slack-app/Dockerfile
+          - image: discord-app
+            dockerfile: discord-app/Dockerfile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # No registry push and no build args: the VITE_*/Sentry args are all
+      # optional at build time, and the scan needs the image contents, not a
+      # configured deployment.
+      - name: Build image
+        run: docker build -f "${{ matrix.dockerfile }}" -t "local/${{ matrix.image }}:scan" .
+
+      - name: Scan image (report)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: local/${{ matrix.image }}:scan
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      # Fork PRs run with a read-only token that cannot write security events;
+      # they still build, scan, and hit the CRITICAL gate below.
+      - name: Upload results to code scanning
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: container-${{ matrix.image }}
+
+      # The gate: fixable CRITICALs fail the job. Reuses the vulnerability DB
+      # the report step already downloaded.
+      - name: Fail on fixable CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: local/${{ matrix.image }}:scan
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
