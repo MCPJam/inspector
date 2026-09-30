@@ -1,5 +1,6 @@
 import { planPlatformSuiteGradingUpdate } from "@mcpjam/sdk";
 import type { EvalGradingPolicyEdit } from "@mcpjam/sdk/contract";
+import type { ModelSelection } from "@mcpjam/sdk";
 import { fetchArtifactBytes } from "../lib/download-screenshot.js";
 import {
   existsSync,
@@ -363,7 +364,7 @@ function composeField(options: {
     server?: string;
     servers?: string[];
     models?: string[];
-    modelSelections?: Record<string, unknown>[];
+    modelSelections?: ModelSelection[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
@@ -397,7 +398,11 @@ function composeField(options: {
       : options.composeModelSelection
       ? [options.composeModelSelection]
       : []
-  ).map((raw) => parseModelSelectionFlag(raw, "--compose-model-selection"));
+  ).map(
+    (raw) =>
+      // The server validates the selection; the flag parser only guarantees JSON.
+      parseModelSelectionFlag(raw, "--compose-model-selection") as ModelSelection
+  );
   const refinements =
     options.composeComputer !== undefined ||
     models !== undefined ||
