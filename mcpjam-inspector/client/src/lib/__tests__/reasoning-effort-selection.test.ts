@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
+import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import {
   carryEffortToModel,
   selectionReasoningEffort,
@@ -125,6 +126,21 @@ describe("setEffortForRow", () => {
     expect(
       setEffortForRow({ ...args, selection: undefined, effort: "high" }),
     ).toBeNull();
+  });
+
+  it("a canonicalized bare BYOK row reads back as itself, never the hosted twin (Playground host switch)", () => {
+    const set = setEffortForRow({
+      ...args,
+      selection: undefined,
+      effort: "high",
+      bareIds: "canonicalize",
+    })!;
+    const choice = { modelId: set.modelId, selection: set.selection };
+    // What the Playground resolves: hosted `openai/gpt-5` sits beside the bare
+    // BYOK `gpt-5`. A raw-id match would pick the hosted row and bill MCPJam.
+    const rows = [gpt5, byokGpt5];
+    expect(findModelForStoredChoice(choice, rows, undefined)).toBe(byokGpt5);
+    expect(rows.find((m) => String(m.id) === set.modelId)).toBe(gpt5);
   });
 
   it("returns a synthesised bare-id row to its legacy shape when cleared", () => {

@@ -37,7 +37,11 @@
  * are refused by name. See {@link resolveChatSessionEngine}.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
-import { readXaaEnterprisePolicy, type ModelSelection } from "@mcpjam/sdk";
+import {
+  readXaaEnterprisePolicy,
+  type ModelReasoningEffort,
+  type ModelSelection,
+} from "@mcpjam/sdk";
 import { selectionIfMatches } from "@mcpjam/sdk/browser";
 import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -244,6 +248,13 @@ export function resolveChatSessionEngine(args: {
    * to resolve without the caller's help. See the unpinnable-host rule above.
    */
   sessionPinsOwnServerIds: boolean;
+  /**
+   * The effort this turn will run at when it is not the host's saved one (the
+   * request's own, or the one the session pinned). Wins over the host's, like
+   * `/stream` prefers a top-level effort over a selection — so a typed effort
+   * on a harness host is refused up front instead of dropped.
+   */
+  reasoningEffort?: ModelReasoningEffort;
 }): ChatSessionEngineResult {
   const harness = harnessOfRuntimeConfig(args.hostTarget?.runtimeConfig);
   if (!harness || !args.hostTarget)
@@ -254,9 +265,9 @@ export function resolveChatSessionEngine(args: {
   // The host's own approval gate, read server-side like everything else here.
   const requireToolApproval = hostConfig.requireToolApproval === true;
 
-  const hostEffort = selectionReasoningEffort(
-    hostSelectionForModel(hostConfig, args.model.id),
-  );
+  const hostEffort =
+    args.reasoningEffort ??
+    selectionReasoningEffort(hostSelectionForModel(hostConfig, args.model.id));
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,

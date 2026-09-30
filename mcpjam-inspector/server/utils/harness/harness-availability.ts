@@ -232,6 +232,25 @@ export function selectionReasoningEffort(
 }
 
 /**
+ * The effort a turn asked for, from every place it can ride: the typed field,
+ * else the top-level `extraBodyFields.reasoningEffort` (where
+ * `resolveTurnRuntime`'s hosted branch puts a turn's own effort, and which
+ * `/stream` prefers), else the saved selection forwarded with the turn
+ * (`extraBodyFields.modelSelection`). One reader for every harness check so a
+ * turn-level effort cannot be dropped by one and refused by another.
+ */
+export function turnReasoningEffortOf(args: {
+  reasoningEffort?: ModelReasoningEffort;
+  extraBodyFields?: Record<string, unknown>;
+}): ModelReasoningEffort | undefined {
+  return (
+    args.reasoningEffort ??
+    readReasoningEffort(args.extraBodyFields?.reasoningEffort) ??
+    selectionReasoningEffort(args.extraBodyFields?.modelSelection)
+  );
+}
+
+/**
  * Why a harness turn must not run at this reasoning effort, or `undefined` when
  * it may.
  *

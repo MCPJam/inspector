@@ -536,6 +536,26 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
+  it("refuses an effort sent WITH THE TURN on a harness host that saved none", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code" }),
+    );
+
+    const response = await turn(
+      firstTurn({
+        environmentId: ENVIRONMENT,
+        toolMode: "auto",
+        reasoningEffort: "high",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("setting-unsupported");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
   it("ignores a saved effort that belongs to a different model than the turn's", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({

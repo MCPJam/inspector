@@ -6,6 +6,7 @@ import {
   harnessToolApprovalRefusalReason,
   readReasoningEffort,
   selectionReasoningEffort,
+  turnReasoningEffortOf,
 } from "../harness-availability";
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
 import { MODEL_REASONING_EFFORTS } from "@mcpjam/sdk/browser";
@@ -870,6 +871,27 @@ describe("reading an effort off untyped input", () => {
     expect(selectionReasoningEffort({ settings: {} })).toBeUndefined();
     expect(selectionReasoningEffort(undefined)).toBeUndefined();
     expect(selectionReasoningEffort("nope")).toBeUndefined();
+  });
+});
+
+describe("the effort a turn asked for", () => {
+  it("reads the typed field, then the top-level body field, then the selection", () => {
+    const selection = { settings: { reasoningEffort: "low" } };
+    expect(
+      turnReasoningEffortOf({
+        reasoningEffort: "high",
+        extraBodyFields: { reasoningEffort: "medium", modelSelection: selection },
+      }),
+    ).toBe("high");
+    expect(
+      turnReasoningEffortOf({
+        extraBodyFields: { reasoningEffort: "medium", modelSelection: selection },
+      }),
+    ).toBe("medium");
+    expect(
+      turnReasoningEffortOf({ extraBodyFields: { modelSelection: selection } }),
+    ).toBe("low");
+    expect(turnReasoningEffortOf({ extraBodyFields: {} })).toBeUndefined();
   });
 });
 

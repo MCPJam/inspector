@@ -1,6 +1,7 @@
 import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
+import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -1405,8 +1406,13 @@ export function PlaygroundMain({
     // event round-trip.
     const desiredModelId = cfg.modelId?.trim();
     if (desiredModelId) {
-      const match = availableModels.find(
-        (m) => String(m.id) === desiredModelId,
+      // Selection-aware, as the host Agent tab resolves it: a saved canonical
+      // id (`openai/gpt-5`) for a bare BYOK row must land on THAT row, not on
+      // the hosted row of the same id (which would bill MCPJam's key).
+      const match = findModelForStoredChoice(
+        { modelId: desiredModelId, selection: cfg.modelSelection },
+        availableModels,
+        undefined,
       );
       if (match) {
         setSelectedModel(match);

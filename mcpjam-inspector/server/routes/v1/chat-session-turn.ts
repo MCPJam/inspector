@@ -1457,6 +1457,9 @@ async function handleTurn(c: Context): Promise<Response> {
       // pins `serverIds` can be continued with no pointer at all, so a host
       // reached by pointer cannot survive on it — see the unpinnable-host rule.
       sessionPinsOwnServerIds: pins.serverIds !== undefined,
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
       toolPolicy: {
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
