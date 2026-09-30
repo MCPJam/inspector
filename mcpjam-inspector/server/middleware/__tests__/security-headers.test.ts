@@ -306,9 +306,7 @@ describe("securityHeadersMiddleware document policies", () => {
     let reported = 0;
     for (let i = 0; i < 2000; i++) {
       const res = await app.request("/");
-      expect(res.headers.has("Content-Security-Policy-Report-Only")).toBe(
-        true,
-      );
+      expect(res.headers.has("Content-Security-Policy-Report-Only")).toBe(true);
       if (
         res.headers
           .get("Content-Security-Policy-Report-Only")!
