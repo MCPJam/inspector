@@ -11,6 +11,7 @@
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
 import {
   describeError,
@@ -89,6 +90,33 @@ export function describeProviderRateLimit(
   };
 }
 
+/**
+ * The card shown on a session that stopped while other requests held the last
+ * credits (`holds_committed`).
+ *
+ * It is deliberately not the catalog's `provider/mcpjam_limit` copy: that entry
+ * is titled "Out of MCPJam credits" and sends the user to upgrade or buy
+ * credits, and a hold is neither an empty balance nor something a purchase
+ * lifts. The slug and severity stay the catalog's so the card renders amber
+ * like every other MCPJam limit. The backend's own sentence stays as the body:
+ * it carries how many requests were holding credits.
+ */
+export function describeHeldCredits(message: string): NormalizedError {
+  return {
+    ...describeAsSlug("provider/mcpjam_limit"),
+    title: "Credits temporarily held",
+    oneLine: message,
+    likelyCauses: [
+      "Other requests from your organization were in flight and held the remaining credits until they finished.",
+    ],
+    nextSteps: [
+      "Run the session again once your other sessions have finished.",
+      "Start fewer sessions at once if this keeps happening.",
+    ],
+    rawMessage: message,
+  };
+}
+
 /** Use the producer's humanized meaning, while retaining raw diagnostics. */
 export function describeSwarmAttemptFailure(
   rawMessage: string | null | undefined,
@@ -106,6 +134,15 @@ export function describeSwarmAttemptFailure(
   ) {
     return {
       ...describeProviderNotAllowlisted(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  // A hold is a wait, not an empty balance, and the limit branch below would
+  // card the same sentence as "Out of MCPJam credits".
+  if (isHeldCreditsRefusal(code, info.refusalReason, info.message)) {
+    return {
+      ...describeHeldCredits(info.message),
       rawMessage: rawMessage ?? info.message,
       rawCode: code,
     };

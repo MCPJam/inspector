@@ -4,6 +4,7 @@ import {
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isHeldCreditsRefusal,
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
@@ -442,6 +443,35 @@ describe("humanizeSwarmAttemptError provider_not_allowlisted", () => {
     expect(info.message).toBe(headline);
     expect(info.code).toBe("provider_not_allowlisted");
     expect(info.httpStatus).toBe(403);
+  });
+});
+
+describe("isHeldCreditsRefusal", () => {
+  const STORED_HOLDS_SENTENCE =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("is the held-credits half of a transient refusal", () => {
+    expect(isHeldCreditsRefusal("user_rate_limit", "holds_committed")).toBe(
+      true,
+    );
+    expect(
+      isHeldCreditsRefusal("user_rate_limit", undefined, STORED_HOLDS_SENTENCE),
+    ).toBe(true);
+    expect(isHeldCreditsRefusal("user_rate_limit", "allowance_exhausted")).toBe(
+      false,
+    );
+    expect(
+      isHeldCreditsRefusal(
+        "user_rate_limit",
+        undefined,
+        "Daily MCPJam model limit reached.",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves a busy reservation out: a wait, but not about credits", () => {
+    expect(isHeldCreditsRefusal("spending_reservation_busy")).toBe(false);
+    expect(isTransientSpendRefusal("spending_reservation_busy")).toBe(true);
   });
 });
 
