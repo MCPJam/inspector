@@ -52,6 +52,22 @@ function translateReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, { scope: "v1.swarm-insights" });
 }
 
+/**
+ * For the SCOPING reads — the ones that authorize a caller-supplied id (the
+ * run/finding preflights, the project-scoped overview/insights/finding
+ * lists). Their refusals are plain errors production Convex masks to "Server
+ * Error", so without `redactedIsRefusal` a cross-tenant probe answered 502
+ * instead of the 404 the scope check exists to guarantee (MJ-021). Reads
+ * AFTER a preflight (the scorecard) keep `translateReadError`: there a
+ * redacted error is a genuine incident.
+ */
+function translatePreflightReadError(error: unknown): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "v1.swarm-insights",
+    redactedIsRefusal: true,
+  });
+}
+
 // ── Convex row shapes (hand-mirrored) ───────────────────────────────────────
 
 type ScorecardRow = {
@@ -332,7 +348,7 @@ async function requireRunInProject(
       { runId } as never,
     )) as { projectId?: string } | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!run || String(run.projectId) !== projectId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Journey run not found");
@@ -349,7 +365,7 @@ async function listFindingRows(
       { projectId } as never,
     )) ?? []) as FindingRow[];
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
 }
 
@@ -421,7 +437,7 @@ both(
         { projectId } as never,
       )) as OverviewRow;
     } catch (error) {
-      throw translateReadError(error);
+      throw translatePreflightReadError(error);
     }
     return v1Resource(c, toOverviewDto(row));
   },
@@ -514,7 +530,7 @@ bothInsights("get", "/insights", async (c, surface) => {
       { projectId, swarmRunGroupId: swarmRunId } as never,
     )) as WaveInsightsRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!row) {
     // Never requested. 404 rather than an empty `status: "none"` body, so a

@@ -41,11 +41,18 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../shared/swarm-description.js";
 
 const swarms = new Hono();
 
+// `redactedIsRefusal`: both reads here scope caller-supplied ids, and
+// production Convex masks the plain membership refusal to "Server Error" —
+// without it a cross-tenant probe answered 502 (MJ-021).
 function translateReadError(error: unknown): WebRouteError {
-  return translateConvexReadError(error, { scope: "v1.swarms" });
+  return translateConvexReadError(error, {
+    scope: "v1.swarms",
+    redactedIsRefusal: true,
+  });
 }
 
 type SwarmRow = {
@@ -109,7 +116,7 @@ function bothIterationSpellings(value: {
 const createSwarmSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(200),
-    description: z.string().max(2000).optional(),
+    description: z.string().max(SWARM_DESCRIPTION_MAX_CHARS).optional(),
     environmentIds: z.array(z.string().min(1)).min(1).optional(),
     iterations: swarmConfigFields.iterations.optional(),
     sessionsPerTarget: swarmConfigFields.iterations.optional(),
@@ -129,7 +136,9 @@ const updateSwarmSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(200).optional(),
     /** `null` clears; absent leaves alone. Same tri-state as journeys. */
-    description: z.union([z.string().max(2000), z.null()]).optional(),
+    description: z
+      .union([z.string().max(SWARM_DESCRIPTION_MAX_CHARS), z.null()])
+      .optional(),
     environmentIds: z
       .union([z.array(z.string().min(1)).min(1), z.null()])
       .optional(),

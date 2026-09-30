@@ -61,6 +61,7 @@ import { markDeprecated as markDeprecatedResponse } from "./deprecation.js";
 import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 
 const clients = new Hono();
@@ -298,6 +299,12 @@ function translateConvexWriteError(error: unknown): WebRouteError {
   });
 }
 
+/**
+ * The scoping read behind every client route: `resolveClientId` and the list
+ * handler both authorize the caller-supplied project id through it. A plain
+ * membership refusal — masked to "Server Error" in production — answers the
+ * neutral 404 instead of the write translator's terminal 500 (MJ-021).
+ */
 async function listHostRows(
   convexAuthToken: string,
   projectId: string,
@@ -309,7 +316,12 @@ async function listHostRows(
       { projectId } as any,
     )) ?? []) as HostListRow[];
   } catch (error) {
-    throw translateConvexWriteError(error);
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Project or client not found, or you do not have access to it.",
+      ) ?? translateConvexWriteError(error)
+    );
   }
 }
 

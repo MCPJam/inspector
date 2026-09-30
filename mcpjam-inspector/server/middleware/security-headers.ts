@@ -18,7 +18,11 @@
  *   reports are what a later enforcing policy gets tuned against. The app
  *   integrates with many external services (WorkOS, PostHog, Sentry, Convex,
  *   Stripe, MCP servers with OAuth), which is why it is not enforced yet.
- *   It is sent on a sampled share of documents (CSP_REPORT_SAMPLE_RATE), and
+ *   The header goes on every hosted response, documents and assets alike
+ *   (MJ-016), but only a sampled share of responses
+ *   carries the report-uri directive (CSP_REPORT_SAMPLE_RATE), which is what
+ *   bounds how many violation reports page views produce — a report-only
+ *   policy without a report endpoint only logs to the console. On documents,
  *   its script-src allows the inline scripts the server writes into the
  *   document through a per-response nonce (documentScriptNonce).
  *
@@ -64,8 +68,9 @@ export const DOCUMENT_PERMISSIONS_POLICY = [
 ].join(", ");
 
 /**
- * Share of hosted HTML documents that carry the report-only policy, which
- * bounds how many violation reports page views produce.
+ * Share of hosted responses whose report-only policy carries report-uri,
+ * which bounds how many violation reports page views produce. The policy
+ * itself is on every hosted response.
  */
 export const CSP_REPORT_SAMPLE_RATE = 0.05;
 
@@ -171,6 +176,9 @@ function reportOnlyDirectives(
   }
 
   return [
+    // The fallback for fetch directives not listed below (media-src, …);
+    // report-only, so an unlisted source only produces a report.
+    ["default-src", ["'self'"]],
     // 'unsafe-eval': JSON Schema validators (ajv) compile schemas at runtime
     // with `new Function`.
     ["script-src", ["'self'", "'unsafe-eval'", ...STRIPE_SCRIPT_SOURCES]],
@@ -188,8 +196,13 @@ function reportOnlyDirectives(
   ];
 }
 
-function renderPolicy(directives: Directive[], scriptNonce?: string): string {
+function renderPolicy(
+  directives: Directive[],
+  scriptNonce?: string,
+  includeReportUri = true,
+): string {
   return directives
+    .filter(([name]) => includeReportUri || name !== "report-uri")
     .map(([name, iterable]) => {
       const sources = Array.from(iterable);
       if (name === "script-src" && scriptNonce) {
@@ -210,22 +223,27 @@ export function buildReportOnlyContentSecurityPolicy(
   sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
   sentryDsn: string = SENTRY_DSN.client,
   scriptNonce?: string,
+  includeReportUri = true,
 ): string {
   return renderPolicy(
     reportOnlyDirectives(runtimeConfig, sandboxHosts, sentryDsn),
     scriptNonce,
+    includeReportUri,
   );
 }
 
 let reportOnlyBase: Directive[] | null = null;
 
-function reportOnlyContentSecurityPolicy(scriptNonce?: string): string {
+function reportOnlyContentSecurityPolicy(
+  scriptNonce: string | undefined,
+  includeReportUri: boolean,
+): string {
   reportOnlyBase ??= reportOnlyDirectives(
     getInspectorClientRuntimeConfig(),
     SANDBOX_HOSTS,
     SENTRY_DSN.client,
   );
-  return renderPolicy(reportOnlyBase, scriptNonce);
+  return renderPolicy(reportOnlyBase, scriptNonce, includeReportUri);
 }
 
 /** Test-only: drop the memoized report-only policy. */
@@ -239,13 +257,16 @@ function isHtmlDocument(res: Response): boolean {
     .startsWith("text/html");
 }
 
-function setDocumentPolicies(
+function setResponsePolicies(
   headers: Headers,
+  isDocument: boolean,
   reportOnlyPolicy: string | null,
 ): void {
-  headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
-  if (!headers.has("Permissions-Policy")) {
-    headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+  if (isDocument) {
+    headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
+    if (!headers.has("Permissions-Policy")) {
+      headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+    }
   }
   if (reportOnlyPolicy) {
     headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy);
@@ -254,8 +275,9 @@ function setDocumentPolicies(
 
 /**
  * Security headers middleware.
- * Adds standard security headers to all responses, and the document policies
- * above to HTML responses.
+ * Adds standard security headers to all responses, the document policies
+ * above to HTML responses, and (hosted) the report-only policy to every
+ * response that does not carry its own Content-Security-Policy.
  */
 export async function securityHeadersMiddleware(
   c: Context,
@@ -270,20 +292,26 @@ export async function securityHeadersMiddleware(
   await next();
 
   const res = c.res;
-  if (!isHtmlDocument(res) || res.headers.has("Content-Security-Policy")) {
+  if (res.headers.has("Content-Security-Policy")) {
     return;
   }
-  const reportOnlyPolicy =
-    HOSTED_MODE && Math.random() < CSP_REPORT_SAMPLE_RATE
-      ? reportOnlyContentSecurityPolicy(scriptNonces.get(c))
-      : null;
+  const isDocument = isHtmlDocument(res);
+  const reportOnlyPolicy = HOSTED_MODE
+    ? reportOnlyContentSecurityPolicy(
+        isDocument ? scriptNonces.get(c) : undefined,
+        Math.random() < CSP_REPORT_SAMPLE_RATE,
+      )
+    : null;
+  if (!isDocument && !reportOnlyPolicy) {
+    return;
+  }
   try {
-    setDocumentPolicies(res.headers, reportOnlyPolicy);
+    setResponsePolicies(res.headers, isDocument, reportOnlyPolicy);
   } catch {
     // A response built from another Response (a proxied fetch) can carry
     // immutable headers; copy it into one whose headers can be set.
     const copy = new Response(res.body, res);
-    setDocumentPolicies(copy.headers, reportOnlyPolicy);
+    setResponsePolicies(copy.headers, isDocument, reportOnlyPolicy);
     c.res = copy;
   }
 }

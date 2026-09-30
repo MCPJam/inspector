@@ -142,6 +142,7 @@ import {
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
 import { useIsMemberActor } from "./hooks/use-is-member-actor";
+import { FeedbackReporterProvider } from "./components/support/FeedbackReporterContext";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -484,6 +485,8 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
     </div>
   );
 }
+
+const GUEST_ROW_RELOAD_KEY = "mcpjam:guest-row-reload";
 
 function UserSetupError() {
   return (
@@ -2762,6 +2765,9 @@ export default function App() {
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
+  // Gates the error card's "Report this": reports need an account, and the
+  // identity Convex holds (not WorkOS's) is the one the write would run as.
+  const isFeedbackMember = useIsMemberActor();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip",
@@ -3127,6 +3133,52 @@ export default function App() {
     isMcpOAuthCallback &&
     getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
+  // A guest whose row vanished was most likely promoted in another tab; a
+  // reload picks up the shared AuthKit session. The sessionStorage flag allows
+  // one reload per tab until a user row is back, and never on a one-shot
+  // callback URL or the hosted chat route.
+  const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
+    try {
+      return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
+    } catch {
+      return true;
+    }
+  });
+  const shouldReloadForMissingGuest =
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    !isMcpOAuthCallback &&
+    isAuthenticated &&
+    !workOsUser &&
+    !isWorkOsLoading &&
+    currentUser === null &&
+    isUserReady &&
+    !guestReloadUsed;
+  const hasCurrentUser = currentUser != null;
+  useEffect(() => {
+    if (!shouldReloadForMissingGuest) {
+      if (hasCurrentUser && guestReloadUsed) {
+        try {
+          sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
+        } catch {
+          // Re-arm in memory anyway; setItem below falls back to the setup error.
+        }
+        setGuestReloadUsed(false);
+      }
+      return;
+    }
+    try {
+      sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
+    } catch {
+      // Without storage there is no loop guard: show the setup error instead.
+      setGuestReloadUsed(true);
+      return;
+    }
+    window.location.reload();
+    // A cancelled unload leaves the page alive: fall back to the setup error.
+    const fallback = window.setTimeout(() => setGuestReloadUsed(true), 10_000);
+    return () => window.clearTimeout(fallback);
+  }, [shouldReloadForMissingGuest, hasCurrentUser, guestReloadUsed]);
 
   useEffect(() => {
     if (!isOAuthCallback) {
@@ -5449,7 +5501,10 @@ export default function App() {
     (currentUser === undefined ||
       // Session revocation can return a null user before Convex's auth state
       // changes or WorkOS finishes navigating away. That is expected at logout.
-      (currentUser === null && (isEnsuringUser || isSignOutInProgress())))
+      (currentUser === null &&
+        (isEnsuringUser ||
+          isSignOutInProgress() ||
+          shouldReloadForMissingGuest)))
   ) {
     return <LoadingScreen />;
   }
@@ -5956,7 +6011,13 @@ export default function App() {
                 ) : isBareCaniuseRoute ? (
                   bareCompareContent
                 ) : (
-                  appContent
+                  // The app shell's error cards may offer "Report this" to a
+                  // signed-in member on the hosted app, and to nobody else.
+                  <FeedbackReporterProvider
+                    enabled={HOSTED_MODE && isFeedbackMember === true}
+                  >
+                    {appContent}
+                  </FeedbackReporterProvider>
                 )}
               </HostedShellGate>
               <FirstRunOnboardingOverlay

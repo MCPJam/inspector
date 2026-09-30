@@ -232,12 +232,18 @@ export function humanizeSwarmAttemptError(
     return { message: sandboxMessage, code: errorCode };
   }
   const input = (raw ?? "").trim();
+  if (errorCode === "spending_reservation_busy") {
+    return {
+      code: errorCode,
+      message:
+        "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+    };
+  }
   // Older backend failures were truncated JSON envelopes. Recognize this
   // specific reservation conflict even when the JSON can no longer be parsed.
   if (
-    errorCode === "spending_reservation_busy" ||
-    (input.includes("streamSpendingReservations") &&
-      input.includes("changed while this mutation was being run"))
+    input.includes("streamSpendingReservations") &&
+    input.includes("changed while this mutation was being run")
   ) {
     return {
       code: "spending_reservation_busy",

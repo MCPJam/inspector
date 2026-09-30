@@ -34,7 +34,10 @@ export function spendRefusalOf(error: unknown): SpendRefusal | undefined {
 /** Shared by all persona and host calls in one session. */
 export class AdmissionWaitBudget {
   remainingMs: number;
-  constructor(totalMs = 5 * 60_000, readonly maxAttemptsPerCall = 8) {
+  constructor(
+    totalMs = 5 * 60_000,
+    readonly maxAttemptsPerCall = 8,
+  ) {
     this.remainingMs = totalMs;
   }
   take(delayMs: number): boolean {

@@ -1468,6 +1468,20 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
 });
 
 describe("classifyRateLimit — a halt needs a real spend signal", () => {
+  it("treats spending reservation timeouts as temporary capacity", () => {
+    expect(
+      classifyRateLimit(
+        'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}',
+      ),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("MCPJam could not reserve spend capacity.", {
+        code: "spending_reservation_busy",
+        httpStatus: 503,
+      }),
+    ).toBe("transient_capacity");
+  });
+
   it("keeps transient holds scoped to one target", () => {
     expect(
       classifyRateLimit(

@@ -45,6 +45,7 @@ import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import {
   HOSTED_SUBMISSION_MODES,
@@ -260,10 +261,20 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
       runId,
     });
   } catch (error) {
-    throw translateConvexError(error, { resource: "Readiness run" });
+    // The scoping read for the caller-supplied run id. A plain membership
+    // refusal — masked to "Server Error" in production — answers the same 404
+    // an unknown id does instead of the terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(error, "Readiness run not found") ??
+      translateConvexError(error, { resource: "Readiness run" })
+    );
   }
   if (!run) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "Readiness run not found",
+    );
   }
   return v1Resource(c, toRunDto(run, projectId));
 });
@@ -307,7 +318,11 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
       ...(limit !== undefined ? { limit } : {}),
     });
   } catch (error) {
-    throw translateConvexError(error, { resource: "Readiness runs" });
+    // Project-scoped list: same masked-refusal reading as the run read above.
+    throw (
+      redactedReadRefusalError(error, "Readiness runs not found") ??
+      translateConvexError(error, { resource: "Readiness runs" })
+    );
   }
   return v1PageJson(
     c,
@@ -325,10 +340,9 @@ readiness.post(
     const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     try {
-      await convex.mutation(
-        "claudeReadinessRuns:cancelReadinessRun" as any,
-        { runId },
-      );
+      await convex.mutation("claudeReadinessRuns:cancelReadinessRun" as any, {
+        runId,
+      });
     } catch (error) {
       throw translateConvexError(error, { resource: "Readiness run" });
     }
@@ -355,7 +369,11 @@ readiness.get(
         { runId },
       );
     } catch (error) {
-      throw translateConvexError(error, { resource: "Readiness report" });
+      // The report route's own scoping read, same reading as the run detail.
+      throw (
+        redactedReadRefusalError(error, "Readiness report not found") ??
+        translateConvexError(error, { resource: "Readiness report" })
+      );
     }
     if (!blobId) {
       // A run with no report is not a missing run: it may be in flight, it may

@@ -16,6 +16,7 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -41,6 +42,8 @@ import { getHarnessAdapter } from "./harness/registry.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
+  harnessReasoningEffortRefusalReason,
+  selectionReasoningEffort,
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
@@ -75,6 +78,12 @@ export interface RunAssistantTurnOptions {
   modelDefinition: ModelDefinition;
   systemPrompt: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn asked for (else the one on the selection in
+   * `extraBodyFields.modelSelection`). A harness that has not verified it
+   * refuses the turn before any spend.
+   */
+  reasoningEffort?: ModelReasoningEffort;
 
   selectedServerIds?: string[];
   /**
@@ -478,6 +487,9 @@ function buildHandlerOptions(
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
+    ...(opts.reasoningEffort !== undefined
+      ? { reasoningEffort: opts.reasoningEffort }
+      : {}),
     ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
     ...(opts.accessVersion !== undefined
       ? { accessVersion: opts.accessVersion }
@@ -669,6 +681,11 @@ export async function runAssistantTurn(
   const harnessModelId = String(opts.modelDefinition.id);
   if (harnessRequested) {
     const harnessAdapter = getHarnessAdapter(opts.harness as string);
+    // The turn's effort, else the saved selection's. Refused here too so a
+    // path that never runs the pre-flight cannot start a paid box for it.
+    const harnessEffort =
+      opts.reasoningEffort ??
+      selectionReasoningEffort(opts.extraBodyFields?.modelSelection);
     // Playground chat (`direct`) may run an unverified harness × model pair
     // with a warning; evals, scenarios and swarms may not.
     const purpose = harnessModelPurposeForSourceType(opts.sourceType);
@@ -681,6 +698,16 @@ export async function runAssistantTurn(
       },
       purpose,
     });
+    const effortRefusal = harnessReasoningEffortRefusalReason({
+      adapter: harnessAdapter,
+      ...(harnessEffort !== undefined ? { reasoningEffort: harnessEffort } : {}),
+    });
+    if (effortRefusal) {
+      throw new Error(
+        `This host runs the ${opts.harness} harness, which isn't available: ` +
+          `${effortRefusal}.`,
+      );
+    }
     if (refusal) {
       // Wrapped in the SAME sentence the chat routes build around a pre-flight
       // refusal, so a reader who meets this in a run log and one who meets it in

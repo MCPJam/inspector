@@ -172,6 +172,81 @@ describe("checkEvalHarnessAdmission", () => {
     ).toEqual({ ok: true, harness: "claude-code" });
   });
 
+  it("refuses a saved effort the harness has not verified (host selection)", () => {
+    const hostConfig = harnessHost({
+      modelSelection: {
+        modelId: "anthropic/claude-haiku-4.5",
+        source: "hosted",
+        settings: { reasoningEffort: "high" },
+        fallback: { provider: "none", model: "none" },
+      },
+    });
+    const staticVerdict = checkEvalHarnessStaticAdmission({
+      hostConfig,
+      serverIds: ["s1"],
+    });
+    expect(staticVerdict.ok).toBe(false);
+    if (staticVerdict.ok) throw new Error("unreachable");
+    expect(staticVerdict.reason).toContain("reasoning effort");
+    const full = checkEvalHarnessAdmission({
+      hostConfig,
+      serverIds: ["s1"],
+      cases: [{ title: "a", ...HOSTED_MODEL }],
+    });
+    expect(full.ok).toBe(false);
+  });
+
+  it("refuses a case whose own model entry saved an effort", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        { title: "plain", ...HOSTED_MODEL },
+        { title: "effortful", ...HOSTED_MODEL, reasoningEffort: "low" },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("reads the effort off a case's persisted selection (what the recorder emits)", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          selection: { settings: { reasoningEffort: "medium" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("an explicit case effort wins over its persisted selection's", () => {
+    // Both are unsupported here, so the point is only that admission reads the
+    // explicit one first: it is the one the reason names.
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          reasoningEffort: "high",
+          selection: { settings: { reasoningEffort: "low" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain('"high"');
+  });
+
   it("refuses when broker delivery is switched off, with the gate's own reason", () => {
     process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
     const verdict = checkEvalHarnessAdmission({
