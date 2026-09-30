@@ -375,6 +375,40 @@ describe("JudgesSection — reasoning effort", () => {
     ).toBe("high");
   });
 
+  it("resolves the judge row by its saved source, not hosted-first by id", () => {
+    const orgTwin = {
+      id: judge.id,
+      name: "Claude Haiku 4.5 (org)",
+      provider: "anthropic",
+      hosted: false,
+      orgProvider: { id: "prov_1", providerKey: "anthropic", enabled: true },
+    } as unknown as ModelDefinition;
+    render(
+      <JudgesSection
+        chrome="bare"
+        saveModelSelections
+        value={{
+          goalCompletion: {
+            enabled: true,
+            autoRun: true,
+            judgeModel: judge.id as string,
+            judgeSelection: {
+              modelId: judge.id as string,
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "prov_1" },
+              fallback: { provider: "none", model: "none" },
+            } as never,
+          },
+        }}
+        availableModels={[judge, orgTwin]}
+        onChange={vi.fn()}
+      />,
+    );
+    // The org row's runtime is unknown, so it offers no effort; the hosted
+    // twin's levels must not be offered for it.
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+  });
+
   it("shows no chip for the managed default judge", () => {
     renderBare({ goalCompletion: { enabled: true, autoRun: true } });
     expect(screen.queryByTestId("effort-control-trigger")).toBeNull();

@@ -2801,6 +2801,8 @@ export function useChatSession(
     },
     [effortKey],
   );
+  // Keys whose effort came from a restored chat, so a new chat forgets them.
+  const restoredEffortKeysRef = useRef<Set<string>>(new Set());
   const seedReasoningEffort = useCallback(
     (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
       const key = reasoningEffortMemoryKey(model);
@@ -4507,6 +4509,19 @@ export function useChatSession(
     useHostedMrtrStore.getState().clear();
     syncResumedVersion(null);
     syncRestoredToolRenderOverrides({});
+    // A restored chat's effort belongs to that chat: a new one falls back to
+    // the remembered pick instead of carrying it until reload.
+    if (restoredEffortKeysRef.current.size > 0) {
+      const restoredKeys = restoredEffortKeysRef.current;
+      restoredEffortKeysRef.current = new Set();
+      setEffortByModel((prev) => {
+        const next = { ...prev };
+        for (const key of restoredKeys) {
+          next[key] = loadRememberedReasoningEffort(key);
+        }
+        return next;
+      });
+    }
     onResetRef.current?.("reset");
   }, [
     clearPendingSessionHydration,
@@ -4992,16 +5007,19 @@ export function useChatSession(
         {
           // The chat pinned its effort: a reopened chat keeps it (for the
           // model the session restores; a level it does not offer is not sent).
+          // One that pinned none runs at the model's default, not at whatever
+          // effort was last remembered for that model. Tracked so a new chat
+          // does not inherit it (see `resetChat`).
           const pinned = session.resumeConfig?.reasoningEffort;
-          if (
+          const restoredEffort =
             typeof pinned === "string" &&
             (MODEL_REASONING_EFFORTS as readonly string[]).includes(pinned)
-          ) {
-            seedReasoningEffort(
-              options?.restoredModel ?? selectedModel,
-              pinned as ModelReasoningEffort,
-            );
-          }
+              ? (pinned as ModelReasoningEffort)
+              : undefined;
+          const restoredRow = options?.restoredModel ?? selectedModel;
+          const restoredKey = reasoningEffortMemoryKey(restoredRow);
+          restoredEffortKeysRef.current.add(restoredKey);
+          seedReasoningEffort(restoredRow, restoredEffort);
         }
         if (session.resumeConfig?.requireToolApproval !== undefined) {
           setRequireToolApproval(session.resumeConfig.requireToolApproval);

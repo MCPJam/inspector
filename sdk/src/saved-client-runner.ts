@@ -205,12 +205,12 @@ export async function createSavedClientRunner(
       host,
       systemPrompt: host.systemPrompt,
       // The selection's settings beat the host default (the same order every
-      // other route resolves them in). An effort replaces the temperature, and
-      // a model with no effort control refuses here, before any spend.
-      temperature: savedSettings?.temperature ?? host.temperature,
+      // other route resolves them in). An effort replaces the temperature —
+      // a selection carrying both must not hand both on — and a model with no
+      // effort control refuses here, before any spend.
       ...(savedSettings?.reasoningEffort !== undefined
         ? { reasoningEffort: savedSettings.reasoningEffort }
-        : {}),
+        : { temperature: savedSettings?.temperature ?? host.temperature }),
       tools,
       apiKey: input.apiKey,
       mcpClientManager: input.manager,

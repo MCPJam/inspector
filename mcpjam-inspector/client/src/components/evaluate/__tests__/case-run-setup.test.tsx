@@ -120,7 +120,7 @@ describe("Case run setup reasoning effort", () => {
       />,
     );
     expect(screen.getByTestId("case-run-environment-effort")).toHaveTextContent(
-      "High reasoning effort, set by the environment",
+      "gpt-5: High effort",
     );
     expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
   });

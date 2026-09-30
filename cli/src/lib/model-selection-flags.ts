@@ -11,9 +11,19 @@ import { MODEL_REASONING_EFFORTS, type ModelReasoningEffort } from "@mcpjam/sdk"
 import { parseJsonInputRecord } from "./json-input.js";
 import { usageError } from "./output.js";
 
-export const EFFORT_FLAG_DESCRIPTION = `Reasoning effort (${MODEL_REASONING_EFFORTS.join(
+const EFFORT_LEVELS_NOTE = `(${MODEL_REASONING_EFFORTS.join(
   " | "
 )}). Which levels a model accepts is \`supportedReasoningEfforts\` in \`mcpjam models list\`; one the route cannot apply is refused, never dropped.`;
+
+/**
+ * `--effort` on an update command: it only EDITS the effort on the selection
+ * the target already has. To set a model and its effort together, send the
+ * whole selection.
+ */
+export const EFFORT_FLAG_DESCRIPTION = `Set the reasoning effort ${EFFORT_LEVELS_NOTE} Only edits the effort on an existing model selection (refused when there is none); use --model-selection to set a model and effort together.`;
+
+/** `--effort` on a request that carries its own effort (no saved selection). */
+export const REQUEST_EFFORT_FLAG_DESCRIPTION = `Reasoning effort ${EFFORT_LEVELS_NOTE}`;
 
 /** Parse one `--effort` value. */
 export function parseEffortFlag(

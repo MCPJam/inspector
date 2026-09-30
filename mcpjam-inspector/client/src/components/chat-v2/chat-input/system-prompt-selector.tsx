@@ -217,8 +217,7 @@ export function SystemPromptSelector({
                 className="text-xs text-muted-foreground"
                 data-testid="temperature-disabled-by-effort"
               >
-                Temperature is not sent while a reasoning effort is set. Clear
-                the effort to use it.
+                Not sent while a reasoning effort is set.
               </p>
             ) : allSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">

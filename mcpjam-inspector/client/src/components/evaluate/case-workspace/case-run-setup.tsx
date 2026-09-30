@@ -174,8 +174,7 @@ export function CaseRunSetup({
                   data-testid="case-run-environment-effort"
                   className="text-xs text-muted-foreground"
                 >
-                  {modelId}: {reasoningEffortLabel(effort)} reasoning effort,
-                  set by the environment.
+                  {modelId}: {reasoningEffortLabel(effort)} effort
                 </p>
               ))
             : null}

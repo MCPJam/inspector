@@ -1538,6 +1538,58 @@ describe("useChatSession minimal mode parity", () => {
       expect(result.current.reasoningEffort).toBeUndefined();
     });
 
+    it("a reopened chat with no saved effort ignores the remembered pick", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({ selectedServers: [], reasoningEffortEnabled: true })
+      );
+      act(() => {
+        result.current.setReasoningEffort("low");
+      });
+      expect(result.current.reasoningEffort).toBe("low");
+      act(() => {
+        void result.current.loadChatSession(
+          {
+            chatSessionId: "unpinned-session",
+            messagesBlobUrl: null,
+            resumeConfig: {},
+            version: 1,
+          },
+          { restoredModel: effortModel as any }
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.chatSessionId).toBe("unpinned-session");
+      });
+      expect(result.current.reasoningEffort).toBeUndefined();
+    });
+
+    it("a restored chat's effort does not leak into the next new chat", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({ selectedServers: [], reasoningEffortEnabled: true })
+      );
+      act(() => {
+        result.current.setReasoningEffort("low");
+      });
+      act(() => {
+        void result.current.loadChatSession(
+          {
+            chatSessionId: "pinned-high",
+            messagesBlobUrl: null,
+            resumeConfig: { reasoningEffort: "high" },
+            version: 1,
+          },
+          { restoredModel: effortModel as any }
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.reasoningEffort).toBe("high");
+      });
+      act(() => {
+        result.current.resetChat();
+      });
+      expect(result.current.reasoningEffort).toBe("low");
+    });
+
     it("seeds a host default without remembering it", () => {
       const { result } = renderHook(() =>
         useChatSession({

@@ -540,7 +540,8 @@ const updateEnvironmentSchema = z
       message:
         "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `modelSelection`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     },
-  );
+  )
+  .superRefine(refineSelectionMatchesModel);
 
 /**
  * A COMPOSED stack: the same execution axes a named environment carries, minus

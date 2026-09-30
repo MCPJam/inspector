@@ -339,6 +339,24 @@ describe("update_project_environment", () => {
     expect(writes).toHaveLength(0);
   });
 
+  it("refuses an effort beside a different model up front, before any write", async () => {
+    const { context, writes } = makeRouter({ environment: ENV_ROW });
+    const error = await refusal(
+      updateEnvironmentOperation.execute(
+        {
+          project: "Acme",
+          environment: "env-1",
+          expectedRevision: 3,
+          modelId: "anthropic/claude-sonnet-4.5",
+          reasoningEffort: "low",
+        },
+        context
+      )
+    );
+    expect(error.message).toContain("different model than `modelId`");
+    expect(writes).toHaveLength(0);
+  });
+
   it("a bare model change drops the selection saved for the old model", async () => {
     const { context, writes } = makeRouter({ environment: ENV_ROW });
     await updateEnvironmentOperation.execute(

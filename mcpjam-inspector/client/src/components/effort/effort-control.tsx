@@ -183,6 +183,7 @@ export function EffortControl({
         </p>
         <ToggleGroup
           type="single"
+          aria-label="Reasoning effort"
           variant="outline"
           size="sm"
           className="flex-wrap"

@@ -65,4 +65,18 @@ describe("EffortControl", () => {
     expect(screen.queryByRole("radio", { name: "Low" })).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
+  it("names the group and picks a level from the keyboard", async () => {
+    const onChange = renderControl({ value: "high" });
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    const group = await screen.findByRole("radiogroup", { name: "Reasoning effort" });
+    expect(group).toBeInTheDocument();
+    const low = screen.getByRole("radio", { name: "Low" });
+    expect(screen.getByRole("radio", { name: "High" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    low.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onChange).toHaveBeenCalledWith("low");
+  });
 });

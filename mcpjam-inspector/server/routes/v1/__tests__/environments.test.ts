@@ -738,6 +738,18 @@ describe("v1 project environment routes", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
+    it("PATCH refuses a selection beside a different modelId up front", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: {
+          expectedRevision: 3,
+          modelId: "anthropic/claude-sonnet-4.5",
+          modelSelection: SELECTION,
+        },
+      });
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     it("passes a selection through ensure-adhoc", async () => {
       convexMutationMock.mockResolvedValue({
         environment: { ...ENV_ROW, name: undefined, origin: "adhoc" },

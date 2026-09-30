@@ -44,7 +44,7 @@ import {
 } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import {
-  EFFORT_FLAG_DESCRIPTION,
+  REQUEST_EFFORT_FLAG_DESCRIPTION,
   parseEffortFlag,
 } from "../lib/model-selection-flags.js";
 
@@ -284,7 +284,7 @@ export function registerSessionsCommands(program: Command): void {
           .option("--temperature <n>", "Sampling temperature (0-2)")
           .option(
             "--effort <level>",
-            `${EFFORT_FLAG_DESCRIPTION} First turn only: pinned to the session, refused on a continuation. Replaces the temperature, so it cannot be combined with --temperature.`
+            `${REQUEST_EFFORT_FLAG_DESCRIPTION} First turn only: pinned to the session, refused on a continuation. Replaces the temperature, so it cannot be combined with --temperature.`
           )
       )
     ),

@@ -12047,6 +12047,19 @@ export const updateEnvironmentOperation: PlatformOperation<
         body.modelId = input.modelSelection.modelId;
       }
     } else if (input.reasoningEffort !== undefined) {
+      // The effort edits the selection saved for the model the environment
+      // pins now. Beside a DIFFERENT model it would be written onto the old
+      // model's selection and refused as a mismatch (or dropped); say so up
+      // front and ask for the whole selection.
+      if (
+        typeof input.modelId === "string" &&
+        environment.modelSelection !== undefined &&
+        environment.modelSelection.modelId !== input.modelId.trim()
+      ) {
+        throw operationInputError(
+          "`reasoningEffort` edits the existing model selection, which is for a different model than `modelId`. Send `modelSelection` (modelId, source, fallback and settings.reasoningEffort) to change the model and its effort together."
+        );
+      }
       // EDITS the environment's existing selection. The row was read above
       // (a `resolveEnvironmentSelector` result), so no extra request.
       body.modelSelection = selectionWithReasoningEffort(

@@ -394,7 +394,7 @@ export function BehaviorTab({
             label="Reasoning effort"
             description={
               effortNotice ??
-              "How hard the model thinks before answering. Set per model; leave on Default to use the model's own."
+              "How hard the model thinks before answering."
             }
             control={
               <div className="w-[180px]">

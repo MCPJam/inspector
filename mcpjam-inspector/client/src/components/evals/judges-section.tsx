@@ -8,7 +8,10 @@ import {
   type GoalCompletionJudgeSlot,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
-import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
+import {
+  findModelForStoredChoice,
+  selectionBesideLegacyId,
+} from "@/components/chat-v2/shared/model-selection";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import {
@@ -176,10 +179,13 @@ export function JudgesSection({
   // model to set an effort on).
   const judgeRow =
     gc?.judgeModel && gc.judgeModel !== MANAGED_DEFAULT_JUDGE_MODEL
-      ? (availableModels.find(
-          (model) =>
-            String(model.id) === gc.judgeModel && model.hosted === true,
-        ) ?? availableModels.find((model) => String(model.id) === gc.judgeModel))
+      ? // The saved selection names the row (its source and connection), else
+        // the legacy id does, hosted first.
+        findModelForStoredChoice(
+          { modelId: gc.judgeModel, selection: gc.judgeSelection },
+          availableModels,
+          undefined,
+        )
       : undefined;
   const autoRun = gc?.autoRun ?? policy?.effective.autoRun;
 
