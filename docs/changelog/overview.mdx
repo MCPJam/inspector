@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-30
+
+#### Fixed
+
+- **Agent now shows a note when it reaches its step limit** — when the agent used its last allowed step on a tool call, the turn ended with no reply and the chat kept re-sending silently. The agent now writes a final answer on its last allowed step instead of stopping after a tool call. If a turn arrives already out of steps, the chat shows a short note — "I reached my step limit for this message. Send a message to continue." — and stops re-sending on its own.
+
 ### 2026-09-26
 
 #### Changed
