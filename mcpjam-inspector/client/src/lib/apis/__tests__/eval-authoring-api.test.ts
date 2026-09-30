@@ -30,16 +30,16 @@ describe("authoringRequest", () => {
     authFetchMock.mockReset();
   });
 
-  it("surfaces the message of the inspector's error envelope", async () => {
+  it("keeps the generic message for the inspector's error envelope", async () => {
     // The inspector route answers `{ code, message }`, with no `error` key.
     respond(400, {
       code: "VALIDATION_ERROR",
-      message: "Remove the environment this suite no longer has.",
+      message: "This suite has multiple environments; name the one to use.",
     });
     await expect(
       authoringRequest({ operation: "status", jobId: "job-1" }),
     ).rejects.toMatchObject({
-      message: "Remove the environment this suite no longer has.",
+      message: "Case authoring failed.",
       status: 400,
     });
   });
