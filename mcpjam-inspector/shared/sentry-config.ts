@@ -173,12 +173,17 @@ const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
  * the four ways browsers spell "the network went away". Applied to the client
  * and Electron-renderer builders only — on the server these strings would
  * suppress real upstream failures.
+ *
+ * String entries match by substring, so the bare-network spellings are
+ * anchored: Chromium's "Failed to fetch dynamically imported module: <url>"
+ * is a code-split chunk that no longer exists on the server, not the network
+ * going away, and must keep reporting.
  */
 export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
   "ResizeObserver loop limit exceeded",
   "ResizeObserver loop completed with undelivered notifications",
   /^AbortError/,
-  "Failed to fetch",
+  /^(?:TypeError: )?Failed to fetch$/,
   "NetworkError when attempting to fetch resource",
   "Load failed",
 ];
