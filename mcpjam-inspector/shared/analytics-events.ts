@@ -276,6 +276,7 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
   // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
@@ -460,6 +461,7 @@ export const ANALYTICS_EVENTS = {
   trace_raw_copied: { source: "client" },
   trace_span_clicked: { source: "client" },
   trace_view_mode_changed: { source: "client" },
+  triggers_tab_viewed: { source: "client" },
   tunnel_closed: { source: "client" },
   tunnel_created: { source: "client" },
   tunnel_rotated: { source: "client" },

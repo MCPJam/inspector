@@ -1,12 +1,13 @@
 /**
  * A context message the user added — a skill, a tool they ran by hand, an MCP
- * prompt's example assistant turn — shown as a compact card rather than as a
- * message they typed. Expanding it shows exactly what the model reads. Widget
+ * prompt's example assistant turn — or an MCP event a trigger ran on, shown as
+ * a compact card rather than as a message they typed. Expanding it shows exactly what the model reads. Widget
  * state is for the model only and renders nothing.
  */
 import {
   ChevronRight,
   MessageSquareQuote,
+  Radio,
   SquareSlash,
   Wrench,
   type LucideIcon,
@@ -27,6 +28,9 @@ const PRESENTATION: Record<ShownKind, { Icon: LucideIcon; label: string }> = {
     Icon: MessageSquareQuote,
     label: "Prompt example (assistant)",
   },
+  // An MCP event a trigger ran on. Its data is untrusted and shown only as
+  // the plain text the model read.
+  event: { Icon: Radio, label: "Event" },
 };
 
 function visibleBlocks(blocks: readonly UserContextBlock[]): ShownBlock[] {
