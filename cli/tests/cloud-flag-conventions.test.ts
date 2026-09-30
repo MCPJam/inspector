@@ -58,6 +58,10 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "compat.ts",
         "conformance.ts",
         "conformance-run.ts",
+        // Local, like `tasks.ts`: `mcpjam events` connects to a server
+        // directly (and, for webhook delivery, runs a receiver on THIS
+        // machine); it never touches a project or an API key.
+        "events.ts",
         "inspector.ts",
         "mcp.ts",
         "oauth.ts",

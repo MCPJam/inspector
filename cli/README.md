@@ -43,6 +43,7 @@ Local MCP testing:
   prompts            List and fetch MCP prompts
   apps               Validate MCP Apps metadata and resource wiring
   tasks              Create, inspect and drive MCP Tasks
+  events             List, poll, watch, subscribe to and conformance-check MCP Events (triggers, draft@28ec35e)
   oauth              Run MCP OAuth login, proxy, and conformance flows
   xaa                Run the Cross-App Access (ID-JAG) debugger against an MCP server
   protocol           MCP protocol inspection and conformance checks
@@ -80,6 +81,11 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
 
 # List tools with full schemas
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --format json
+
+# MCP Events: what does the server offer, and stream one as NDJSON for a minute
+mcpjam events list --url https://your-server.com/mcp
+mcpjam events watch comment.created --url https://your-server.com/mcp \
+  --event-args '{"document_id":"doc_1"}' --duration 60
 
 # Run MCPJam itself as a stdio MCP server (for Claude Desktop, Claude Code, Cursor, ...)
 mcpjam mcp

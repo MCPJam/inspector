@@ -241,6 +241,91 @@ Plus shared connection flags.
 
 ---
 
+## `events` commands
+
+MCP Events (triggers), pinned to the working-group draft `draft@28ec35e`. See [MCP Events](/cli/events) for the guide.
+
+Every `events` command uses the shared connection flags, plus:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--profile <profile>` | `draft` | Rulebook the run is judged by: `draft` (`draft@28ec35e`) or `chatgpt` (`chatgpt@2026-09-30`). Decides the usable delivery modes and the default `ttlMs`. |
+| `--protocol-version <version>` | SDK default | Pin the MCP protocol version (e.g. `2026-07-28`). HTTP targets only; not with `--host`. |
+| `--force` | off | Send `events/*` even though the server did not declare `capabilities.events`. Without it such a server exits `2` with `EVENTS_NOT_DECLARED`. |
+| `--host <id>` | | Connect as this host. Mutually exclusive with `--client-capabilities`. |
+| `--retries <count>` / `--retry-delay-ms <ms>` | `0` | Retry transient connection failures |
+
+### `events list`
+
+No extra flags. Prints `{support, rawCapabilities, profile, events}` — `support` and `rawCapabilities` come from the raw handshake, and `events` holds every page of `events/list`.
+
+### `events poll <name>`
+
+| Flag | Description |
+|------|-------------|
+| `--event-args <json>` | Event arguments as inline JSON, `@path`, or `-` for stdin (default `{}`) |
+| `--cursor <cursor>` | Resume from this cursor. Default `null`: start from now, which returns no events, only the cursor to poll from next. |
+| `--max-events <n>` | `maxEvents` for the request |
+| `--max-age-ms <ms>` | `maxAgeMs` for the request |
+
+### `events watch <name>`
+
+Streams journal entries as NDJSON on stdout, one per line: `{seq, kind, origin, eventId, name, timestamp, data, cursor}`. Status goes to stderr. On Ctrl-C, `--duration` or `--max-events` the subscription is removed (webhook mode sends `events/unsubscribe`) and the command exits `0`.
+
+| Flag | Description |
+|------|-------------|
+| `--event-args <json>` | Event arguments as inline JSON, `@path`, or `-` for stdin (default `{}`) |
+| `--mode <mode>` | `push` (`events/stream`), `poll` or `webhook`. Default: `webhook` when a receiver flag (`--public-url`, `--listen`, `--insecure-local-receiver`) is given, otherwise `push` if the event offers it, otherwise `poll`. |
+| `--duration <seconds>` | Stop after this many seconds |
+| `--max-events <n>` | Stop after this many delivered events |
+| `--cursor <cursor>` | Start from this cursor (default `null`, start from now) |
+| `--max-age-ms <ms>` | `maxAgeMs` sent with the poll, stream or subscribe request |
+| `--listen <host:port>` | Webhook mode: where the local receiver listens (default `127.0.0.1:0`) |
+| `--public-url <url>` | Webhook mode: the `https` origin that forwards to the local receiver, such as a tunnel. Callback URLs are `<url>/i/<inbox>/s/<slot>`. |
+| `--insecure-local-receiver` | Webhook mode: accept a plain-`http` callback origin, defaulting to the receiver's own address. Non-conformant development mode that never counts as a conformance pass. |
+
+### `events subscribe <name>`
+
+Sends one `events/subscribe` for a receiver you run yourself and prints the result (`{id, refreshBefore, cursor, …}`).
+
+| Flag | Description |
+|------|-------------|
+| `--callback-url <url>` | Your receiver's `https` callback URL (required) |
+| `--event-args <json>` | Event arguments (default `{}`) |
+| `--secret-file <path>` | Read the webhook secret from this file. If the file is missing or empty, a new secret is generated and written there with mode `0600`. The secret is never printed. |
+| `--ttl-ms <ms>` | Requested lifetime. Default: the profile's (`draft`: one hour; `chatgpt`: omitted) |
+| `--no-expiry` | Request no expiry (`ttlMs: null`) |
+| `--cursor <cursor>` | Replay from this cursor (default `null`) |
+| `--max-age-ms <ms>` | `maxAgeMs` for the request |
+| `--insecure-callback` | Accept a plain-`http` `--callback-url`. Non-conformant development mode. |
+
+### `events unsubscribe <name>`
+
+| Flag | Description |
+|------|-------------|
+| `--callback-url <url>` | The callback URL the subscription was made with (required) |
+| `--event-args <json>` | The same event arguments the subscription used (default `{}`) |
+
+Prints `{"outcome": "removed"}`, or `{"outcome": "already-gone"}` when the server answers `NotFound`.
+
+### `events conformance`
+
+Runs the profile-aware conformance checks. The result JSON goes to stdout and a table to stderr. Exits `0` passed, `1` failed, `3` incomplete. Takes the shared connection flags, `--profile`, `--protocol-version`, `--host` and the retry flags, but not `--force`: a server that does not declare the capability is a failed check, not a refusal.
+
+| Flag | Description |
+|------|-------------|
+| `--event-args <name>=<json>` | Subscription arguments for one event type (repeatable). Required fields are never invented. |
+| `--tls-cert <path>` / `--tls-key <path>` | Serve the webhook receiver over https |
+| `--public-url <origin>` | https origin that forwards to the receiver |
+| `--listen <host:port>` | Receiver address (default `127.0.0.1:0`) |
+| `--insecure-local-receiver` | Plain-http receiver. The run is labelled `insecure-local-receiver` and can never pass. |
+| `--trigger-tool <name>` / `--trigger-args <json>` | Tool that makes the server emit an event. Without it the delivery checks are `could-not-run`. |
+| `--wait-ms <ms>` | Delivery wait after triggering (default `5000`) |
+| `--checks <ids>` | Comma-separated check ids (default: all except `events-push-heartbeat`) |
+| `--heartbeat-wait-ms <ms>` | `events-push-heartbeat` window (default `65000`) |
+
+---
+
 ## `xaa` commands
 
 ### `xaa run`
@@ -2705,8 +2790,8 @@ When `MCPJAM_API_KEY` is set to an active `sk_` key, `logout` prints a warning t
 |------|---------|
 | `0` | Success / all checks passed |
 | `1` | Command ran but reported a failure |
-| `2` | Invalid arguments or configuration |
-| `3` | `tasks conformance` only: the run was incomplete — its task-dependent checks never ran, so it is neither a pass nor a spec violation |
+| `2` | Invalid arguments or configuration. Also `events` commands against a server that did not declare `capabilities.events` (`EVENTS_NOT_DECLARED`, unless `--force`), and `events watch` when no delivery mode fits both the event and the profile |
+| `3` | `tasks conformance` and `events conformance`: the run was incomplete — applicable checks never ran, so it is neither a pass nor a spec violation |
 | `6` | `tasks watch` only: the task needs input this run could not answer. Answer it with `tasks update`, or re-run with `--interactive` in a TTY |
 | `7` | `tasks watch` only: `--duration-ms` elapsed before the task reached a terminal status |
 | `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
