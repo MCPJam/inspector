@@ -37,7 +37,9 @@
  * are refused by name. See {@link resolveChatSessionEngine}.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
-import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
+import { readXaaEnterprisePolicy, type ModelSelection } from "@mcpjam/sdk";
+import { selectionIfMatches } from "@mcpjam/sdk/browser";
+import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   checkHarnessRuntimeAvailable,
@@ -203,6 +205,23 @@ export type ChatSessionEngineResult =
  *     The escapes are both lossless: `environmentId` pins a host durably, and
  *     `hostId` alone plus per-turn `allowedServerIds` narrows the same set.
  */
+/**
+ * The host's saved model selection, only when it is for `modelId`.
+ *
+ * A saved selection (and the reasoning effort in its settings) belongs to one
+ * model; a turn that names a different model must not inherit it. Read with the
+ * SDK validator, so a malformed stored selection reads as none.
+ */
+export function hostSelectionForModel(
+  runtimeConfig: Record<string, unknown> | undefined,
+  modelId: string,
+): ModelSelection | undefined {
+  return selectionIfMatches(
+    readStoredModelSelection(runtimeConfig?.modelSelection),
+    modelId,
+  );
+}
+
 export function resolveChatSessionEngine(args: {
   /** Server-fetched host, or absent for a bare `serverIds` turn. */
   hostTarget?: ChatSessionHostTarget;

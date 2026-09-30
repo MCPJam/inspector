@@ -387,23 +387,21 @@ export async function resolveTurnRuntime(
 
   // --- MCPJam-provided → hosted `/stream` ---
   if (resolution.source === "mcpjam") {
-    // `/stream` applies a reasoning effort from the forwarded selection; an
-    // effort that selection does not carry could not reach the provider.
+    // `/stream` applies a reasoning effort from the forwarded selection, or the
+    // top-level `reasoningEffort` field, which it prefers. A per-run effort the
+    // selection does not carry (a chat turn's own, an override) rides as that
+    // field instead of being refused.
     const effort = args.settings?.reasoningEffort;
-    if (effort && hostedSelection?.settings?.reasoningEffort !== effort) {
-      throw new ModelResolutionRefusalError([
-        {
-          code: "capability_missing",
-          reason: `reasoning effort "${effort}" cannot be applied to ${modelId} on this route`,
-          evidence: { setting: "reasoningEffort", route: "hosted" },
-        },
-      ]);
-    }
+    const topLevelEffort =
+      effort && hostedSelection?.settings?.reasoningEffort !== effort
+        ? { reasoningEffort: effort }
+        : undefined;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection
+      args.extraBodyFields || hostedSelection || topLevelEffort
         ? {
             ...(args.extraBodyFields ?? {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+            ...(topLevelEffort ?? {}),
           }
         : undefined;
     return {

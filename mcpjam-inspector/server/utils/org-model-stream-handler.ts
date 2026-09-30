@@ -28,8 +28,12 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { MCPClientManager, ModelSelection } from "@mcpjam/sdk";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
+import type {
+  MCPClientManager,
+  ModelReasoningEffort,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
   buildOrgModelFromResolvedConfig,
@@ -107,6 +111,11 @@ export interface OrgModelHandlerOptions {
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * The reasoning effort for this turn. Sent to `/stream/org` as the top-level
+   * `reasoningEffort` field, which the backend maps per org provider.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
@@ -306,6 +315,13 @@ export interface OrgLocalModelHandlerOptions {
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Provider options that apply the turn's reasoning effort. The inspector
+   * calls the provider itself on this runtime, so the caller resolves the
+   * effort to options (`directChatEffort`, which refuses a provider with no
+   * effort control before any spend) and they are handed to the engine as-is.
+   */
+  providerOptions?: ProviderOptions;
   tools: ToolSet;
   selectedServers?: string[];
   serverIds?: string[];
@@ -667,6 +683,9 @@ export function handleLocalOrgChatModel(
         messageHistory: messages,
         systemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
+        ...(options.providerOptions
+          ? { providerOptions: options.providerOptions }
+          : {}),
         tools,
         progressivePlan: options.progressivePlan,
         discoveryState: options.discoveryState,
@@ -1029,6 +1048,9 @@ export async function handleHostedOrgChatModel(
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
+    ...(options.reasoningEffort !== undefined
+      ? { reasoningEffort: options.reasoningEffort }
+      : {}),
     tools: options.tools,
     projectId: options.projectId,
     authHeader: options.authHeader,

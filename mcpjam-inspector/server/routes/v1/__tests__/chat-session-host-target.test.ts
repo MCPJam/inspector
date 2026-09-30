@@ -325,6 +325,53 @@ describe("host targeting dispatches the real harness", () => {
   });
 });
 
+describe("the host's saved effort reaches the runtime", () => {
+  const selection = (modelId: string) => ({
+    modelId,
+    source: "hosted",
+    settings: { reasoningEffort: "high" },
+    fallback: { provider: "none", model: "none" },
+  });
+
+  it("hands the selection and its effort to the runtime and prepare, for the same model", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelSelection: selection(MODEL) }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    expect(response.status).toBe(200);
+    expect(resolveTurnRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelSelection: expect.objectContaining({ modelId: MODEL }),
+        settings: { reasoningEffort: "high" },
+      }),
+    );
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEffort: "high" }),
+    );
+  });
+
+  it("never carries the saved effort onto a different model", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelSelection: selection("openai/gpt-5") }),
+    );
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const args = resolveTurnRuntimeMock.mock.calls.at(-1)![0];
+    expect("modelSelection" in args).toBe(false);
+    expect("settings" in args).toBe(false);
+  });
+
+  it("a host with no saved selection is unchanged", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({}));
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const args = resolveTurnRuntimeMock.mock.calls.at(-1)![0];
+    expect("modelSelection" in args).toBe(false);
+    expect("settings" in args).toBe(false);
+  });
+});
+
 describe("the request body never supplies the engine", () => {
   it("REJECTS a body-supplied harness rather than honouring or ignoring it", async () => {
     const response = await turn(

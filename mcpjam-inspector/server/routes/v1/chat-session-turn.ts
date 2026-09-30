@@ -94,6 +94,7 @@ import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
+import { backendModelSelection } from "../../utils/model-resolution-local.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
@@ -125,6 +126,7 @@ import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
   engineLabel,
+  hostSelectionForModel,
   resolveChatSessionEngine,
   type ChatSessionEngine,
   type ChatSessionHostTarget,
@@ -1385,6 +1387,16 @@ async function handleTurn(c: Context): Promise<Response> {
       auth: { authHeader },
     });
 
+    // The host's saved selection, only for the model this turn runs: a saved
+    // selection (and its effort) belongs to one model and must never be carried
+    // onto a different one the body named. Read once so the prepare step, the
+    // runtime resolution and the resume record cannot disagree about the effort.
+    const hostSelection = hostSelectionForModel(
+      target.host?.runtimeConfig,
+      String(modelDefinition.id),
+    );
+    const turnReasoningEffort = hostSelection?.settings?.reasoningEffort;
+
     // --- Engine pre-flight ------------------------------------------------
     //
     // BEFORE the connection and before any model call, so a harness host whose
@@ -1685,6 +1697,10 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.temperature !== undefined
         ? { temperature: pins.temperature }
         : {}),
+      // Under an effort the resolved temperature is omitted (see prepareChatV2).
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
       ...(excluded.length > 0 ? { excludeMcpToolNames: excluded } : {}),
       // No progressive discovery: the caller chose this target deliberately
       // and wants to see what it advertises, not a search/load indirection.
@@ -1721,6 +1737,16 @@ async function handleTurn(c: Context): Promise<Response> {
       chatSessionId: runtimeChatSessionId,
       serverIds: selectedServerIds,
       tools,
+      // The host's saved selection and its effort: the rail applies it (provider
+      // options on the direct engine, the forwarded selection / top-level field
+      // on the hosted rails) or refuses it, instead of dropping it. Only a
+      // backend-resolvable selection is sent (never `local`).
+      ...(hostSelection && backendModelSelection(hostSelection)
+        ? { modelSelection: backendModelSelection(hostSelection) }
+        : {}),
+      ...(turnReasoningEffort !== undefined
+        ? { settings: { reasoningEffort: turnReasoningEffort } }
+        : {}),
       // The harness selector rides the RUNTIME, which is where
       // `runUnifiedAssistantTurn` reads it from. Absent ⇒ the emulated engine,
       // byte-identical to every turn this surface ran before host targeting.
@@ -1932,6 +1958,11 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
       ...(pins.temperature !== undefined
         ? { temperature: pins.temperature }
+        : {}),
+      // What the conversation ran at (from the host's saved selection), so a
+      // reopened chat shows it. Absent when the turn had none.
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
         : {}),
       selectedServers: selectedServerIds,
       // The four agent pins. First-write-wins is enforced at the ingest
