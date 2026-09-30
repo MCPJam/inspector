@@ -45,8 +45,14 @@ import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../shared/swarm-description.j
 
 const swarms = new Hono();
 
+// `redactedIsRefusal`: both reads here scope caller-supplied ids, and
+// production Convex masks the plain membership refusal to "Server Error" —
+// without it a cross-tenant probe answered 502 (MJ-021).
 function translateReadError(error: unknown): WebRouteError {
-  return translateConvexReadError(error, { scope: "v1.swarms" });
+  return translateConvexReadError(error, {
+    scope: "v1.swarms",
+    redactedIsRefusal: true,
+  });
 }
 
 type SwarmRow = {

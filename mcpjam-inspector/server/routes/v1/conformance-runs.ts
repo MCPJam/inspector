@@ -14,6 +14,7 @@ import { authorizeServer, parseWithSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import {
   HOSTED_CONFORMANCE_SUITES,
@@ -60,10 +61,7 @@ function toRunDto(run: Record<string, any>, projectId: string) {
   });
 }
 
-function assertSameProject(
-  run: Record<string, any>,
-  projectId: string,
-): void {
+function assertSameProject(run: Record<string, any>, projectId: string): void {
   if (run.projectId && run.projectId !== projectId) {
     throw new WebRouteError(
       404,
@@ -128,7 +126,13 @@ async function loadRun(
   try {
     run = await convex.query("conformanceRuns:getRun" as any, { runId });
   } catch (error) {
-    throw translateConvexError(error, { resource: "Conformance run" });
+    // The scoping read for the caller-supplied run id. A plain membership
+    // refusal — masked to "Server Error" in production — answers the same 404
+    // an unknown id does instead of the terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(error, "Conformance run not found") ??
+      translateConvexError(error, { resource: "Conformance run" })
+    );
   }
   if (!run) {
     throw new WebRouteError(
@@ -227,7 +231,11 @@ conformanceRuns.get("/projects/:projectId/conformance-runs", async (c) => {
       paginationOpts: paginationOptsFrom(c),
     });
   } catch (error) {
-    throw translateConvexError(error, { resource: "Conformance runs" });
+    // Project-scoped list: same masked-refusal reading as the run read above.
+    throw (
+      redactedReadRefusalError(error, "Conformance runs not found") ??
+      translateConvexError(error, { resource: "Conformance runs" })
+    );
   }
   return v1PageJson(
     c,

@@ -55,6 +55,7 @@ export function RouteRow({
   onChooseTools,
   onAddTool,
   onSetKind,
+  turnScoped = false,
 }: {
   row: ScorecardRow;
   availableTools?: string[];
@@ -69,6 +70,12 @@ export function RouteRow({
   onChooseTools: () => void;
   onAddTool: (toolName: string) => void;
   onSetKind: (kind: CaseKind) => void;
+  /**
+   * The tools ONE later prompt expects, under that prompt. The case-wide
+   * controls (matching options, "No tool should be called") stay on the first
+   * prompt's block, so this shows only the tools and the picker.
+   */
+  turnScoped?: boolean;
 }) {
   const route = row.route;
   if (!route) return null;
@@ -84,6 +91,7 @@ export function RouteRow({
       data-row-key={row.key}
       data-route={route.kind}
       data-role={row.role}
+      data-turn-scoped={turnScoped || undefined}
       className="overflow-hidden rounded-lg border border-border bg-card"
     >
       <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2.5">
@@ -98,48 +106,50 @@ export function RouteRow({
         <RoleChip role={row.role} />
       </div>
       <div className="space-y-3 p-3">
-        <details className="text-[11px] text-muted-foreground">
-          <summary className="cursor-pointer">Matching options</summary>
-          <div className="flex flex-wrap items-center gap-2 py-2">
-            {" "}
-            {route.kind === "tools" ? (
-              <ToggleGroup
-                type="single"
-                value={matchMode}
-                onValueChange={(value) => {
-                  if (value === "capability" || value === "regression") {
-                    onSetKind(value);
-                  }
-                }}
-                className="shrink-0 gap-0.5"
-                aria-label="Route match mode"
-                disabled={locked}
-              >
-                <ToggleGroupItem
-                  value="capability"
-                  className="h-6 px-2 text-[11px]"
+        {turnScoped ? null : (
+          <details className="text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer">Matching options</summary>
+            <div className="flex flex-wrap items-center gap-2 py-2">
+              {" "}
+              {route.kind === "tools" ? (
+                <ToggleGroup
+                  type="single"
+                  value={matchMode}
+                  onValueChange={(value) => {
+                    if (value === "capability" || value === "regression") {
+                      onSetKind(value);
+                    }
+                  }}
+                  className="shrink-0 gap-0.5"
+                  aria-label="Route match mode"
+                  disabled={locked}
                 >
-                  Reach the tool
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="regression"
-                  className="h-6 px-2 text-[11px]"
-                >
-                  Exact route
-                </ToggleGroupItem>
-              </ToggleGroup>
+                  <ToggleGroupItem
+                    value="capability"
+                    className="h-6 px-2 text-[11px]"
+                  >
+                    Reach the tool
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    value="regression"
+                    className="h-6 px-2 text-[11px]"
+                  >
+                    Exact route
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              ) : null}
+            </div>
+            {route.kind === "tools" && matchMode === "regression" ? (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Strict order, no extra calls; arguments compared as pinned.
+              </p>
             ) : null}
-          </div>
-          {route.kind === "tools" && matchMode === "regression" ? (
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Strict order, no extra calls; arguments compared as pinned.
-            </p>
-          ) : null}
-        </details>
+          </details>
+        )}
 
         {/* The route choice decides the route itself, so it stays visible
             outside the collapsed matching options. */}
-        {route.kind === "locked" ? (
+        {turnScoped ? null : route.kind === "locked" ? (
           <p
             className="text-[11px] text-muted-foreground"
             data-testid="simple-case-route-locked"
@@ -175,7 +185,7 @@ export function RouteRow({
           </div>
         )}
 
-        {showUnsetError ? (
+        {showUnsetError && !turnScoped ? (
           <p
             className="text-[11px] text-destructive"
             data-testid="simple-case-tools-unset"
@@ -184,7 +194,7 @@ export function RouteRow({
           </p>
         ) : null}
 
-        {negativeContradiction ? (
+        {negativeContradiction && !turnScoped ? (
           <p
             className="text-[11px] text-destructive"
             data-testid="simple-case-negative-contradiction"

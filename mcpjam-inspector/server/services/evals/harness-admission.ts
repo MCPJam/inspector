@@ -41,8 +41,10 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   checkHarnessRuntimeAvailable,
+  selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
@@ -65,6 +67,32 @@ export interface EvalHarnessCase {
   title?: string;
   model?: string;
   provider?: string;
+  /**
+   * The reasoning effort this case's model entry saved
+   * (`models[].selection.settings.reasoningEffort`). Wins over the host's own
+   * saved effort for this case, matching the precedence the runner applies.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The case's saved model-entry selection, exactly as the recorder's
+   * `config.tests` rows carry it (`selection`). This is where a persisted
+   * effort actually lives, so it is read when `reasoningEffort` is absent.
+   */
+  selection?: { settings?: { reasoningEffort?: string } } | null;
+}
+
+/** The effort a case's own model entry asks for: explicit, else its selection. */
+function caseReasoningEffort(
+  test: EvalHarnessCase,
+): ModelReasoningEffort | undefined {
+  return test.reasoningEffort ?? selectionReasoningEffort(test.selection);
+}
+
+/** The effort the host's saved selection carries, if any. */
+function hostSavedReasoningEffort(
+  hostConfig: Record<string, unknown>,
+): ModelReasoningEffort | undefined {
+  return selectionReasoningEffort(hostConfig.modelSelection);
 }
 
 /**
@@ -306,6 +334,10 @@ export function checkEvalHarnessStaticAdmission(args: {
     // Evals refuse an unverified harness × model pair ("not verified for
     // <harness> <version>") rather than run it.
     purpose: "eval",
+    // The host's saved effort is known here; refusing it now costs nothing.
+    ...(hostSavedReasoningEffort(hostConfig) !== undefined
+      ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
+      : {}),
   });
   if (!availability.ok) {
     // With no host-pinned model, a model-eligibility refusal is about the
@@ -384,7 +416,8 @@ export function checkEvalHarnessAdmission(args: {
     { reason: string; kind: HarnessUnavailableKind } | undefined
   >();
   for (const test of modelCases) {
-    const key = `${test.provider ?? ""}::${test.model}`;
+    const effort = caseReasoningEffort(test) ?? hostSavedReasoningEffort(hostConfig);
+    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
@@ -402,6 +435,7 @@ export function checkEvalHarnessAdmission(args: {
         ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
         purpose: "eval",
+        ...(effort !== undefined ? { reasoningEffort: effort } : {}),
       });
       verdict = availability.ok
         ? undefined

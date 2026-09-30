@@ -142,6 +142,7 @@ import {
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
 import { useIsMemberActor } from "./hooks/use-is-member-actor";
+import { FeedbackReporterProvider } from "./components/support/FeedbackReporterContext";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -2764,6 +2765,9 @@ export default function App() {
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
+  // Gates the error card's "Report this": reports need an account, and the
+  // identity Convex holds (not WorkOS's) is the one the write would run as.
+  const isFeedbackMember = useIsMemberActor();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip",
@@ -6009,7 +6013,13 @@ export default function App() {
                 ) : isBareCaniuseRoute ? (
                   bareCompareContent
                 ) : (
-                  appContent
+                  // The app shell's error cards may offer "Report this" to a
+                  // signed-in member on the hosted app, and to nobody else.
+                  <FeedbackReporterProvider
+                    enabled={HOSTED_MODE && isFeedbackMember === true}
+                  >
+                    {appContent}
+                  </FeedbackReporterProvider>
                 )}
               </HostedShellGate>
               <FirstRunOnboardingOverlay

@@ -2630,7 +2630,7 @@ Tell the MCPJam team about MCPJam itself: a bug, a missing capability, something
 
 **Your text is sent to the MCPJam team, outside your organization, and stored for 180 days.** It is kept in MCPJam's own database and never published. Summarize. Never paste secrets, tokens, or raw tool output. Requires a signed-in account (`cloud login` or an `sk_` key).
 
-When a Cloud command fails with an internal error, its error message ends with a ready-to-run `cloud feedback` command that carries the failing request's id, so the report can be matched to the server's logs.
+When a Cloud command fails with an internal error or a missing capability and the response carries a request id, its error message ends with a ready-to-run `cloud feedback` command that carries that id, so the report can be matched to the server's logs. Gateway failures (502/503/504) and `cloud feedback` itself never suggest it.
 
 | Flag | Description |
 |------|-------------|

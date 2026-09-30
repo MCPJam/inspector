@@ -1313,3 +1313,62 @@ describe("large eval matrices", () => {
     expect(result.environmentIds).toEqual(hosts.map((id) => `env-${id}`));
   });
 });
+
+describe("resolveComposerEnvironments — reusing a named row across efforts", () => {
+  const MODEL = "openai/gpt-5";
+  const saved = (effort?: "low" | "high") => ({
+    modelId: MODEL,
+    source: "hosted" as const,
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+    fallback: { provider: "none" as const, model: "none" as const },
+  });
+  const cell = (selection?: ReturnType<typeof saved>) =>
+    composeState({
+      hostIds: ["h1"],
+      modelSelection: {
+        includeClientDefaults: false,
+        explicitModelIds: [MODEL],
+        ...(selection ? { explicitModelSelections: { [MODEL]: selection } } : {}),
+      },
+    });
+  const run = (
+    state: EnvironmentComposerState,
+    row: Partial<ProjectEnvironmentView>,
+  ) => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    return resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      modelSelectionsEnabled: true,
+      state,
+      liveEnvironments: [
+        named({ environmentId: "curated", hostId: "h1", modelId: MODEL, ...row }),
+      ],
+      ensureAdhocEnvironments: ensure,
+    });
+  };
+
+  it("does not reuse a row saved at another effort for the same model", async () => {
+    const result = await run(cell(saved("high")), {
+      modelSelection: saved("low"),
+    });
+    expect(result.environmentIds).toEqual(["adhoc-1"]);
+  });
+
+  it("reuses a row saved at the same effort", async () => {
+    const result = await run(cell(saved("high")), {
+      modelSelection: saved("high"),
+    });
+    expect(result.environmentIds).toEqual(["curated"]);
+  });
+
+  it("a cell with no saved selection does not reuse a row that carries an effort", async () => {
+    const result = await run(cell(), { modelSelection: saved("high") });
+    expect(result.environmentIds).toEqual(["adhoc-1"]);
+  });
+
+  it("a cell with no saved selection still reuses a row with no settings", async () => {
+    const result = await run(cell(), { modelSelection: saved() });
+    expect(result.environmentIds).toEqual(["curated"]);
+  });
+});

@@ -64,8 +64,14 @@ import { translateConvexReadError } from "./convex-read-errors.js";
 
 const secrets = new Hono();
 
+// `redactedIsRefusal`: both reads here scope caller-supplied ids, and
+// production Convex masks the plain membership refusal to "Server Error" —
+// without it a cross-tenant probe answered 502 (MJ-021).
 function translateReadError(error: unknown): WebRouteError {
-  return translateConvexReadError(error, { scope: "v1.secrets" });
+  return translateConvexReadError(error, {
+    scope: "v1.secrets",
+    redactedIsRefusal: true,
+  });
 }
 
 /**
