@@ -83,7 +83,7 @@ describe("SharedSlackChannelCard", () => {
       screen.getByLabelText("Loading shared Slack channel")
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Set up your shared Slack channel")
+      screen.queryByText("Set up Slack Connect with the MCPJam team")
     ).not.toBeInTheDocument();
   });
 
@@ -101,7 +101,13 @@ describe("SharedSlackChannelCard", () => {
     mockUseQuery.mockReturnValue(dto());
     render(<SharedSlackChannelCard organizationId="org_1" />);
     expect(
-      screen.getByText("Set up your shared Slack channel")
+      screen.getByRole("heading", { name: "Slack Connect" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Set up Slack Connect with the MCPJam team")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your Slack admin may need to approve it/)
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument();
     expect(trackMock).toHaveBeenCalledWith("home_shared_slack_card_viewed", {
@@ -142,14 +148,17 @@ describe("SharedSlackChannelCard", () => {
     expect(screen.getByText(/owner changed during setup/)).toBeInTheDocument();
   });
 
-  it("shows the real Slack logo, not a placeholder glyph", () => {
+  it("shows Slack's real logo, not a placeholder glyph or Slackbot", () => {
     mockUseQuery.mockReturnValue(dto());
     const { container } = render(
       <SharedSlackChannelCard organizationId="org_1" />
     );
-    expect(container.querySelector("img")?.getAttribute("src")).toMatch(
-      /slack_logo\.png/
-    );
+    const logo = container.querySelector("img");
+    const src = logo?.getAttribute("src");
+    expect(src).toMatch(/why-mcp\/slack\.png/);
+    expect(src).not.toMatch(/slack_logo/);
+    // Transparent: no tinted tile behind the logo.
+    expect(logo?.parentElement?.className).not.toMatch(/\bbg-/);
   });
 
   it("shows a spinner while provisioning", () => {
@@ -305,6 +314,23 @@ describe("SharedSlackChannelCard", () => {
       );
     }
   );
+
+  it("says the team will reach out when setup is paused, without promising an email", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        channel: {
+          status: "error",
+          errorCode: "possible_existing_channel",
+          openUrl: null,
+        },
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText(/Our team will reach out to connect you/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/email/i)).not.toBeInTheDocument();
+  });
 
   it("hides Retry when the viewer cannot manage the invite", () => {
     mockUseQuery.mockReturnValue(
