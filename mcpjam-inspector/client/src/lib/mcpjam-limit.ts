@@ -1,6 +1,5 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { isCreditExhaustion } from "@/shared/credit-exhaustion";
-import { isHeldCreditsRefusal } from "@/shared/swarm-attempt-error";
+import { isCreditExhaustion, isHoldRefusal } from "@/shared/credit-exhaustion";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -464,13 +463,15 @@ export function describeMCPJamLimitMessage(
 ): string | null {
   if (!message) return null;
   // The backend's structured verdict decides. Its sentence is the fallback for
-  // a stored attempt row, which keeps the sentence and loses the reason.
+  // a stored attempt row, which keeps the sentence and loses the reason, and it
+  // is read by the predicate the dialog uses: a quoted hold, or one joined with
+  // a stated exhaustion, is not a retry here either.
   const reasons = collectJsonCandidates(message).map((parsed) =>
     findStringPropertyDeep(parsed, "refusalReason"),
   );
   if (
     reasons.includes("holds_committed") ||
-    (!reasons.some(Boolean) && isHeldCreditsRefusal(null, null, message))
+    (!reasons.some(Boolean) && isHoldRefusal(message))
   ) {
     return MCPJAM_HOLDS_COMMITTED_MESSAGE;
   }

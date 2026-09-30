@@ -690,7 +690,6 @@ export async function runHarnessTurn(
     builtInTools,
     computerWorkdir,
     harnessSandboxBinding,
-    harnessMaxOutputTokens,
     harnessExecutionTarget,
     executionScope,
     pinnedHarnessSkills,
@@ -2188,9 +2187,6 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           modelId,
           runId: brokerRunId,
-          ...(harnessMaxOutputTokens !== undefined
-            ? { maxOutputTokens: harnessMaxOutputTokens }
-            : {}),
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });

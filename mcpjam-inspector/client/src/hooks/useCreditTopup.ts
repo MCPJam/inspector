@@ -2,6 +2,7 @@ import { useAction, useQuery } from "convex/react";
 import { useCallback, useMemo, useState } from "react";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditTopupPreset {
   packageId: string;
@@ -263,6 +264,12 @@ export function useCreditTopup() {
           errorKind = "invalid_url";
           throw new Error("The payment link couldn’t be verified. Try purchasing credits again.");
         }
+        // The user is about to pay. A swarm wave that ran out before this and
+        // runs out again after it is news, not a repeat, so the waves announced
+        // so far stop silencing the dialog. On the web the page reloads for the
+        // return trip and this is moot; the desktop app stays open while the
+        // browser handles checkout, and a retried launch reuses its wave.
+        useMCPJamLimitDialogStore.getState().forgetNotifiedWaves();
         if (isDesktopApp()) {
           // The shell sends any cross-origin navigation to the system browser,
           // so `location.assign` here would do nothing and the return URL would

@@ -94,6 +94,11 @@ export function withoutHeldCreditsSentence(text: string): string {
  * sentence and loses the reason. Reading the sentence first would let a
  * refusal that quotes one (or aggregates several) outvote its own reason.
  *
+ * The fallback also defers to the code a row kept. A hold rides the generic
+ * `user_rate_limit` (or none, once a message is flattened); any other code
+ * names a different refusal, so a locked wallet, which answers `wallet_locked`
+ * with the same sentence, is not a wait.
+ *
  * Split from {@link isTransientSpendRefusal} because a hold and a busy
  * reservation are both waits but read differently to the user: a hold is about
  * credits, a busy reservation is not.
@@ -105,6 +110,7 @@ export function isHeldCreditsRefusal(
 ): boolean {
   if (refusalReason)
     return code === "user_rate_limit" && refusalReason === "holds_committed";
+  if (code && code !== "user_rate_limit") return false;
   return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
 }
 

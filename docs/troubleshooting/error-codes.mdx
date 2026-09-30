@@ -694,15 +694,22 @@ not.
 
 When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run, or one per swarm when a swarm launches several runs at once. Completed results are preserved. Buying credits does not automatically restart the run — start a new run once credits are available.
 
-**Credits temporarily held**
-
-A swarm session can also stop with **Credits temporarily held**. The balance is not empty: other requests from your organization were in flight and held the remaining credits until they finish. No credit prompt opens for it and nothing needs buying. Run the session again once your other sessions have finished, and start fewer sessions at once if it keeps happening.
-
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
   turns are always billed to MCPJam and have no BYOK path, so adding a key does
   not lift this limit for a swarm.
 </Warning>
+
+### Credits temporarily held
+
+A swarm session can stop with **Credits temporarily held**. The balance is not
+empty: other requests from your organization were in flight and held the
+remaining credits until they finish. No credit prompt opens for it and nothing
+needs buying.
+
+**Next steps**
+- Run the session again once your other sessions have finished.
+- Start fewer sessions at once if it keeps happening.
 
 ### Provider failed fallback not permitted
 

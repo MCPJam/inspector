@@ -324,7 +324,7 @@ export interface SyntheticHostRuntime {
    * Output-token ceiling for each assistant step, sent as the hosted body's
    * `maxOutputTokens`. Absent ⇒ the backend sizes it to the model, and holds
    * credits against that. The swarm runner pins its own
-   * (`SWARM_HOST_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
+   * (`HOSTED_STEP_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
    */
   maxOutputTokens?: number;
   requireToolApproval: boolean;
@@ -2182,10 +2182,11 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
-    // No `harnessMaxOutputTokens`: the harness model broker clamps `max_tokens`
-    // to it without touching the model's thinking budget, so a ceiling below
-    // the broker's own default (64,000) can make Anthropic refuse every thinking
-    // turn. The ceiling rides the hosted `/stream` body only.
+    // No ceiling for a harness host: its model broker clamps `max_tokens` to it
+    // without touching the model's thinking budget, so one below the broker's
+    // own default (64,000) can make Anthropic refuse every thinking turn. The
+    // ceiling rides the hosted `/stream` body only, and `resolveTurnRuntime`
+    // withholds it from a harness host even when `maxOutputTokens` is set.
     ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The turn's Project Environment — the grant boundary the harness path
     // checks a BROKERED external-account credential against. Inert for the

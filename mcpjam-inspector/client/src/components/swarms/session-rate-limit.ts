@@ -100,12 +100,20 @@ export function describeProviderRateLimit(
  * lifts. The slug and severity stay the catalog's so the card renders amber
  * like every other MCPJam limit. The backend's own sentence stays as the body:
  * it carries how many requests were holding credits.
+ *
+ * Two things in that entry are about buying credits and would contradict the
+ * title, so both are replaced: its "Learn more" link (the buy-credits section;
+ * a hold has its own note), and the backend's closing "Top up to add more
+ * credits." which it appends to a hold's details for an organization that can
+ * top up.
  */
 export function describeHeldCredits(message: string): NormalizedError {
+  const base = describeAsSlug("provider/mcpjam_limit");
   return {
-    ...describeAsSlug("provider/mcpjam_limit"),
+    ...base,
+    docsAnchor: base.docsAnchor.replace(/#.*$/, "#credits-temporarily-held"),
     title: "Credits temporarily held",
-    oneLine: message,
+    oneLine: message.replace(/\s*Top up to add more credits\.?/i, "").trim(),
     likelyCauses: [
       "Other requests from your organization were in flight and held the remaining credits until they finished.",
     ],

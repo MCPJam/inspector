@@ -15,6 +15,7 @@ beforeEach(() => {
   useFrontierSignInDialogStore.getState().close();
   useMCPJamLimitDialogStore.setState({
     notifiedKeys: new Set<string>(),
+    staleWaveKeys: new Set<string>(),
     authStatus: "loading",
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -512,6 +513,33 @@ describe("credits held by in-flight requests", () => {
     expect(exhausted).not.toBeNull();
   });
 
+  it("words a refusal the way the dialog reads it, so the panel never contradicts an open dialog", () => {
+    const HELD =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+    const retry =
+      "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.";
+    const exhaustions = [
+      // A sentence quoted under `details` is someone else's words.
+      JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached.",
+        details: { previous: HELD },
+      }),
+      // One text joining a hold with a spent allowance.
+      `${HELD} Daily MCPJam model limit reached.`,
+      // A code that never rides a hold.
+      `${HELD} (billing_limit_reached, HTTP 429)`,
+    ];
+    for (const message of exhaustions) {
+      expect(isMCPJamModelLimitError({ message })).toBe(true);
+      const described = describeMCPJamLimitMessage(message);
+      expect(described).not.toBeNull();
+      expect(described).not.toBe(retry);
+    }
+    // And a hold that states nothing else is still a retry.
+    expect(describeMCPJamLimitMessage(HELD)).toBe(retry);
+  });
+
   it("still opens for a real exhaustion whose details mention in-flight work", () => {
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
 
@@ -672,6 +700,61 @@ describe("one dialog per swarm wave", () => {
     });
     expect(store.getState().outOfCreditsHit).toBe(true);
     expect(store.getState().outOfCreditsOrganizationId).toBe("org-1");
+  });
+
+  it("does not attribute a fresh notice with no organization to the previous latch's", () => {
+    // Only a notice that continues a known wave is the same event as the latch.
+    // A new run in another wave, from a surface that does not know which
+    // organization it belongs to, is an event of unknown origin: it locks every
+    // organization, as it did before waves, instead of pinning the last one.
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+    store.getState().notifyLimitHit({
+      runId: "run-a",
+      swarmRunGroupId: "wave-1",
+      organizationId: "org-1",
+      surface: "swarm",
+    });
+    expect(store.getState().outOfCreditsOrganizationId).toBe("org-1");
+
+    store.getState().notifyLimitHit({
+      runId: "run-z",
+      swarmRunGroupId: "wave-9",
+      surface: "swarm",
+    });
+    expect(store.getState().outOfCreditsHit).toBe(true);
+    expect(store.getState().outOfCreditsOrganizationId).toBeNull();
+  });
+
+  it("opens again for a run that hits the wall after a purchase, while replays of the old runs stay quiet", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().close();
+
+    // The user starts buying credits and relaunches under the same wave (a
+    // retry reuses it). The wave was announced before the purchase.
+    store.getState().clearOutOfCreditsHit();
+    store.getState().forgetNotifiedWaves();
+
+    // Convex keeps replaying the old run's notice: still a no-op, and it must
+    // not teach the wave back, or the next run would be silenced again.
+    const before = store.getState();
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    notify({ runId: "run-a" });
+    expect(store.getState()).toBe(before);
+    expect(store.getState().outOfCreditsHit).toBe(false);
+
+    // A new run in that wave running out again after the purchase is news.
+    notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().close();
+
+    // The wave is announced again: its next run is quiet, as before.
+    notify({ runId: "run-d", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
   });
 
   it("keeps the wave suppressed across the loading-to-signed-in handoff", () => {

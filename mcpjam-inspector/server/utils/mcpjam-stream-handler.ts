@@ -863,12 +863,6 @@ export interface MCPJamHandlerOptions {
    */
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   /**
-   * Per-step output-token ceiling the harness model broker reserves credits
-   * against (harness turns only; the emulated engine takes it from the hosted
-   * body). Absent keeps the model-sized default hold.
-   */
-  harnessMaxOutputTokens?: number;
-  /**
    * Run this harness turn on the USER'S OWN MACHINE rather than in a cloud
    * computer.
    *

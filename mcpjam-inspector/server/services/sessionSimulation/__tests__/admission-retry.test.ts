@@ -39,18 +39,19 @@ it("waits within jitter bounds and succeeds", async () => {
   expect(await result).toBe("done");
   expect(op).toHaveBeenCalledTimes(2);
 });
-it("retries a hold that arrives as plain text, with no JSON and no reason", async () => {
+it("does not replay a call on a sentence that only names a hold", async () => {
   // A flattened error keeps the backend's sentence and the code suffix the
-  // runner appends, but not the structured reason.
-  vi.useFakeTimers();
+  // runner appends, but neither a structured reason nor proof that nothing ran.
+  // A harness host throws this after its write tools already executed, so a
+  // replay would run them twice. Classification still treats it as a wait.
   const plain = new Error(
     "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. (user_rate_limit, HTTP 429)",
   );
-  const op = vi.fn().mockRejectedValueOnce(plain).mockResolvedValue("done");
-  const result = withAdmissionRetry(op, { budget: new AdmissionWaitBudget() });
-  await vi.runAllTimersAsync();
-  expect(await result).toBe("done");
-  expect(op).toHaveBeenCalledTimes(2);
+  const op = vi.fn().mockRejectedValue(plain);
+  await expect(
+    withAdmissionRetry(op, { budget: new AdmissionWaitBudget() }),
+  ).rejects.toBe(plain);
+  expect(op).toHaveBeenCalledTimes(1);
 });
 it.each([busy, emptyHostTurnBusy])(
   "recovers from a busy admission before a turn executes",

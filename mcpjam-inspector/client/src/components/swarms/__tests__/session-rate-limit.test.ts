@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ERROR_CATALOG } from "@mcpjam/sdk/browser";
 import {
@@ -165,6 +168,56 @@ describe("describeSwarmAttemptFailure held credits", () => {
     );
     const advice = [...result.likelyCauses, ...result.nextSteps].join(" ");
     expect(advice).not.toMatch(/upgrade|buy|top.?up|purchase|byok|api key/i);
+  });
+
+  it("keeps the top-up sentence out of the body and links the hold's own docs note", () => {
+    // With `canTopUp` the backend ends a hold's details with "Top up to add
+    // more credits." Nothing bought lifts a hold, so the card must not say it,
+    // and its "Learn more" must not land on the buy-credits section.
+    const body = `Backend stream error: 429 ${JSON.stringify({
+      code: "user_rate_limit",
+      error:
+        "MCPJam model limit reached for the moment: 13 in-flight request(s) hold the remaining credits and release them as they finish.",
+      details: "Retry in a few seconds. Top up to add more credits.",
+      canTopUp: true,
+      retryAfter: 15000,
+    })}`;
+    const result = describeSwarmAttemptFailure(
+      body,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Credits temporarily held");
+    expect(result.oneLine).toContain("13 in-flight request(s)");
+    expect(result.oneLine).toContain("Retry in a few seconds.");
+    expect(result.oneLine).not.toMatch(/top.?up/i);
+    expect(result.docsAnchor).toMatch(/#credits-temporarily-held$/);
+    expect(result.docsAnchor).not.toBe(
+      ERROR_CATALOG["provider/mcpjam_limit"].docsAnchor,
+    );
+  });
+
+  it("points at a heading that exists in the docs", () => {
+    const docs = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "../../../../../../docs/troubleshooting/error-codes.mdx",
+      ),
+      "utf8",
+    );
+    expect(docs).toMatch(/^#{2,4} Credits temporarily held$/m);
+  });
+
+  it("leaves a locked wallet's row to its own card: the same sentence rides that code", () => {
+    // `buildSpendRefusalBody` answers `wallet_locked` with the hold sentence when
+    // a locked wallet and a hold coincide, and a stored row keeps that code.
+    const result = describeSwarmAttemptFailure(
+      HELD,
+      "wallet_locked",
+      "Anthropic",
+    );
+    expect(result.title).not.toBe("Credits temporarily held");
+    expect(result.rawCode).toBe("wallet_locked");
   });
 
   it("still cards a spent allowance and a shortfall as running out", () => {
