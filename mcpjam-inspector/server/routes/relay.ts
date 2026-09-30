@@ -172,11 +172,10 @@ setInterval(flushRelayStats, STATS_FLUSH_INTERVAL_MS).unref();
 // - RATE_LIMIT_PER_MIN covers everything the relay serves; 600/min is ~10x
 //   the busiest real posthog-js client, mostly asset and config reads.
 // - INGEST_LIMIT_PER_MIN covers only the ingest subpaths — the requests that
-//   write into the PostHog project (MJ-015 retest #3: 260 event posts from
-//   one address drew no 429). posthog-js batches captures and replay slices
-//   into a flush every few seconds, so a real browser stays well under one
-//   ingest request per second; 60/min refuses a burst like the retest's
-//   inside its first minute. The pooled bucket for unattested requests gets
+//   write into the PostHog project (MJ-015). posthog-js batches captures and
+//   replay slices into a flush every few seconds, so a real browser stays
+//   well under one ingest request per second, and 60/min leaves several
+//   times that headroom. The pooled bucket for unattested requests gets
 //   the multiple the other pooled windows use (passthrough-rate-limit.ts)
 //   because it covers many callers at once.
 // ---------------------------------------------------------------------------
