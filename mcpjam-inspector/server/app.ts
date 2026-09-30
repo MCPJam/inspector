@@ -552,6 +552,9 @@ export async function createHonoApp() {
 
     // Serve static assets (JS, CSS, images) - no token injection needed
     app.use("/assets/*", serveStatic({ root }));
+    // Mirror of server/index.ts: a missing hashed asset is a 404, not the
+    // SPA document.
+    app.use("/assets/*", async (c) => c.notFound());
 
     // In-app browser redirect: detect embedded WebViews (LinkedIn, Facebook, etc.)
     // and serve a redirect page before the SPA loads, since Google OAuth blocks
