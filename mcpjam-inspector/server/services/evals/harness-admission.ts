@@ -73,6 +73,19 @@ export interface EvalHarnessCase {
    * saved effort for this case, matching the precedence the runner applies.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The case's saved model-entry selection, exactly as the recorder's
+   * `config.tests` rows carry it (`selection`). This is where a persisted
+   * effort actually lives, so it is read when `reasoningEffort` is absent.
+   */
+  selection?: { settings?: { reasoningEffort?: string } } | null;
+}
+
+/** The effort a case's own model entry asks for: explicit, else its selection. */
+function caseReasoningEffort(
+  test: EvalHarnessCase,
+): ModelReasoningEffort | undefined {
+  return test.reasoningEffort ?? selectionReasoningEffort(test.selection);
 }
 
 /** The effort the host's saved selection carries, if any. */
@@ -403,7 +416,7 @@ export function checkEvalHarnessAdmission(args: {
     { reason: string; kind: HarnessUnavailableKind } | undefined
   >();
   for (const test of modelCases) {
-    const effort = test.reasoningEffort ?? hostSavedReasoningEffort(hostConfig);
+    const effort = caseReasoningEffort(test) ?? hostSavedReasoningEffort(hostConfig);
     const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {

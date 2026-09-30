@@ -210,6 +210,43 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).toContain("reasoning effort");
   });
 
+  it("reads the effort off a case's persisted selection (what the recorder emits)", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          selection: { settings: { reasoningEffort: "medium" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("an explicit case effort wins over its persisted selection's", () => {
+    // Both are unsupported here, so the point is only that admission reads the
+    // explicit one first: it is the one the reason names.
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          reasoningEffort: "high",
+          selection: { settings: { reasoningEffort: "low" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain('"high"');
+  });
+
   it("refuses when broker delivery is switched off, with the gate's own reason", () => {
     process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
     const verdict = checkEvalHarnessAdmission({
