@@ -62,7 +62,7 @@ function extrasCapOf(options: EvalMatchOptions | undefined): number | null {
 function expectationOf(
   step: ToolExpectationStep,
   position: number,
-  caseArgumentMatching: ToolExpectationArgumentMode
+  caseArgumentMatching: ToolExpectationArgumentMode,
 ): ToolExpectation | undefined {
   if (step.kind !== "assert") return undefined;
   const assertion = asRecord(step.assertion);
@@ -98,7 +98,7 @@ function expectationOf(
 
 export function compileToolExpectations(
   steps: readonly ToolExpectationStep[],
-  options: CompileToolExpectationsOptions = {}
+  options: CompileToolExpectationsOptions = {},
 ): TurnExpectations[] {
   const order =
     options.matchOptions?.toolCallOrder ?? MATCH_OPTIONS_DEFAULTS.toolCallOrder;

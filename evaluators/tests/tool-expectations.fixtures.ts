@@ -71,7 +71,7 @@ export function expectCall(
     argumentMatching?: "exact" | "partial" | "ignore";
     minCount?: number;
     role?: "advisory";
-  } = {}
+  } = {},
 ): ToolExpectationStep {
   return {
     id,
@@ -94,7 +94,7 @@ export function expectCall(
 export const call = (
   toolName: string,
   args: Record<string, unknown> = {},
-  toolCallId?: string
+  toolCallId?: string,
 ): ToolExpectationCall => ({
   toolName,
   arguments: args,
@@ -103,7 +103,7 @@ export const call = (
 
 const ok = (
   assertions: Record<string, FixtureAssertionOutcome>,
-  extra: Partial<FixtureTurnExpectation> = {}
+  extra: Partial<FixtureTurnExpectation> = {},
 ): FixtureTurnExpectation => ({ assertions, passed: true, ...extra });
 
 export const TOOL_EXPECTATION_FIXTURES: ToolExpectationFixture[] = [

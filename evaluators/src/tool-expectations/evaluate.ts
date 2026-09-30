@@ -98,7 +98,7 @@ export type TurnEvaluation = {
 };
 
 function normalizeCalls(
-  calls: readonly ToolExpectationCall[] | undefined
+  calls: readonly ToolExpectationCall[] | undefined,
 ): ToolExpectationCall[] {
   return Array.isArray(calls) ? [...calls] : [];
 }
@@ -107,7 +107,7 @@ function normalizeCalls(
 function matchableCalls(
   calls: ToolExpectationCall[],
   exemptionNames: ReadonlySet<string>,
-  context: EvaluateTurnContext
+  context: EvaluateTurnContext,
 ): { matchable: ToolExpectationCall[]; rawIndex: number[] } {
   const isSkill = context.isSkillTool ?? isSkillToolName;
   const matchable: ToolExpectationCall[] = [];
@@ -134,7 +134,7 @@ function matchableCalls(
  */
 function legacyTurnVerdict(
   turn: TurnExpectations,
-  matchable: ToolExpectationCall[]
+  matchable: ToolExpectationCall[],
 ): TurnEvaluation["matcher"] & { passed: boolean } {
   if (turn.pinned) {
     return {
@@ -181,20 +181,34 @@ function evaluateTurn(
   rawCalls: readonly ToolExpectationCall[] | undefined,
   context: EvaluateTurnContext,
   /** The names that exempt a skill call. Always the WHOLE turn's, even when only some assertions are graded. */
-  exemptionNames: ReadonlySet<string>
+  exemptionNames: ReadonlySet<string>,
 ): TurnEvaluation {
   const calls = normalizeCalls(rawCalls);
   const { matchable, rawIndex } = matchableCalls(
     calls,
     exemptionNames,
-    context
+    context,
   );
 
   // One slot per `minCount`, adjacent, all owned by one assertion.
+  //
+  // A slot more than `matchable.length` places into its own assertion is not
+  // built: an authored `minCount` of 1e9 must not allocate a billion slots.
+  // That drops nothing that could pair. The slots of one assertion are
+  // identical and adjacent, and a call goes to at most one slot, so under
+  // `ignore` and `superset` a slot that fails to pair ends its assertion's
+  // pairing (only `matchable.length` calls exist to hand out), and under
+  // `strict` a slot at a global index >= the call count has no call at its
+  // index. Assertions after a truncated one start past that index either way,
+  // so their alignment is the same. Each dropped slot is counted as missing.
   const slots: EvalToolCall[] = [];
   const slotOwner: number[] = [];
+  const droppedSlots: number[] = turn.expectations.map(() => 0);
+  const slotsPerAssertion = matchable.length + 1;
   turn.expectations.forEach((expectation, owner) => {
-    for (let n = 0; n < expectation.minCount; n++) {
+    const built = Math.min(expectation.minCount, slotsPerAssertion);
+    droppedSlots[owner] = expectation.minCount - built;
+    for (let n = 0; n < built; n++) {
       slots.push({
         toolName: expectation.toolName,
         arguments: expectation.args,
@@ -224,7 +238,7 @@ function evaluateTurn(
 
   const assertions: ToolAssertionResult[] = turn.expectations.map(
     (expectation, owner) => {
-      let missingSlots = 0;
+      let missingSlots = droppedSlots[owner]!;
       let argumentMismatchSlots = 0;
       let outOfOrderSlots = 0;
       const paired = new Set<number>();
@@ -244,8 +258,8 @@ function evaluateTurn(
         missingSlots > 0 || invalid
           ? "missing"
           : argumentMismatchSlots > 0
-          ? "arguments"
-          : null;
+            ? "arguments"
+            : null;
       const pairedCallIndexes = [...paired].sort((a, b) => a - b);
       return {
         stepId: expectation.stepId,
@@ -261,12 +275,12 @@ function evaluateTurn(
           return id === undefined ? [] : [id];
         }),
       };
-    }
+    },
   );
 
   const outOfOrderSlots = assertions.reduce(
     (sum, assertion) => sum + assertion.outOfOrderSlots,
-    0
+    0,
   );
   const extraCount =
     matchable.length - new Set(graded.expectedToActual.values()).size;
@@ -322,7 +336,7 @@ function exemptionNamesOf(turn: TurnExpectations): Set<string> {
 export function evaluateTurnExpectations(
   turn: TurnExpectations,
   calls: readonly ToolExpectationCall[] | undefined,
-  context: EvaluateTurnContext = {}
+  context: EvaluateTurnContext = {},
 ): TurnEvaluation {
   return evaluateTurn(turn, calls, context, exemptionNamesOf(turn));
 }
@@ -341,16 +355,16 @@ export function evaluateAssertionAtPosition(
   turn: TurnExpectations,
   stepId: string,
   callsSoFar: readonly ToolExpectationCall[] | undefined,
-  context: EvaluateTurnContext = {}
+  context: EvaluateTurnContext = {},
 ): ToolAssertionResult | undefined {
   const target = turn.expectations.find(
-    (expectation) => expectation.stepId === stepId
+    (expectation) => expectation.stepId === stepId,
   );
   if (!target) return undefined;
   const visible: TurnExpectations = {
     ...turn,
     expectations: turn.expectations.filter(
-      (expectation) => expectation.position <= target.position
+      (expectation) => expectation.position <= target.position,
     ),
   };
   // The exemption names stay the whole turn's: an assertion below that names
@@ -359,7 +373,7 @@ export function evaluateAssertionAtPosition(
     visible,
     callsSoFar,
     context,
-    exemptionNamesOf(turn)
+    exemptionNamesOf(turn),
   ).assertions.find((assertion) => assertion.stepId === stepId);
 }
 
@@ -376,10 +390,10 @@ export type ToolExpectationsEvaluation = {
 export function evaluateToolExpectations(
   turns: readonly TurnExpectations[],
   callsByTurn: ReadonlyArray<readonly ToolExpectationCall[] | undefined>,
-  context: EvaluateTurnContext = {}
+  context: EvaluateTurnContext = {},
 ): ToolExpectationsEvaluation {
   const evaluated = turns.map((turn, index) =>
-    evaluateTurnExpectations(turn, callsByTurn[index], context)
+    evaluateTurnExpectations(turn, callsByTurn[index], context),
   );
   return {
     turns: evaluated,

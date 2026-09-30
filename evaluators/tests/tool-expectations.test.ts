@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateToolCalls,
+  pairToolCalls,
   type EvalMatchOptions,
   type EvalToolCall,
 } from "../src/matchers";
@@ -40,7 +41,7 @@ describe("the counterexample fixtures", () => {
       });
       expect(evaluation.turns).toHaveLength(fixture.engine.length);
       expect(evaluation.turns.map((turn) => turn.matcherEquivalent)).toEqual(
-        fixture.matcher
+        fixture.matcher,
       );
 
       evaluation.turns.forEach((turn, index) => {
@@ -56,7 +57,7 @@ describe("the counterexample fixtures", () => {
         }
         if (want.sequence !== undefined) {
           expect(turn.sequence.passed, `turn ${index} sequence`).toBe(
-            want.sequence
+            want.sequence,
           );
         }
         if (want.extras !== undefined) {
@@ -64,17 +65,17 @@ describe("the counterexample fixtures", () => {
         }
         if (want.negative !== undefined) {
           expect(turn.negative.passed, `turn ${index} no-tool`).toBe(
-            want.negative
+            want.negative,
           );
         }
       });
-    }
+    },
   );
 
   it("names an intended difference wherever the engine and the matcher disagree, and only there", () => {
     for (const fixture of TOOL_EXPECTATION_FIXTURES) {
       const disagrees = fixture.engine.some(
-        (turn, index) => turn.passed !== fixture.matcher[index]
+        (turn, index) => turn.passed !== fixture.matcher[index],
       );
       expect(
         Boolean(fixture.intendedDifference),
@@ -82,7 +83,7 @@ describe("the counterexample fixtures", () => {
           disagrees
             ? "differs from the matcher without saying why"
             : "names a difference that is not there"
-        }`
+        }`,
       ).toBe(disagrees);
     }
   });
@@ -105,7 +106,7 @@ describe("compile", () => {
         openedBy: turn.openedBy,
         pinned: turn.pinned,
         steps: turn.expectations.map((e) => e.stepId),
-      }))
+      })),
     ).toEqual([
       { turnIndex: 0, openedBy: undefined, pinned: false, steps: ["lead"] },
       { turnIndex: 1, openedBy: "p1", pinned: false, steps: ["a1"] },
@@ -122,7 +123,7 @@ describe("compile", () => {
         expectCall("a1", "A", { x: 1 }, { minCount: 3 }),
         expectCall("a2", "B", {}, { argumentMatching: "exact" }),
       ],
-      { matchOptions: { argumentMatching: "ignore" } }
+      { matchOptions: { argumentMatching: "ignore" } },
     );
     expect(turn!.expectations).toEqual([
       {
@@ -178,7 +179,7 @@ describe("compile", () => {
     expect(() =>
       compileToolExpectations([prompt("p1")], {
         matchOptions: { maxExtraToolCalls: -1 },
-      })
+      }),
     ).toThrow(/maxExtraToolCalls/);
   });
 
@@ -198,7 +199,7 @@ describe("compile", () => {
 describe("evaluate", () => {
   const compileOne = (
     steps: ToolExpectationStep[],
-    matchOptions?: EvalMatchOptions
+    matchOptions?: EvalMatchOptions,
   ) => compileToolExpectations(steps, { matchOptions })[0]!;
 
   it("reports which calls each assertion was paired with, by index and id", () => {
@@ -223,7 +224,7 @@ describe("evaluate", () => {
     const result = evaluateTurnExpectations(
       turn,
       [call("loadSkill"), call("A", {}, "a")],
-      { skillToolsActive: true }
+      { skillToolsActive: true },
     );
     expect(result.assertions[0]).toMatchObject({
       pairedCallIndexes: [1],
@@ -287,7 +288,7 @@ describe("evaluate", () => {
     const turn = compileOne([prompt("p1"), expectCall("a1", "A")]);
     expect(evaluateTurnExpectations(turn, undefined).passed).toBe(false);
     expect(
-      evaluateToolExpectations([turn], []).turns[0]!.assertions[0]
+      evaluateToolExpectations([turn], []).turns[0]!.assertions[0],
     ).toMatchObject({ failureKind: "missing" });
   });
 
@@ -301,14 +302,14 @@ describe("evaluate", () => {
 
     it("grades an assertion over the calls made so far, not the turn's final calls", () => {
       expect(
-        evaluateAssertionAtPosition(turn, "a3", [call("A", { x: 1 })])
+        evaluateAssertionAtPosition(turn, "a3", [call("A", { x: 1 })]),
       ).toMatchObject({ passed: false, failureKind: "missing" });
       expect(
         evaluateAssertionAtPosition(turn, "a3", [
           call("A", { x: 1 }),
           call("A", { x: 2 }),
           call("B"),
-        ])
+        ]),
       ).toMatchObject({ passed: true });
     });
 
@@ -331,7 +332,7 @@ describe("evaluate", () => {
       const final = evaluateTurnExpectations(turn, calls);
       for (const assertion of final.assertions) {
         expect(
-          evaluateAssertionAtPosition(turn, assertion.stepId, calls)
+          evaluateAssertionAtPosition(turn, assertion.stepId, calls),
         ).toEqual(assertion);
       }
     });
@@ -339,13 +340,13 @@ describe("evaluate", () => {
     it("keeps a skill call an assertion below names from counting as housekeeping", () => {
       const withSkill = compileOne(
         [prompt("p1"), expectCall("a1", "A"), expectCall("a2", "loadSkill")],
-        { maxExtraToolCalls: 0 }
+        { maxExtraToolCalls: 0 },
       );
       const calls = [call("loadSkill"), call("A")];
       expect(
         evaluateAssertionAtPosition(withSkill, "a1", calls, {
           skillToolsActive: true,
-        })
+        }),
       ).toMatchObject({ passed: true, pairedCallIndexes: [1] });
     });
 
@@ -414,11 +415,11 @@ describe("agreement with the matcher where the promotion loses nothing", () => {
       };
       const expectations = Array.from(
         { length: Math.floor(next() * 4) },
-        (_, i) => expectCall(`a${i}`, pick(next, TOOLS), pick(next, ARGS))
+        (_, i) => expectCall(`a${i}`, pick(next, TOOLS), pick(next, ARGS)),
       );
       const calls: EvalToolCall[] = Array.from(
         { length: Math.floor(next() * 5) },
-        () => ({ toolName: pick(next, TOOLS), arguments: pick(next, ARGS) })
+        () => ({ toolName: pick(next, TOOLS), arguments: pick(next, ARGS) }),
       );
       const [turn] = compileToolExpectations([prompt("p1"), ...expectations], {
         matchOptions: options,
@@ -443,20 +444,125 @@ describe("agreement with the matcher where the promotion loses nothing", () => {
       const lost = result.assertions.reduce(
         (sum, a) =>
           sum + a.missingSlots + a.argumentMismatchSlots + a.outOfOrderSlots,
-        0
+        0,
       );
       const bounded = result.extras.passed;
       expect(result.passed, label).toBe(
         result.assertions.every((a) => a.passed) &&
           result.sequence.passed &&
-          bounded
+          bounded,
       );
       if (turn!.legacyExpected.length > 0) {
         const matcher = evaluateToolCalls(turn!.legacyExpected, calls, options);
         expect(lost, label).toBe(
-          matcher.missing.length + matcher.argumentMismatches.length
+          matcher.missing.length + matcher.argumentMismatches.length,
         );
       }
     }
   });
+});
+
+describe("an authored minCount", () => {
+  it("does not cost time or memory in proportion to itself", () => {
+    const [turn] = compileToolExpectations([
+      prompt("p1"),
+      expectCall("a1", "A", { x: 1 }, { minCount: 1e9 }),
+      expectCall("a2", "B"),
+    ]);
+    const started = Date.now();
+    const result = evaluateTurnExpectations(turn!, [
+      call("A", { x: 1 }),
+      call("B"),
+    ]);
+    expect(Date.now() - started).toBeLessThan(1000);
+    // One call for a1 exists; the other 999,999,999 do not.
+    expect(result.assertions[0]).toMatchObject({
+      passed: false,
+      failureKind: "missing",
+      missingSlots: 1e9 - 1,
+    });
+    expect(result.assertions[1]).toMatchObject({ passed: true });
+  });
+
+  /**
+   * The engine builds at most `calls + 1` slots per assertion and counts the
+   * rest as missing. That has to be a saving, not a change: this grades the
+   * same turns against a reference that builds every slot.
+   */
+  it("gives the results of building every slot", () => {
+    const TOOLS = ["A", "B"];
+    const ARGS: Array<Record<string, unknown>> = [{}, { x: 1 }, { x: 2 }];
+    const ORDERS = ["ignore", "strict", "superset"] as const;
+    const MODES = ["partial", "exact", "ignore"] as const;
+    let state = 424242;
+    const next = () =>
+      (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+    const pick = <T>(list: readonly T[]): T =>
+      list[Math.floor(next() * list.length)]!;
+
+    for (let n = 0; n < 3000; n++) {
+      const order = pick(ORDERS);
+      const argumentMatching = pick(MODES);
+      const expectations = Array.from(
+        { length: 1 + Math.floor(next() * 3) },
+        (_, i) =>
+          expectCall(`a${i}`, pick(TOOLS), pick(ARGS), {
+            minCount: 1 + Math.floor(next() * 8),
+          }),
+      );
+      const calls: EvalToolCall[] = Array.from(
+        { length: Math.floor(next() * 4) },
+        () => ({ toolName: pick(TOOLS), arguments: pick(ARGS) }),
+      );
+      const [turn] = compileToolExpectations([prompt("p1"), ...expectations], {
+        matchOptions: { toolCallOrder: order, argumentMatching },
+      });
+      const label = `case ${n}: ${JSON.stringify({ order, argumentMatching, expectations, calls })}`;
+      const result = evaluateTurnExpectations(turn!, calls);
+
+      // The reference: every slot built, graded and classified in the open.
+      const slots: EvalToolCall[] = [];
+      const owner: number[] = [];
+      turn!.expectations.forEach((e, i) => {
+        for (let k = 0; k < e.minCount; k++) {
+          slots.push({ toolName: e.toolName, arguments: e.args });
+          owner.push(i);
+        }
+      });
+      const mode = (slot: number) =>
+        turn!.expectations[owner[slot]!]!.argumentMatching;
+      const graded = pairToolCalls(slots, calls, order, mode);
+      const agnostic = pairToolCalls(slots, calls, "ignore", mode);
+      const counts = turn!.expectations.map(() => ({
+        missingSlots: 0,
+        argumentMismatchSlots: 0,
+        outOfOrderSlots: 0,
+      }));
+      slots.forEach((_, slot) => {
+        const lost =
+          !graded.expectedToActual.has(slot) ||
+          graded.argumentMismatchExpected.includes(slot);
+        if (!lost) return;
+        const own = counts[owner[slot]!]!;
+        if (!agnostic.expectedToActual.has(slot)) own.missingSlots += 1;
+        else if (agnostic.argumentMismatchExpected.includes(slot))
+          own.argumentMismatchSlots += 1;
+        else own.outOfOrderSlots += 1;
+      });
+
+      result.assertions.forEach((assertion, i) => {
+        expect(
+          {
+            missingSlots: assertion.missingSlots,
+            argumentMismatchSlots: assertion.argumentMismatchSlots,
+            outOfOrderSlots: assertion.outOfOrderSlots,
+          },
+          `${label}, assertion ${i}`,
+        ).toEqual(counts[i]);
+      });
+      expect(result.extras.count, label).toBe(
+        calls.length - new Set(graded.expectedToActual.values()).size,
+      );
+    }
+  }, 60000);
 });
