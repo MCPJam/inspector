@@ -268,5 +268,5 @@ export function selectionIfMatches(
   modelId: string | undefined
 ): ModelSelection | undefined {
   if (selection === undefined || modelId === undefined) return undefined;
-  return selection.modelId === modelId ? selection : undefined;
+  return selection.modelId === modelId.trim() ? selection : undefined;
 }
