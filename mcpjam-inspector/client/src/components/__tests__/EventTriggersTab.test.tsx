@@ -3,6 +3,7 @@
  * history, including the parked state (`tool_outcome_unknown`).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 import {
   fireEvent,
   render,
@@ -26,6 +27,14 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => mockTrack(...args),
+}));
+
+const mockToastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: (...args: unknown[]) => mockToastError(...args),
+  },
 }));
 
 import { EventTriggersTab, PARKED_EXPLANATION } from "../EventTriggersTab";
@@ -149,6 +158,35 @@ describe("EventTriggersTab", () => {
       spendCapMicrosPerDay: 1_500_000,
       approvalPolicy: "deny_writes",
     });
+  });
+
+  it("shows the backend's reason when it refuses the trigger", async () => {
+    queryResults.set(EVENT_TRIGGERS_API.list, []);
+    const reason =
+      "Only the subscription's owner can set up or change its triggers, because runs use the owner's credentials.";
+    mutations.set(
+      EVENT_TRIGGERS_API.create,
+      vi
+        .fn()
+        .mockRejectedValue(
+          new ConvexError({ code: "FORBIDDEN", message: reason }),
+        ),
+    );
+    render(<EventTriggersTab projectId="proj_1" isSignedInMember />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /New trigger/ })[0]!);
+    const form = await screen.findByTestId("trigger-form");
+    fireEvent.change(within(form).getByLabelText("Name"), {
+      target: { value: "Triage" },
+    });
+    fireEvent.change(within(form).getByLabelText("Instructions"), {
+      target: { value: "Label each new issue." },
+    });
+    fireEvent.click(
+      within(form).getByRole("button", { name: "Create trigger" }),
+    );
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(reason));
   });
 
   it("refuses an out-of-range budget before calling the backend", async () => {

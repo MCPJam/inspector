@@ -29,6 +29,7 @@ A trigger pairs a subscription with a standing instruction ("when someone commen
 
 - **Approval policy.** *Read-only tools only* (the default) lets the agent call only tools the server marks `readOnlyHint`. *Allow writes* also runs tools that change data, and still denies any tool that would need a person to approve it, because nobody is watching.
 - **Limits.** Each trigger has a rate limit (runs per hour) and a daily spending cap, checked before a run starts.
+- **Who can change a trigger.** A trigger's runs use the credentials of the person who created the subscription, so only that person can add or edit its triggers, turn them on, or simulate its events. A project admin can turn a trigger off or delete it.
 - **Untrusted events.** The event is passed to the model as untrusted data, and the instruction is the only thing it follows.
 - **Parked runs.** If a tool call's outcome is unknown, for example because the runner stopped mid-call, the run is **parked** rather than retried. MCPJam never repeats a write it can't confirm.
 - **Run history.** Shows each event, the turn it caused, and the tool calls.

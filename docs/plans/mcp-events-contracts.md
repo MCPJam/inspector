@@ -58,13 +58,16 @@ runKey      = H({ v: 1, kind: "run", namespace, projectId, environmentId: string
   | `controlKey` (`webhookId: "msg_gap_1"`) | `a6530fbaa491b23a0c18a9e62d0358143162eb40ac8382ddb162ef9a48cd22d4` |
   | `runKey` (`namespace: "live"`) | `7883b3f010b6dcd0398c74810ec34c1b4b2ae1ecdda4e84e1cab3adffe8c3f68` |
   | `runKey` (`namespace: "simulation"`) | `e4692945e7a17df513f8b3059276ff97765fb1c853eb2731b24050c72baf5688` |
+
 - A run freezes, at schedule time, a snapshot of `{trigger: {id, revision, instructions, modelId, approvalPolicy, hostProfile, maxSteps}, event, subscription: {id, generation, bindingKey, serverId, environmentId}}`. Retries read only the snapshot.
 
 ## C3. Registration and rotation
 
 Callback URL: `https://hooks.mcpjam.com/i/{inboxId}/s/{slotId}`. `inboxId` and `slotId` are random 128-bit base32 ids; they are routing, not credentials.
 
-Slot states: `pending → active → removed`. A pending slot also becomes `expired` after `pendingTtlMs` without reconciliation.
+Slot states: `pending → active → removed`. A pending slot also becomes `expired` after `pendingTtlMs` without reconciliation. An expired or removed slot is never reconciled again (`409 slot_expired` / `slot_removed`). `getSecret` also reports the slot's effective `state`; a keeper that finds its slot `expired` (a first subscribe retried past the TTL) allocates a fresh one instead of subscribing a URL that answers `410`.
+
+Reconciliation: the id `events/subscribe` returns is bound to the slot. A different id on a bound slot is a conflict: reported to the keeper, never overwritten. The one exception is pause: the draft does not require a server to reuse an id after `events/unsubscribe`, so once the unsubscribe succeeds the keeper calls `unbind`. The slot goes back to `pending`, keeping its secret, overlap and URL, with the reconciled id cleared and no pending expiry, because a paused subscription holds its slot. Resume's id, new or reused, then binds as a first reconciliation. `unbind` is idempotent and refused on an expired or removed slot.
 
 | Delivery to slot in state | Signature valid | Result |
 |---|---|---|
@@ -184,6 +187,9 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 | Register receiver (allocate slot) | inspector: project `member` for the subscription's project; admin token to the inbox |
 | Issue viewer token | inspector: project `member` now; token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
 | Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing |
+| Author a trigger (create, edit, enable) | Convex: the caller is the subscription's **owner**. A run acts with the owner's credentials, so no one else (a project admin included) decides what it does |
+| Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing |
+| Simulate an event | inspector: project `member`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
 | Dispatch a run | enqueue mutation: subscription not removed, trigger enabled, owner still a member |
 | Execute tools | executor: delegated bearer for the owner, `createAuthorizedManager` re-authorizes each server |
 
@@ -207,13 +213,13 @@ The object handed to `inner.send` is the original. The inbox stores rejection me
 interface EventsCoordinatorPorts {
   clock: { now(): number };
   rpc(record: SubscriptionRecord): Promise<EventsRpcPort>;           // credentials live behind this port
-  inbox: InboxPort;                                                   // allocate/secret/reconcile/rotate/retire/remove/append
+  inbox: InboxPort;                                                   // allocate/secret/reconcile/unbind/rotate/retire/remove/append
   onDescriptorsChanged?(serverKey: string): void;
 }
 step(record: SubscriptionRecord): Promise<StepOutcome>              // one lifecycle transition, never loops forever
 ```
 
-`StepOutcome = { patch: Partial<SubscriptionRecord>, nextActionAt: number, appended?: number, error?: ClassifiedFailure }`. The keeper commits `patch` with CAS (C4). Poll drains `hasMore` for at most `maxPagesPerStep` (default 5) before yielding, so one noisy subscription cannot starve the rest. `nextPollMs` gets a floor of `max(1000, profile floor)`.
+`StepOutcome = { patch: Partial<SubscriptionRecord>, nextActionAt: number, appended?: number, error?: ClassifiedFailure }`. The keeper commits `patch` with CAS (C4). Poll drains `hasMore` for at most `maxPagesPerStep` (default 5) before yielding, so one noisy subscription cannot starve the rest. `nextPollMs` gets a floor of `max(1000, profile floor)`. `challenge_failed` stops retrying after `maxChallengeFailures` (default 5) consecutive challenge failures. Failures of other kinds before them do not count: `consecutiveFailures`, and the backoff with it, restarts at 1 when the previous `lastError.kind` was something else.
 
 ## C10. Capability capture
 

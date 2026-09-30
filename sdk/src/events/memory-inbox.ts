@@ -164,11 +164,12 @@ export class MemoryEventInbox implements InboxPort {
     return {
       secret: slot.secret,
       ...(this.previousSecretLive(slot) ? { previousSecret: slot.previousSecret! } : {}),
+      state: this.effectiveState(slot),
     };
   }
 
   async reconcile(slotId: string, serverSubscriptionId: string) {
-    const slot = this.requireSlot(slotId);
+    const slot = this.requireLiveSlot(slotId);
     if (slot.serverSubscriptionId && slot.serverSubscriptionId !== serverSubscriptionId) {
       return {
         state: slot.state,
@@ -181,6 +182,15 @@ export class MemoryEventInbox implements InboxPort {
       delete slot.pendingExpiresAt;
     }
     return { state: slot.state };
+  }
+
+  async unbind(slotId: string) {
+    // Pause (C3): the unsubscribed server id no longer binds this slot. It
+    // waits, pending but never expiring, for resume's id — new or reused.
+    const slot = this.requireLiveSlot(slotId);
+    slot.state = "pending";
+    delete slot.serverSubscriptionId;
+    delete slot.pendingExpiresAt;
   }
 
   async rotate(slotId: string) {
@@ -330,10 +340,8 @@ export class MemoryEventInbox implements InboxPort {
     }
     const slot = this.slots.get(args.slotId);
     if (!slot) return reject(410, "unknown_slot");
-    if (slot.state === "pending" && slot.pendingExpiresAt !== undefined && now > slot.pendingExpiresAt) {
-      slot.state = "expired";
-    }
-    if (slot.state === "expired") return reject(410, "expired_slot", slot.slotId);
+    if (this.effectiveState(slot) === "expired")
+      return reject(410, "expired_slot", slot.slotId);
 
     const secrets = [slot.secret];
     if (this.previousSecretLive(slot)) secrets.push(slot.previousSecret!);
@@ -494,7 +502,7 @@ export class MemoryEventInbox implements InboxPort {
     const slot = this.slots.get(slotId);
     if (!slot) return undefined;
     return {
-      state: slot.state,
+      state: this.effectiveState(slot),
       ...(slot.serverSubscriptionId ? { serverSubscriptionId: slot.serverSubscriptionId } : {}),
       observedSubscriptionIds: [...slot.observedSubscriptionIds],
       hasPreviousSecret: this.previousSecretLive(slot),
@@ -572,6 +580,28 @@ export class MemoryEventInbox implements InboxPort {
     const slot = this.slots.get(slotId);
     if (!slot) throw new Error(`Unknown receiver slot ${slotId}`);
     return slot;
+  }
+
+  /** Like the Durable Object: a removed or expired slot is never re-bound. */
+  private requireLiveSlot(slotId: string): Slot {
+    const slot = this.requireSlot(slotId);
+    const state = this.effectiveState(slot);
+    if (state === "removed" || state === "expired") {
+      throw new Error(`Receiver slot ${slotId} is ${state}`);
+    }
+    return slot;
+  }
+
+  /** A pending slot past its TTL is `expired` (C3), from then on. */
+  private effectiveState(slot: Slot): SlotState {
+    if (
+      slot.state === "pending" &&
+      slot.pendingExpiresAt !== undefined &&
+      this.clock.now() >= slot.pendingExpiresAt
+    ) {
+      slot.state = "expired";
+    }
+    return slot.state;
   }
 }
 

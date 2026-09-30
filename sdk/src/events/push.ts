@@ -180,10 +180,12 @@ export class EventsPushRuntime {
       const id = meta?.[EVENTS_SUBSCRIPTION_ID_META_KEY];
       if (typeof id !== "string" && typeof id !== "number") return;
       const state = this.byRequestId.get(String(id));
-      if (!state || state.stopped) return;
-      // Frames of one stream are processed strictly in order.
+      if (!state || state.stopped || !state.controller) return;
+      // Frames of one stream are processed strictly in order, each only while
+      // the request it arrived on is still the current one.
+      const controller = state.controller;
       state.queue = state.queue
-        .then(() => this.handleFrame(state, notification))
+        .then(() => this.handleFrame(state, controller, notification))
         .catch(() => undefined);
     };
     for (const method of [
@@ -305,8 +307,13 @@ export class EventsPushRuntime {
 
   private async handleFrame(
     state: StreamState,
+    controller: AbortController,
     notification: { method: string; params?: Record<string, unknown> }
   ): Promise<void> {
+    // Queued behind a frame whose append failed (or a rollover, or a stop):
+    // its request is gone, and advancing here would skip the failed frame.
+    // The reopened request replays it from the committed cursor.
+    if (state.controller !== controller) return;
     this.armLiveness(state);
     const params = notification.params ?? {};
     switch (notification.method) {
@@ -314,7 +321,14 @@ export class EventsPushRuntime {
         state.failures = 0;
         const cursor = normalizeCursor(params.cursor as string | null | undefined);
         if (params.truncated === true) {
-          await this.append(state, [{ type: "gap", cursor }], `active:${cursor}`);
+          const journalled = await this.append(
+            state,
+            controller,
+            [{ type: "gap", cursor }],
+            `active:${cursor}`
+          );
+          // The gap marker was not journalled ⇒ do not advance past it.
+          if (!journalled) return;
         }
         this.advance(state, cursor);
         state.callbacks.onState?.({ observedState: "active" });
@@ -331,7 +345,7 @@ export class EventsPushRuntime {
         } catch {
           return; // Malformed frame: not journalled as an event, stream stays up.
         }
-        const accepted = await this.append(state, [event], `event:${event.eventId}`);
+        const accepted = await this.append(state, controller, [event], `event:${event.eventId}`);
         if (accepted) this.advance(state, normalizeCursor(event.cursor));
         return;
       }
@@ -349,7 +363,12 @@ export class EventsPushRuntime {
         return;
       case EventsTerminatedNotificationMethod: {
         const error = params.error as { code: number; message: string; data?: unknown };
-        await this.append(state, [{ type: "terminated", error }], `terminated:${this.now()}`);
+        await this.append(
+          state,
+          controller,
+          [{ type: "terminated", error }],
+          `terminated:${this.now()}`
+        );
         state.callbacks.onState?.({
           observedState: "terminated",
           failure: {
@@ -373,6 +392,7 @@ export class EventsPushRuntime {
   /** Append through the shared ingestion path; `false` if not accepted. */
   private async append(
     state: StreamState,
+    controller: AbortController,
     entries: InboxAppendEntry[],
     discriminator: string
   ): Promise<boolean> {
@@ -395,10 +415,17 @@ export class EventsPushRuntime {
       });
       return true;
     } catch (error) {
+      // Not journalled ⇒ the cursor must not advance, and no later frame of
+      // this request may advance it either (that would skip this one). So ANY
+      // failure — backpressure, a 5xx, a timeout — reopens from the last
+      // committed cursor; the server replays what we could not take. A request
+      // already superseded while the append was in flight is left alone.
+      if (state.controller !== controller) return false;
       if (error instanceof InboxBackpressureError) {
-        // Not journalled ⇒ the cursor must not advance. Reopen later from the
-        // last committed cursor; the server replays what we could not take.
         this.reconnect(state, "inbox_backpressure", Math.max(error.retryAfterMs, 1_000));
+      } else {
+        state.failures += 1;
+        this.reconnect(state, "inbox_error", this.backoff(state));
       }
       return false;
     }

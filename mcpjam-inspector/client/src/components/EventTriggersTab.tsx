@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -46,6 +47,13 @@ interface EventTriggersTabProps {
 }
 
 function errorMessage(error: unknown, fallback: string): string {
+  // The events backend refuses with `ConvexError({ code, message })` — e.g.
+  // a trigger on someone else's subscription — and a ConvexError's own
+  // `.message` is Convex's framing around that JSON, so read the data.
+  if (error instanceof ConvexError) {
+    const message = (error.data as { message?: unknown } | null)?.message;
+    if (typeof message === "string" && message) return message;
+  }
   return error instanceof Error && error.message ? error.message : fallback;
 }
 

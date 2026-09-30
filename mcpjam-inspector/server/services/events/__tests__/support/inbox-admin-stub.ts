@@ -135,6 +135,9 @@ export async function startInboxAdminStub(options: {
             return send(200, await memory.getSecret(slotId));
           case "reconcile":
             return send(200, await memory.reconcile(slotId, body.serverSubscriptionId));
+          case "unbind":
+            await memory.unbind(slotId);
+            return send(200, { state: "pending" });
           case "rotate":
             return send(200, { ...(await memory.rotate(slotId)), previousExpiresAt: 0 });
           case "retire-previous":

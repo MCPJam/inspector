@@ -361,6 +361,65 @@ export function runEventsLifecycleSuite(adapter: LifecycleAdapter): void {
       await harness.close?.();
     });
 
+    it("counts only consecutive challenge failures toward that bound", async () => {
+      const { server, coordinator, harness } = await setup();
+      const challengeFailed = () =>
+        rpcError(-32015, "CallbackEndpointError", {
+          reason: "challenge_failed",
+        });
+      let sub = baseRecord({ mode: "webhook" });
+      // An outage on the first subscribe …
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        server.subscribeAnswers.push(new Error("socket hang up"));
+        sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      }
+      expect(sub.consecutiveFailures).toBe(4);
+      // … does not spend the challenge attempts: this is the first of five.
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        server.subscribeAnswers.push(challengeFailed());
+        sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      }
+      expect(sub.observedState).toBe("pending");
+      expect(sub.lastError).toMatchObject({
+        kind: "callback_challenge_failed",
+        retryable: true,
+      });
+      expect(sub.consecutiveFailures).toBe(4);
+      server.subscribeAnswers.push(challengeFailed());
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("error");
+      expect(sub.lastError?.retryable).toBe(false);
+      await harness.close?.();
+    });
+
+    it("allocates a fresh slot when a first subscribe outlives the pending one", async () => {
+      const { clock, server, coordinator, harness } = await setup();
+      let sub = baseRecord({ mode: "webhook" });
+      server.subscribeAnswers.push(new Error("socket hang up"));
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      const first = { slotId: sub.slotId!, callbackUrl: sub.callbackUrl! };
+      // The backoff (5 s, 10 s, 20 s, …) carries the retries past the slot's
+      // 15 min pending TTL; until then the live slot is reused.
+      const expiresAt = 1_000_000 + 15 * 60 * 1000;
+      while (sub.nextActionAt < expiresAt) {
+        clock.value = sub.nextActionAt;
+        server.subscribeAnswers.push(new Error("socket hang up"));
+        sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+        expect(sub.slotId).toBe(first.slotId);
+      }
+      expect(sub.consecutiveFailures).toBe(8);
+      // The expired slot's URL answers 410, so a challenge sent there could
+      // only fail: the subscribe that finally lands uses a new slot.
+      clock.value = sub.nextActionAt;
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("active");
+      expect(sub.slotId).not.toBe(first.slotId);
+      expect(sub.callbackUrl).not.toBe(first.callbackUrl);
+      expect(server.calls.at(-1)!.params.delivery.url).toBe(sub.callbackUrl);
+      expect(sub.serverSubscriptionId).toBe("sub_1");
+      await harness.close?.();
+    });
+
     it("pauses and resumes at the same callback URL", async () => {
       const { server, coordinator, harness } = await setup();
       let sub = applySubscriptionPatch(
@@ -376,6 +435,31 @@ export function runEventsLifecycleSuite(adapter: LifecycleAdapter): void {
       sub = applySubscriptionPatch(sub, await coordinator.step(sub));
       expect(sub.observedState).toBe("active");
       expect(server.calls.at(-1)!.params.delivery.url).toBe(url);
+      await harness.close?.();
+    });
+
+    it("binds the new server id when resume gets one", async () => {
+      const { server, coordinator, harness } = await setup();
+      let sub = applySubscriptionPatch(
+        baseRecord({ mode: "webhook" }),
+        await coordinator.step(baseRecord({ mode: "webhook" }))
+      );
+      expect(sub.serverSubscriptionId).toBe("sub_1");
+      sub = { ...sub, desiredState: "paused", generation: 2 };
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      // The draft does not require a server to reuse an id it unsubscribed.
+      server.subscribeAnswers.push({ id: "sub_2", refreshBefore: null });
+      sub = { ...sub, desiredState: "active", generation: 3 };
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("active");
+      expect(sub.serverSubscriptionId).toBe("sub_2");
+      expect(sub.conflictingServerSubscriptionId).toBeUndefined();
+      expect(sub.lastError).toBeUndefined();
+      // So the next pause still unsubscribes it.
+      sub = { ...sub, desiredState: "paused", generation: 4 };
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("paused");
+      expect(server.count("events/unsubscribe")).toBe(2);
       await harness.close?.();
     });
 

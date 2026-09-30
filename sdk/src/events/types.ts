@@ -142,11 +142,24 @@ export interface InboxPort {
     bindingKey: string;
     dispatch: boolean;
   }): Promise<InboxSlotAllocation>;
-  getSecret(slotId: string): Promise<{ secret: string; previousSecret?: string }>;
+  /**
+   * The slot's secrets, and its effective C3 `state` — `expired` is a pending
+   * slot past its TTL, whose callback answers `410` (optional: an inbox that
+   * does not report it is read as alive).
+   */
+  getSecret(
+    slotId: string
+  ): Promise<{ secret: string; previousSecret?: string; state?: string }>;
   reconcile(
     slotId: string,
     serverSubscriptionId: string
   ): Promise<{ state: string; conflict?: { existing: string; proposed: string } }>;
+  /**
+   * Back to `pending`, keeping the secret and URL, with its reconciled id
+   * cleared and no pending expiry (C3) — after a successful unsubscribe, so
+   * the next subscribe binds its id, new or reused, instead of conflicting.
+   */
+  unbind(slotId: string): Promise<void>;
   rotate(slotId: string): Promise<{ secret: string }>;
   retirePrevious(slotId: string): Promise<void>;
   remove(slotId: string): Promise<void>;

@@ -232,12 +232,14 @@ export class HttpInboxClient implements InboxPort {
     };
   }
 
-  async getSecret(slotId: string): Promise<{ secret: string; previousSecret?: string }> {
-    const result = await this.request<{ secret: string; previousSecret?: string }>(
-      "secret read",
-      "POST",
-      this.slotPath(slotId, "secret"),
-    );
+  async getSecret(
+    slotId: string,
+  ): Promise<{ secret: string; previousSecret?: string; state?: string }> {
+    const result = await this.request<{
+      secret: string;
+      previousSecret?: string;
+      state?: string;
+    }>("secret read", "POST", this.slotPath(slotId, "secret"));
     if (typeof result.secret !== "string") {
       throw new InboxHttpError("secret read", 200, "malformed_response");
     }
@@ -246,6 +248,7 @@ export class HttpInboxClient implements InboxPort {
       ...(typeof result.previousSecret === "string"
         ? { previousSecret: result.previousSecret }
         : {}),
+      ...(typeof result.state === "string" ? { state: result.state } : {}),
     };
   }
 
@@ -263,6 +266,10 @@ export class HttpInboxClient implements InboxPort {
       state: String(result.state ?? "unknown"),
       ...(result.conflict ? { conflict: result.conflict } : {}),
     };
+  }
+
+  async unbind(slotId: string): Promise<void> {
+    await this.request("slot unbind", "POST", this.slotPath(slotId, "unbind"));
   }
 
   async rotate(slotId: string, overlapMs?: number): Promise<{ secret: string }> {

@@ -4,7 +4,7 @@ Status: proposed implementation plan, revised 2026-09-30 after the plan audit. E
 
 Audience: whoever implements this, human or agent. Phases are ordered by dependency. A phase is done when its exit gate is proven, not when its code merges.
 
-### Revision 2026-09-30: audit amendments
+## Revision 2026-09-30: audit amendments
 
 The audit kept the overall direction: the SDK extension boundary, a separate public receiver on a Worker and Durable Object, and reuse of the shared turn engine. It found that the first version described features without the reliability rules underneath them. All nine findings are adopted. The audit's line references point at the first version (SHA-256 `dc6e9527…`).
 
@@ -256,7 +256,7 @@ As of 2026-09-30. This spans two PRs: MCPJam/inspector (SDK, CLI, inspector serv
 | 1 Contracts, wire, coordinator | Done | [`mcp-events-contracts.md`](./mcp-events-contracts.md). Tests: `sdk/tests/events-lifecycle.test.ts` (the lifecycle suite, also run against the hosted inbox client in the inspector server); `events-wire.integration.test.ts` (raw capability capture on both eras, and the sentinel secret absent from every captured frame across subscribe, refresh and a failed request whose error quotes it, while the server receives it exactly); Standard Webhooks tests against the published vector and an independent HMAC; push gates in `events-push.integration.test.ts` (two streams, heartbeat-only, dropped stream, cancelling one stream, rollover). |
 | 2 Webhook → agent vertical slice | Built; gates covered by unit/integration tests, not yet run on deployed infrastructure | Inbox: 61 tests (journal atomicity under an injected write failure, dispatch retry, lost response and expiry, the C3 table, rotation, backpressure, feed gaps). Convex: registry CAS and lease fencing, tombstones and late-delivery re-unsubscribe, idempotent enqueue, run keys, frozen inputs, FIFO, budgets, tool-journal parking, authorization loss, plus an inbox→Convex contract test. Inspector: keeper against the real fixture, executor against the fixture's tool with a scripted model (replay, park-on-unknown, spend refusal, prompt containment, transcript ordering). |
 | 3 Poll + conformance | Done | Poll goes through the same inbox append before the cursor advances (lifecycle suite, keeper tests). `runEventsConformance` covers MUST/SHOULD by profile, with allowed alternatives passing (`events-conformance.integration.test.ts`). |
-| 4 Surfaces | Done | Events tab (Inspect), Triggers tab (Explore), Tracing `webhook` rows, the Playground event card, local `/api/mcp/events/*` and hosted `/api/web/events/*` routes, and `mcpjam events list|poll|watch|subscribe|unsubscribe|conformance`. |
+| 4 Surfaces | Done | Events tab (Inspect), Triggers tab (Explore), Tracing `webhook` rows, the Playground event card, local `/api/mcp/events/*` and hosted `/api/web/events/*` routes, and `mcpjam events` with `list`, `poll`, `watch`, `subscribe`, `unsubscribe` and `conformance`. |
 | 5 Evals, Swarms, User Testing | Partial: needs owner design passes | Code-first `runEventStep` and the shared event-turn prompt are built; triggers attach to environments. Suite-file `event` steps and the swarm stage are proposed in [`mcp-events-phase5-design.md`](./mcp-events-phase5-design.md). |
 | 6 Push | Local done; hosted deferred | `EventsPushRuntime` is wired into the local runtime and the CLI. Hosted push stays deferred, as the support matrix says. |
 

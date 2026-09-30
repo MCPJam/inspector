@@ -132,6 +132,26 @@ describe("HttpInboxClient", () => {
     expect((error as InboxHttpError).inboxError).toBe("unknown_slot");
   });
 
+  it("reads the slot state with its secret, and unbinds a paused slot", async () => {
+    const inbox = await client();
+    const { slotId, secret } = await inbox.allocateSlot({
+      logicalSubscriptionId: "esub_1",
+      projectId: "proj_1",
+      environmentId: null,
+      bindingKey: "b".repeat(64),
+      dispatch: true,
+    });
+    expect(await inbox.getSecret(slotId)).toEqual({ secret, state: "pending" });
+    await inbox.reconcile(slotId, "sub_1");
+    await inbox.unbind(slotId);
+    expect(stub!.requests.at(-1)).toMatchObject({
+      method: "POST",
+      path: `/admin/i/${stub!.memory.inboxId}/slots/${slotId}/unbind`,
+    });
+    // Resume's new id binds; it is not a conflict with the unsubscribed one.
+    expect(await inbox.reconcile(slotId, "sub_2")).toEqual({ state: "active" });
+  });
+
   it("reads and bumps the viewer epoch", async () => {
     const inbox = await client();
     expect(await inbox.getViewerEpoch()).toBe(1);

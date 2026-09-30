@@ -20,7 +20,9 @@ import {
 } from "../profiles.js";
 import { MemoryEventInbox } from "../memory-inbox.js";
 import { buildWebhookHeaders } from "../standard-webhooks.js";
-import { computeRefreshAt } from "../coordinator.js";
+import { computeRefreshAt, EventsCoordinator } from "../coordinator.js";
+import { DRAFT_PROFILE_ID } from "../profiles.js";
+import type { EventsRpcPort } from "../types.js";
 
 describe("guards", () => {
   it("refuses a subscribe result without refreshBefore instead of reading no-expiry", () => {
@@ -216,6 +218,43 @@ describe("profiles (C1)", () => {
   });
 });
 
+describe("coordinator options (C9)", () => {
+  it("reads a coordinator option passed as undefined as its default", async () => {
+    const polls: unknown[] = [];
+    const rpc = {
+      poll: async (params: unknown) => {
+        polls.push(params);
+        return { events: [], cursor: "p1" };
+      },
+    } as unknown as EventsRpcPort;
+    const inbox = new MemoryEventInbox({ publicOrigin: "https://h" });
+    const coordinator = new EventsCoordinator({
+      rpc: async () => rpc,
+      inbox: async () => inbox,
+      clock: undefined,
+      maxPagesPerStep: undefined,
+    });
+    const outcome = await coordinator.step({
+      id: "esub_1",
+      projectId: "p",
+      environmentId: null,
+      bindingKey: "b",
+      serverId: "srv_1",
+      profile: DRAFT_PROFILE_ID,
+      eventName: "thing.happened",
+      arguments: {},
+      mode: "poll",
+      desiredState: "active",
+      observedState: "pending",
+      generation: 1,
+      nextActionAt: 0,
+      consecutiveFailures: 0,
+    });
+    expect(polls).toHaveLength(1);
+    expect(outcome.patch.lastCursor).toBe("p1");
+  });
+});
+
 describe("MemoryEventInbox receive (C3 table)", () => {
   async function signed(
     inbox: MemoryEventInbox,
@@ -304,6 +343,50 @@ describe("MemoryEventInbox receive (C3 table)", () => {
     const b = await slot(inbox);
     now += 2000;
     expect((await signed(inbox, b.slotId, event("e3"), "e3", { now })).status).toBe(410);
+  });
+
+  it("reports an expired pending slot and never binds it", async () => {
+    let now = Date.now();
+    const inbox = new MemoryEventInbox({
+      publicOrigin: "https://h",
+      clock: { now: () => now },
+      pendingTtlMs: 1000,
+    });
+    const { slotId, secret } = await slot(inbox);
+    expect(await inbox.getSecret(slotId)).toEqual({ secret, state: "pending" });
+    now += 1000;
+    expect(await inbox.getSecret(slotId)).toEqual({ secret, state: "expired" });
+    expect(inbox.slotState(slotId)?.state).toBe("expired");
+    // Like the Durable Object's `409 slot_expired`: not resurrectable.
+    await expect(inbox.reconcile(slotId, "sub_1")).rejects.toThrow(/expired/);
+  });
+
+  it("unbinds a paused slot so resume binds a new server id", async () => {
+    let now = Date.now();
+    const inbox = new MemoryEventInbox({
+      publicOrigin: "https://h",
+      clock: { now: () => now },
+      pendingTtlMs: 1000,
+    });
+    const { slotId, secret } = await slot(inbox);
+    await inbox.reconcile(slotId, "sub_1");
+    expect(await inbox.reconcile(slotId, "sub_2")).toMatchObject({
+      conflict: { existing: "sub_1", proposed: "sub_2" },
+    });
+    await inbox.unbind(slotId);
+    await inbox.unbind(slotId); // idempotent
+    expect(inbox.slotState(slotId)).toMatchObject({ state: "pending" });
+    expect(inbox.slotState(slotId)?.serverSubscriptionId).toBeUndefined();
+    // A paused subscription holds its slot: no pending expiry, same secret.
+    now += 60_000;
+    expect(await inbox.getSecret(slotId)).toEqual({ secret, state: "pending" });
+    expect(
+      (await signed(inbox, slotId, event("e1"), "e1", { now })).status
+    ).toBe(200);
+    expect(await inbox.reconcile(slotId, "sub_2")).toEqual({ state: "active" });
+    expect(inbox.slotState(slotId)?.serverSubscriptionId).toBe("sub_2");
+    await inbox.remove(slotId);
+    await expect(inbox.unbind(slotId)).rejects.toThrow(/removed/);
   });
 
   it("quarantines a malformed signed event instead of dropping or retrying it", async () => {

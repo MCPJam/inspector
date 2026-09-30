@@ -227,10 +227,15 @@ export class EventsCoordinator {
     typeof DEFAULTS & { clock: { now(): number } };
 
   constructor(options: EventsCoordinatorOptions) {
+    // An option passed as `undefined` means "the default", not "undefined"
+    // (a `maxPagesPerStep: undefined` would otherwise poll zero pages).
+    const given = Object.fromEntries(
+      Object.entries(options).filter(([, value]) => value !== undefined)
+    );
     this.options = {
       ...DEFAULTS,
       clock: { now: () => Date.now() },
-      ...options,
+      ...given,
     } as EventsCoordinator["options"];
   }
 
@@ -281,7 +286,15 @@ export class EventsCoordinator {
   ): StepOutcome {
     const now = this.now();
     const failure = classifyStepFailure(method, error, now);
-    const failures = record.consecutiveFailures + 1;
+    // `challenge_failed` is capped on its OWN streak: failures of another
+    // kind before it (an outage on the first subscribe) must not spend its
+    // attempts, so the count — and with it the backoff — restarts when the
+    // previous failure was something else.
+    const failures =
+      failure.kind === "callback_challenge_failed" &&
+      record.lastError?.kind !== "callback_challenge_failed"
+        ? 1
+        : record.consecutiveFailures + 1;
     const { authLost, ...lastError } = failure;
     if (authLost) {
       return {
@@ -347,6 +360,23 @@ export class EventsCoordinator {
     let slotId = record.slotId;
     let callbackUrl = record.callbackUrl;
     let secret: string | undefined;
+    if (slotId && callbackUrl && record.rotation?.phase !== "requested") {
+      // A slot never reconciled expires after its pending TTL, and its URL
+      // then answers 410 — a challenge sent there can only fail. A first
+      // subscribe that outlived it (retries through an outage) gets a fresh
+      // slot instead of reusing the dead one.
+      try {
+        const current = await inbox.getSecret(slotId);
+        if (current.state === "expired") {
+          slotId = undefined;
+          callbackUrl = undefined;
+        } else {
+          secret = current.secret;
+        }
+      } catch (error) {
+        return this.fail(record, "inbox/secret", error);
+      }
+    }
     if (!slotId || !callbackUrl) {
       try {
         const allocation = await inbox.allocateSlot({
@@ -370,21 +400,15 @@ export class EventsCoordinator {
     // 2. Rotation (contract C3): new secret on the slot FIRST, then refresh
     //    the server with it; the previous secret stays valid on the slot for
     //    the overlap until a refresh with the new one is known to succeed.
+    //    Only a kept slot with a rotation requested has no secret yet here.
     let rotated = false;
-    if (record.rotation?.phase === "requested" && secret === undefined) {
+    if (secret === undefined) {
       try {
         secret = (await inbox.rotate(slotId)).secret;
         patch.rotation = { phase: "rotated", at: now };
         rotated = true;
       } catch (error) {
         return this.fail(record, "inbox/rotate", error, patch);
-      }
-    }
-    if (secret === undefined) {
-      try {
-        secret = (await inbox.getSecret(slotId)).secret;
-      } catch (error) {
-        return this.fail(record, "inbox/secret", error, patch);
       }
     }
 
@@ -589,6 +613,18 @@ export class EventsCoordinator {
         });
       } catch (error) {
         return this.fail(record, "events/unsubscribe", error);
+      }
+      // The server's id died with the unsubscribe, and the draft does not
+      // promise resume gets it back: unbind the slot (secret and URL kept)
+      // so resume binds whatever id it returns instead of a conflict. A retry
+      // after a failed unbind unsubscribes again, which is "already gone".
+      if (record.slotId) {
+        try {
+          const inbox = await this.options.inbox(record);
+          await inbox.unbind(record.slotId);
+        } catch (error) {
+          return this.fail(record, "inbox/unbind", error);
+        }
       }
     }
     return {

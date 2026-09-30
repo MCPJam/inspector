@@ -20,9 +20,11 @@
  * first proves the caller is a member of the project NOW (C7), through a
  * Convex read made with the caller's own bearer — the inspector never takes
  * a project id's word for it. `simulate` and `slot-state` additionally check
- * that the subscription belongs to that project. A viewer token is the only
- * credential that ever leaves here, and it is scoped to one inbox, read-only,
- * and valid for at most ten minutes.
+ * that the subscription belongs to that project, and `simulate` that the
+ * caller OWNS it: a simulated event runs the subscription's triggers, which
+ * act with the owner's credentials. A viewer token is the only credential
+ * that ever leaves here, and it is scoped to one inbox, read-only, and valid
+ * for at most ten minutes.
  */
 
 import { Hono } from "hono";
@@ -51,10 +53,16 @@ import {
   isEventsBackendConfigured,
   type EventSubscriptionRow,
 } from "../../services/events/backend-client.js";
-import { getEventsInboxUrl, getEventsInboxViewerKey } from "../../services/events/config.js";
+import {
+  getEventsInboxUrl,
+  getEventsInboxViewerKey,
+} from "../../services/events/config.js";
 import { HttpInboxClient } from "../../services/events/inbox-client.js";
 import { classifyEventsRouteError } from "../../services/events/route-errors.js";
-import { issueViewerToken } from "../../services/events/viewer-token.js";
+import {
+  issueViewerToken,
+  MIN_VIEWER_KEY_LENGTH,
+} from "../../services/events/viewer-token.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { translateConvexReadError } from "../v1/convex-read-errors.js";
 
@@ -64,9 +72,20 @@ import { translateConvexReadError } from "../v1/convex-read-errors.js";
 
 export interface WebEventsDeps {
   backend: () => Pick<EventsBackendClient, "ensureInbox" | "getSubscription">;
-  inbox: (inboxId: string) => Pick<HttpInboxClient, "getViewerEpoch" | "simulate" | "slotState">;
+  inbox: (
+    inboxId: string,
+  ) => Pick<HttpInboxClient, "getViewerEpoch" | "simulate" | "slotState">;
   /** `projects:getProjectCapabilities` with the caller's bearer. */
-  projectAccess: (c: Context, projectId: string) => Promise<ProjectAccessRow | null>;
+  projectAccess: (
+    c: Context,
+    projectId: string,
+  ) => Promise<ProjectAccessRow | null>;
+  /**
+   * `eventSubscriptions:authorizeSimulation` with the caller's bearer: throws
+   * unless the caller owns the subscription. Convex resolves the caller, so
+   * the owner comparison is between ids of the same kind.
+   */
+  authorizeSimulation: (c: Context, subscriptionId: string) => Promise<void>;
   now: () => number;
 }
 
@@ -95,13 +114,51 @@ const defaultDeps: WebEventsDeps = {
       });
     }
   },
+  authorizeSimulation: async (c, subscriptionId) => {
+    const client = createConvexClient(await getConvexBearerForRequest(c));
+    try {
+      await client.query(
+        "eventSubscriptions:authorizeSimulation" as never,
+        { subscriptionId } as never,
+      );
+    } catch (error) {
+      throw simulationRefusal(error);
+    }
+  },
   now: () => Date.now(),
 };
+
+/**
+ * How `authorizeSimulation` refusing becomes an answer. The owner refusal is a
+ * 403 with the backend's reason, not the neutral 404 the shared translator
+ * gives a coded `FORBIDDEN`: the caller has already proved membership and can
+ * see this subscription, so "not found" would only mislead.
+ */
+export function simulationRefusal(error: unknown): WebRouteError {
+  const data = (error as { data?: unknown } | null)?.data as
+    { code?: unknown; message?: unknown } | undefined;
+  if (data && typeof data === "object" && data.code === "FORBIDDEN") {
+    return new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      typeof data.message === "string" && data.message
+        ? data.message
+        : "Only the subscription's owner can simulate its events.",
+    );
+  }
+  return translateConvexReadError(error, {
+    scope: "web.events.simulate",
+    notFoundMessage: "Subscription not found",
+    redactedIsRefusal: true,
+  });
+}
 
 let deps: WebEventsDeps = defaultDeps;
 
 /** Test seam. Pass `undefined` to restore the defaults. */
-export function setWebEventsDepsForTests(next: Partial<WebEventsDeps> | undefined): void {
+export function setWebEventsDepsForTests(
+  next: Partial<WebEventsDeps> | undefined,
+): void {
   deps = next ? { ...defaultDeps, ...next } : defaultDeps;
 }
 
@@ -109,21 +166,31 @@ export function setWebEventsDepsForTests(next: Partial<WebEventsDeps> | undefine
 // Helpers
 // ---------------------------------------------------------------------------
 
-const ORG_ROLE_RANK: Record<string, number> = { guest: 0, member: 1, admin: 2, owner: 3 };
+const ORG_ROLE_RANK: Record<string, number> = {
+  guest: 0,
+  member: 1,
+  admin: 2,
+  owner: 3,
+};
 
 /**
  * C7 "member now": an organization member (or higher), or a holder of a
  * project grant. A guest with no grant is refused, as is a caller the read
  * does not recognize at all.
  */
-async function assertProjectMember(c: Context, projectId: string): Promise<void> {
+async function assertProjectMember(
+  c: Context,
+  projectId: string,
+): Promise<void> {
   const row = await deps.projectAccess(c, projectId);
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found");
   }
   const rank = ORG_ROLE_RANK[row.role ?? ""] ?? 0;
   const granted =
-    row.isProjectAdmin === true || row.projectRole === "admin" || row.projectRole === "editor";
+    row.isProjectAdmin === true ||
+    row.projectRole === "admin" ||
+    row.projectRole === "editor";
   if (rank < ORG_ROLE_RANK.member! && !granted) {
     throw new WebRouteError(
       403,
@@ -150,7 +217,11 @@ async function projectSubscription(
 ): Promise<EventSubscriptionRow> {
   const row = await deps.backend().getSubscription(subscriptionId);
   if (!row || String(row.projectId) !== projectId) {
-    throw new WebRouteError(404, ErrorCode.EVENTS_NOT_FOUND, "Subscription not found");
+    throw new WebRouteError(
+      404,
+      ErrorCode.EVENTS_NOT_FOUND,
+      "Subscription not found",
+    );
   }
   return row;
 }
@@ -159,10 +230,14 @@ function decodeJwtSub(bearer: string): string | undefined {
   const parts = bearer.split(".");
   if (parts.length !== 3) return undefined;
   try {
-    const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as {
+    const payload = JSON.parse(
+      Buffer.from(parts[1]!, "base64url").toString("utf8"),
+    ) as {
       sub?: unknown;
     };
-    return typeof payload.sub === "string" && payload.sub ? payload.sub : undefined;
+    return typeof payload.sub === "string" && payload.sub
+      ? payload.sub
+      : undefined;
   } catch {
     return undefined;
   }
@@ -182,10 +257,17 @@ async function viewerUserId(c: Context): Promise<string> {
   if (guestId) return `guest:${guestId}`;
   const sub = decodeJwtSub(await getConvexBearerForRequest(c));
   if (sub) return sub;
-  throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Cannot identify the viewer.");
+  throw new WebRouteError(
+    401,
+    ErrorCode.UNAUTHORIZED,
+    "Cannot identify the viewer.",
+  );
 }
 
-function supportView(manager: MCPClientManager, serverId: string): {
+function supportView(
+  manager: MCPClientManager,
+  serverId: string,
+): {
   support: EventsSupportView;
   rawCapabilities?: Record<string, unknown>;
   protocolVersion?: string;
@@ -200,8 +282,12 @@ function supportView(manager: MCPClientManager, serverId: string): {
       ...(support.capability ? { capability: support.capability } : {}),
       ...(support.source ? { source: support.source } : {}),
     },
-    ...(captured?.rawCapabilities ? { rawCapabilities: captured.rawCapabilities } : {}),
-    ...(captured?.protocolVersion ? { protocolVersion: captured.protocolVersion } : {}),
+    ...(captured?.rawCapabilities
+      ? { rawCapabilities: captured.rawCapabilities }
+      : {}),
+    ...(captured?.protocolVersion
+      ? { protocolVersion: captured.protocolVersion }
+      : {}),
   };
 }
 
@@ -216,7 +302,9 @@ async function withInboxBackpressure<T>(fn: () => Promise<T>): Promise<T> {
         ErrorCode.EVENTS_UNAVAILABLE,
         "The project's event inbox is full; retry shortly.",
       ).withHeaders({
-        "Retry-After": String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))),
+        "Retry-After": String(
+          Math.max(1, Math.ceil(error.retryAfterMs / 1000)),
+        ),
       });
     }
     throw error;
@@ -224,7 +312,10 @@ async function withInboxBackpressure<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** Events failures → the events codes; anything else passes through. */
-async function mapEventsErrors<T>(method: string, fn: () => Promise<T>): Promise<T> {
+async function mapEventsErrors<T>(
+  method: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   try {
     return await fn();
   } catch (error) {
@@ -322,9 +413,13 @@ events.post("/poll", async (c) =>
       const response: EventsPollResponse = {
         events: result.events as EventsPollResponse["events"],
         ...(result.cursor !== undefined ? { cursor: result.cursor } : {}),
-        ...(result.truncated !== undefined ? { truncated: result.truncated } : {}),
+        ...(result.truncated !== undefined
+          ? { truncated: result.truncated }
+          : {}),
         ...(result.hasMore !== undefined ? { hasMore: result.hasMore } : {}),
-        ...(result.nextPollMs !== undefined ? { nextPollMs: result.nextPollMs } : {}),
+        ...(result.nextPollMs !== undefined
+          ? { nextPollMs: result.nextPollMs }
+          : {}),
       };
       return response;
     }),
@@ -335,7 +430,10 @@ events.post("/viewer-token", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(viewerTokenSchema, await readJsonBody(c));
     requireEventsPlane();
-    if (!getEventsInboxViewerKey()) {
+    // A short key would make signing throw a config error (a 500); it is the
+    // same configuration gap as a missing one.
+    const viewerKey = getEventsInboxViewerKey();
+    if (!viewerKey || viewerKey.length < MIN_VIEWER_KEY_LENGTH) {
       throw new WebRouteError(
         503,
         ErrorCode.EVENTS_UNAVAILABLE,
@@ -374,6 +472,7 @@ events.post("/simulate", async (c) =>
     requireEventsPlane();
     await assertProjectMember(c, body.projectId);
     const row = await projectSubscription(body.projectId, body.subscriptionId);
+    await deps.authorizeSimulation(c, String(row._id));
     if (row.desiredState === "removed") {
       throw new WebRouteError(
         404,
@@ -381,20 +480,23 @@ events.post("/simulate", async (c) =>
         "The subscription was removed.",
       );
     }
-    const inboxId = row.inboxId ?? (await deps.backend().ensureInbox(body.projectId)).inboxId;
+    const inboxId =
+      row.inboxId ?? (await deps.backend().ensureInbox(body.projectId)).inboxId;
     const eventId = body.event.eventId ?? `sim_${crypto.randomUUID()}`;
-    const result = await withInboxBackpressure(() => deps.inbox(inboxId).simulate({
-      logicalSubscriptionId: row.logicalId,
-      projectId: body.projectId,
-      environmentId: row.environmentId ? String(row.environmentId) : null,
-      bindingKey: row.bindingKey,
-      event: {
-        eventId,
-        name: body.event.name ?? row.eventName,
-        timestamp: body.event.timestamp ?? new Date(deps.now()).toISOString(),
-        data: body.event.data,
-      },
-    }));
+    const result = await withInboxBackpressure(() =>
+      deps.inbox(inboxId).simulate({
+        logicalSubscriptionId: row.logicalId,
+        projectId: body.projectId,
+        environmentId: row.environmentId ? String(row.environmentId) : null,
+        bindingKey: row.bindingKey,
+        event: {
+          eventId,
+          name: body.event.name ?? row.eventName,
+          timestamp: body.event.timestamp ?? new Date(deps.now()).toISOString(),
+          data: body.event.data,
+        },
+      }),
+    );
     return {
       accepted: result.accepted > 0 || result.duplicates > 0,
       eventId,
@@ -430,7 +532,9 @@ events.post("/slot-state", async (c) =>
         reason: rejection.reason,
         ...(rejection.slotId ? { slotId: rejection.slotId } : {}),
         at: rejection.at,
-        headerNames: Array.isArray(rejection.headerNames) ? rejection.headerNames : [],
+        headerNames: Array.isArray(rejection.headerNames)
+          ? rejection.headerNames
+          : [],
         bodyBytes: rejection.bodyBytes,
       })),
     };

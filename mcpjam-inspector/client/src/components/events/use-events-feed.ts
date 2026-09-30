@@ -272,6 +272,10 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
     let timers: Array<ReturnType<typeof setTimeout>> = [];
     let token: EventsViewerTokenResponse | null = null;
     let failuresWithoutOpen = 0;
+    // Viewer-token failures back off on their own count: they say nothing
+    // about whether a stream would open, so they must not push the feed onto
+    // polling, which has no way back to the live stream.
+    let tokenFailures = 0;
 
     const later = (fn: () => void, ms: number) => {
       timers.push(setTimeout(fn, ms));
@@ -335,15 +339,13 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       let current: EventsViewerTokenResponse;
       try {
         current = await getToken(freshToken);
+        tokenFailures = 0;
       } catch (err) {
         if (disposed) return;
         setStatus("error");
         setError(errorMessage(err, "Could not authorize the feed"));
-        failuresWithoutOpen += 1;
-        later(
-          () => void connect(true),
-          Math.min(30_000, 2000 * failuresWithoutOpen),
-        );
+        tokenFailures += 1;
+        later(() => void connect(true), Math.min(30_000, 2000 * tokenFailures));
         return;
       }
       if (disposed) return;
