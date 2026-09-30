@@ -57,10 +57,11 @@ export const GOOGLE_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
 export const HARNESS_REASONING_EFFORTS: Readonly<
   Record<Harness, readonly ModelReasoningEffort[]>
 > = {
-  // Mapping code exists (the adapter's `effort` option + adaptive thinking) but
-  // stays inert: the live check against the AI Gateway that gates these rows
-  // has not been run, so an effort on Claude Code is still REFUSED. Fill this
-  // row only from that check's evidence.
+  // STILL REFUSED, PENDING THE LIVE CHECK. The adapter has the mapping code
+  // (`effort` option + adaptive thinking + effort env), but whether the AI
+  // Gateway accepts adaptive thinking + `output_config.effort` per model, and
+  // what reaches the wire, needs a staging run that has not happened. Fill
+  // this row only from that check's evidence, never by inference.
   "claude-code": [],
   // Both transports apply it through their own option (exec `reasoningEffort`,
   // app-server `turn/start effort`). none / minimal / max stay refused until

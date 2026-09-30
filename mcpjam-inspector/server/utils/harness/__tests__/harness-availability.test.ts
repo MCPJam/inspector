@@ -8,6 +8,7 @@ import {
   selectionReasoningEffort,
 } from "../harness-availability";
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
+import { MODEL_REASONING_EFFORTS } from "@mcpjam/sdk/browser";
 import { registeredHarnessIds } from "../registry";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
@@ -794,6 +795,33 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
           }),
         ),
       ).toEqual({ ok: true });
+    },
+  );
+
+  // STILL REFUSED PENDING THE LIVE CHECK. Claude Code's mapping code exists
+  // (`effort` option + adaptive thinking + the effort env), but the evidence
+  // that the AI Gateway accepts it (adaptive thinking + `output_config.effort`
+  // per model, and the wire effort at the proxy) needs staging access that has
+  // not been run. Until those rows exist this must stay empty: do not add a
+  // level to `HARNESS_REASONING_EFFORTS["claude-code"]` without that evidence.
+  it.each(MODEL_REASONING_EFFORTS)(
+    "still refuses %s on Claude Code (live check pending)",
+    (reasoningEffort) => {
+      setFullyAvailable();
+      expect(HARNESS_REASONING_EFFORTS["claude-code"]).toEqual([]);
+      expect(getHarnessAdapter("claude-code").supportedReasoningEfforts).toEqual(
+        [],
+      );
+      const verdict = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "claude-code",
+          model: { id: "anthropic/claude-haiku-4.5" },
+          reasoningEffort,
+        }),
+      );
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) throw new Error("unreachable");
+      expect(verdict.kind).toBe("setting-unsupported");
     },
   );
 
