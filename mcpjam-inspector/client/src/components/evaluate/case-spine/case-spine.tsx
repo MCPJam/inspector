@@ -77,9 +77,12 @@ import {
   deleteActionPlan,
   moveActionBlock,
   removeActionWithChecks,
+  replaceActionTools,
   spineStatus,
+  toolsByLaterAction,
   type DeleteActionPlan,
 } from "./case-spine-model";
+import { SuiteRowsDisclosure } from "../case-scorecard/suite-rows-disclosure";
 
 export type CaseSpineProps = {
   steps: TestStep[];
@@ -270,6 +273,32 @@ export function CaseSpine({
     [card.groups, trialIteration, trialChain, steps, stepStatusById],
   );
   const wholeCaseRows = afterTheRunRows(card);
+  const ownWholeCaseRows = wholeCaseRows.filter(
+    (row) => row.provenance !== "suite",
+  );
+  const suiteWholeCaseRows = wholeCaseRows.filter(
+    (row) => row.provenance === "suite",
+  );
+  const suiteRowFailed = suiteWholeCaseRows.some((row) => {
+    const state = results?.get(row.key)?.result.state;
+    return state === "failed" || state === "error";
+  });
+  // Each later prompt's own tools, and what the first prompt's block keeps.
+  const laterTools = useMemo(() => toolsByLaterAction(steps), [steps]);
+  const laterToolList = useMemo(
+    () => [...laterTools.values()].flat(),
+    [laterTools],
+  );
+  const firstRoute = useMemo(() => {
+    const route = card.route.route;
+    if (route?.kind !== "tools" || laterToolList.length === 0)
+      return card.route;
+    const later = new Set(laterToolList.map((tool) => tool.id));
+    return {
+      ...card.route,
+      route: { ...route, tools: route.tools.filter((t) => !later.has(t.id)) },
+    };
+  }, [card.route, laterToolList]);
   const [emptyPromptId] = useState(() => newStepId("prompt"));
   const rows = useMemo(
     () =>
@@ -386,6 +415,50 @@ export function CaseSpine({
       return;
     }
     setPendingDelete({ ...plan, stepId });
+  };
+
+  const renderWholeCaseRow = (row: (typeof wholeCaseRows)[number]) => {
+    const result = results?.get(row.key);
+    if (result)
+      return (
+        <TrialScorecardRow
+          key={row.key}
+          row={result}
+          syncedStepId={syncedStepId}
+          onSyncStep={onHoverStep}
+        />
+      );
+    return (
+      <ScorecardRowView
+        key={row.key}
+        row={row}
+        readOnly={readOnly}
+        checkPolicy={checkPolicy}
+        availableTools={availableTools.map((tool) => tool.name)}
+        onChangePredicate={
+          row.provenance === "case"
+            ? (next) =>
+                onPredicatesChange({
+                  mode: predicates?.mode ?? "extend",
+                  list: (predicates?.list ?? []).map((item, index) =>
+                    index === row.predicateIndex ? next : item,
+                  ),
+                })
+            : undefined
+        }
+        onRemove={
+          row.provenance === "case"
+            ? () =>
+                onPredicatesChange({
+                  mode: predicates?.mode ?? "extend",
+                  list: (predicates?.list ?? []).filter(
+                    (_, index) => index !== row.predicateIndex,
+                  ),
+                })
+            : undefined
+        }
+      />
+    );
   };
 
   // ── the spine ──────────────────────────────────────────────────────────────
@@ -561,20 +634,77 @@ export function CaseSpine({
                   <TrialScorecardRow row={results.get(card.route.key)!} />
                 ) : (
                   <RouteRow
-                    row={card.route}
+                    row={firstRoute}
                     availableTools={availableTools.map((tool) => tool.name)}
                     toolsStatus={toolsStatus}
                     onRetryTools={onRetryTools}
                     readOnly={readOnly}
                     showUnsetError={showUnsetError}
                     negativeContradiction={card.negativeContradiction}
-                    onSetTools={setTools}
+                    onSetTools={(tools) =>
+                      setTools([...tools, ...laterToolList])
+                    }
                     onChooseNoTool={chooseNoTool}
                     onChooseTools={chooseTools}
                     onAddTool={addTool}
                     onSetKind={setKind}
                   />
                 )}
+              </ul>
+            ) : null}
+
+            {/* A later prompt's own tools, under that prompt: the runner grades
+                them against its turn. */}
+            {action.ordinal > 1 &&
+            laterTools.has(action.step.id) &&
+            card.route.route?.kind === "tools" ? (
+              <ul className="space-y-1.5">
+                <RouteRow
+                  turnScoped
+                  row={{
+                    ...card.route,
+                    key: `${card.route.key}:${action.step.id}`,
+                    route: {
+                      ...card.route.route,
+                      tools: laterTools.get(action.step.id)!,
+                    },
+                  }}
+                  availableTools={availableTools.map((tool) => tool.name)}
+                  toolsStatus={toolsStatus}
+                  onRetryTools={onRetryTools}
+                  readOnly={readOnly}
+                  showUnsetError={false}
+                  negativeContradiction={false}
+                  onSetTools={(next) =>
+                    !readOnly &&
+                    onStepsChange(
+                      replaceActionTools(
+                        steps,
+                        action.step.id,
+                        laterTools.get(action.step.id)!,
+                        next,
+                      ),
+                    )
+                  }
+                  onAddTool={(toolName) => {
+                    const name = toolName.trim();
+                    if (readOnly || !name) return;
+                    const current = laterTools.get(action.step.id)!;
+                    onStepsChange(
+                      replaceActionTools(steps, action.step.id, current, [
+                        ...current,
+                        {
+                          id: newStepId("assert"),
+                          toolName: name,
+                          arguments: {},
+                        },
+                      ]),
+                    );
+                  }}
+                  onChooseNoTool={() => {}}
+                  onChooseTools={() => {}}
+                  onSetKind={setKind}
+                />
               </ul>
             ) : null}
 
@@ -653,7 +783,7 @@ export function CaseSpine({
           placeholder={
             readOnly
               ? "No expected outcome captured"
-              : "States the signed-in account's email address."
+              : "One sentence the judge scores against"
           }
           className={cnBorder(undefined)}
         />
@@ -662,51 +792,21 @@ export function CaseSpine({
       {wholeCaseRows.length > 0 && (
         <section className="space-y-2" aria-label="Whole-case assertions">
           <h3 className="text-sm font-semibold">Whole-case assertions</h3>
-          <ul className="space-y-1.5">
-            {wholeCaseRows.map((row) => {
-              const result = results?.get(row.key);
-              if (result)
-                return (
-                  <TrialScorecardRow
-                    key={row.key}
-                    row={result}
-                    syncedStepId={syncedStepId}
-                    onSyncStep={onHoverStep}
-                  />
-                );
-              return (
-                <ScorecardRowView
-                  key={row.key}
-                  row={row}
-                  readOnly={readOnly}
-                  checkPolicy={checkPolicy}
-                  availableTools={availableTools.map((tool) => tool.name)}
-                  onChangePredicate={
-                    row.provenance === "case"
-                      ? (next) =>
-                          onPredicatesChange({
-                            mode: predicates?.mode ?? "extend",
-                            list: (predicates?.list ?? []).map((item, index) =>
-                              index === row.predicateIndex ? next : item,
-                            ),
-                          })
-                      : undefined
-                  }
-                  onRemove={
-                    row.provenance === "case"
-                      ? () =>
-                          onPredicatesChange({
-                            mode: predicates?.mode ?? "extend",
-                            list: (predicates?.list ?? []).filter(
-                              (_, index) => index !== row.predicateIndex,
-                            ),
-                          })
-                      : undefined
-                  }
-                />
-              );
-            })}
-          </ul>
+          {ownWholeCaseRows.length > 0 ? (
+            <ul className="space-y-1.5">
+              {ownWholeCaseRows.map(renderWholeCaseRow)}
+            </ul>
+          ) : null}
+          {suiteWholeCaseRows.length > 0 ? (
+            <SuiteRowsDisclosure
+              rows={suiteWholeCaseRows}
+              defaultOpen={suiteRowFailed}
+            >
+              <ul className="space-y-1.5">
+                {suiteWholeCaseRows.map(renderWholeCaseRow)}
+              </ul>
+            </SuiteRowsDisclosure>
+          ) : null}
         </section>
       )}
       {pendingDelete ? (
