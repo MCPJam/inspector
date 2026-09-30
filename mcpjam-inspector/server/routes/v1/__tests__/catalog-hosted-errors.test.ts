@@ -1,5 +1,5 @@
 /**
- * MJ-020 (retest #3 residual): the read-proxy family must not relay Convex's
+ * MJ-020: the read-proxy family must not relay Convex's
  * own exception text. An upstream error envelope carrying an
  * `ArgumentValidationError` — which quotes the whole validator definition —
  * answers with generic copy and a request id in hosted mode, with the detail

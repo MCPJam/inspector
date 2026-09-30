@@ -35,8 +35,7 @@ export const PROXY_TIMEOUT_MS = 15_000;
  * Convex's own failure prose, relayed inside an upstream error envelope. An
  * argument-validation rejection quotes the whole validator definition
  * (`Validator: v.union(v.literal("mcp-apps"), …)`) and Convex prefixes its
- * request id — text written for operators, not callers (MJ-020 retest #3:
- * "the raw Convex validator is still returned by the read-proxy family").
+ * request id — text written for operators, not callers (MJ-020).
  * The verbatim-passthrough contract holds for envelopes the upstream AUTHORED;
  * these markers only ever appear when it relayed a Convex exception instead.
  */
