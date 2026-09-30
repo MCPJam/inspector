@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   ANTHROPIC_REASONING_EFFORTS,
   HARNESS_REASONING_EFFORTS,
+} from "../src/host-config/internal.js";
+import {
   MODEL_REASONING_EFFORTS,
   reasoningEffortProviderOptions,
   selectionConfigKey,
@@ -81,11 +83,21 @@ describe("supportedReasoningEfforts", () => {
     ]) {
       expect(efforts("openai", chat), chat).toEqual([]);
     }
-    expect(efforts("openai", "openai/o3-mini", "org")).toEqual([
+    expect(efforts("openai", "openai/o3-mini")).toEqual([
       "low",
       "medium",
       "high",
     ]);
+    // Only o-series ids the provider sends effort for; o1-mini / o1-preview
+    // reject the parameter and unknown oN are unverified.
+    for (const id of ["o1", "o3", "o4-mini", "o1-2024-12-17"]) {
+      expect(efforts("openai", id), id).toEqual(["low", "medium", "high"]);
+    }
+    for (const id of ["o1-mini", "o1-preview", "o4", "o5", "o3-pro"]) {
+      expect(efforts("openai", id), id).toEqual([]);
+    }
+    // The org runtime is unknown until resolved: nothing is offered.
+    expect(efforts("openai", "gpt-5", "org")).toEqual([]);
     expect(efforts("openai", "gpt-4o")).toEqual([]);
     // Per version: 4.5 low-high, 4.6 adds max, Opus 4.7+ adds xhigh.
     expect(efforts("anthropic", "anthropic/claude-opus-4-5")).toEqual([
@@ -294,6 +306,18 @@ describe("selectionIfMatches", () => {
 });
 
 describe("browser entry", () => {
+  it("keeps the level tables off the public entries", () => {
+    const record = browser as Record<string, unknown>;
+    for (const name of [
+      "OPENAI_REASONING_EFFORTS",
+      "ANTHROPIC_REASONING_EFFORTS",
+      "GOOGLE_REASONING_EFFORTS",
+      "HARNESS_REASONING_EFFORTS",
+    ]) {
+      expect(record[name], name).toBeUndefined();
+    }
+  });
+
   it("exports the effort helpers", () => {
     expect(typeof browser.supportedReasoningEfforts).toBe("function");
     expect(typeof browser.reasoningEffortProviderOptions).toBe("function");

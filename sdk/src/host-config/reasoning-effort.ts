@@ -64,7 +64,12 @@ export const HARNESS_REASONING_EFFORTS: Readonly<
 
 // ── Capability ───────────────────────────────────────────────────────────
 
-/** Where a call runs, which decides who owns the capability. */
+/**
+ * Where a call runs, which decides who owns the capability. Pass the CONCRETE
+ * route: `org` means the org's runtime (cloud vs local) is not known yet, so
+ * it answers "no efforts" rather than offer levels the cloud runtime would
+ * refuse; resolve it to `direct` or `orgCloud` first.
+ */
 export type ReasoningEffortRoute = "direct" | "hosted" | "orgCloud" | "org";
 
 /** The model name without a `provider/` prefix. */
@@ -83,7 +88,11 @@ function bareModelName(modelId: string): string {
  */
 function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
   if (/-(?:pro|chat)(?:[.-]|$)/.test(name)) return [];
-  if (/^o[1-9](?:[.-]|$)/.test(name)) return ["low", "medium", "high"];
+  // o-series: only the ids the provider sends effort for. `o1-mini` and
+  // `o1-preview` reject the parameter, and unknown `oN` are unverified.
+  if (/^(?:o1|o3|o3-mini|o4-mini)(?:-\d{4}-\d{2}-\d{2})?$/.test(name)) {
+    return ["low", "medium", "high"];
+  }
   const codex = /-codex(?:[.-]|$)/.test(name);
   if (/^gpt-5\.1-codex-max(?:[.-]|$)/.test(name)) {
     return ["low", "medium", "high", "xhigh"];
@@ -207,7 +216,8 @@ function orderedEfforts(values: readonly string[]): ModelReasoningEffort[] {
  *
  *  - harness  → the adapter's verified table (empty until verified).
  *  - hosted   → the catalog's list, nothing else.
- *  - direct / org → the provider tables above.
+ *  - direct   → the provider tables above.
+ *  - org      → none: the concrete runtime is unknown (see the route type).
  *  - orgCloud → none yet: the org-cloud stream does not apply an effort
  *    (flip when it does, in the same change as the backend).
  */
@@ -220,10 +230,10 @@ export function supportedReasoningEfforts(
   switch (input.route) {
     case "hosted":
       return orderedEfforts(input.catalogEfforts ?? []);
+    case "org":
     case "orgCloud":
       return [];
     case "direct":
-    case "org":
       return orderedEfforts(directEfforts(input.providerKey, input.modelId));
   }
 }

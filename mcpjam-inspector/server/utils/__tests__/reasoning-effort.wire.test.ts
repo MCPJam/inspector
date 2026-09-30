@@ -147,25 +147,39 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
           modelId,
           effort,
         })!;
+        if (providerKey === "openai") {
+          // Every direct OpenAI call in the product uses the default callable
+          // (the Responses API: `reasoning.effort`), and Chat Completions
+          // (`reasoning_effort`) stays covered.
+          const responses = await captureBody(
+            (fetch) => createOpenAI({ apiKey: "k", fetch })(modelId),
+            options,
+            {},
+          );
+          expect(responses.reasoning?.effort, `responses ${effort}`).toBe(
+            effort,
+          );
+          const chat = await captureBody(
+            (fetch) => createOpenAI({ apiKey: "k", fetch }).chat(modelId),
+            options,
+            {},
+          );
+          expect(chat.reasoning_effort, `chat ${effort}`).toBe(effort);
+          continue;
+        }
         const body =
-          providerKey === "openai"
+          providerKey === "anthropic"
             ? await captureBody(
-                (fetch) => createOpenAI({ apiKey: "k", fetch }).chat(modelId),
+                (fetch) => createAnthropic({ apiKey: "k", fetch })(modelId),
                 options,
                 {},
               )
-            : providerKey === "anthropic"
-              ? await captureBody(
-                  (fetch) => createAnthropic({ apiKey: "k", fetch })(modelId),
-                  options,
-                  {},
-                )
-              : await captureBody(
-                  (fetch) =>
-                    createGoogleGenerativeAI({ apiKey: "k", fetch })(modelId),
-                  options,
-                  {},
-                );
+            : await captureBody(
+                (fetch) =>
+                  createGoogleGenerativeAI({ apiKey: "k", fetch })(modelId),
+                options,
+                {},
+              );
         const sent =
           body.reasoning_effort ??
           body.output_config?.effort ??
