@@ -1190,10 +1190,8 @@ function isConvexNotVisibleError(error: unknown): boolean {
  * `redactedIsRefusal` because those refusals are plain errors production
  * Convex masks to "Server Error": without it a cross-tenant probe answered
  * 502 — an existence oracle, and on hosted a bare edge page in place of the
- * JSON envelope — instead of this 404 (MJ-021). Several call sites share one
- * try block between the scoping read and the page read behind it; the flag
- * still applies there, at the documented cost of one misleading 404 should
- * the post-scoping read itself crash.
+ * JSON envelope — instead of this 404 (MJ-021). Shared catches disable this
+ * flag once the scope check succeeds, so later failures remain incidents.
  */
 function scopedEvalReadOptions(notFoundMessage: string) {
   return {
@@ -1768,10 +1766,10 @@ function toRunJudgesDto(run: RunDoc) {
         ...(row.status === undefined
           ? { status: "scored" as const }
           : row.status === "scored" ||
-            row.status === "error" ||
-            row.status === "skipped"
-          ? { status: row.status }
-          : {}),
+              row.status === "error" ||
+              row.status === "skipped"
+            ? { status: row.status }
+            : {}),
         ...(typeof row.gradingKey === "string"
           ? { gradingKey: row.gradingKey }
           : {}),
@@ -3809,7 +3807,7 @@ function buildCaseMutationArgs(
   if (body.models !== undefined) {
     args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
-    args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
+    args.models = isModelFreeStepsCase ? [] : (opts.defaultModels ?? []);
   }
 
   // On create, a null override is meaningless (nothing to clear) — omit it so
@@ -3822,11 +3820,11 @@ function buildCaseMutationArgs(
       body.matchOptions === null
         ? null
         : // Create sets a fresh override from the provided fields; update merges
-        // the partial patch onto the case's existing override so unmentioned
-        // fields aren't reset.
-        opts.forCreate
-        ? toInternalMatchOptions(body.matchOptions)
-        : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
+          // the partial patch onto the case's existing override so unmentioned
+          // fields aren't reset.
+          opts.forCreate
+          ? toInternalMatchOptions(body.matchOptions)
+          : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.suppressedSuiteStandardCheckIds !== undefined)
     args.suppressedSuiteStandardCheckIds = body.suppressedSuiteStandardCheckIds;
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
@@ -4607,7 +4605,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   const suiteRerun =
     Boolean(body.suiteId) && body.tests.length === 0
       ? true
-      : body.suiteRerun ?? false;
+      : (body.suiteRerun ?? false);
 
   // Fail unknown models now, with a pointer to valid ids, rather than
   // letting the detached run die later with an opaque stream error.
@@ -5621,8 +5619,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       baseRunId
         ? "The requested baseline run was not found, is not completed, or belongs to another suite."
         : baseCommitSha
-        ? "No completed run in this suite was recorded against that commit SHA."
-        : "No earlier completed run in this suite to compare against.",
+          ? "No completed run in this suite was recorded against that commit SHA."
+          : "No earlier completed run in this suite to compare against.",
       // A SHA that resolved to nothing is deliberately THIS, not one of the
       // two 400 baseline codes: exit 3 must keep meaning "we looked and
       // established nothing", distinct from "you asked for something
@@ -5647,11 +5645,11 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       (baselineSource.policy === undefined && Boolean(baseCommitSha))
         ? "commit_sha"
         : baselineSource.policy === "run" ||
-          (baselineSource.policy === undefined && Boolean(baseRunId))
-        ? "run"
-        : baselineSource.policy === "previous_completed_same_environment"
-        ? "previous_completed_same_environment"
-        : "previous_completed",
+            (baselineSource.policy === undefined && Boolean(baseRunId))
+          ? "run"
+          : baselineSource.policy === "previous_completed_same_environment"
+            ? "previous_completed_same_environment"
+            : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
     // Echoed for `commit_sha` only. Read from the BACKEND's answer, falling
     // back to what the request asked for, so a mixed-version deployment that
@@ -6176,9 +6174,11 @@ evals.get(
 
     let run: RunDoc | null;
     let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
+    let scopeVerified = false;
     try {
       run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
       requireProjectMatch(run, projectId, "Eval run");
+      scopeVerified = true;
       page = await convex.query(
         "testSuites:listTestSuiteRunIterations" as any,
         {
@@ -6187,10 +6187,10 @@ evals.get(
         },
       );
     } catch (error) {
-      throw translateConvexReadError(
-        error,
-        scopedEvalReadOptions("Eval run not found"),
-      );
+      throw translateConvexReadError(error, {
+        ...scopedEvalReadOptions("Eval run not found"),
+        redactedIsRefusal: !scopeVerified,
+      });
     }
 
     const complete = decisionSummaryPageIsComplete({
@@ -6234,18 +6234,20 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
 
   let run: RunDoc | null;
   let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
+  let scopeVerified = false;
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     page = await convex.query("testSuites:listTestSuiteRunIterations" as any, {
       runId,
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval run not found"),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions("Eval run not found"),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
   const listVocabulary = vocabularyOf(c);
   return v1PageJson(
@@ -6271,6 +6273,7 @@ evals.get(
     const convex = createConvexReadClient(convexAuthToken);
 
     let trace: unknown;
+    let scopeVerified = false;
     try {
       const [run, iteration] = await Promise.all([
         convex.query("testSuites:getTestSuiteRun" as any, { runId }),
@@ -6287,14 +6290,15 @@ evals.get(
           "Eval iteration not found",
         );
       }
+      scopeVerified = true;
       trace = await convex.action("testSuites:getTestIterationBlob" as any, {
         iterationId,
       });
     } catch (error) {
-      throw translateConvexReadError(
-        error,
-        scopedEvalReadOptions("Eval iteration not found"),
-      );
+      throw translateConvexReadError(error, {
+        ...scopedEvalReadOptions("Eval iteration not found"),
+        redactedIsRefusal: !scopeVerified,
+      });
     }
     if (trace === null || trace === undefined) {
       throw new WebRouteError(
@@ -6435,8 +6439,7 @@ evals.get(
     const assembled = assembleStepResults(
       steps,
       iteration.metadata as
-        | { stepResults?: any[]; skippedSteps?: any[] }
-        | undefined,
+        { stepResults?: any[]; skippedSteps?: any[] } | undefined,
       envelope as Parameters<typeof assembleStepResults>[2],
     );
     // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
@@ -6473,18 +6476,20 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
 
   let runs: RunDoc[];
   let suite: { projectId?: unknown } | null;
+  let scopeVerified = false;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
     requireProjectMatch(suite, projectId, "Eval suite");
+    scopeVerified = true;
     runs = await convex.query("testSuites:listTestSuiteRuns" as any, {
       suiteId,
       limit,
     });
   } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval suite not found"),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions("Eval suite not found"),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
   return v1PageJson(c, (runs ?? []).map(toRunDto));
 });
@@ -6563,6 +6568,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
     isDone: boolean;
     continueCursor: string;
   };
+  let scopeVerified = false;
   try {
     // Project scope first, on the SUITE — the revision list is scoped by the
     // suite id alone, so the suite's project is checked against the path
@@ -6572,15 +6578,16 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
       { suiteId },
     );
     requireProjectMatch(suite, projectId, "Eval suite");
+    scopeVerified = true;
     page = await convex.query("testSuites:listSuiteRevisions" as any, {
       suiteId,
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval suite not found"),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions("Eval suite not found"),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   return v1PageJson(
@@ -6683,6 +6690,7 @@ evals.get(
       isDone: boolean;
       continueCursor: string;
     };
+    let scopeVerified = false;
     try {
       // The suite is read and project-matched FIRST so a valid suite id from
       // another of the caller's projects reads as NOT_FOUND here, rather than
@@ -6693,6 +6701,7 @@ evals.get(
         suiteId,
       });
       requireProjectMatch(suite, projectId, "Eval suite");
+      scopeVerified = true;
       page = await convex.query("testSuites:listEvalStageAnalytics" as any, {
         projectId,
         suiteId,
@@ -6732,10 +6741,10 @@ evals.get(
             : "Invalid stage analytics window",
         );
       }
-      throw translateConvexReadError(
-        error,
-        scopedEvalReadOptions("Eval suite not found"),
-      );
+      throw translateConvexReadError(error, {
+        ...scopedEvalReadOptions("Eval suite not found"),
+        redactedIsRefusal: !scopeVerified,
+      });
     }
 
     // Validated at the boundary with the REFINED schema — the structural one
@@ -6811,6 +6820,7 @@ evals.get(
 
     let document: unknown;
     let runSuiteId: string | undefined;
+    let scopeVerified = false;
     try {
       // The run is read and project-matched FIRST, exactly as the suite route
       // matches its suite: a valid run id from another of the caller's projects
@@ -6820,6 +6830,7 @@ evals.get(
         runId,
       });
       requireProjectMatch(run, projectId, "Eval run");
+      scopeVerified = true;
       // Kept for the identity check below — the run we authorized is the only
       // thing that can say which suite this document is allowed to name.
       const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
@@ -6836,10 +6847,10 @@ evals.get(
           RUN_ANALYTICS_NOT_FOUND,
         );
       }
-      throw translateConvexReadError(
-        error,
-        scopedEvalReadOptions(RUN_ANALYTICS_NOT_FOUND),
-      );
+      throw translateConvexReadError(error, {
+        ...scopedEvalReadOptions(RUN_ANALYTICS_NOT_FOUND),
+        redactedIsRefusal: !scopeVerified,
+      });
     }
 
     if (document === null || document === undefined) {
@@ -6931,11 +6942,13 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
+  let scopeVerified = false;
   try {
     const run = await convex.query("testSuites:getTestSuiteRun" as any, {
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     document = await convex.query("testSuites:evaluateSuiteGate" as any, {
       runId,
     });
@@ -6948,10 +6961,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_GATE_NOT_FOUND);
     }
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions(RUN_GATE_NOT_FOUND),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions(RUN_GATE_NOT_FOUND),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   if (document === null || document === undefined) {
@@ -7025,6 +7038,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
 
   let document: unknown;
   let runSuiteId: string | undefined;
+  let scopeVerified = false;
   try {
     // The run is read and project-matched FIRST, exactly as the suite route
     // matches its suite: a valid run id from another of the caller's projects
@@ -7034,6 +7048,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     // Kept for the identity check below — the run we authorized is the only
     // thing that can say which suite this document is allowed to name.
     const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
@@ -7049,10 +7064,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
         RUN_ROUTE_FACTS_NOT_FOUND,
       );
     }
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions(RUN_ROUTE_FACTS_NOT_FOUND),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions(RUN_ROUTE_FACTS_NOT_FOUND),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   if (document === null || document === undefined) {
@@ -7124,6 +7139,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
 
   let document: unknown;
   let runSuiteId: string | undefined;
+  let scopeVerified = false;
   try {
     // Project-matched FIRST, same as route facts: a valid run id from another
     // of the caller's projects reads as NOT_FOUND here rather than relying on
@@ -7133,6 +7149,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
     runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
     document = await convex.query("testSuites:getEvalRunServerFacts" as any, {
@@ -7155,10 +7172,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
         RUN_SERVER_FACTS_NOT_FOUND,
       );
     }
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions(RUN_SERVER_FACTS_NOT_FOUND),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions(RUN_SERVER_FACTS_NOT_FOUND),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   if (document === null || document === undefined) {
@@ -7348,8 +7365,7 @@ async function readBackDescriptionExperimentArms(
         { experimentId },
       )) as Record<string, unknown> | null;
       const recorded = current?.arms as
-        | { original?: unknown; rewrite?: unknown }
-        | undefined;
+        { original?: unknown; rewrite?: unknown } | undefined;
       return current &&
         recorded?.original === arms.original &&
         recorded?.rewrite === arms.rewrite
@@ -7438,9 +7454,7 @@ function descriptionOverrideAttributionRefusal(
   message: string;
 } | null {
   const doc = run as
-    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
-    | null
-    | undefined;
+    { toolSnapshot?: unknown; toolSnapshotDebug?: unknown } | null | undefined;
   const servers = readSnapshotServers(doc?.toolSnapshot);
   const offering = servers
     .filter((server) => server.toolNames?.includes(toolName))
@@ -7463,9 +7477,7 @@ function descriptionOverrideAttributionRefusal(
   const captureResult = (
     doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
   )?.captureResult as
-    | { status?: unknown; failedServerIds?: unknown }
-    | null
-    | undefined;
+    { status?: unknown; failedServerIds?: unknown } | null | undefined;
   if (Array.isArray(captureResult?.failedServerIds)) {
     for (const id of captureResult.failedServerIds) {
       if (typeof id === "string") failed.add(id);
@@ -7764,8 +7776,7 @@ evals.post(
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);
     const suiteId = String(launching.suiteId ?? experiment.suiteId);
     const plan = (launching.plan ?? experiment.plan) as
-      | { caseScope?: string; repetitions?: number }
-      | undefined;
+      { caseScope?: string; repetitions?: number } | undefined;
     const caseScope = body.caseScope ?? plan?.caseScope ?? "all";
     const affectedCaseIds = (launching.affectedCaseIds ??
       experiment.affectedCaseIds) as string[] | undefined;
@@ -7778,8 +7789,7 @@ evals.post(
     const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
       ?.configSnapshot;
     const envRef = snapshot?.environmentRef as
-      | { environmentId?: string }
-      | undefined;
+      { environmentId?: string } | undefined;
     const namedHostId =
       (typeof (sourceRun as { namedHostId?: unknown }).namedHostId === "string"
         ? (sourceRun as { namedHostId: string }).namedHostId
@@ -8924,15 +8934,17 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
   let suite: SuiteDoc | null;
   let cases: CaseDoc[];
+  let scopeVerified = false;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
     requireProjectMatch(suite, projectId, "Eval suite");
+    scopeVerified = true;
     cases = await convex.query("testSuites:listTestCases" as any, { suiteId });
   } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval suite not found"),
-    );
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions("Eval suite not found"),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
   const listVocabulary = vocabularyOf(c);
   return v1PageJson(
@@ -9741,7 +9753,8 @@ async function startAuthoringJobAndAwait(
   } catch {
     // A 4xx can still be a refusal the backend owns even when the body is not
     // JSON (a WAF page, a proxy error), so classify before calling it ours.
-    if (!response.ok) throw authoringRefusal(response, bodyText, args, undefined);
+    if (!response.ok)
+      throw authoringRefusal(response, bodyText, args, undefined);
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,

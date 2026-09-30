@@ -70,7 +70,9 @@ const masked = () =>
 function convexError(data: Record<string, unknown>): Error {
   return Object.assign(
     new Error(
-      `[CONVEX Q(fn)] [Request ID: 7d1b] Server Error\nUncaught ConvexError: ${JSON.stringify(data)}`,
+      `[CONVEX Q(fn)] [Request ID: 7d1b] Server Error\nUncaught ConvexError: ${JSON.stringify(
+        data,
+      )}`,
     ),
     { data },
   );
@@ -200,13 +202,15 @@ const READ_FAMILIES: ReadFamily[] = [
     family: "images",
     module: "../images.js",
     path: "/api/v1/projects/proj-other/images",
-    message: "Environment or project not found, or you do not have access to it.",
+    message:
+      "Environment or project not found, or you do not have access to it.",
   },
   {
     family: "environments",
     module: "../environments.js",
     path: "/api/v1/projects/proj-other/environments",
-    message: "Environment or project not found, or you do not have access to it.",
+    message:
+      "Environment or project not found, or you do not have access to it.",
   },
   {
     family: "server groups",
@@ -227,6 +231,7 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
     vi.clearAllMocks();
     config.hosted = false;
     vi.stubEnv("CONVEX_URL", "https://convex.test");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex-http.test");
     vi.spyOn(logger, "event").mockImplementation(() => {});
     vi.spyOn(logger, "warn").mockImplementation(() => {});
     vi.spyOn(logger, "error").mockImplementation(() => {});
@@ -281,4 +286,117 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
     expect(response.status).toBe(401);
     expect((await response.json()).code).toBe("UNAUTHORIZED");
   });
+
+  const projectId = "js7abc0def1ghj2klm3nop4qrs5tuv6x";
+  const suitePath = `/api/v1/projects/${projectId}/eval-suites/${CONVEX_ID}`;
+  const runPath = `/api/v1/projects/${projectId}/eval-runs/${CONVEX_ID}`;
+  const pageReads = [
+    `${suitePath}/cases`,
+    `${suitePath}/runs`,
+    `${suitePath}/revisions`,
+    `${suitePath}/stage-analytics`,
+    `${runPath}/decision-summary`,
+    `${runPath}/iterations`,
+    `${runPath}/stage-analytics`,
+    `${runPath}/gate`,
+    `${runPath}/route-facts`,
+    `${runPath}/server-facts`,
+    `${runPath}/iterations/${CONVEX_ID}/trace`,
+  ];
+
+  it.each(pageReads)(
+    "%s: a masked scope refusal still answers 404",
+    async (path) => {
+      convex.query.mockRejectedValue(masked());
+      convex.action.mockRejectedValue(masked());
+      const { default: router } = await import("../evals.js");
+      const response = await createApp(router).request(path);
+      expect(response.status).toBe(404);
+      await expectNoConvexFraming(response);
+      expect(logger.error).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(pageReads)(
+    "%s: a masked failure after authorization answers 502",
+    async (path) => {
+      convex.query.mockImplementation(async (name: string) => {
+        if (
+          name === "testSuites:getTestSuite" ||
+          name === "testSuites:getTestSuiteRun"
+        ) {
+          return { projectId, suiteId: CONVEX_ID };
+        }
+        if (name === "testSuites:getTestIteration")
+          return { suiteRunId: CONVEX_ID };
+        throw masked();
+      });
+      convex.action.mockRejectedValue(masked());
+      const { default: router } = await import("../evals.js");
+      const response = await createApp(router).request(path);
+      expect(response.status).toBe(502);
+      await expectNoConvexFraming(response);
+      expect((await response.json()).code).toBe("SERVER_UNREACHABLE");
+      expect(logger.error).toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["GET", "", { kind: "forbidden" }, 403, "FORBIDDEN"],
+    [
+      "GET",
+      "",
+      { code: "VALIDATION_ERROR", message: "Invalid authoring request" },
+      400,
+      "VALIDATION_ERROR",
+    ],
+    ["POST", "/commit", { kind: "forbidden" }, 403, "FORBIDDEN"],
+    [
+      "POST",
+      "/commit",
+      { code: "VALIDATION_ERROR", message: "Invalid authoring request" },
+      400,
+      "VALIDATION_ERROR",
+    ],
+  ] as const)(
+    "authoring %s%s preserves typed refusal %j",
+    async (method, suffix, data, status, code) => {
+      convex.query.mockRejectedValue(convexError(data));
+      const { default: router } = await import("../evals.js");
+      const response = await createApp(router).request(
+        `${suitePath}/authoring/${CONVEX_ID}${suffix}`,
+        { method },
+      );
+      expect(response.status).toBe(status);
+      await expectNoConvexFraming(response);
+      expect((await response.json()).code).toBe(code);
+      expect(convex.mutation).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["/backtest", { assertions: { mode: "replace", list: [] } }],
+    ["/judge/backtest", { rubric: null }],
+  ])(
+    "%s distinguishes a masked scope refusal from a later crash",
+    async (suffix, body) => {
+      const { default: router } = await import("../eval-backtest.js");
+      const app = createApp(router);
+      const request = () =>
+        app.request(`${runPath}${suffix}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      convex.query.mockRejectedValue(masked());
+      expect((await request()).status).toBe(404);
+      expect(convex.action).not.toHaveBeenCalled();
+      convex.query.mockResolvedValue({ projectId, suiteId: CONVEX_ID });
+      convex.action.mockRejectedValue(masked());
+      const response = await request();
+      expect(response.status).toBe(502);
+      await expectNoConvexFraming(response);
+      expect(logger.error).toHaveBeenCalled();
+    },
+  );
 });

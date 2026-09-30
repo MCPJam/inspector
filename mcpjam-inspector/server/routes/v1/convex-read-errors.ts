@@ -10,6 +10,7 @@
  * throws.
  */
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
 
@@ -98,7 +99,7 @@ const AUTHENTICATION_FAILURE =
  */
 export function redactedReadRefusalError(
   error: unknown,
-  notFoundMessage: string
+  notFoundMessage: string,
 ): WebRouteError | undefined {
   if (error instanceof WebRouteError) return undefined;
   if (hasConvexErrorData(error)) return undefined;
@@ -110,7 +111,7 @@ export function redactedReadRefusalError(
 /**
  * Whether a `ConvexError` payload rides on the error or its `cause` chain —
  * the same bounded walk `convexErrorData` does in `convex-errors.ts`, asked
- * as a yes/no so this module keeps not depending on the write translator.
+ * as a yes/no before interpreting the production framing as a refusal.
  */
 function hasConvexErrorData(error: unknown): boolean {
   let current: unknown = error;
@@ -176,9 +177,11 @@ export function translateConvexReadError(
      * real incidents and 404 would hide them.
      */
     redactedIsRefusal?: boolean;
-  }
+  },
 ): WebRouteError {
   if (error instanceof WebRouteError) return error;
+  const structured = translateStructuredConvexRefusal(error);
+  if (structured) return structured;
   const failure = classifyConvexReadError(error);
   // A caller-shaped id Convex's validator rejected cannot name a resource the
   // caller may see; not an incident, so no Sentry — see
@@ -204,7 +207,7 @@ export function translateConvexReadError(
     return new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      options.notFoundMessage ?? "Not found"
+      options.notFoundMessage ?? "Not found",
     );
   }
   if (
@@ -214,14 +217,14 @@ export function translateConvexReadError(
     return new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      options.notFoundMessage ?? "Not found"
+      options.notFoundMessage ?? "Not found",
     );
   }
   if (failure.kind === "authentication") {
     return new WebRouteError(
       401,
       ErrorCode.UNAUTHORIZED,
-      "Invalid or expired credentials."
+      "Invalid or expired credentials.",
     );
   }
   // The REDACTED error, not the original — see `redactedErrorForCapture`.
@@ -232,6 +235,6 @@ export function translateConvexReadError(
   return new WebRouteError(
     502,
     ErrorCode.SERVER_UNREACHABLE,
-    "Upstream request failed"
+    "Upstream request failed",
   );
 }

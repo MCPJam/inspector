@@ -30,6 +30,7 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     return v1Error(c, "INTERNAL_ERROR", "Backtest service is unavailable");
   const client = new ConvexHttpClient(process.env.CONVEX_URL);
   client.setAuth(token);
+  let scopeVerified = false;
   try {
     const run = (await client.query(
       "testSuites:getTestSuiteRun" as never,
@@ -37,6 +38,7 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     )) as { projectId?: string; suiteId?: string } | null;
     if (!run || run.projectId !== c.req.param("projectId") || !run.suiteId)
       return v1Error(c, "NOT_FOUND", "Eval run not found");
+    scopeVerified = true;
     const report = await runAssertionBacktest({
       runId: c.req.param("runId"),
       suiteId: run.suiteId,
@@ -112,10 +114,8 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     throw translateConvexReadError(error, {
       scope: "v1.eval-backtest",
       notFoundMessage: "Eval run not found or backtest is not authorized",
-      // The action authorizes the caller-supplied run id itself, and its
-      // refusal is a plain error production Convex masks to "Server Error" —
-      // without this a cross-tenant probe answered 502 (MJ-021).
-      redactedIsRefusal: true,
+      // Only the initial run lookup can be a masked scope refusal.
+      redactedIsRefusal: !scopeVerified,
     });
   }
 });
@@ -142,6 +142,7 @@ router.post(
       return v1Error(c, "INTERNAL_ERROR", "Backtest service is unavailable");
     const client = new ConvexHttpClient(process.env.CONVEX_URL);
     client.setAuth(await getConvexBearerForRequest(c));
+    let scopeVerified = false;
     try {
       const run = (await client.query(
         "testSuites:getTestSuiteRun" as never,
@@ -149,6 +150,7 @@ router.post(
       )) as { projectId?: string; suiteId?: string } | null;
       if (!run || run.projectId !== c.req.param("projectId") || !run.suiteId)
         return v1Error(c, "NOT_FOUND", "Eval run not found");
+      scopeVerified = true;
       const report = await client.action(
         "goalCompletionAction:requestJudgeBacktest" as never,
         {
@@ -173,8 +175,8 @@ router.post(
         scope: "v1.eval-judge-backtest",
         notFoundMessage:
           "Eval run not found or judge backtest is not authorized",
-        // Same masked-refusal reading as the preview route above (MJ-021).
-        redactedIsRefusal: true,
+        // Only the initial run lookup can be a masked scope refusal.
+        redactedIsRefusal: !scopeVerified,
       });
     }
   },
