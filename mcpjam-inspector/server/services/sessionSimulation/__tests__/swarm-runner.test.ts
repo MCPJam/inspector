@@ -1502,6 +1502,21 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     ).toBe("org_spend_cap");
   });
 
+  // What a stored row or a flattened error keeps: the backend's sentence, with
+  // no JSON, no structured reason and no hint. Blaming the user's provider for
+  // it (or halting the whole run as a spend cap) would both be wrong.
+  it("reads a hold from its sentence alone as temporary capacity", () => {
+    const held =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish.";
+    expect(classifyRateLimit(held)).toBe("transient_capacity");
+    expect(classifyRateLimit(`${held} (user_rate_limit, HTTP 429)`)).toBe(
+      "transient_capacity",
+    );
+    expect(classifyRateLimit(held, { code: "user_rate_limit" })).toBe(
+      "transient_capacity",
+    );
+  });
+
   // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",
   // "recap" and "escape" could not escalate one host's rate limit into a
   // whole-run stop. `spend` was not, and "suspended" contains it.

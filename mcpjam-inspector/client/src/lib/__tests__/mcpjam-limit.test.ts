@@ -489,6 +489,29 @@ describe("credits held by in-flight requests", () => {
     expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
   });
 
+  it("describes a stored row's hold as a retry too, not as an empty wallet or raw text", () => {
+    // The row kept the sentence and lost the reason: the sentence is the only
+    // signal, and without it the caller printed the backend's words raw.
+    const expected =
+      "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.";
+    expect(
+      describeMCPJamLimitMessage(
+        "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.",
+      ),
+    ).toBe(expected);
+    // A structured reason that says otherwise wins over the prose.
+    const exhausted = describeMCPJamLimitMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+        error:
+          "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits.",
+      }),
+    );
+    expect(exhausted).not.toBe(expected);
+    expect(exhausted).not.toBeNull();
+  });
+
   it("still opens for a real exhaustion whose details mention in-flight work", () => {
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
 
@@ -584,6 +607,71 @@ describe("one dialog per swarm wave", () => {
 
     store.getState().setAuthStatus("signedIn");
     expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
+  it("leaves the latch alone when a known notice is replayed", () => {
+    // RunLiveBridge, the sessions provider and the eval queries replay a run's
+    // notice on every Convex push. Once a top-up or a daily reset has cleared
+    // the latch, a replay must not set it again.
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+    const keys = { runId: "run-a", swarmRunGroupId: "wave-1" };
+
+    notify(keys);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+    store.getState().close();
+    store.getState().clearOutOfCreditsHit();
+
+    const before = store.getState();
+    notify(keys);
+    notify({ runId: "run-a" });
+    notify({ swarmRunGroupId: "wave-1" });
+    expect(store.getState()).toBe(before);
+    expect(store.getState().outOfCreditsHit).toBe(false);
+  });
+
+  it("keeps the held notice's organization when a later one in the wave has none", () => {
+    // Auth is still loading: the first notice is held. A second one from a
+    // surface that does not know the organization must not erase it.
+    const store = useMCPJamLimitDialogStore;
+    store.getState().notifyLimitHit({
+      runId: "run-a",
+      swarmRunGroupId: "wave-1",
+      organizationId: "org-1",
+      surface: "swarm",
+    });
+    store.getState().notifyLimitHit({
+      runId: "run-b",
+      swarmRunGroupId: "wave-1",
+    });
+
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState()).toMatchObject({
+      isOpen: true,
+      organizationId: "org-1",
+      surface: "swarm",
+      outOfCreditsOrganizationId: "org-1",
+    });
+  });
+
+  it("does not widen one organization's latch to every organization", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+    store.getState().notifyLimitHit({
+      runId: "run-a",
+      swarmRunGroupId: "wave-1",
+      organizationId: "org-1",
+      surface: "swarm",
+    });
+    expect(store.getState().outOfCreditsOrganizationId).toBe("org-1");
+
+    // A sibling run, suppressed, from a surface with no organization.
+    store.getState().notifyLimitHit({
+      runId: "run-b",
+      swarmRunGroupId: "wave-1",
+    });
+    expect(store.getState().outOfCreditsHit).toBe(true);
+    expect(store.getState().outOfCreditsOrganizationId).toBe("org-1");
   });
 
   it("keeps the wave suppressed across the loading-to-signed-in handoff", () => {

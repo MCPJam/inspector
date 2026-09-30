@@ -1048,12 +1048,14 @@ export async function launchJourneyRun(
     // Raise the wall HERE, while the body still carries the route's `code` —
     // same reasoning as `postGenerate`. Launching a goal run spends model
     // budget like every other action that already shows this dialog.
+    // No run id and no wave id: a refused launch is the user's own action, and
+    // the callers that see `limitDialogRaised` stay silent because the dialog
+    // IS their answer. Keyed by the wave (which a retry reuses), a second press
+    // of Launch would be deduped and answer nothing. There is no stack of
+    // dialogs to prevent: the create flow stops at the first refusal, and Run
+    // again carries on, where a notice while the dialog is open only re-asserts it.
     const limitDialogRaised = notifyMCPJamLimitError({
       ...(code ? { code } : {}),
-      // One dialog per wave: the wave's later launches hit the same wall.
-      ...(args.swarmRunGroupId
-        ? { swarmRunGroupId: args.swarmRunGroupId }
-        : {}),
       details: body,
       message,
       surface: "swarm",

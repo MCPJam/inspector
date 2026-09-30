@@ -74,9 +74,25 @@ const HOLDS_COMMITTED_SENTENCE =
   /MCPJam model limit reached for the moment\b|in-flight request\(s\) hold the remaining credits/i;
 
 /**
+ * The whole held-credits sentence, for taking it OUT of a text so what is left
+ * can be read for anything else the text says.
+ */
+const HOLDS_COMMITTED_SENTENCE_TEXT =
+  /MCPJam model limit reached for the moment\b[^.]*\.?|in-flight request\(s\) hold the remaining credits[^.]*\.?/gi;
+
+/** `text` without the backend's held-credits sentence. */
+export function withoutHeldCreditsSentence(text: string): string {
+  return text.replace(HOLDS_COMMITTED_SENTENCE_TEXT, " ");
+}
+
+/**
  * `holds_committed`: other in-flight requests hold the last credits and
- * release them as they finish. Read off the structured pair when the caller
- * has it, and off the stored sentence when all it has is an attempt row.
+ * release them as they finish.
+ *
+ * A structured `refusalReason` is the backend's own verdict and decides alone:
+ * the sentence is only a fallback for a stored attempt row, which keeps the
+ * sentence and loses the reason. Reading the sentence first would let a
+ * refusal that quotes one (or aggregates several) outvote its own reason.
  *
  * Split from {@link isTransientSpendRefusal} because a hold and a busy
  * reservation are both waits but read differently to the user: a hold is about
@@ -87,8 +103,8 @@ export function isHeldCreditsRefusal(
   refusalReason?: string | null,
   message?: string | null,
 ): boolean {
-  if (code === "user_rate_limit" && refusalReason === "holds_committed")
-    return true;
+  if (refusalReason)
+    return code === "user_rate_limit" && refusalReason === "holds_committed";
   return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
 }
 

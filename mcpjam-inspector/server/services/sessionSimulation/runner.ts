@@ -1938,7 +1938,8 @@ export async function drainAssistantTurn(
      * Per-step output-token ceiling for the hosted body (see
      * `SyntheticHostRuntime.maxOutputTokens`). The backend reserves credits
      * against it, so a realistic ceiling is a realistic hold. Sent on the
-     * MCPJam-hosted rail only (see `resolveTurnRuntime`).
+     * MCPJam-hosted rail only (see `resolveTurnRuntime`), and never to a
+     * harness host's model broker (see the harness options below).
      */
     maxOutputTokens?: number;
     /** Optional turn hooks (browser session context attachment points). */
@@ -2194,9 +2195,10 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
-    ...(args.harness && maxOutputTokens !== undefined
-      ? { harnessMaxOutputTokens: maxOutputTokens }
-      : {}),
+    // No `harnessMaxOutputTokens`: the harness model broker clamps `max_tokens`
+    // to it without touching the model's thinking budget, so a ceiling below
+    // the broker's own default (64,000) can make Anthropic refuse every thinking
+    // turn. The ceiling rides the hosted `/stream` body only.
     ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The turn's Project Environment — the grant boundary the harness path
     // checks a BROKERED external-account credential against. Inert for the

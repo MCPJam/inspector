@@ -473,6 +473,31 @@ describe("isHeldCreditsRefusal", () => {
     expect(isHeldCreditsRefusal("spending_reservation_busy")).toBe(false);
     expect(isTransientSpendRefusal("spending_reservation_busy")).toBe(true);
   });
+
+  it("lets a structured reason decide, and reads the sentence only without one", () => {
+    // A caller that passes `refusalReason` has the backend's own verdict; the
+    // regex over its prose is the fallback for a stored row that lost it.
+    expect(
+      isHeldCreditsRefusal(
+        "user_rate_limit",
+        "allowance_exhausted",
+        STORED_HOLDS_SENTENCE,
+      ),
+    ).toBe(false);
+    expect(
+      isTransientSpendRefusal(
+        "user_rate_limit",
+        "allowance_exhausted",
+        STORED_HOLDS_SENTENCE,
+      ),
+    ).toBe(false);
+    expect(
+      isHeldCreditsRefusal("user_rate_limit", "holds_committed", "Retry."),
+    ).toBe(true);
+    expect(
+      isHeldCreditsRefusal("user_rate_limit", undefined, STORED_HOLDS_SENTENCE),
+    ).toBe(true);
+  });
 });
 
 describe("isTransientSpendRefusal", () => {
@@ -569,7 +594,7 @@ describe("isTransientSpendRefusal", () => {
     expect(
       isCreditExhaustion({
         code: "user_rate_limit",
-        message: "Daily MCPJam model limit reached.",
+        message: "Request refused.",
         details: STORED_HOLDS_SENTENCE,
       }),
     ).toBe(false);
@@ -587,5 +612,83 @@ describe("isTransientSpendRefusal", () => {
         details: { refusal: { refusalReason: "holds_committed" } },
       }),
     ).toBe(false);
+  });
+});
+
+describe("isCreditExhaustion when a hold and an exhaustion are both in play", () => {
+  const HELD =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+  const SPENT = "Daily MCPJam model limit reached.";
+  const envelope = (body: Record<string, unknown>) =>
+    `Backend stream error: 429 ${JSON.stringify(body)}`;
+
+  it("lets a structured non-hold reason win over the sentence on the same object", () => {
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+        message: HELD,
+      }),
+    ).toBe(true);
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        refusalReason: "holds_committed",
+        message: SPENT,
+      }),
+    ).toBe(false);
+  });
+
+  it("counts an exhaustion that shares a string with a hold", () => {
+    // One string aggregating several session errors: the hold must not hide
+    // the exhaustion next to it.
+    expect(
+      isCreditExhaustion({
+        message: "Some sessions failed",
+        details: `Session 1: ${HELD} Session 2: ${SPENT}`,
+      }),
+    ).toBe(true);
+    expect(isCreditExhaustion(`${HELD} ${SPENT}`)).toBe(true);
+    // The refusal's own fields disagree: the stated exhaustion counts.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: SPENT,
+        details: HELD,
+      }),
+    ).toBe(true);
+  });
+
+  it("reads the envelope a string wraps, so a quoted hold cannot hide a real exhaustion", () => {
+    const exhaustedQuotingAHold = envelope({
+      code: "user_rate_limit",
+      refusalReason: "allowance_exhausted",
+      message: "MCPJam daily credit limit reached.",
+      details: { previous: HELD },
+    });
+    expect(isCreditExhaustion(exhaustedQuotingAHold)).toBe(true);
+    expect(isCreditExhaustion({ message: exhaustedQuotingAHold })).toBe(true);
+  });
+
+  it("still reads a hold as a hold, in every shape it arrives in", () => {
+    // With and without the structured reason, bare or wrapped.
+    const withReason = envelope({
+      code: "user_rate_limit",
+      refusalReason: "holds_committed",
+      error: HELD,
+    });
+    const withoutReason = envelope({ code: "user_rate_limit", error: HELD });
+    for (const held of [
+      HELD,
+      withReason,
+      withoutReason,
+      { code: "user_rate_limit", message: HELD },
+      { message: withReason },
+      { message: withoutReason },
+    ]) {
+      expect(isCreditExhaustion(held)).toBe(false);
+    }
+    // A truncated envelope cannot be parsed; the sentence still says hold.
+    expect(isCreditExhaustion(withoutReason.slice(0, -12))).toBe(false);
   });
 });

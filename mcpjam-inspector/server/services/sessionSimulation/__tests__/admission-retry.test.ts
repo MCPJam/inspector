@@ -39,6 +39,19 @@ it("waits within jitter bounds and succeeds", async () => {
   expect(await result).toBe("done");
   expect(op).toHaveBeenCalledTimes(2);
 });
+it("retries a hold that arrives as plain text, with no JSON and no reason", async () => {
+  // A flattened error keeps the backend's sentence and the code suffix the
+  // runner appends, but not the structured reason.
+  vi.useFakeTimers();
+  const plain = new Error(
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. (user_rate_limit, HTTP 429)",
+  );
+  const op = vi.fn().mockRejectedValueOnce(plain).mockResolvedValue("done");
+  const result = withAdmissionRetry(op, { budget: new AdmissionWaitBudget() });
+  await vi.runAllTimersAsync();
+  expect(await result).toBe("done");
+  expect(op).toHaveBeenCalledTimes(2);
+});
 it.each([busy, emptyHostTurnBusy])(
   "recovers from a busy admission before a turn executes",
   async (makeError) => {

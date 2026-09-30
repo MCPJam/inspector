@@ -82,7 +82,11 @@ const latchFor = (
   if (!input.shortfall) {
     return {
       outOfCreditsHit: true,
-      outOfCreditsOrganizationId: input.organizationId ?? null,
+      // A notice from a surface that does not know the organization never
+      // widens a latch that already names one to every organization.
+      outOfCreditsOrganizationId:
+        input.organizationId ??
+        (state.outOfCreditsHit ? state.outOfCreditsOrganizationId : null),
     };
   }
   const latchIsForAnotherOrg =
@@ -110,28 +114,38 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     notifyLimitHit: (input = {}) =>
       set((state) => {
         const keys = dedupeKeys(input);
-        const notifiedKeys = keys.every((key) => state.notifiedKeys.has(key))
-          ? state.notifiedKeys
-          : new Set([...state.notifiedKeys, ...keys]);
+        const newKeys = keys.filter((key) => !state.notifiedKeys.has(key));
+        const notifiedKeys = newKeys.length
+          ? new Set([...state.notifiedKeys, ...newKeys])
+          : state.notifiedKeys;
         // Suppressed when ANY key was seen, but every key is still recorded:
         // a run first seen alone (A), then with its wave (A+W), has to teach
         // the store W, or the wave's next run (B+W) would open it again.
-        // The exhaustion latch still follows the notice: a wave's first run
-        // may report a shortfall and a later one real exhaustion.
-        if (keys.some((key) => state.notifiedKeys.has(key))) {
+        if (newKeys.length < keys.length) {
+          // A replay, every key already known, changes nothing. The views
+          // that show a run replay its notice on every Convex push; setting
+          // the latch again would undo what a top-up or a daily reset cleared.
+          if (!newKeys.length) return state;
+          // A notice that brings a new key still carries new evidence: a
+          // wave's first run may report a shortfall and a later one real
+          // exhaustion, so the exhaustion latch follows it.
           const latch = latchFor(state, input);
-          // A notice held for auth keeps the newest exhaustion, or the
-          // replay after sign-in would clear the latch this one just set.
+          // A notice held for auth keeps the newest exhaustion, or the replay
+          // after sign-in would clear the latch this one just set. It keeps
+          // the held notice's organization and surface when the newer one does
+          // not know them, or the dialog would open for no organization.
+          const held = state.pendingInput;
           const pending =
             state.hasPendingLimit && !input.shortfall
-              ? { pendingInput: input }
+              ? {
+                  pendingInput: {
+                    ...input,
+                    organizationId:
+                      input.organizationId ?? held?.organizationId,
+                    surface: input.surface ?? held?.surface,
+                  },
+                }
               : {};
-          if (
-            notifiedKeys === state.notifiedKeys &&
-            !Object.keys(latch).length &&
-            !Object.keys(pending).length
-          )
-            return state;
           return { notifiedKeys, ...latch, ...pending };
         }
         if (state.authStatus === "loading") {

@@ -1,5 +1,6 @@
 import {
   humanizeSwarmAttemptError,
+  isHeldCreditsRefusal,
   isTransientSpendRefusal,
 } from "../../../shared/swarm-attempt-error.js";
 import {
@@ -25,6 +26,17 @@ export function spendRefusalOf(error: unknown): SpendRefusal | undefined {
     return undefined;
   if (!(error instanceof Error)) return undefined;
   const info = humanizeSwarmAttemptError(error.message);
+  // A hold that arrives as plain text (no JSON, so no structured reason) is
+  // still a hold: hand back the pair the retry reads.
+  if (
+    !info.refusalReason &&
+    isHeldCreditsRefusal(info.code, undefined, error.message)
+  )
+    return {
+      ...info,
+      code: info.code ?? "user_rate_limit",
+      refusalReason: "holds_committed",
+    };
   // A busy reservation carries no `refusalReason`, only its code.
   return info.refusalReason || isTransientSpendRefusal(info.code)
     ? info

@@ -1,5 +1,6 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { isCreditExhaustion } from "@/shared/credit-exhaustion";
+import { isHeldCreditsRefusal } from "@/shared/swarm-attempt-error";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -462,11 +463,14 @@ export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
+  // The backend's structured verdict decides. Its sentence is the fallback for
+  // a stored attempt row, which keeps the sentence and loses the reason.
+  const reasons = collectJsonCandidates(message).map((parsed) =>
+    findStringPropertyDeep(parsed, "refusalReason"),
+  );
   if (
-    collectJsonCandidates(message).some(
-      (parsed) =>
-        findStringPropertyDeep(parsed, "refusalReason") === "holds_committed",
-    )
+    reasons.includes("holds_committed") ||
+    (!reasons.some(Boolean) && isHeldCreditsRefusal(null, null, message))
   ) {
     return MCPJAM_HOLDS_COMMITTED_MESSAGE;
   }
