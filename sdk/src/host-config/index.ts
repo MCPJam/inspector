@@ -68,7 +68,11 @@ export {
   taskModeForSurface,
   surfaceMayDeclareTasks,
 } from "./tasks-policy.js";
-export type { TasksPolicy, TaskMode, TaskSurface } from "./tasks-policy.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
+} from "./tasks-policy.js";
 
 // Saved model selection: model + credential source + connection reference +
 // settings + fallback, beside the bare `modelId`. Pure and browser-safe.
