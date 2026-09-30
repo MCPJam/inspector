@@ -341,6 +341,29 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
+  it("never hands a harness host's model broker an output ceiling", async () => {
+    // The broker clamps max_tokens to the ceiling without touching the
+    // model's thinking budget, so a cap below the broker's own default can
+    // make Anthropic refuse every thinking turn. The ceiling rides the hosted
+    // /stream body only; a harness host keeps the broker's default.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        harness: "claude-code",
+        maxOutputTokens: 16_384,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty("harnessMaxOutputTokens");
+  });
+
   it("sends the output ceiling on the plain hosted /stream rail for a credit-funded step", async () => {
     // A credit-funded step bills credits on the default hosted
     // endpoint, which is the rail that reserves against the ceiling.

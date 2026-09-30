@@ -9,7 +9,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
  * be a false promise, which is the whole reason the ticket rejects a modal.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
 const appNavigate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/app-navigation", () => ({ useAppNavigate: () => appNavigate }));
@@ -205,9 +205,17 @@ async function openTheSession() {
   });
 }
 
+// The dialog store outlives a test: a failed assertion must not leave its auth
+// status, its notified keys or an open dialog for the next one to inherit.
+const resetLimitDialogStore = () =>
+  useMCPJamLimitDialogStore.setState(
+    useMCPJamLimitDialogStore.getInitialState(),
+  );
+beforeEach(resetLimitDialogStore);
+afterEach(resetLimitDialogStore);
+
 describe("NewSwarmRunningStep — provider rate-limit card", () => {
   it("targets the swarm organization when an attempt automatically opens recovery", () => {
-    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
     attempt.errorCode = "user_rate_limit";
     attempt.errorMessage = "Credits exhausted";
@@ -221,7 +229,6 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       outOfCreditsOrganizationId: "org-1",
       surface: "swarm",
     });
-    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
   });
 
   beforeEach(() => {
@@ -352,9 +359,6 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     // What the runner stores for a `holds_committed` refusal once its wait
     // budget runs out: the backend's sentence under the generic code, with the
     // refusal reason gone. The wallet was never empty.
-    useMCPJamLimitDialogStore.setState(
-      useMCPJamLimitDialogStore.getInitialState(),
-    );
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
     attempt.errorCode = "user_rate_limit";
     attempt.errorMessage =
@@ -367,9 +371,6 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       screen.queryByRole("button", { name: "View credit options" }),
     ).not.toBeInTheDocument();
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    useMCPJamLimitDialogStore.setState(
-      useMCPJamLimitDialogStore.getInitialState(),
-    );
   });
 
   it("shows the credit callout for an all-limited run", async () => {

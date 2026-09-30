@@ -507,6 +507,42 @@ describe("launchJourneyRun — MCPJam limit", () => {
     expect(state.surface).toBe("swarm");
   });
 
+  it("opens the dialog again when the same wave is launched again", async () => {
+    // The create flow and Run again keep a failed launch's wave id and retry
+    // under it. A launch failure is the user's own action, so it is never
+    // deduped by wave: the dialog is the only answer the button gives.
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      }),
+    );
+    const launch = async () => {
+      try {
+        await launchJourneyRun({
+          projectId: "proj-1",
+          journeyId: "goal-1",
+          swarmRunGroupId: "wave-relaunch",
+        });
+      } catch (e) {
+        return e as LaunchJourneyRunError;
+      }
+      throw new Error("expected the launch to be refused");
+    };
+
+    const first = await launch();
+    expect(first.limitDialogRaised).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    useMCPJamLimitDialogStore.getState().close();
+
+    const second = await launch();
+    expect(second.limitDialogRaised).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
   it("classifies a body that names the limit only under `error`", async () => {
     authFetchMock.mockResolvedValue(
       jsonResponse(429, {

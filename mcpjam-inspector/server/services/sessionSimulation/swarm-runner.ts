@@ -527,7 +527,9 @@ export function classifyRateLimit(
   hint?: SpendRefusal,
 ): "org_spend_cap" | "provider_rate_limit" | "transient_capacity" {
   const refusal = hint ?? humanizeSwarmAttemptError(message);
-  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason))
+  // The message is the fallback for a hold that lost its structured reason: a
+  // bare sentence would otherwise read as the user's provider throttling.
+  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason, message))
     return "transient_capacity";
   if (!message) return "provider_rate_limit";
   if (isCreditExhaustion(message)) return "org_spend_cap";

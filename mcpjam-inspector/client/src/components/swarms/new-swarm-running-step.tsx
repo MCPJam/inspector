@@ -53,7 +53,6 @@ import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
-  isTransientSpendRefusal,
 } from "@/shared/swarm-attempt-error";
 import { providerLabelForModelId } from "./session-rate-limit";
 import {
@@ -1099,15 +1098,17 @@ export function NewSwarmRunningStep({
         }
         count += 1;
         const code = attempt.errorCode ?? info.code;
+        // `isCreditExhaustion` reads the hold (by its structured reason, else
+        // by the stored sentence), so a wait never counts as a spent wallet.
         if (
-          isCreditExhaustion({ code, message: attempt.errorMessage }) &&
-          ![
-            "holds_committed",
-            "wallet_locked",
-            "budget_reached",
-            "admission_invalid",
-          ].includes(info.refusalReason ?? "") &&
-          !isTransientSpendRefusal(code, info.refusalReason, info.message)
+          isCreditExhaustion({
+            code,
+            refusalReason: info.refusalReason,
+            message: attempt.errorMessage,
+          }) &&
+          !["wallet_locked", "budget_reached", "admission_invalid"].includes(
+            info.refusalReason ?? "",
+          )
         )
           exhausted += 1;
         // The whole-run finalize writes a code and no message; any sibling
