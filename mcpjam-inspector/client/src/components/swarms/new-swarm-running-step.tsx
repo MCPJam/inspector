@@ -54,6 +54,7 @@ import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
 import { providerLabelForModelId } from "./session-rate-limit";
 import {
@@ -410,6 +411,23 @@ function RunLiveBridge({
   }, [hostName, onSnapshot, run, runId, sessionResults, stream]);
 
   return null;
+}
+
+/**
+ * A session stopped because other requests held the last credits: a wait, not a
+ * limit. The row keeps the sentence under the generic account-limit code but
+ * not the reason, so this reads what the session card reads, and the banner
+ * cannot call a session a usage limit that its own card calls a hold.
+ */
+function isHeldAttempt(
+  attempt: Pick<JourneyRunAttempt, "errorCode">,
+  info: ReturnType<typeof humanizeSwarmAttemptError>,
+): boolean {
+  return isHeldCreditsRefusal(
+    attempt.errorCode ?? info.code,
+    info.refusalReason,
+    info.message,
+  );
 }
 
 /** A value-comparable key for an attempt's raw execution record. */
@@ -1060,7 +1078,10 @@ export function NewSwarmRunningStep({
         // The code comes off the attempt, not the humanized info: that only
         // carries a code through for the codes it words itself, so the
         // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
-        if (isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+        if (
+          isAccountLimit(info.message, attempt.errorCode ?? info.code) ||
+          isHeldAttempt(attempt, info)
+        ) {
           continue;
         }
         count += 1;
@@ -1101,13 +1122,13 @@ export function NewSwarmRunningStep({
           attempt.errorMessage,
           attempt.errorCode,
         );
+        // A hold is not a limit: it has its own callout below.
+        if (isHeldAttempt(attempt, info)) continue;
         if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
           continue;
         }
         count += 1;
         const code = attempt.errorCode ?? info.code;
-        // `isCreditExhaustion` reads the hold (by its structured reason, else
-        // by the stored sentence), so a wait never counts as a spent wallet.
         if (
           isCreditExhaustion({
             code,
@@ -1127,24 +1148,46 @@ export function NewSwarmRunningStep({
     return count === 0 ? null : { count, message, exhausted };
   }, [snapshots]);
 
-  // The account-limit callout owns its cause — count, breakdown and the top-up
-  // links — so the grouped banner states every OTHER cause, once. A run whose
-  // only cause is the limit shows the callout alone.
+  // Sessions stopped while other requests held the last credits. Not a limit
+  // and not an empty wallet, so they are kept out of the callout above and
+  // worded as what the session card says: a wait.
+  const heldCredits = useMemo(() => {
+    let count = 0;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed")
+          continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (isHeldAttempt(attempt, info)) count += 1;
+      }
+    }
+    return count === 0 ? null : { count };
+  }, [snapshots]);
+
+  // The account-limit and held-credits callouts own their causes — count,
+  // breakdown and the top-up links — so the grouped banner states every OTHER
+  // cause, once. A run whose only cause is one of them shows its callout alone.
   const bannerFailure = useMemo(() => {
     if (!runFailure) return null;
-    const causes = accountLimit
-      ? runFailure.causes.filter(
-          (cause) =>
-            !isAccountLimit(cause.info.message, cause.code ?? cause.info.code),
-        )
-      : runFailure.causes;
+    const causes = runFailure.causes.filter((cause) => {
+      const code = cause.code ?? cause.info.code;
+      if (
+        heldCredits &&
+        isHeldCreditsRefusal(code, cause.info.refusalReason, cause.info.message)
+      )
+        return false;
+      return !(accountLimit && isAccountLimit(cause.info.message, code));
+    });
     if (!causes.length) return null;
     const lead =
       causes.find(
         (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
       ) ?? causes[0];
     return { ...lead, causes };
-  }, [accountLimit, runFailure]);
+  }, [accountLimit, heldCredits, runFailure]);
 
   const selectedRunStatus = selection
     ? snapshots[selection.runId]?.status ?? "running"
@@ -1163,6 +1206,7 @@ export function NewSwarmRunningStep({
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
     accountLimit !== null ||
+    heldCredits !== null ||
     runFailure !== null;
 
   return (
@@ -1269,6 +1313,24 @@ export function NewSwarmRunningStep({
                   </p>
                 </div>
               ) : null}
+              {heldCredits ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-held-credits"
+                  role="status"
+                >
+                  <p className="font-medium">Credits temporarily held.</p>
+                  <p className="mt-0.5">
+                    {heldCredits.count === 1
+                      ? "1 session stopped"
+                      : `${heldCredits.count} sessions stopped`}{" "}
+                    while other requests from your organization held the
+                    remaining credits. Nothing needs buying; run{" "}
+                    {heldCredits.count === 1 ? "it" : "them"} again once your
+                    other sessions have finished.
+                  </p>
+                </div>
+              ) : null}
               {/* Account limits remain visible even when another cause failed. */}
               {accountLimit ? (
                 <div
@@ -1287,6 +1349,7 @@ export function NewSwarmRunningStep({
                       failed +
                         rateLimited -
                         accountLimit.count -
+                        (heldCredits?.count ?? 0) -
                         (providerRateLimit?.count ?? 0),
                     )} failed, ${
                       accountLimit.count

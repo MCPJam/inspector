@@ -355,22 +355,129 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not call held credits exhausted, nor open the dialog", async () => {
-    // What the runner stores for a `holds_committed` refusal once its wait
-    // budget runs out: the backend's sentence under the generic code, with the
-    // refusal reason gone. The wallet was never empty.
+  // What the runner stores for a `holds_committed` refusal once its wait
+  // budget runs out: the backend's sentence under the generic code, with the
+  // refusal reason gone. The wallet was never empty.
+  const HELD_ROW =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("words a hold as a wait, not as a usage limit or an empty wallet, and opens no dialog", async () => {
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
     attempt.errorCode = "user_rate_limit";
-    attempt.errorMessage =
-      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+    attempt.errorMessage = HELD_ROW;
     renderStep();
 
-    const banner = await screen.findByTestId("new-swarm-running-account-limit");
-    expect(banner).not.toHaveTextContent("Out of MCPJam credits.");
+    // The session card says "Credits temporarily held"; the run banner agrees.
+    const banner = await screen.findByTestId("new-swarm-running-held-credits");
+    expect(banner).toHaveTextContent("Credits temporarily held");
+    expect(banner).toHaveTextContent("1 session stopped");
+    expect(banner).not.toHaveTextContent(
+      /usage limit|Out of MCPJam credits|credit options/i,
+    );
+    // It owns its cause: no account-limit callout, no grouped failure banner.
+    expect(
+      screen.queryByTestId("new-swarm-running-account-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "View credit options" }),
     ).not.toBeInTheDocument();
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("keeps a hold out of the account-limit callout when a real exhaustion shares the run", async () => {
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 2 };
+    attempts = [
+      {
+        ...attempt,
+        chatSessionId: CHAT_SESSION_ID,
+        errorCode: "user_rate_limit",
+        errorMessage: HELD_ROW,
+      },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+        errorCode: "user_rate_limit",
+        errorMessage:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow },
+      { ...sessionRow, id: "s-2", chatSessionId: otherChatSessionId },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    // Each cause gets its own line, and the held session is counted once.
+    const held = await screen.findByTestId("new-swarm-running-held-credits");
+    const limit = await screen.findByTestId("new-swarm-running-account-limit");
+    expect(held).toHaveTextContent("1 session stopped");
+    expect(limit).toHaveTextContent(
+      "0 completed, 0 failed, 1 stopped at an organization usage limit.",
+    );
+    expect(limit).toHaveTextContent("Out of MCPJam credits.");
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("counts several held sessions and reads a hold stored under its structured reason", async () => {
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 2 };
+    attempts = [
+      {
+        ...attempt,
+        chatSessionId: CHAT_SESSION_ID,
+        errorCode: "user_rate_limit",
+        errorMessage: HELD_ROW,
+      },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+        errorCode: "user_rate_limit",
+        errorMessage:
+          'Backend stream error: 429 {"code":"user_rate_limit","refusalReason":"holds_committed","error":"Try again shortly."}',
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow },
+      { ...sessionRow, id: "s-2", chatSessionId: otherChatSessionId },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    const held = await screen.findByTestId("new-swarm-running-held-credits");
+    expect(held).toHaveTextContent("2 sessions stopped");
+    expect(
+      screen.queryByTestId("new-swarm-running-account-limit"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the credit callout for an all-limited run", async () => {

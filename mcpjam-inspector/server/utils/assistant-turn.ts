@@ -280,8 +280,6 @@ export interface RunAssistantTurnOptions {
    * personal path unchanged.
    */
   harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
-  /** Pass-through: the broker's per-step output ceiling for a harness turn. */
-  harnessMaxOutputTokens?: MCPJamHandlerOptions["harnessMaxOutputTokens"];
 
   /**
    * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
@@ -535,9 +533,6 @@ function buildHandlerOptions(
     // personal computer, exactly as before.
     ...(opts.harnessSandboxBinding
       ? { harnessSandboxBinding: opts.harnessSandboxBinding }
-      : {}),
-    ...(opts.harnessMaxOutputTokens !== undefined
-      ? { harnessMaxOutputTokens: opts.harnessMaxOutputTokens }
       : {}),
     // Server-executed built-ins forwarded SEPARATELY so the harness path can
     // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).

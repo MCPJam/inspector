@@ -124,8 +124,10 @@ export interface ResolveTurnRuntimeArgs {
   modelSelection?: RequestedModelSelection;
   /**
    * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`): the
-   * backend holds credits against it. Sent on that rail ONLY. Nothing in this repo shows `/stream/org` or
-   * the direct engine reading it, so a BYOK turn keeps its own limits.
+   * backend holds credits against it. Sent on that rail ONLY, and never to a
+   * harness host (its model broker clamps `max_tokens` without touching the
+   * thinking budget). Nothing in this repo shows `/stream/org` or the direct
+   * engine reading it, so a BYOK turn keeps its own limits.
    */
   maxOutputTokens?: number;
   /**
@@ -419,12 +421,18 @@ export async function resolveTurnRuntime(
       effort && hostedSelection?.settings?.reasoningEffort !== effort
         ? { reasoningEffort: effort }
         : undefined;
+    // Never for a harness host: its model broker clamps `max_tokens` to a
+    // ceiling without touching the model's thinking budget, so one below the
+    // broker's own default can make every thinking turn fail. Held here, where
+    // the body is built, rather than left to whatever `runHarnessTurn` happens
+    // to read out of `extraBodyFields` today.
+    const outputCeiling = args.harness ? undefined : args.maxOutputTokens;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection || topLevelEffort || args.maxOutputTokens !== undefined
+      args.extraBodyFields || hostedSelection || topLevelEffort || outputCeiling !== undefined
         ? {
             ...(args.extraBodyFields ?? {}),
-            ...(args.maxOutputTokens !== undefined
-              ? { maxOutputTokens: args.maxOutputTokens }
+            ...(outputCeiling !== undefined
+              ? { maxOutputTokens: outputCeiling }
               : {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
             ...(topLevelEffort ?? {}),

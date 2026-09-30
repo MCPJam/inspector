@@ -392,7 +392,10 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).not.toHaveProperty("harnessMaxOutputTokens");
+    expect((calls[0] as any).extraBodyFields).not.toHaveProperty(
+      "maxOutputTokens",
+    );
+    expect(calls[0]).not.toHaveProperty("maxOutputTokens");
   });
 
   it("sends the output ceiling on the plain hosted /stream rail for a credit-funded step", async () => {

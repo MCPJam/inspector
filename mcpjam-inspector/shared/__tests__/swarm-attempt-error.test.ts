@@ -498,6 +498,31 @@ describe("isHeldCreditsRefusal", () => {
       isHeldCreditsRefusal("user_rate_limit", undefined, STORED_HOLDS_SENTENCE),
     ).toBe(true);
   });
+
+  it("reads the sentence as a hold only under the code a hold rides", () => {
+    // A locked wallet answers `wallet_locked` with the same sentence
+    // (`buildSpendRefusalBody`), and a stored row keeps that code. Any other
+    // code names a different refusal, so the sentence cannot turn it into a wait.
+    for (const code of [
+      "wallet_locked",
+      "spend_budget_reached",
+      "billing_limit_reached",
+      "org_rate_limit",
+      "mcpjam_rate_limit",
+    ]) {
+      expect(isHeldCreditsRefusal(code, undefined, STORED_HOLDS_SENTENCE)).toBe(
+        false,
+      );
+      expect(
+        isTransientSpendRefusal(code, undefined, STORED_HOLDS_SENTENCE),
+      ).toBe(false);
+    }
+    // No code at all (a flattened message) and the generic one still read it.
+    expect(
+      isHeldCreditsRefusal(undefined, undefined, STORED_HOLDS_SENTENCE),
+    ).toBe(true);
+    expect(isHeldCreditsRefusal(null, null, STORED_HOLDS_SENTENCE)).toBe(true);
+  });
 });
 
 describe("isTransientSpendRefusal", () => {
@@ -657,6 +682,37 @@ describe("isCreditExhaustion when a hold and an exhaustion are both in play", ()
         details: HELD,
       }),
     ).toBe(true);
+  });
+
+  it("counts a code-only exhaustion next to a hold's sentence", () => {
+    // `billing_limit_reached`, `org_rate_limit` and `mcpjam_rate_limit` never
+    // ride a hold (its code is `user_rate_limit`), so one beside the sentence
+    // is a real exhaustion that the hold must not hide.
+    for (const code of [
+      "billing_limit_reached",
+      "org_rate_limit",
+      "mcpjam_rate_limit",
+    ]) {
+      expect(isCreditExhaustion(`${HELD} (${code}, HTTP 429)`)).toBe(true);
+      expect(isCreditExhaustion({ code, message: HELD })).toBe(true);
+      expect(isCreditExhaustion(envelope({ code, error: HELD }))).toBe(true);
+    }
+    // The hold's own code is not an exhaustion signal.
+    expect(isCreditExhaustion(`${HELD} (user_rate_limit, HTTP 429)`)).toBe(
+      false,
+    );
+  });
+
+  it("does not read a hold under another refusal's code", () => {
+    // The object form: the code is on the refusal, so it decides.
+    expect(
+      isCreditExhaustion({ code: "billing_limit_reached", message: HELD }),
+    ).toBe(true);
+    // A locked wallet sends `wallet_locked` with the same sentence. It is not a
+    // wait and not a top-up either, so it stays out of exhaustion.
+    expect(isCreditExhaustion({ code: "wallet_locked", message: HELD })).toBe(
+      false,
+    );
   });
 
   it("reads the envelope a string wraps, so a quoted hold cannot hide a real exhaustion", () => {

@@ -22,10 +22,21 @@ const EXHAUSTION_PHRASES: readonly RegExp[] = [
 const EXHAUSTION_CODES =
   /\b(?:mcpjam_rate_limit|user_rate_limit|org_rate_limit|billing_limit_reached)\b/i;
 
+/**
+ * The exhaustion codes that never ride a hold. A hold answers with the generic
+ * `user_rate_limit` (`buildSpendRefusalBody`), so that one says nothing next to
+ * the sentence; these three do.
+ */
+const EXHAUSTION_ONLY_CODES =
+  /\b(?:mcpjam_rate_limit|org_rate_limit|billing_limit_reached)\b/i;
+
 /** The held-credits sentence is a hold; what is left of the text may not be. */
 const statesExhaustion = (text: string): boolean => {
   const rest = withoutHeldCreditsSentence(text);
-  return EXHAUSTION_PHRASES.some((phrase) => phrase.test(rest));
+  return (
+    EXHAUSTION_PHRASES.some((phrase) => phrase.test(rest)) ||
+    EXHAUSTION_ONLY_CODES.test(rest)
+  );
 };
 
 /**
@@ -59,17 +70,28 @@ const refusalRoot = (value: unknown): Record<string, unknown> | undefined => {
  *   the refusal's OWN words decide: the top-level message fields, and the
  *   top-level `details` when it is a string. A sentence quoted deeper (a value
  *   under `details`, a nested object's own `message`, a history entry) is
- *   someone else's words and never counts.
+ *   someone else's words and never counts. So does its own `code`: a hold rides
+ *   `user_rate_limit`, and any other code is a different refusal.
  * - A text that states the hold AND an exhaustion (one string aggregating
  *   several session errors) is an exhaustion: the hold must not hide it.
+ *
+ * Exported so a surface that words a refusal (the agent panel, the generation
+ * workspace) reads it the same way the dialog does; two readings of one
+ * refusal would print "try again in a few seconds" under an open upgrade dialog.
  */
-const isHoldRefusal = (value: unknown, depth = 0): boolean => {
+export const isHoldRefusal = (value: unknown, depth = 0): boolean => {
   if (depth > 3) return false;
   const root = refusalRoot(value);
   if (root) {
     const reason = root.refusalReason;
     if (typeof reason === "string" && reason)
       return reason === "holds_committed";
+    if (
+      typeof root.code === "string" &&
+      root.code &&
+      root.code !== "user_rate_limit"
+    )
+      return false;
     const texts = [...OWN_MESSAGE_KEYS.map((key) => root[key]), root.details];
     const own = texts.filter(
       (text): text is string => typeof text === "string",
