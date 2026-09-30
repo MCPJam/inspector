@@ -79,6 +79,18 @@ const TraceTimelineLazy = lazy(() =>
 
 const NOOP = (..._args: unknown[]) => {};
 
+type TranscriptNavigation = {
+  focusMessageId: string | null;
+  highlightedMessageIds: string[];
+  navigationKey: number;
+};
+
+const TRANSCRIPT_NAVIGATION_AT_REST: TranscriptNavigation = {
+  focusMessageId: null,
+  highlightedMessageIds: [],
+  navigationKey: 0,
+};
+
 export type TraceViewerEvalToolCall = {
   toolName: string;
   arguments: Record<string, any>;
@@ -429,15 +441,8 @@ export function TraceViewer({
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [transcriptNavigation, setTranscriptNavigation] = useState<{
-    focusMessageId: string | null;
-    highlightedMessageIds: string[];
-    navigationKey: number;
-  }>({
-    focusMessageId: null,
-    highlightedMessageIds: [],
-    navigationKey: 0,
-  });
+  const [transcriptNavigation, setTranscriptNavigation] =
+    useState<TranscriptNavigation>(TRANSCRIPT_NAVIGATION_AT_REST);
   const [timelineViewportMaxMs, setTimelineViewportMaxMs] = useState(1);
   const resolvedModel: ModelDefinition = model ?? {
     id: "unknown",
@@ -511,20 +516,25 @@ export function TraceViewer({
     return true;
   }, [promptGroups, expandedPromptIds, expandedStepIds, fullyExpandedStepIds]);
 
-  useEffect(() => {
+  // Reset the timeline's zoom, filter and expansion when its spans change, by
+  // adjusting state during render rather than in an effect. A streaming reply
+  // hands this viewer a new trace on every token, and an effect here set state
+  // after each token's commit. A fast stream stacks enough of those in a row
+  // to trip React's "Maximum update depth exceeded", the same failure the
+  // compare cards had in INSPECTOR-CLIENT-2HP. React applies an update to this
+  // component's own state within the same render pass, so it never schedules
+  // more work. The key starts at `null` so the first render applies the reset,
+  // as the mount-time effect did.
+  const [timelineResetIdentity, setTimelineResetIdentity] = useState<
+    string | null
+  >(null);
+  if (timelineResetIdentity !== traceIdentityForToolbar) {
+    setTimelineResetIdentity(traceIdentityForToolbar);
     setTimelineViewportMaxMs(maxEndMsForToolbar);
-  }, [maxEndMsForToolbar, traceIdentityForToolbar]);
-
-  useEffect(() => {
     setTimelineFilter("all");
-    if (!recordedSpans?.length) {
-      setExpandedPromptIds(new Set());
-      setExpandedStepIds(new Set());
-      return;
-    }
     setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
     setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
-  }, [traceIdentityForToolbar, promptGroups, recordedSpans?.length]);
+  }
 
   const adaptedTrace = useMemo(
     () =>
@@ -574,13 +584,17 @@ export function TraceViewer({
     [browserSteps, recorder?.recordingTarget]
   );
 
-  useEffect(() => {
-    setTranscriptNavigation({
-      focusMessageId: null,
-      highlightedMessageIds: [],
-      navigationKey: 0,
-    });
-  }, [trace]);
+  // A reveal-in-transcript highlight belongs to the trace it was made on. Clear
+  // it when the trace changes, during render for the same reason as the
+  // timeline reset above, and only when there is a highlight to clear.
+  const [transcriptNavigationTrace, setTranscriptNavigationTrace] =
+    useState(trace);
+  if (transcriptNavigationTrace !== trace) {
+    setTranscriptNavigationTrace(trace);
+    if (transcriptNavigation !== TRANSCRIPT_NAVIGATION_AT_REST) {
+      setTranscriptNavigation(TRANSCRIPT_NAVIGATION_AT_REST);
+    }
+  }
 
   useEffect(() => {
     if (!hasEvalToolCalls) {
