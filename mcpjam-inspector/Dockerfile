@@ -1,20 +1,18 @@
-# Use specific Node.js version to match local/CI runtimes and dependency engines
-ARG NODE_VERSION=24.14.0
+# Use specific Node.js version to match local/CI runtimes and dependency engines.
+# 24.21 runs ahead of CI's 24.14 deliberately: its bundled npm carries the
+# node-tar fix for CVE-2026-59873, and the Container Scan workflow's gate
+# verifies the Debian layer on every change. Build-time apt/npm upgrades are NOT
+# the way to fix base-image CVEs here — Railway caches that layer while CI
+# rebuilds cold, so the scanned image silently drifts from the deployed one.
+# When the weekly Container Scan fails on a fixable CRITICAL from the base,
+# bump this pin.
+ARG NODE_VERSION=24.21.0
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
 # against glibc and will not launch on musl. Widget-probe rendering (synthetic
 # monitors + browser-render evals) needs a launchable Chromium in this image.
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /usr/src/app
-
-# Patch the base at build time: the pinned node image trails Debian security
-# point releases (libgnutls30 CVE-2026-33845 / CVE-2026-42010), and its
-# bundled npm vendors node-tar 7.5.7 (CVE-2026-59873, gzip-bomb DoS) — the
-# runtime ENTRYPOINT is `npm start`, so npm ships in the final image. The
-# container-scan workflow gates on fixable CRITICALs; without this layer a
-# stale base fails CI until the upstream image tag catches up.
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
-    && npm install -g npm@11
 
 ################################################################################
 # Install workspace dependencies with a single root lockfile.

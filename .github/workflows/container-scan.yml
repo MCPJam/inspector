@@ -1,15 +1,17 @@
 name: Container Scan
 
-# Vulnerability-scans the three container images this repo ships to Railway
-# (the hosted inspector, the Slack bot, the Discord bot). Each image is built
-# exactly as Railway builds it — same Dockerfile, monorepo root as context —
-# then scanned with Trivy for OS-package and bundled-dependency CVEs.
+# Vulnerability-scans the three Docker images this repo ships to Railway (the
+# hosted inspector, the Slack bot, the Discord bot; soundcheck deploys via
+# Railpack with no Dockerfile). Each image is built from the same Dockerfile
+# and build context Railway uses — cold, with no build args — then scanned
+# with Trivy for OS-package and bundled-dependency CVEs.
 #
 # Findings are uploaded as SARIF so they land in GitHub code scanning (one
-# category per image) with dated, attributable history. The build only FAILS
-# on CRITICAL vulnerabilities that have a fix available: unfixable CVEs are
-# reported but cannot be acted on, and gating on them would make every
-# unrelated pull request red.
+# category per image) with dated, attributable history. Both the report and
+# the failure gate consider only findings with a fix available: an alert
+# nobody can act on (no patched version exists) can only age past its SLA.
+# A scheduled run failing on a new fixable CRITICAL in a base image is the
+# signal to bump that base (e.g. NODE_VERSION in the inspector Dockerfile).
 on:
   pull_request:
     branches:
@@ -18,6 +20,18 @@ on:
     # the installed dependency set (lockfile) — not application source, which
     # dependency-audit and Snyk already gate on every PR. Scanning on source
     # changes would add three image builds to every PR for no new signal.
+    paths:
+      - "mcpjam-inspector/Dockerfile"
+      - "slack-app/Dockerfile"
+      - "discord-app/Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/container-scan.yml"
+  # Code scanning opens and closes default-branch alerts from default-branch
+  # analyses only; without this, an alert fixed by a merged PR stays open
+  # until the next scheduled run.
+  push:
+    branches: [main]
     paths:
       - "mcpjam-inspector/Dockerfile"
       - "slack-app/Dockerfile"
@@ -35,6 +49,10 @@ on:
 permissions:
   contents: read
   security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   scan:
@@ -54,6 +72,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # The build context includes the whole checkout; keep the token out
+          # of .git/config so it cannot leak into a layer.
+          persist-credentials: false
 
       # No registry push and no build args: the VITE_*/Sentry args are all
       # optional at build time, and the scan needs the image contents, not a
@@ -62,12 +84,10 @@ jobs:
         run: docker build -f "${{ matrix.dockerfile }}" -t "local/${{ matrix.image }}:scan" .
 
       # ignore-unfixed on the report too: every SARIF result becomes an
-      # SLA-tracked code-scanning alert, and an alert nobody can act on (no
-      # patched version exists) only ages past its SLA. The first unrestricted
-      # run put 528 findings on the web image, almost all unfixable Debian
-      # HIGHs.
+      # SLA-tracked code-scanning alert, and only findings with a patched
+      # version to move to are actionable within one.
       - name: Scan image (report)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: local/${{ matrix.image }}:scan
@@ -84,15 +104,16 @@ jobs:
       # they still build, scan, and hit the CRITICAL gate below.
       - name: Upload results to code scanning
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: container-${{ matrix.image }}
 
-      # The gate: fixable CRITICALs fail the job. Reuses the vulnerability DB
-      # the report step already downloaded.
+      # Fixable CRITICALs fail the job. skip-setup-trivy reuses the binary the
+      # report step installed; the vulnerability DB comes from the action's
+      # shared cache.
       - name: Fail on fixable CRITICAL vulnerabilities
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: local/${{ matrix.image }}:scan
