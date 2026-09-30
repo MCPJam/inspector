@@ -68,7 +68,7 @@ describe("stale chunk recovery", () => {
   it("offers a reload when a chunk from an older build fails to load", async () => {
     failChunkLoad();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
     expect(window.location.reload).toHaveBeenCalledTimes(1);
   });
@@ -78,8 +78,8 @@ describe("stale chunk recovery", () => {
     failChunkLoad();
     failChunkLoad();
 
-    await screen.findByRole("button", { name: "Reload" });
-    expect(screen.getAllByRole("button", { name: "Reload" })).toHaveLength(1);
+    await screen.findByRole("button", { name: "Refresh" });
+    expect(screen.getAllByRole("button", { name: "Refresh" })).toHaveLength(1);
   });
 
   it("leaves the import rejection to its caller", () => {
