@@ -441,12 +441,11 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
   });
 
   it.each([true, false])(
-    "MJ-008 retest #3: a surfaceless caller's turn cannot execute a write, requireToolApproval=%s",
+    "MJ-008: a surfaceless caller's turn gets no write tools, requireToolApproval=%s",
     async (requireToolApproval) => {
-      // The retest drove the headless surface with `requireToolApproval` set
-      // both ways and saw a non-read-only operation execute identically. The
-      // field is not part of this route's contract, so it must change nothing
-      // — and the write tools must not reach the engine at all.
+      // `requireToolApproval` is not part of this route's contract, so either
+      // value must change nothing — and the write tools must not reach the
+      // engine at all.
       const res = await turnRequest(makeApp(), {
         ...OK_BODY,
         requireToolApproval,

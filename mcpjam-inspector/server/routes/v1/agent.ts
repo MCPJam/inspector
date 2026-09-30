@@ -34,8 +34,8 @@
  *    interactive fallback, so an unattended turn must never spend on the
  *    model's own initiative. Destructive ops stay excluded entirely — a
  *    proposal makes spend deliberate, not a deletion recoverable.
- *  - The direct tier's WRITES additionally require a human surface (MJ-008
- *    retest #3). A caller with no chat surface — an `sk_` key or a plain JWT —
+ *  - The direct tier's WRITES additionally require a human surface
+ *    (MJ-008). A caller with no chat surface — an `sk_` key or a plain JWT —
  *    gets the read-only catalog and nothing else: its model must not mutate
  *    the workspace unattended, whatever the request body says. The surface is
  *    resolved from the AUTH METHOD (`approval-surface.ts`), never the body,
@@ -788,7 +788,7 @@ export function buildAgentApiToolSet(opts: {
    * ran and approvals are collected (`resolveProposalSurface` — Slack/Discord
    * service auth plus a conversation). Resolved from the AUTH METHOD, never
    * from the request body. Absent or false, every operation that is not
-   * read-only is OMITTED, same rule as the gated tier (MJ-008 retest #3): a
+   * read-only is OMITTED, same rule as the gated tier (MJ-008): a
    * headless caller's model must not mutate the workspace unattended, and the
    * caller can always issue the write itself through the plain /api/v1
    * operation under its own name.
