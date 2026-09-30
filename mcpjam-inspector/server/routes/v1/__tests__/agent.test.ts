@@ -121,9 +121,8 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
-    "@mcpjam/sdk"
-  );
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
   return {
     ...actual,
     MCPClientManager: vi.fn().mockImplementation(() => ({
@@ -176,7 +175,7 @@ function makeApp(): Hono {
 function turnRequest(
   app: Hono,
   body: unknown,
-  token = "tok"
+  token = "tok",
 ): Promise<Response> {
   return Promise.resolve(
     app.request("/api/v1/projects/p1/agent", {
@@ -186,7 +185,7 @@ function turnRequest(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
-    })
+    }),
   );
 }
 
@@ -292,55 +291,90 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     { "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
   ])("rejects dispatch without owned lease proof: %j", async (headers) => {
     const query = vi.fn().mockResolvedValue(null);
-    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query } as any);
+    const client = vi
+      .spyOn(routeHelpers, "createConvexClient")
+      .mockReturnValue({ query } as any);
     try {
       const response = await makeApp().request("/api/v1/projects/p1/agent", {
         method: "POST",
-        headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-inspector-service-token": "svc", ...headers } as Record<string, string>,
+        headers: {
+          Authorization: "Bearer tok",
+          "Content-Type": "application/json",
+          "x-inspector-service-token": "svc",
+          ...headers,
+        } as Record<string, string>,
         body: JSON.stringify(OK_BODY),
       });
       expect(response.status).toBe(403);
       expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
       if (headers["x-mcpjam-agent-job"] && headers["x-mcpjam-agent-lease"])
-        expect(query).toHaveBeenCalledWith("agentTurnState:resumeContext", { jobId: "job", token: "lease" });
+        expect(query).toHaveBeenCalledWith("agentTurnState:resumeContext", {
+          jobId: "job",
+          token: "lease",
+        });
       else expect(query).not.toHaveBeenCalled();
-    } finally { client.mockRestore(); }
+    } finally {
+      client.mockRestore();
+    }
   });
 
   it("rejects durable headers from a non-service caller", async () => {
     const response = await makeApp().request("/api/v1/projects/p1/agent", {
       method: "POST",
-      headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+      headers: {
+        Authorization: "Bearer tok",
+        "Content-Type": "application/json",
+        "x-mcpjam-agent-job": "job",
+        "x-mcpjam-agent-lease": "lease",
+      },
       body: JSON.stringify(OK_BODY),
     });
     expect(response.status).toBe(403);
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
-  it.each(["GET", "POST"])("returns 404 for missing agent jobs on %s", async (method) => {
-    const previous = process.env.CONVEX_URL;
-    process.env.CONVEX_URL = "https://convex.test";
-    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query: vi.fn().mockResolvedValue(null) } as any);
-    try {
-      const response = await makeApp().request(`/api/v1/projects/p1/agent/jobs/job${method === "POST" ? "/cancel" : ""}`, { method, headers: { Authorization: "Bearer tok" } });
-      expect(response.status).toBe(404);
-    } finally {
-      client.mockRestore();
-      if (previous === undefined) delete process.env.CONVEX_URL; else process.env.CONVEX_URL = previous;
-    }
-  });
+  it.each(["GET", "POST"])(
+    "returns 404 for missing agent jobs on %s",
+    async (method) => {
+      const previous = process.env.CONVEX_URL;
+      process.env.CONVEX_URL = "https://convex.test";
+      const client = vi
+        .spyOn(routeHelpers, "createConvexClient")
+        .mockReturnValue({ query: vi.fn().mockResolvedValue(null) } as any);
+      try {
+        const response = await makeApp().request(
+          `/api/v1/projects/p1/agent/jobs/job${method === "POST" ? "/cancel" : ""}`,
+          { method, headers: { Authorization: "Bearer tok" } },
+        );
+        expect(response.status).toBe(404);
+      } finally {
+        client.mockRestore();
+        if (previous === undefined) delete process.env.CONVEX_URL;
+        else process.env.CONVEX_URL = previous;
+      }
+    },
+  );
   it("returns a top-level job ID for pending durable turns", async () => {
     const oldFlag = process.env.DURABLE_AGENT_TURNS_ENABLED;
     process.env.DURABLE_AGENT_TURNS_ENABLED = "true";
-    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({} as any);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ jobId: "job" }));
+    const client = vi
+      .spyOn(routeHelpers, "createConvexClient")
+      .mockReturnValue({} as any);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ jobId: "job" }));
     try {
       const response = await turnRequest(makeApp(), OK_BODY);
       expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ jobId: "job", status: "pending" });
+      expect(await response.json()).toEqual({
+        jobId: "job",
+        status: "pending",
+      });
     } finally {
-      client.mockRestore(); fetchMock.mockRestore();
-      if (oldFlag === undefined) delete process.env.DURABLE_AGENT_TURNS_ENABLED; else process.env.DURABLE_AGENT_TURNS_ENABLED = oldFlag;
+      client.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined) delete process.env.DURABLE_AGENT_TURNS_ENABLED;
+      else process.env.DURABLE_AGENT_TURNS_ENABLED = oldFlag;
     }
   });
 
@@ -566,7 +600,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
       await opts.tools[createEvalSuiteOperation.name].execute(
         VALID_CREATE_INPUT,
-        {}
+        {},
       );
       return okTurnResult({ turnTrace: undefined });
     });
@@ -635,7 +669,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
 
   it("maps other engine failures to INTERNAL_ERROR", async () => {
     runUnifiedAssistantTurnMock.mockResolvedValue(
-      okTurnResult({ turnTrace: undefined })
+      okTurnResult({ turnTrace: undefined }),
     );
     const res = await turnRequest(makeApp(), OK_BODY);
     expect(res.status).toBe(500);
@@ -647,7 +681,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
       () =>
         new Promise((resolve) => {
           gate.push(() => resolve(okTurnResult()));
-        })
+        }),
     );
     const app = makeApp();
     const inflight = [1, 2, 3, 4].map(() => turnRequest(app, OK_BODY));
@@ -726,7 +760,7 @@ describe("agent tool surface", () => {
     await tool.execute({}, {});
     expect(executeSpy).toHaveBeenCalledWith(
       expect.objectContaining({ project: "p1" }),
-      expect.anything()
+      expect.anything(),
     );
     executeSpy.mockRestore();
   });
@@ -999,17 +1033,17 @@ describe("agent tool surface", () => {
     };
     expect(
       tool.inputSchema.safeParse({ runId: "run_1", iterationId: "it_1" })
-        .success
+        .success,
     ).toBe(true);
     await tool.execute({ runId: "run_1", iterationId: "it_1" }, {});
     expect(executeSpy).toHaveBeenCalledWith(
       expect.objectContaining({ project: "p1" }),
-      expect.anything()
+      expect.anything(),
     );
 
     const denied = (await tool.execute(
       { runId: "run_1", iterationId: "it_1", project: "p2" },
-      {}
+      {},
     )) as { error?: string };
     expect(denied.error).toMatch(/scoped/);
     executeSpy.mockRestore();
@@ -1036,7 +1070,7 @@ describe("agent tool surface", () => {
     };
     const result = (await tool.execute(
       { runId: "run_1", iterationId: "it_1" },
-      {}
+      {},
     )) as Record<string, unknown>;
     expect(result.truncated).toBe(true);
     executeSpy.mockRestore();
@@ -1124,7 +1158,7 @@ type GatedTool = {
 
 /** Run a turn as a linked Slack user and hand back the tools it was given. */
 async function toolsForSlackTurn(
-  body: Record<string, unknown> = {}
+  body: Record<string, unknown> = {},
 ): Promise<Record<string, GatedTool>> {
   const app = makeApp();
   const res = await app.request("/api/v1/projects/p1/agent", {
@@ -1238,7 +1272,7 @@ describe("gated proposal tools", () => {
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     const result = await tools[runEvalSuiteOperation.name]!.execute(
       { suite: "smoke" },
-      {}
+      {},
     );
     expect(createProposedActionMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1253,7 +1287,7 @@ describe("gated proposal tools", () => {
         surfaceActorId: "U1",
         organizationId: "org_1",
         projectId: "p1",
-      })
+      }),
     );
     // The model gets an OPAQUE id and an explicit "not started" note — never
     // anything it could use to execute the action itself.
@@ -1266,7 +1300,7 @@ describe("gated proposal tools", () => {
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     const result = await tools[runEvalSuiteOperation.name]!.execute(
       { suite: "smoke", project: "p2" },
-      {}
+      {},
     );
     expect(result.error).toMatch(/scoped to a single project/);
     expect(createProposedActionMock).not.toHaveBeenCalled();
@@ -1322,7 +1356,7 @@ describe("gated proposal tools", () => {
     };
     expect(body.proposedActions).toHaveLength(1);
     const ids = createProposedActionMock.mock.calls.map(
-      (call) => (call[0] as { actionId: string }).actionId
+      (call) => (call[0] as { actionId: string }).actionId,
     );
     expect(new Set(ids).size).toBe(1);
   });
@@ -1332,7 +1366,7 @@ describe("gated proposal tools", () => {
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     const result = await tools[runEvalSuiteOperation.name]!.execute(
       { suite: "smoke" },
-      {}
+      {},
     );
     // Not "proposed": the model must not tell the user a button exists.
     expect(result.proposed).toBeUndefined();
@@ -1367,7 +1401,7 @@ describe("gated proposal tools", () => {
             remoteUrl: "https://mcp.linear.app/mcp",
             latestContentHash: "hash_now",
           }),
-          { headers: { "Content-Type": "application/json" } }
+          { headers: { "Content-Type": "application/json" } },
         );
       }
       return new Response("{}");
@@ -1379,7 +1413,7 @@ describe("gated proposal tools", () => {
     expect(result).toMatchObject({ proposed: true });
     // The FROZEN description — the endpoint host the approval control shows.
     expect(result.description).toBe(
-      "Install directory server cs_1 at mcp.linear.app"
+      "Install directory server cs_1 at mcp.linear.app",
     );
     expect(createProposedActionMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1388,7 +1422,7 @@ describe("gated proposal tools", () => {
           endpointUrl: "https://mcp.linear.app/mcp",
           expectedContentHash: "hash_now",
         }),
-      })
+      }),
     );
   });
 
@@ -1396,7 +1430,7 @@ describe("gated proposal tools", () => {
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     const result = await tools[runEvalSuiteOperation.name]!.execute(
       { suite: "smoke" },
-      { abortSignal: { aborted: true } }
+      { abortSignal: { aborted: true } },
     );
     expect(result.error).toMatch(/cancelled/i);
     expect(createProposedActionMock).not.toHaveBeenCalled();
@@ -1415,7 +1449,7 @@ describe("gated proposal tools", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async () => {
       await captured![cancelEvalRunOperation.name]!.execute(
         { runId: "run_1" },
-        {}
+        {},
       );
       return okTurnResult();
     });
@@ -1455,19 +1489,19 @@ describe("gated proposal tools", () => {
     expect(viaGeneric[runEvalSuiteOperation.name]).toBeDefined();
     await viaGeneric[runEvalSuiteOperation.name]!.execute(
       { suite: "smoke" },
-      {}
+      {},
     );
     expect(createProposedActionMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ surfaceConversationId: "C_NEW" })
+      expect.objectContaining({ surfaceConversationId: "C_NEW" }),
     );
 
     const viaLegacy = await toolsForSlackTurn({ slackChannelId: "C_OLD" });
     await viaLegacy[runEvalSuiteOperation.name]!.execute(
       { suite: "smoke" },
-      {}
+      {},
     );
     expect(createProposedActionMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ surfaceConversationId: "C_OLD" })
+      expect.objectContaining({ surfaceConversationId: "C_OLD" }),
     );
   });
 
@@ -1478,7 +1512,7 @@ describe("gated proposal tools", () => {
     });
     await tools[runEvalSuiteOperation.name]!.execute({ suite: "smoke" }, {});
     expect(createProposedActionMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ surfaceConversationId: "C_NEW" })
+      expect.objectContaining({ surfaceConversationId: "C_NEW" }),
     );
   });
 
@@ -1504,7 +1538,7 @@ describe("gated proposal tools", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async () => {
       await captured![createEvalSuiteOperation.name]!.execute(
         VALID_CREATE_INPUT,
-        {}
+        {},
       );
       return okTurnResult();
     });
@@ -1536,7 +1570,7 @@ describe("gated proposal tools", () => {
       expect.objectContaining({
         operation: runEvalSuiteOperation.name,
         input: expect.objectContaining({ suite: "ts_1", project: "p1" }),
-      })
+      }),
     );
     executeSpy.mockRestore();
   });
@@ -1564,12 +1598,12 @@ describe("gated proposal tools", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async () => {
       await captured![createEvalSuiteOperation.name]!.execute(
         VALID_CREATE_INPUT,
-        {}
+        {},
       );
       // The model proposes running it BY NAME.
       await captured![runEvalSuiteOperation.name]!.execute(
         { suite: "smoke" },
-        {}
+        {},
       );
       return okTurnResult();
     });
@@ -1616,7 +1650,7 @@ describe("gated proposal tools", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async () => {
       await captured![createEvalSuiteOperation.name]!.execute(
         VALID_CREATE_INPUT,
-        {}
+        {},
       );
       return okTurnResult();
     });
@@ -1670,7 +1704,7 @@ describe("gated proposal tools", () => {
         toolName: "send_email",
         parameters: { to: "alice@example.com" },
       },
-      {}
+      {},
     );
     expect(executeSpy).not.toHaveBeenCalled();
     expect(result).toMatchObject({ proposed: true });
@@ -1678,7 +1712,7 @@ describe("gated proposal tools", () => {
     expect(result.description).toContain("send_email");
     expect(result.description).toContain('to: "alice@example.com"');
     expect(createProposedActionMock).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: callServerToolOperation.name })
+      expect.objectContaining({ operation: callServerToolOperation.name }),
     );
     executeSpy.mockRestore();
   });
@@ -1696,7 +1730,7 @@ describe("gated proposal tools", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async () => {
       await captured![callServerToolOperation.name]!.execute(
         { server: "mailer", toolName: "send_email", parameters: {} },
-        {}
+        {},
       );
       return okTurnResult();
     });
@@ -1828,16 +1862,15 @@ describe("org capability policy", () => {
   it("treats a route-missing backend as an empty policy, and stops asking", async () => {
     // Deployable ahead of the backend. The empty answer is CACHED, so an old
     // deployment does not cost a round trip on every turn.
-    const { SlackBackendUnavailable } = (await import(
-      "../../../services/slack-backend.js"
-    )) as {
-      SlackBackendUnavailable: new (
-        m: string,
-        o?: { status?: number }
-      ) => Error;
-    };
+    const { SlackBackendUnavailable } =
+      (await import("../../../services/slack-backend.js")) as {
+        SlackBackendUnavailable: new (
+          m: string,
+          o?: { status?: number },
+        ) => Error;
+      };
     getOrgAgentPolicyMock.mockRejectedValue(
-      new SlackBackendUnavailable("404", { status: 404 })
+      new SlackBackendUnavailable("404", { status: 404 }),
     );
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     expect(tools[runEvalSuiteOperation.name]).toBeDefined();
@@ -1916,7 +1949,7 @@ describe("org capability policy", () => {
     runUnifiedAssistantTurnMock.mockImplementation(async () => {
       await captured![createEvalSuiteOperation.name]!.execute(
         VALID_CREATE_INPUT,
-        {}
+        {},
       );
       return okTurnResult();
     });
@@ -2016,18 +2049,18 @@ describe("GET /api/v1/agent-ops", () => {
     }
 
     const gated = body.operations.find(
-      (op) => op.name === runEvalSuiteOperation.name
+      (op) => op.name === runEvalSuiteOperation.name,
     );
     expect(gated).toMatchObject({ tier: "gated", gatedKind: "start" });
 
     const direct = body.operations.find(
-      (op) => op.name === listProjectServersOperation.name
+      (op) => op.name === listProjectServersOperation.name,
     );
     expect(direct).toMatchObject({ tier: "direct" });
     expect(direct).not.toHaveProperty("gatedKind");
 
     const external = body.operations.find(
-      (op) => op.name === callServerToolOperation.name
+      (op) => op.name === callServerToolOperation.name,
     );
     expect(external).toMatchObject({ confirmSeverity: "external" });
   });
@@ -2040,7 +2073,7 @@ describe("GET /api/v1/agent-ops", () => {
       operations: Array<{ name: string; confirmSeverity?: string }>;
     };
     const scheduled = body.operations.find(
-      (op) => op.name === setEvalSuiteScheduleOperation.name
+      (op) => op.name === setEvalSuiteScheduleOperation.name,
     );
     expect(scheduled).toBeDefined();
     expect(scheduled).not.toHaveProperty("confirmSeverity");
