@@ -2317,6 +2317,54 @@ describe("mcp-oauth", () => {
       expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
     });
 
+    it("rejects a credential-bearing OAuth URL before persisting or starting discovery", async () => {
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "unsafe-url",
+        serverUrl: "https://mcp.example/mcp?api_key=dummy-secret",
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("must not contain credentials");
+      expect(result.error).not.toContain("dummy-secret");
+      expect(localStorage.getItem("mcp-serverUrl-unsafe-url")).toBeNull();
+      expect(mockDiscoverOAuthServerInfo).not.toHaveBeenCalled();
+    });
+
+    it("does not save arbitrary registration fields alongside the public client identity", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider("public-client", "https://mcp.example/mcp");
+      await provider.saveClientInformation({
+        client_id: "public-id",
+        token_endpoint_auth_method: "client_secret_post",
+        client_secret: "dummy-secret",
+        registration_access_token: "dummy-management-token",
+        extension: { access_token: "dummy-nested-token" },
+      });
+      expect(JSON.parse(localStorage.getItem("mcp-client-public-client")!)).toEqual({
+        client_id: "public-id", token_endpoint_auth_method: "client_secret_post",
+      });
+      expect((await provider.clientInformation())?.client_secret).toBe("dummy-secret");
+    });
+
+    it("rebuilds discovery storage without unknown response fields", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider("public-discovery", "https://mcp.example/mcp");
+      const discovery = {
+        ...createDiscoveryState(),
+        authorizationServerMetadata: {
+          ...createDiscoveryState().authorizationServerMetadata,
+          extension: { access_token: "dummy-discovery-token" },
+        },
+        clientSecret: "dummy-top-level-secret",
+      };
+      await provider.saveDiscoveryState(discovery);
+      const stored = provider.discoveryState();
+      expect(JSON.stringify(stored)).not.toContain("dummy");
+      expect(stored?.authorizationServerMetadata?.issuer).toBe(
+        discovery.authorizationServerMetadata.issuer
+      );
+    });
+
     it("strips legacy client secrets from every issuer bucket on read and write", async () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
@@ -2333,14 +2381,17 @@ describe("mcp-oauth", () => {
           JSON.stringify({
             v: 2,
             activeIssuer: "https://auth.example.com",
+            client_secret: "dummy-envelope-secret",
             byIssuer: {
               "https://auth.example.com": {
                 client_id: "current",
-                client_secret: "active-secret"
+                client_secret: "active-secret",
+                registration_access_token: "dummy-management-token"
               },
               "https://other.example.com": {
                 client_id: "other",
-                client_secret: "inactive-secret"
+                client_secret: "inactive-secret",
+                extension: { refresh_token: "dummy-token" }
               }
             }
           })
@@ -2358,6 +2409,7 @@ describe("mcp-oauth", () => {
       const raw = localStorage.getItem("mcp-client-issuer-secrets")!;
       expect(raw).not.toContain("client_secret");
       expect(raw).not.toContain("runtime-only");
+      expect(raw).not.toContain("dummy");
       expect(raw).toContain("other");
     });
 

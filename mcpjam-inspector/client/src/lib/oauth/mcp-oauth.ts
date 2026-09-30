@@ -58,6 +58,12 @@ import {
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import {
+  assertPublicOAuthUrl,
+  publicClientInformation,
+  publicDiscoveryState,
+  sanitizeStoredClientInformation,
+} from "./public-oauth-storage";
+import {
   getHostedProjectId,
   tryResolveProjectServer
 } from "@/lib/apis/web/context";
@@ -190,34 +196,6 @@ function headerScopeKey(binding: {
   serverId: string;
 }): string {
   return JSON.stringify([binding.projectId, binding.serverId]);
-}
-
-function stripStoredClientSecrets(raw: string | null): string | null {
-  if (!raw) return raw;
-  try {
-    const parsed = JSON.parse(raw);
-    const strip = (value: unknown) =>
-      value && typeof value === "object" && !Array.isArray(value)
-        ? Object.fromEntries(
-            Object.entries(value).filter(([key]) => key !== "client_secret")
-          )
-        : value;
-    return JSON.stringify(
-      isIssuerKeyedStore(parsed)
-        ? {
-            ...parsed,
-            byIssuer: Object.fromEntries(
-              Object.entries(parsed.byIssuer).map(([issuer, value]) => [
-                issuer,
-                strip(value)
-              ])
-            )
-          }
-        : strip(parsed)
-    );
-  } catch {
-    return null;
-  }
 }
 
 function withoutAuthorizationHeader(
@@ -1167,6 +1145,7 @@ export function readStoredOAuthConfig(
       );
     }
 
+    if (config.resourceUrl) assertPublicOAuthUrl(config.resourceUrl);
     return config;
   } catch (e) {
     console.warn("[mcp-oauth] Failed to parse stored OAuth config", e);
@@ -1205,6 +1184,7 @@ export function buildStoredOAuthConfig(
   }
 
   if (options.resourceUrl?.trim()) {
+    assertPublicOAuthUrl(options.resourceUrl.trim());
     config.resourceUrl = options.resourceUrl.trim();
   }
 
@@ -2075,7 +2055,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   private readStoredClientInformation(): Record<string, any> | undefined {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    const raw = stripStoredClientSecrets(stored);
+    const raw = sanitizeStoredClientInformation(stored);
     if (raw && raw !== stored) {
       localStorage.setItem(`mcp-client-${this.serverName}`, raw);
     }
@@ -2175,20 +2155,13 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     if (typeof clientInformation?.client_secret === "string") {
       this.runtimeClientSecret = clientInformation.client_secret;
     }
-    const clientInformationToStore =
-      clientInformation && typeof clientInformation === "object"
-        ? Object.fromEntries(
-            Object.entries(clientInformation).filter(
-              ([key]) => key !== "client_secret"
-            )
-          )
-        : clientInformation;
+    const clientInformationToStore = publicClientInformation(clientInformation);
     // SEP-2352: bind the registration to the exact issuer that granted it.
     // When the issuer is resolved, persist issuer-keyed (a later AS change then
     // gets its own bucket — an AS-A client id is never reused for AS B). Before
     // any AS discovery, store unkeyed; the next issuer-stamped save promotes it.
     const issuer = this.currentIssuer();
-    const raw = stripStoredClientSecrets(
+    const raw = sanitizeStoredClientInformation(
       localStorage.getItem(`mcp-client-${this.serverName}`)
     );
     localStorage.setItem(
@@ -2332,9 +2305,10 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(discoveryState: OAuthDiscoveryState) {
+    assertPublicOAuthUrl(this.serverUrl);
     const payload: StoredOAuthDiscoveryState = {
       serverUrl: this.serverUrl,
-      discoveryState,
+      discoveryState: publicDiscoveryState(discoveryState),
     };
     localStorage.setItem(
       getDiscoveryStorageKey(this.serverName),
@@ -2479,6 +2453,7 @@ const oauthBindingStorage = {
   set(serverName: string, binding: MCPOAuthProviderConvexBinding): void {
     if (typeof window === "undefined") return;
     try {
+      if (binding.oauthResourceUrl) assertPublicOAuthUrl(binding.oauthResourceUrl);
       localStorage.setItem(
         this.storageKey(serverName),
         JSON.stringify(binding)
@@ -2677,7 +2652,14 @@ function loadStoredDiscoveryState(
     ) {
       return undefined;
     }
-    return parsed.discoveryState;
+    if (typeof parsed.serverUrl !== "string") return undefined;
+    assertPublicOAuthUrl(parsed.serverUrl);
+    const discoveryState = publicDiscoveryState(parsed.discoveryState);
+    const sanitized = JSON.stringify({ serverUrl: parsed.serverUrl, discoveryState });
+    if (sanitized !== stored) {
+      localStorage.setItem(getDiscoveryStorageKey(serverName), sanitized);
+    }
+    return discoveryState;
   } catch {
     return undefined;
   }
@@ -2713,7 +2695,11 @@ function readStoredClientInformation(
   serverUrl?: string
 ): StoredOAuthClientInformation {
   try {
-    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    const stored = localStorage.getItem(`mcp-client-${serverName}`);
+    const raw = sanitizeStoredClientInformation(stored);
+    if (raw && raw !== stored) {
+      localStorage.setItem(`mcp-client-${serverName}`, raw);
+    }
     // Bind the read to the exact resolved issuer. Without a resolved issuer we
     // must NOT fall back to the envelope's `activeIssuer` bucket: after a PRM
     // change that bucket is a different AS's credential, and returning it here
@@ -2724,7 +2710,7 @@ function readStoredClientInformation(
     if (!issuer) {
       return {};
     }
-    const { value, legacyUnbound } = readIssuerKeyed<Record<string, unknown>>(
+    const { value } = readIssuerKeyed<Record<string, unknown>>(
       raw,
       issuer,
       (parsed) =>
@@ -2734,23 +2720,6 @@ function readStoredClientInformation(
     );
     if (!value || typeof value !== "object") {
       return {};
-    }
-    // Purge a secret lingering in a legacy (unkeyed) record. Keyed saves
-    // already strip, so only the legacy form needs in-place sanitization.
-    if (legacyUnbound && "client_secret" in value) {
-      const sanitized = Object.fromEntries(
-        Object.entries(value).filter(([key]) => key !== "client_secret")
-      );
-      localStorage.setItem(
-        `mcp-client-${serverName}`,
-        JSON.stringify(sanitized)
-      );
-      return {
-        client_id:
-          typeof sanitized.client_id === "string"
-            ? (sanitized.client_id as string)
-            : undefined,
-      };
     }
     return {
       client_id:
@@ -2839,6 +2808,8 @@ export async function initiateOAuth(
     );
 
   try {
+    assertPublicOAuthUrl(options.serverUrl);
+    if (options.resourceUrl) assertPublicOAuthUrl(options.resourceUrl);
     const provider = createMCPOAuthProvider({
       serverName: options.serverName,
       serverUrl: options.serverUrl,
@@ -2905,7 +2876,7 @@ export async function initiateOAuth(
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
     if (options.clientId) {
-      const raw = stripStoredClientSecrets(
+      const raw = sanitizeStoredClientInformation(
         localStorage.getItem(`mcp-client-${options.serverName}`)
       );
       // Key the write to the CURRENT resolved issuer (discovery has run by the

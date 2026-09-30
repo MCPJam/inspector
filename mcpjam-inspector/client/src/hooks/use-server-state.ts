@@ -23,6 +23,7 @@ import {
   readXaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
+import { assertPublicOAuthUrl } from "@/lib/oauth/public-oauth-storage";
 import type {
   AppAction,
   AppState,
@@ -308,6 +309,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     return;
   }
 
+  assertPublicOAuthUrl(formData.url);
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
   const oauthConfig: Record<string, unknown> = {};

@@ -1,6 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { isPrivateNetworkUrl } from "@/shared/private-address";
 import type { ServerFormData } from "@/shared/types.js";
+import { assertPublicOAuthUrl } from "./oauth/public-oauth-storage";
 
 export function validateBearerTargetUrl(url: string): string | null {
   let parsedUrl: URL;
@@ -54,6 +55,13 @@ export function validateServerFormData(
   }
   if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
     return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
+  }
+  if (formData.useOAuth) {
+    try {
+      assertPublicOAuthUrl(formData.url);
+    } catch (error) {
+      return error instanceof Error ? error.message : "Invalid OAuth server URL.";
+    }
   }
   return null;
 }
