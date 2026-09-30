@@ -434,6 +434,9 @@ export function ChatTabV2({
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -469,6 +472,9 @@ export function ChatTabV2({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
+    // A scenario / share-link turn runs the host's own config; the visitor's
+    // chip would be ignored there, so it is not offered.
+    reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     hostedContext: {
@@ -2211,6 +2217,11 @@ export function ChatTabV2({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    onReasoningEffortChange: hostedContext?.scenarioId
+      ? undefined
+      : setReasoningEffort,
     onResetChat: handleResetAllChats,
     submitDisabled: submitBlocked || scenarioComposerBlocked,
     tokenUsage,
