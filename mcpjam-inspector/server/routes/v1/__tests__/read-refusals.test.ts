@@ -1,5 +1,5 @@
 /**
- * MJ-021 retest #3: cross-tenant READS must answer 404 (or 403 for a
+ * MJ-021: cross-tenant READS must answer 404 (or 403 for a
  * refusal the backend states), never a 5xx.
  *
  * The refusal under test is the one production actually produces: the

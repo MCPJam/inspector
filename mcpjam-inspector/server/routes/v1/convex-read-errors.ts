@@ -103,9 +103,24 @@ export function redactedReadRefusalError(
 ): WebRouteError | undefined {
   if (error instanceof WebRouteError) return undefined;
   if (hasConvexErrorData(error)) return undefined;
-  return classifyConvexReadError(error).kind === "redacted"
-    ? new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage)
-    : undefined;
+  if (classifyConvexReadError(error).kind !== "redacted") return undefined;
+  logRedactedReadAsNotFound("v1.read-refusal", error);
+  return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
+}
+
+/**
+ * The one trace a redacted read answered as 404 leaves. Usually it is a
+ * caller naming an id they cannot see, so it never pages (`warn` is
+ * Axiom-only). But a genuine crash on the same read arrives as the same
+ * "Server Error", and without this line it would be a silent 404: logged,
+ * a route that starts answering 404 uniformly is something an operator can
+ * see and rate-alert on.
+ */
+function logRedactedReadAsNotFound(scope: string, error: unknown): void {
+  logger.warn(`[${scope}] redacted read failure answered as not found`, {
+    scope,
+    detail: redactForLog(error),
+  });
 }
 
 /**
@@ -210,10 +225,15 @@ export function translateConvexReadError(
       options.notFoundMessage ?? "Not found",
     );
   }
-  if (
-    failure.kind === "membership" ||
-    (failure.kind === "redacted" && options.redactedIsRefusal === true)
-  ) {
+  if (failure.kind === "redacted" && options.redactedIsRefusal === true) {
+    logRedactedReadAsNotFound(options.scope, error);
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      options.notFoundMessage ?? "Not found",
+    );
+  }
+  if (failure.kind === "membership") {
     return new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,

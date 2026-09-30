@@ -14,9 +14,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * decorative until the ERROR passed in was the redacted one.
  */
 
-const { errorMock } = vi.hoisted(() => ({ errorMock: vi.fn() }));
+const { errorMock, warnMock } = vi.hoisted(() => ({
+  errorMock: vi.fn(),
+  warnMock: vi.fn(),
+}));
 vi.mock("../../../utils/logger.js", () => ({
-  logger: { error: errorMock, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+  logger: { error: errorMock, warn: warnMock, info: vi.fn(), debug: vi.fn() },
 }));
 
 import {
@@ -177,10 +180,23 @@ describe("translateConvexReadError", () => {
     );
     expect(err.status).toBe(404);
     expect(err.message).toBe("Scenario not found");
-    // And SILENTLY. A cross-workspace probe is someone typing an id they do
-    // not have access to; paging on each one turns a routine refusal into an
-    // alert stream, which is how the real incidents get lost.
+    // And without paging. A cross-workspace probe is someone typing an id
+    // they do not have access to; paging on each one turns a routine refusal
+    // into an alert stream, which is how the real incidents get lost.
     expect(errorMock).not.toHaveBeenCalled();
+    // But not invisibly: a genuine crash arrives as the same string, so the
+    // 404 leaves an Axiom-only warn an operator can rate-alert on.
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    const [line, context] = warnMock.mock.calls[0]!;
+    expect(line).toContain("[v1.test]");
+    expect(context).toMatchObject({ scope: "v1.test" });
+  });
+
+  it("does not warn for a stated membership refusal", () => {
+    // Only the ambiguous redacted string needs a trace; a refusal the backend
+    // spelled out is exactly what it says.
+    expect(translate("Not a member of this project").status).toBe(404);
+    expect(warnMock).not.toHaveBeenCalled();
   });
 
   it("still answers 502 to a network failure even at a preflight", () => {
