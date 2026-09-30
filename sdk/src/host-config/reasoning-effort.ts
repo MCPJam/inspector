@@ -123,21 +123,23 @@ function anthropicEfforts(name: string): readonly ModelReasoningEffort[] {
   if (!m) return [];
   const major = Number(m[2]);
   const minor = m[3] === undefined ? 0 : Number(m[3]);
-  const atLeast = (maj: number, min: number) =>
-    major > maj || (major === maj && minor >= min);
-  switch (m[1]) {
-    case "opus":
-      if (atLeast(4, 7)) return ["low", "medium", "high", "xhigh", "max"];
-      if (atLeast(4, 6)) return ["low", "medium", "high", "max"];
-      if (atLeast(4, 5)) return ["low", "medium", "high"];
-      return [];
-    case "sonnet":
-      return atLeast(4, 6) ? ["low", "medium", "high", "max"] : [];
-    case "fable":
-      return major >= 5 ? ["low", "medium", "high", "max"] : [];
-    default:
-      return [];
+  const ALL: readonly ModelReasoningEffort[] = ANTHROPIC_REASONING_EFFORTS;
+  // Version 5+ (Opus, Sonnet, Fable) documents the full set. Within 4.x only
+  // the documented minors are listed; an undocumented minor (4.10+) is
+  // unverified and offers nothing.
+  if (m[1] === "haiku") return [];
+  if (major >= 5) return ALL;
+  if (major !== 4 || minor >= 10) return [];
+  if (m[1] === "opus") {
+    if (minor >= 7) return ALL;
+    if (minor === 6) return ["low", "medium", "high", "max"];
+    if (minor === 5) return ["low", "medium", "high"];
+    return [];
   }
+  // sonnet / fable 4.x
+  return m[1] === "sonnet" && minor >= 6
+    ? ["low", "medium", "high", "max"]
+    : [];
 }
 
 /**
