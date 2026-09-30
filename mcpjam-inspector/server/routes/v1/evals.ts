@@ -1183,6 +1183,8 @@ function isConvexNotVisibleError(error: unknown): boolean {
   return /not found|unauthorized|not a member/i.test(message);
 }
 
+type EvalReadPhase = "preflight" | "authorized";
+
 /**
  * Read-translator options for the id-resolving read at the top of a route —
  * the suite/run/iteration/case lookup that authorizes a caller-supplied id.
@@ -1193,11 +1195,14 @@ function isConvexNotVisibleError(error: unknown): boolean {
  * JSON envelope — instead of this 404 (MJ-021). Shared catches disable this
  * flag once the scope check succeeds, so later failures remain incidents.
  */
-function scopedEvalReadOptions(notFoundMessage: string) {
+function scopedEvalReadOptions(
+  notFoundMessage: string,
+  phase: EvalReadPhase = "preflight",
+) {
   return {
     scope: "v1.evals",
     notFoundMessage,
-    redactedIsRefusal: true,
+    redactedIsRefusal: phase === "preflight",
   } as const;
 }
 
@@ -1281,6 +1286,7 @@ async function readSuiteInProject(
   convexAuthToken: string,
   projectId: string,
   suiteId: string,
+  phase: EvalReadPhase,
 ): Promise<SuiteDoc> {
   // Gated HERE rather than at each caller: the launch routes take `suiteId`
   // from the request BODY, where `RunEvalsRequestSchema` types it as a plain
@@ -1298,7 +1304,7 @@ async function readSuiteInProject(
   } catch (error) {
     throw translateConvexReadError(
       error,
-      scopedEvalReadOptions("Eval suite not found"),
+      scopedEvalReadOptions("Eval suite not found", phase),
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
@@ -1565,14 +1571,11 @@ export async function fetchSuiteRunServerSelection(
   convexAuthToken: string,
   suiteId: string,
   namedHostId: string | undefined,
+  phase: EvalReadPhase,
 ): Promise<{ serverIds: string[]; serverNames: string[] }> {
-  // Gated HERE, not at the callers: this function does NOT pass through
-  // `readSuiteInProject`, so its `suiteId` reaches `v.id('testSuite')` with
-  // nothing having looked at it, and `namedHostId` — which callers take from
-  // the launch BODY, typed as a plain string — reaches `v.id('hosts')` the same
-  // way. `POST /eval-runs` is guest-reachable (`guest-allowed-paths.ts` sets no
-  // method restriction on it), so an ungated body id here is a caller-mintable
-  // paging event, which is the whole hazard this file's id gate exists for.
+  // Keep the shape gates here so standalone callers cannot send malformed
+  // ids into Convex's validators. The phase distinguishes a new host lookup
+  // from fetching the saved selection of a suite already authorized.
   requireConvexIdShape(suiteId, "suiteId", {
     scope: "v1.evals",
     notFoundMessage: "Eval suite not found",
@@ -1608,7 +1611,7 @@ export async function fetchSuiteRunServerSelection(
     }
     throw translateConvexReadError(
       error,
-      scopedEvalReadOptions("Eval suite not found"),
+      scopedEvalReadOptions("Eval suite not found", phase),
     );
   }
 
@@ -4460,6 +4463,7 @@ async function resolveLaunchServers(params: {
   convexAuthToken: string;
   projectId: string;
   suiteId: string | undefined;
+  suiteReadPhase: EvalReadPhase;
   requestedEnvironmentId: string | undefined;
   namedHostId: string | undefined;
   requestedServerIds: string[];
@@ -4485,7 +4489,12 @@ async function resolveLaunchServers(params: {
     ? await selectSuiteEnvironmentId({
         convexAuthToken,
         projectId,
-        suite: await readSuiteInProject(convexAuthToken, projectId, suiteId),
+        suite: await readSuiteInProject(
+          convexAuthToken,
+          projectId,
+          suiteId,
+          params.suiteReadPhase,
+        ),
         requestedEnvironmentId: params.requestedEnvironmentId,
         hasServerOverride: params.requestedServerIds.length > 0,
         serverField: "serverIds",
@@ -4526,6 +4535,7 @@ async function resolveLaunchServers(params: {
       convexAuthToken,
       suiteId!,
       namedHostId,
+      namedHostId ? "preflight" : "authorized",
     );
     serverIds = selection.serverIds;
     serverNames = selection.serverNames;
@@ -4624,6 +4634,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       convexAuthToken,
       projectId,
       suiteId: body.suiteId,
+      suiteReadPhase: "preflight",
       requestedEnvironmentId: body.environmentId,
       namedHostId: body.namedHostId,
       requestedServerIds: body.serverIds ?? [],
@@ -4894,6 +4905,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     convexAuthToken,
     projectId,
     body.suiteId,
+    "preflight",
   );
 
   // Deduplicate by resolved id, preserving the caller's order. Two entries for
@@ -5013,6 +5025,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       convexAuthToken,
       projectId,
       suiteId: body.suiteId,
+      suiteReadPhase: "authorized",
       requestedEnvironmentId: target.environmentId,
       namedHostId: target.namedHostId,
       requestedServerIds: [],
@@ -5339,7 +5352,12 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // creates. Re-read for the same reason the PATCH route does.
     let attachedHostIds: string[] = [];
     const authoredSuite = body.hosts?.length
-      ? await readSuiteInProject(convexAuthToken, projectId, suiteId)
+      ? await readSuiteInProject(
+          convexAuthToken,
+          projectId,
+          suiteId,
+          "authorized",
+        )
       : null;
     if ((authoredSuite?.environmentIds?.length ?? 0) > 0) {
       // Born an environment suite on the requested client: nothing to attach.
@@ -5445,6 +5463,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
     projectId,
     String(result.suite._id),
     vocabularyOf(c),
+    "authorized",
   );
   return v1Resource(
     c,
@@ -7804,6 +7823,7 @@ evals.post(
         convexAuthToken: token,
         projectId,
         suiteId,
+        suiteReadPhase: "authorized",
         requestedEnvironmentId: envRef?.environmentId,
         namedHostId,
         requestedServerIds: [],
@@ -8110,6 +8130,7 @@ async function readSuiteDetail(
   // already cost us one endpoint that answered a vocabulary-2 request with the
   // legacy spelling. Making the compiler ask means a new reader cannot forget.
   vocabulary: EvalVocabulary,
+  phase: EvalReadPhase,
 ) {
   const convex = createConvexReadClient(convexAuthToken);
   let suite: SuiteDoc | null;
@@ -8118,7 +8139,7 @@ async function readSuiteDetail(
   } catch (error) {
     throw translateConvexReadError(
       error,
-      scopedEvalReadOptions("Eval suite not found"),
+      scopedEvalReadOptions("Eval suite not found", phase),
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
@@ -8255,7 +8276,13 @@ evals.get("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const token = await getConvexBearerForRequest(c);
   return suiteResource(
     c,
-    await readSuiteDetail(token, projectId, suiteId, vocabularyOf(c)),
+    await readSuiteDetail(
+      token,
+      projectId,
+      suiteId,
+      vocabularyOf(c),
+      "preflight",
+    ),
   );
 });
 
@@ -8725,7 +8752,13 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
 
   return suiteResource(
     c,
-    await readSuiteDetail(token, projectId, suiteId, vocabularyOf(c)),
+    await readSuiteDetail(
+      token,
+      projectId,
+      suiteId,
+      vocabularyOf(c),
+      "authorized",
+    ),
   );
 });
 
@@ -8768,7 +8801,7 @@ evals.post(
     // Scope check first: Convex enforces membership, and this makes a valid id
     // from another of the caller's projects read as NOT_FOUND rather than
     // leaking across the scope the path declares.
-    await readSuiteInProject(token, projectId, suiteId);
+    await readSuiteInProject(token, projectId, suiteId, "preflight");
 
     const { convexClient } = createConvexClients(token);
     let result: { attached?: boolean; environmentIds?: unknown };
@@ -8923,7 +8956,13 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   }
   return suiteResource(
     c,
-    await readSuiteDetail(token, projectId, suiteId, vocabularyOf(c)),
+    await readSuiteDetail(
+      token,
+      projectId,
+      suiteId,
+      vocabularyOf(c),
+      "authorized",
+    ),
   );
 });
 
@@ -8963,6 +9002,7 @@ async function loadCaseInScope(
   projectId: string,
   suiteId: string,
   caseId: string,
+  phase: EvalReadPhase,
 ): Promise<CaseDoc> {
   let testCase: CaseDoc | null;
   try {
@@ -8972,7 +9012,7 @@ async function loadCaseInScope(
   } catch (error) {
     throw translateConvexReadError(
       error,
-      scopedEvalReadOptions("Eval case not found"),
+      scopedEvalReadOptions("Eval case not found", phase),
     );
   }
   if (!testCase || String(testCase.testSuiteId ?? "") !== suiteId) {
@@ -8990,7 +9030,13 @@ evals.get(
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     const caseId = evalIdParam(c, "caseId", "Eval case");
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
-    const testCase = await loadCaseInScope(convex, projectId, suiteId, caseId);
+    const testCase = await loadCaseInScope(
+      convex,
+      projectId,
+      suiteId,
+      caseId,
+      "preflight",
+    );
     return caseResource(c, testCase);
   },
 );
@@ -9064,6 +9110,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     projectId,
     suiteId,
     String(committed.testCaseId),
+    "authorized",
   );
   return caseResource(c, created, 201);
 });
@@ -9232,6 +9279,7 @@ evals.patch(
       projectId,
       suiteId,
       caseId,
+      "preflight",
     );
     // The CASE was loaded above; the SUITE was not. Both create paths already
     // read it for their scope guard, so a PATCH was the one door through which
@@ -9241,7 +9289,7 @@ evals.patch(
     // title edit does not pay for a second round trip.
     if (body.repetitions !== undefined || body.passThreshold !== undefined) {
       assertCasePolicyFieldsSupported(
-        await readSuiteInProject(token, projectId, suiteId),
+        await readSuiteInProject(token, projectId, suiteId, "authorized"),
         body,
         "",
         countFieldNames(vocabularyOf(c)),
@@ -9281,6 +9329,7 @@ evals.patch(
         projectId,
         suiteId,
         caseId,
+        "authorized",
       );
     }
     return caseResource(c, updated);
@@ -9300,6 +9349,7 @@ evals.delete(
       projectId,
       suiteId,
       caseId,
+      "preflight",
     );
     const { convexClient } = createConvexClients(token);
     try {
@@ -9404,6 +9454,7 @@ evals.post(
         token,
         suiteId,
         undefined,
+        "authorized",
       );
       serverIds = selection.serverIds;
       serverNames = selection.serverNames;
@@ -9520,6 +9571,7 @@ evals.post(
         token,
         suiteId,
         undefined,
+        "authorized",
       );
       serverIds = selection.serverIds;
       serverNames = selection.serverNames;

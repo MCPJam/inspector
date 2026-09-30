@@ -399,4 +399,123 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
       expect(logger.error).toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["PATCH", "", { name: "Renamed suite" }],
+    ["PATCH", "/schedule", { enabled: false }],
+    [
+      "POST",
+      "/cases",
+      {
+        title: "Read tools",
+        steps: [{ id: "s1", kind: "prompt", prompt: "Read tools" }],
+      },
+    ],
+    ["PATCH", `/cases/${CONVEX_ID}`, { title: "Renamed case" }],
+  ])(
+    "%s %s keeps masked post-write read failures observable",
+    async (method, suffix, body) => {
+      let committed = false;
+      convex.query.mockImplementation(async (name: string) => {
+        if (committed) throw masked();
+        if (name === "testSuites:getTestSuite")
+          return { _id: CONVEX_ID, projectId };
+        if (name === "testSuites:getTestCase")
+          return {
+            _id: CONVEX_ID,
+            projectId,
+            testSuiteId: CONVEX_ID,
+            caseType: "prompt",
+            title: "Read tools",
+            query: "Read tools",
+            runs: 1,
+          };
+        return null;
+      });
+      convex.mutation.mockImplementation(async (name: string) => {
+        committed = true;
+        if (name === "testSuites:createTestCases")
+          return {
+            caseUpsert: {
+              committed: [
+                {
+                  index: 0,
+                  title: "Read tools",
+                  testCaseId: CONVEX_ID,
+                  replayed: false,
+                },
+              ],
+              failed: [],
+            },
+            duplicatePolicy: { effectivePolicy: "block", coerced: false },
+            warnings: [],
+          };
+        return undefined;
+      });
+      const { default: router } = await import("../evals.js");
+      const response = await createApp(router).request(
+        `${suitePath}${suffix}`,
+        {
+          method,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      expect(committed).toBe(true);
+      expect(response.status).toBe(502);
+      await expectNoConvexFraming(response);
+      expect((await response.json()).code).toBe("SERVER_UNREACHABLE");
+      expect(logger.error).toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a failed suite policy read after case authorization observable", async () => {
+    convex.query.mockImplementation(async (name: string) => {
+      if (name === "testSuites:getTestCase")
+        return {
+          _id: CONVEX_ID,
+          projectId,
+          testSuiteId: CONVEX_ID,
+          caseType: "prompt",
+        };
+      throw masked();
+    });
+    const { default: router } = await import("../evals.js");
+    const response = await createApp(router).request(
+      `${suitePath}/cases/${CONVEX_ID}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repetitions: 2 }),
+      },
+    );
+    expect(response.status).toBe(502);
+    await expectNoConvexFraming(response);
+    expect(logger.error).toHaveBeenCalled();
+    expect(convex.mutation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["GET", "", undefined],
+    ["GET", `/cases/${CONVEX_ID}`, undefined],
+    ["POST", "/environments", { environmentId: CONVEX_ID }],
+  ])(
+    "%s %s retains masked refusal mapping on initial helper lookups",
+    async (method, suffix, body) => {
+      convex.query.mockRejectedValue(masked());
+      const { default: router } = await import("../evals.js");
+      const response = await createApp(router).request(
+        `${suitePath}${suffix}`,
+        {
+          method,
+          headers: { "content-type": "application/json" },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        },
+      );
+      expect(response.status).toBe(404);
+      await expectNoConvexFraming(response);
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(convex.mutation).not.toHaveBeenCalled();
+    },
+  );
 });
