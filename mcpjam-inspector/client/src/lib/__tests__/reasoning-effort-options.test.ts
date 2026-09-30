@@ -42,12 +42,28 @@ describe("reasoningEffortOptions", () => {
       "medium",
       "high",
     ]);
-    expect(reasoningEffortOptions(row, "hosted", "codex")).toEqual([
+    // A harness offers its verified levels intersected with the MODEL's own:
+    // with no catalog list the model's levels are unknown, so nothing is offered.
+    expect(reasoningEffortOptions(row, "hosted", "codex")).toEqual([]);
+    const catalogRow = {
+      ...row,
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+    };
+    expect(reasoningEffortOptions(catalogRow, "hosted", "codex")).toEqual([
       "low",
       "medium",
       "high",
       "xhigh",
     ]);
-    expect(reasoningEffortOptions(row, "hosted", "claude-code")).toEqual([]);
+    expect(
+      reasoningEffortOptions(
+        { ...row, supportedReasoningEfforts: ["low", "medium", "high"] },
+        "hosted",
+        "codex",
+      ),
+    ).toEqual(["low", "medium", "high"]);
+    expect(reasoningEffortOptions(catalogRow, "hosted", "claude-code")).toEqual(
+      [],
+    );
   });
 });
