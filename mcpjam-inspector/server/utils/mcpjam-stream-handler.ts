@@ -1352,6 +1352,12 @@ interface StepContext {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
+  /**
+   * This is the turn's last allowed model call (`stepIndex === maxSteps - 1`).
+   * Sent with `toolChoice: "none"` so it writes the reply: a tool call here
+   * would run with no model call left to read its result.
+   */
+  isFinalStep?: boolean;
   usedToolCallIds: Set<string>;
   traceTurn: LiveTraceTurnContext;
   endpointPath: string;
@@ -1626,6 +1632,31 @@ function readFinishReasonFromChunk(
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
   return normalizeFinishReason(source?.finishReason);
+}
+
+export const STEP_LIMIT_NOTE =
+  "I reached my step limit for this message. Send a message to continue.";
+
+/**
+ * Writes the step-limit note as its own step: `start-step` first, because the
+ * browser's resume predicates only weigh parts after the last `step-start`.
+ * Also appended to the history so the saved chat shows what the browser saw.
+ */
+function writeStepLimitNote(
+  writer: { write: (chunk: UIMessageChunk) => void },
+  messageHistory: ModelMessage[],
+  traceTurn: LiveTraceTurnContext,
+): void {
+  const id = `step-limit-${traceTurn.turnId}`;
+  writer.write({ type: "start-step" });
+  writer.write({ type: "text-start", id });
+  writer.write({ type: "text-delta", id, delta: STEP_LIMIT_NOTE });
+  writer.write({ type: "text-end", id });
+  writer.write({ type: "finish-step" });
+  messageHistory.push({
+    role: "assistant",
+    content: [{ type: "text", text: STEP_LIMIT_NOTE }],
+  });
 }
 
 function createClientFinishChunk(
@@ -3308,9 +3339,12 @@ async function settleUnapprovedHistoryToolCalls(args: {
  * Process a single step of the agentic loop.
  * Calls Convex, streams the response, and executes tools if needed.
  */
-async function processOneStep(
-  ctx: StepContext,
-): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
+async function processOneStep(ctx: StepContext): Promise<{
+  shouldContinue: boolean;
+  didEmitFinish: boolean;
+  /** The model's own finish reason, on a step that ended the turn with a reply. */
+  modelFinishReason?: string;
+}> {
   const {
     writer,
     messageHistory,
@@ -3333,6 +3367,7 @@ async function processOneStep(
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
+    isFinalStep,
     usedToolCallIds,
     traceTurn,
     progressivePlan,
@@ -3407,6 +3442,12 @@ async function processOneStep(
     activeToolDefs.some((def) => def.name === META_TOOL_SEARCH)
       ? { type: "tool" as const, toolName: META_TOOL_SEARCH }
       : undefined;
+  // The last allowed step answers instead of calling tools. A turn that ends on
+  // tool results is one the browser's `shouldAutoResumeTurn` resumes, into a
+  // turn with no steps left. Tools stay advertised because the history still
+  // holds tool calls. A caller's own `toolChoice` in `extraBodyFields` (hosted
+  // evals) still wins.
+  const toolChoice = isFinalStep ? ("none" as const) : forcedToolChoice;
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -3563,7 +3604,7 @@ async function processOneStep(
         turnId: traceTurn.turnId,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
-        ...(forcedToolChoice ? { toolChoice: forcedToolChoice } : {}),
+        ...(toolChoice ? { toolChoice } : {}),
         ...(extraBodyFields ?? {}),
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
@@ -4541,7 +4582,11 @@ async function processOneStep(
   }
 
   // We're done with this conversation turn
-  return { shouldContinue: false, didEmitFinish };
+  return {
+    shouldContinue: false,
+    didEmitFinish,
+    modelFinishReason: harnessSpanMeta.finishReason,
+  };
 }
 
 /**
@@ -5027,6 +5072,12 @@ export async function runChatEngineLoop(
         }
       }
 
+      // Whether a step ended the turn itself (a reply, or an error) rather than
+      // the loop running out of steps, and the model's own reason when it did:
+      // a last step that answered is "stop", one cut off by its output cap
+      // stays "length".
+      let stepEndedTurn = false;
+      let endingModelFinishReason: string | undefined;
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         await options.durableCheckpoint?.({
@@ -5034,59 +5085,61 @@ export async function runChatEngineLoop(
           messages: messageHistory,
           step: effectiveSteps(),
         });
-        const { shouldContinue, didEmitFinish } = await processOneStep({
-          durableCheckpoint: options.durableCheckpoint,
-          writer: safeWriter,
-          messageHistory,
-          toolDefs,
-          toolDefsByName,
-          tools,
-          progressivePlan,
-          discoveryState,
-          authHeader,
-          scenarioId,
-          accessVersion,
-          projectId,
-          chatSessionId,
-          sourceType,
-          modelId,
-          provider,
-          systemPrompt,
-          temperature,
-          mcpClientManager,
-          selectedServers,
-          approvalDecisions,
-          approvalBinding,
-          ...(options.historyPresentation
-            ? { historyPresentation: options.historyPresentation }
-            : {}),
-          modelVisibleMcpToolResults,
-          approvalMode,
-          stepIndex: effectiveSteps(),
-          usedToolCallIds,
-          traceTurn,
-          endpointPath: resolvedEndpointPath,
-          extraHeaders,
-          extraBodyFields,
-          clientIp,
-          onLiveTextDelta,
-          // PR 5b-pre: chunk-level callbacks. Passed through to the
-          // step processor where the chunk-switch (onToolCall) +
-          // tool-result emission (onToolResult) sites fire them.
-          onToolCall,
-          onToolResult,
-          // PR 5b-followup-2: structured-error callback. Fires from
-          // the two `processOneStep` error sites (non-OK Convex
-          // response + processStream/tool catch).
-          onEngineError,
-          onModelHandover: () => {
-            modelInvoked = true;
-          },
-          failureReporter,
-          // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
-          prepareAdvertisedTools,
-          abortSignal,
-        });
+        const { shouldContinue, didEmitFinish, modelFinishReason } =
+          await processOneStep({
+            durableCheckpoint: options.durableCheckpoint,
+            writer: safeWriter,
+            messageHistory,
+            toolDefs,
+            toolDefsByName,
+            tools,
+            progressivePlan,
+            discoveryState,
+            authHeader,
+            scenarioId,
+            accessVersion,
+            projectId,
+            chatSessionId,
+            sourceType,
+            modelId,
+            provider,
+            systemPrompt,
+            temperature,
+            mcpClientManager,
+            selectedServers,
+            approvalDecisions,
+            approvalBinding,
+            ...(options.historyPresentation
+              ? { historyPresentation: options.historyPresentation }
+              : {}),
+            modelVisibleMcpToolResults,
+            approvalMode,
+            stepIndex: effectiveSteps(),
+            isFinalStep: effectiveSteps() === resolvedMaxSteps - 1,
+            usedToolCallIds,
+            traceTurn,
+            endpointPath: resolvedEndpointPath,
+            extraHeaders,
+            extraBodyFields,
+            clientIp,
+            onLiveTextDelta,
+            // PR 5b-pre: chunk-level callbacks. Passed through to the
+            // step processor where the chunk-switch (onToolCall) +
+            // tool-result emission (onToolResult) sites fire them.
+            onToolCall,
+            onToolResult,
+            // PR 5b-followup-2: structured-error callback. Fires from
+            // the two `processOneStep` error sites (non-OK Convex
+            // response + processStream/tool catch).
+            onEngineError,
+            onModelHandover: () => {
+              modelInvoked = true;
+            },
+            failureReporter,
+            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+            prepareAdvertisedTools,
+            abortSignal,
+          });
 
         steps++;
         await options.durableCheckpoint?.({
@@ -5117,6 +5170,8 @@ export async function runChatEngineLoop(
         );
 
         if (!shouldContinue) {
+          stepEndedTurn = true;
+          endingModelFinishReason = modelFinishReason;
           break;
         }
         if (options.yieldAfterStep) break;
@@ -5180,13 +5235,27 @@ export async function runChatEngineLoop(
         });
       }
 
+      // A request that arrives with the step budget already spent (the browser
+      // auto-continuing after the last step's tools ran) gets a written note
+      // in a new step, not an empty reply. An empty reply changes nothing in
+      // the chat, so `shouldAutoResumeTurn` fires again, forever; a step with
+      // no tool calls is one it does not resume. No model call: the backend
+      // refuses a step past the budget (`step_out_of_range`).
+      if (!mrtrPaused && steps === 0 && hitStepCap()) {
+        writeStepLimitNote(safeWriter, messageHistory, traceTurn);
+      }
+
+      const turnEndedByLength =
+        (hitStepCap() && !stepEndedTurn) ||
+        endingModelFinishReason === "length";
+
       // Safety: ensure we always emit a finish event
       if (!finishEmitted) {
         safeWriter.write(
           createClientFinishChunk(
             null,
             traceTurn,
-            hitStepCap() ? "length" : "stop",
+            turnEndedByLength ? "length" : "stop",
           ),
         );
         finishEmitted = true;
@@ -5195,7 +5264,7 @@ export async function runChatEngineLoop(
       // Shared ritual: turn_finish + success flag (finish chunk already
       // emitted by the step or the safety block above).
       driver.usage = traceTurn.turnUsage;
-      driver.finishReason = hitStepCap() ? "length" : "stop";
+      driver.finishReason = turnEndedByLength ? "length" : "stop";
       driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
 
       runSucceeded = true;
