@@ -165,6 +165,41 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     },
   );
 
+  it.each([
+    "apiKey",
+    "api_key",
+    "api-key",
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "Authorization",
+  ])("redacts quoted values under the %s credential key", async (key) => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          code: "VALIDATION_ERROR",
+          message: "ArgumentValidationError: Invalid input",
+          details: {
+            entries: [{ [key]: 'nested "credential" sentinel' }],
+            context: "benign diagnostic context",
+          },
+        },
+        400,
+      ),
+    );
+    const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+
+    expect(res.status).toBe(400);
+    const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+    expect(logged).toContain("ArgumentValidationError");
+    expect(logged).toContain("[redacted]");
+    expect(logged).toContain("benign diagnostic context");
+    expect(logged).not.toContain("nested");
+    expect(logged).not.toContain("credential");
+    expect(logged).not.toContain("sentinel");
+  });
+
   it("keeps passing upstream-authored error envelopes through verbatim", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "NOT_FOUND", message: "Project not found" }, 404),

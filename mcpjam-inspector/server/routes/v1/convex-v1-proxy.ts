@@ -68,9 +68,17 @@ function sanitizeProxiedFailure(
     status,
     requestId,
     detail: redactForLog(
-      JSON.stringify(body, (_key, value: unknown) =>
-        typeof value === "string" ? redactForLog(value) : value,
-      ),
+      JSON.stringify(body, (key, value: unknown) => {
+        if (typeof value !== "string") return value;
+        if (
+          /^(api[-_]?key|secret|token|password|passwd|authorization)$/i.test(
+            key,
+          )
+        ) {
+          return "[redacted]";
+        }
+        return redactForLog(value);
+      }),
     ),
   });
   const upstreamCode = (body as { code?: unknown } | null)?.code;
