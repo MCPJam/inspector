@@ -84,7 +84,7 @@ function bareModelName(modelId: string): string {
  * level is an API error). Families this does not know return none: the
  * control is hidden rather than guessed. `-pro` and `-chat` models are hidden
  * the same way (pro takes narrower levels; the provider classes `gpt-5*-chat*`
- * as non-reasoning). Codex models never take `none`.
+ * as non-reasoning). Codex models are hidden except the two documented ones (never `none`).
  */
 function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
   if (/-(?:pro|chat)(?:[.-]|$)/.test(name)) return [];
@@ -93,27 +93,21 @@ function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
   if (/^(?:o1|o3|o3-mini|o4-mini)(?:-\d{4}-\d{2}-\d{2})?$/.test(name)) {
     return ["low", "medium", "high"];
   }
-  const codex = /-codex(?:[.-]|$)/.test(name);
-  if (/^gpt-5\.1-codex-max(?:[.-]|$)/.test(name)) {
-    return ["low", "medium", "high", "xhigh"];
+  // Codex variants differ (`-mini` takes fewer levels, some add `minimal`), and
+  // only the two below are documented, so every other Codex id is hidden
+  // rather than guessed from its family.
+  if (/-codex(?:[.-]|$)/.test(name)) {
+    return /^gpt-5\.1-codex-max$|^gpt-5\.2-codex$/.test(name)
+      ? ["low", "medium", "high", "xhigh"]
+      : [];
   }
   const minor = /^gpt-5\.(\d+)(?:[.-]|$)/.exec(name);
   if (minor) {
-    const m = Number(minor[1]);
-    if (codex) {
-      return m >= 2
-        ? ["low", "medium", "high", "xhigh"]
-        : ["low", "medium", "high"];
-    }
-    return m >= 2
+    return Number(minor[1]) >= 2
       ? ["none", "low", "medium", "high", "xhigh"]
       : ["none", "low", "medium", "high"];
   }
-  if (/^gpt-5(?:-|$)/.test(name)) {
-    return codex
-      ? ["low", "medium", "high"]
-      : ["minimal", "low", "medium", "high"];
-  }
+  if (/^gpt-5(?:-|$)/.test(name)) return ["minimal", "low", "medium", "high"];
   return [];
 }
 

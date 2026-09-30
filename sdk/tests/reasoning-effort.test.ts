@@ -74,7 +74,15 @@ describe("supportedReasoningEfforts", () => {
       "high",
       "xhigh",
     ]);
-    expect(efforts("openai", "gpt-5-codex")).toEqual(["low", "medium", "high"]);
+    // Undocumented Codex variants are hidden, not guessed from the family.
+    for (const id of [
+      "gpt-5-codex",
+      "gpt-5.1-codex",
+      "gpt-5.1-codex-mini",
+      "gpt-5.3-codex",
+    ]) {
+      expect(efforts("openai", id), id).toEqual([]);
+    }
     expect(efforts("openai", "gpt-5.2-pro")).toEqual([]);
     for (const chat of [
       "gpt-5-chat-latest",
