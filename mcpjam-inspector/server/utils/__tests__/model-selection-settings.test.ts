@@ -162,7 +162,7 @@ describe("reasoningEffortProviderOptions", () => {
     expect(
       reasoningEffortProviderOptions({
         providerKey: "anthropic",
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-sonnet-4.6",
         effort: "medium",
       }),
     ).toEqual({

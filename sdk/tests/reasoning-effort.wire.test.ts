@@ -72,17 +72,17 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
   it("anthropic sends output_config.effort with adaptive thinking", async () => {
     const options = reasoningEffortProviderOptions({
       providerKey: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      modelId: "claude-sonnet-4-6",
       effort: "low",
     })!;
     const body = await captureBody(
-      (fetch) => createAnthropic({ apiKey: "k", fetch })("claude-sonnet-4-5"),
+      (fetch) => createAnthropic({ apiKey: "k", fetch })("claude-sonnet-4-6"),
       options,
       {
         id: "x",
         type: "message",
         role: "assistant",
-        model: "claude-sonnet-4-5",
+        model: "claude-sonnet-4-6",
         content: [{ type: "text", text: "ok" }],
         stop_reason: "end_turn",
         usage: { input_tokens: 1, output_tokens: 1 },
@@ -124,8 +124,9 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
     ["openai", "gpt-5.1"],
     ["openai", "gpt-5.2"],
     ["openai", "o3"],
-    ["anthropic", "claude-sonnet-4-5"],
+    ["anthropic", "claude-sonnet-4-6"],
     ["google", "gemini-3-pro"],
+    ["google", "gemini-3-flash"],
   ] as const)(
     "%s %s: every level the table offers survives the provider's option schema",
     async (providerKey, modelId) => {

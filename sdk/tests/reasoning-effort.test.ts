@@ -72,10 +72,25 @@ describe("supportedReasoningEfforts", () => {
       "high",
     ]);
     expect(efforts("openai", "gpt-4o")).toEqual([]);
-    expect(efforts("anthropic", "claude-sonnet-4-5")).toEqual([
+    expect(efforts("anthropic", "claude-sonnet-4-6")).toEqual([
       ...ANTHROPIC_REASONING_EFFORTS,
     ]);
-    expect(efforts("google", "gemini-3-pro")).toEqual([
+    expect(efforts("anthropic", "anthropic/claude-opus-4-5")).toEqual([
+      ...ANTHROPIC_REASONING_EFFORTS,
+    ]);
+    expect(efforts("anthropic", "claude-fable-5-1")).not.toEqual([]);
+    // Older / unverified Claude models reject output_config.effort.
+    for (const old of [
+      "claude-3-5-sonnet-latest",
+      "claude-sonnet-4-20250514",
+      "claude-sonnet-4-5",
+      "claude-opus-4-1",
+      "claude-haiku-4-5",
+    ]) {
+      expect(efforts("anthropic", old), old).toEqual([]);
+    }
+    expect(efforts("google", "gemini-3-pro")).toEqual(["low", "high"]);
+    expect(efforts("google", "gemini-3-flash")).toEqual([
       "minimal",
       "low",
       "medium",
@@ -129,7 +144,7 @@ describe("reasoningEffortProviderOptions", () => {
     expect(
       reasoningEffortProviderOptions({
         providerKey: "anthropic",
-        modelId: "claude-sonnet-4-5",
+        modelId: "claude-sonnet-4-6",
         effort: "low",
       })
     ).toEqual({ anthropic: { effort: "low", thinking: { type: "adaptive" } } });
@@ -143,7 +158,7 @@ describe("reasoningEffortProviderOptions", () => {
     expect(
       reasoningEffortProviderOptions({
         providerKey: "google",
-        modelId: "gemini-3-pro",
+        modelId: "gemini-3-flash",
         effort: "minimal",
       })
     ).toEqual({ google: { thinkingConfig: { thinkingLevel: "minimal" } } });

@@ -97,6 +97,43 @@ function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
 }
 
 /**
+ * Claude models that implement `output_config.effort` (and adaptive
+ * thinking): Opus 4.5+, Sonnet 4.6+, and the Fable family. Older Claude
+ * (3.x, 4.0/4.1) reject the fields, and Haiku is not verified, so those offer
+ * nothing. A trailing date (`-20250514`) is not a minor version.
+ */
+function anthropicSupportsEffort(name: string): boolean {
+  const m =
+    /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d)(?!\d))?(?:[.-]|$)/.exec(
+      name
+    );
+  if (!m) return false;
+  const major = Number(m[2]);
+  const minor = m[3] === undefined ? 0 : Number(m[3]);
+  switch (m[1]) {
+    case "opus":
+      return major > 4 || (major === 4 && minor >= 5);
+    case "sonnet":
+      return major > 4 || (major === 4 && minor >= 6);
+    case "fable":
+      return major >= 5;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Gemini 3+ thinking levels. Pro models take only low and high; the other
+ * Gemini 3+ families (Flash) take the full set.
+ */
+function googleEfforts(name: string): readonly ModelReasoningEffort[] {
+  if (!/^gemini-([3-9]|[1-9][0-9])(?:[.-]|$)/.test(name)) return [];
+  return /-pro(?:[.-]|$)/.test(name)
+    ? ["low", "high"]
+    : GOOGLE_REASONING_EFFORTS;
+}
+
+/**
  * The efforts a provider/model pair accepts on a direct AI SDK call, from the
  * model families whose effort control the provider documents (OpenAI
  * reasoning models, Claude, Gemini 3+). Empty for anything else.
@@ -110,11 +147,9 @@ function directEfforts(
     case "openai":
       return openaiEfforts(name);
     case "anthropic":
-      return /^claude-/.test(name) ? ANTHROPIC_REASONING_EFFORTS : [];
+      return anthropicSupportsEffort(name) ? ANTHROPIC_REASONING_EFFORTS : [];
     case "google":
-      return /^gemini-([3-9]|[1-9][0-9])(?:[.-]|$)/.test(name)
-        ? GOOGLE_REASONING_EFFORTS
-        : [];
+      return googleEfforts(name);
     default:
       return [];
   }
