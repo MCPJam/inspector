@@ -61,10 +61,7 @@ function toRunDto(run: Record<string, any>, projectId: string) {
   });
 }
 
-function assertSameProject(
-  run: Record<string, any>,
-  projectId: string,
-): void {
+function assertSameProject(run: Record<string, any>, projectId: string): void {
   if (run.projectId && run.projectId !== projectId) {
     throw new WebRouteError(
       404,

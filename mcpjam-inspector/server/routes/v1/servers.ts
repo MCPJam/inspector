@@ -95,7 +95,7 @@ const updateServerSchema = z
       Object.entries(serverFields).map(([key, schema]) => [
         key,
         schema.optional(),
-      ])
+      ]),
     ),
     clearClientSecret: z.boolean().optional(),
     clearXaaConfig: z.boolean().optional(),
@@ -110,7 +110,7 @@ function convexClient(token: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(url);
@@ -133,7 +133,7 @@ function translateAddressedServerWriteError(
   error: unknown,
   token: string,
   projectId: string,
-  serverId: string
+  serverId: string,
 ): Promise<WebRouteError> {
   return translateAddressedConvexWriteError(
     error,
@@ -142,23 +142,23 @@ function translateAddressedServerWriteError(
       (
         (await convexClient(token).query(
           "servers:getProjectServers" as any,
-          { projectId } as any
+          { projectId } as any,
         )) as Array<Record<string, unknown>>
-      ).some((row) => String(row._id ?? row.id) === serverId)
+      ).some((row) => String(row._id ?? row.id) === serverId),
   );
 }
 
 async function findProjectServer(
   token: string,
   projectId: string,
-  serverId: string
+  serverId: string,
 ) {
   const rows = (await convexClient(token).query(
     "servers:getProjectServers" as any,
-    { projectId } as any
+    { projectId } as any,
   )) as Array<Record<string, unknown>>;
   const row = rows.find(
-    (candidate) => String(candidate._id ?? candidate.id) === serverId
+    (candidate) => String(candidate._id ?? candidate.id) === serverId,
   );
   if (!row)
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Server not found");
@@ -178,7 +178,7 @@ async function findProjectServer(
 }
 
 async function readJsonObject(
-  c: Parameters<typeof synthesizeServerBody>[0]
+  c: Parameters<typeof synthesizeServerBody>[0],
 ): Promise<Record<string, unknown>> {
   const text = await c.req.text();
   if (!text.trim()) return {};
@@ -189,14 +189,14 @@ async function readJsonObject(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body"
+      "Invalid JSON body",
     );
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be a JSON object"
+      "Request body must be a JSON object",
     );
   }
   return value as Record<string, unknown>;
@@ -214,12 +214,12 @@ servers.post("/projects/:projectId/servers", async (c) => {
         ...body,
         projectId,
         failOnNameConflict: true,
-      } as any
+      } as any,
     );
     return v1Resource(
       c,
       await findProjectServer(token, projectId, String(serverId)),
-      201
+      201,
     );
   } catch (error) {
     throw translateServerWriteError(error);
@@ -235,8 +235,8 @@ servers.get("/projects/:projectId/servers/:serverId", async (c) => {
       await findProjectServer(
         token,
         c.req.param("projectId"),
-        c.req.param("serverId")
-      )
+        c.req.param("serverId"),
+      ),
     );
   } catch (error) {
     // The scoping read. A structured refusal keeps the backend's own mapping;
@@ -267,7 +267,7 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
         ...body,
         projectId,
         serverId,
-      } as any
+      } as any,
     );
     return v1Resource(c, await findProjectServer(token, projectId, serverId));
   } catch (error) {
@@ -275,7 +275,7 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
       error,
       token,
       projectId,
-      serverId
+      serverId,
     );
   }
 });
@@ -289,20 +289,20 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Delete body must be empty"
+      "Delete body must be empty",
     );
   const token = await getConvexBearerForRequest(c);
   try {
     await convexClient(token).mutation(
       "servers:deleteServer" as any,
-      { projectId, serverId } as any
+      { projectId, serverId } as any,
     );
   } catch (error) {
     throw await translateAddressedServerWriteError(
       error,
       token,
       projectId,
-      serverId
+      serverId,
     );
   }
   return v1Resource(c, { id: serverId, deleted: true });
@@ -319,7 +319,7 @@ servers.post("/projects/:projectId/servers/:serverId/validate", async (c) =>
     (manager, body) => validateServerCore(c, manager, body),
     (ctx, result) => v1Resource(ctx, result),
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
-  )
+  ),
 );
 
 // POST /v1/projects/:projectId/servers/:serverId/doctor
@@ -350,12 +350,12 @@ servers.post(
         accessScope: body.accessScope,
         scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
-      }
+      },
     );
     // Same projection the web twin returns, so the two never drift on what
     // "requires authorization" means.
     return v1Resource(c, buildOAuthRequirementProjection(auth.serverConfig));
-  }
+  },
 );
 
 export default servers;

@@ -122,7 +122,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -167,7 +167,7 @@ plugins.get("/projects/:projectId/plugins", async (c) => {
   try {
     rows = (await readClient.query(
       "plugins:listProjectPlugins" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as PluginRow[] | null | undefined;
   } catch (error) {
     throw translatePluginReadError(error);
@@ -185,7 +185,7 @@ plugins.get("/plugin-versions/:pluginVersionId", async (c) => {
   try {
     row = (await readClient.query(
       "plugins:getPluginVersion" as any,
-      { pluginVersionId } as any
+      { pluginVersionId } as any,
     )) as PluginVersionRow | null | undefined;
   } catch (error) {
     throw translatePluginReadError(error);
@@ -194,7 +194,7 @@ plugins.get("/plugin-versions/:pluginVersionId", async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "Plugin version not found"
+      "Plugin version not found",
     );
   }
   return v1Resource(c, toPluginVersionDto(row));

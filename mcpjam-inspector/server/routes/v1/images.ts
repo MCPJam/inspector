@@ -103,7 +103,7 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -135,7 +135,7 @@ function translateConvexWriteError(error: unknown): WebRouteError {
 async function readEnvironmentInProject(
   convexAuthToken: string,
   projectId: string,
-  environmentId: string
+  environmentId: string,
 ): Promise<EnvironmentRow> {
   const readClient = createConvexReadClient(convexAuthToken);
   let env: EnvironmentRow | null;
@@ -144,7 +144,7 @@ async function readEnvironmentInProject(
       "computerEnvironments:getEnvironment" as any,
       {
         environmentId,
-      } as any
+      } as any,
     )) as EnvironmentRow | null;
   } catch (error) {
     // The scoping read. A plain membership refusal — masked to "Server Error"
@@ -161,7 +161,7 @@ async function readEnvironmentInProject(
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "Environment not found in this project"
+      "Environment not found in this project",
     );
   }
   return env;
@@ -182,14 +182,14 @@ async function assertEmptyBody(c: Context) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body"
+      "Invalid JSON body",
     );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be a JSON object"
+      "Request body must be a JSON object",
     );
   }
   const stray = Object.keys(parsed).sort();
@@ -197,7 +197,7 @@ async function assertEmptyBody(c: Context) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Unexpected field(s) in body: ${stray.join(", ")}`
+      `Unexpected field(s) in body: ${stray.join(", ")}`,
     );
   }
 }
@@ -209,7 +209,7 @@ async function assertEmptyBody(c: Context) {
  * comes from the path param at the call site, never the body.
  */
 async function readJsonObjectBody(
-  c: Context
+  c: Context,
 ): Promise<Record<string, unknown>> {
   const text = await c.req.text();
   if (!text || !text.trim()) return {};
@@ -220,14 +220,14 @@ async function readJsonObjectBody(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body"
+      "Invalid JSON body",
     );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be a JSON object"
+      "Request body must be a JSON object",
     );
   }
   return parsed as Record<string, unknown>;
@@ -250,7 +250,7 @@ const updateEnvironmentSchema = z
   })
   .refine(
     (value) => value.name !== undefined || value.blueprint !== undefined,
-    { message: "Provide at least one of `name` or `blueprint` to update." }
+    { message: "Provide at least one of `name` or `blueprint` to update." },
   );
 
 const validateBlueprintSchema = z.strictObject({
@@ -267,7 +267,7 @@ images.get("/projects/:projectId/images", async (c) => {
   try {
     rows = (await readClient.query(
       "computerEnvironments:listEnvironments" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as EnvironmentRow[] | null | undefined;
   } catch (error) {
     // Project-scoped list: same masked-refusal reading as the detail read.
@@ -286,7 +286,7 @@ images.post("/projects/:projectId/images", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     createEnvironmentSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
   const { convexClient } = createConvexClients(token);
@@ -294,7 +294,7 @@ images.post("/projects/:projectId/images", async (c) => {
   try {
     created = (await convexClient.mutation(
       "computerEnvironments:createEnvironment" as any,
-      { projectId, name: body.name, blueprint: body.blueprint } as any
+      { projectId, name: body.name, blueprint: body.blueprint } as any,
     )) as EnvironmentRow;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -309,7 +309,7 @@ images.post("/projects/:projectId/images/validate", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     validateBlueprintSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
   let result:
@@ -318,7 +318,7 @@ images.post("/projects/:projectId/images/validate", async (c) => {
   try {
     result = (await readClient.query(
       "computerEnvironments:validateBlueprint" as any,
-      { projectId, blueprint: body.blueprint } as any
+      { projectId, blueprint: body.blueprint } as any,
     )) as typeof result;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -341,7 +341,7 @@ images.patch("/projects/:projectId/images/:imageId", async (c) => {
   const environmentId = c.req.param("imageId");
   const body = parseWithSchema(
     updateEnvironmentSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
   // Scope guard: env must belong to this project before we mutate by id.
@@ -354,7 +354,7 @@ images.patch("/projects/:projectId/images/:imageId", async (c) => {
   try {
     updated = (await convexClient.mutation(
       "computerEnvironments:updateEnvironment" as any,
-      updateArgs as any
+      updateArgs as any,
     )) as EnvironmentRow;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -373,7 +373,7 @@ images.delete("/projects/:projectId/images/:imageId", async (c) => {
   try {
     await convexClient.mutation(
       "computerEnvironments:deleteEnvironment" as any,
-      { environmentId } as any
+      { environmentId } as any,
     );
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -392,7 +392,7 @@ images.get("/projects/:projectId/images/:imageId/builds", async (c) => {
   try {
     rows = (await readClient.query(
       "computerEnvironments:listEnvironmentBuilds" as any,
-      { environmentId } as any
+      { environmentId } as any,
     )) as BuildRow[] | null | undefined;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -412,7 +412,7 @@ images.post("/projects/:projectId/images/:imageId/build", async (c) => {
   try {
     result = (await convexClient.mutation(
       "computerEnvironments:startEnvironmentBuild" as any,
-      { environmentId } as any
+      { environmentId } as any,
     )) as { buildId: string; reused: boolean };
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -421,7 +421,7 @@ images.post("/projects/:projectId/images/:imageId/build", async (c) => {
   return v1Resource(
     c,
     { id: environmentId, buildId: result.buildId, reused: result.reused },
-    202
+    202,
   );
 });
 
@@ -437,7 +437,7 @@ images.post("/projects/:projectId/images/:imageId/promote", async (c) => {
   try {
     promoted = (await convexClient.mutation(
       "computerEnvironments:promoteEnvironmentToProject" as any,
-      { environmentId } as any
+      { environmentId } as any,
     )) as EnvironmentRow;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -457,7 +457,7 @@ images.post("/projects/:projectId/images/:imageId/use", async (c) => {
   try {
     computer = (await convexClient.mutation(
       "projectComputers:setComputerEnvironment" as any,
-      { projectId, environmentId } as any
+      { projectId, environmentId } as any,
     )) as { computerId: string; status: string };
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -481,7 +481,7 @@ images.post("/projects/:projectId/computer/reset", async (c) => {
   try {
     result = (await convexClient.mutation(
       "projectComputers:resetComputer" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as { reset: boolean };
   } catch (error) {
     throw translateConvexWriteError(error);

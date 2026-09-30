@@ -130,99 +130,96 @@ const connectCheckRepoSchema = z
 // requests. Empty when GitHub Checks is not available for the organization —
 // the backend answers an empty list rather than refusing, which is a truthful
 // answer to "what may I see here".
-evalChecks.get(
-  "/organizations/:organizationId/eval-check-repos",
-  async (c) => {
-    const organizationId = c.req.param("organizationId");
-    const client = convexClient(await getConvexBearerForRequest(c));
+evalChecks.get("/organizations/:organizationId/eval-check-repos", async (c) => {
+  const organizationId = c.req.param("organizationId");
+  const client = convexClient(await getConvexBearerForRequest(c));
 
-    let availability: { state?: string } | null = null;
-    try {
-      availability = await client.query(
-        "github/checkRepoConfigs:getGithubChecksSettingsAvailability" as any,
-        { organizationId } as any,
-      );
-    } catch (error) {
-      // The org-scoped read authorizes the caller-supplied organization id,
-      // and its refusal is a plain error production Convex masks to "Server
-      // Error" — read that as the refusal it is, not a 502 (MJ-021).
-      throw translateConvexReadError(error, {
-        scope: "v1.evalChecks",
-        redactedIsRefusal: true,
-      });
-    }
+  let availability: { state?: string } | null = null;
+  try {
+    availability = await client.query(
+      "github/checkRepoConfigs:getGithubChecksSettingsAvailability" as any,
+      { organizationId } as any,
+    );
+  } catch (error) {
+    // The org-scoped read authorizes the caller-supplied organization id,
+    // and its refusal is a plain error production Convex masks to "Server
+    // Error" — read that as the refusal it is, not a 502 (MJ-021).
+    throw translateConvexReadError(error, {
+      scope: "v1.evalChecks",
+      redactedIsRefusal: true,
+    });
+  }
 
-    // Availability travels in the response rather than being flattened into an
-    // empty list: "not enabled for this organization" and "enabled, nothing
-    // connected" are different situations, and only one of them is fixed by
-    // connecting a repository.
-    const enabled = availability?.state === "enabled";
-    if (!enabled) {
-      return v1Resource(c, {
-        organizationId,
-        available: false,
-        items: [],
-        connectable: null,
-      });
-    }
-
-    let rows: Array<Record<string, any>>;
-    try {
-      rows = ((await client.query(
-        "github/checkRepoConfigs:listForOrganization" as any,
-        { organizationId } as any,
-      )) ?? []) as Array<Record<string, any>>;
-    } catch (error) {
-      // Same masked-refusal reading as the availability read above (MJ-021).
-      throw translateConvexReadError(error, {
-        scope: "v1.evalChecks",
-        redactedIsRefusal: true,
-      });
-    }
-
-    // The repositories the App can actually reach — the choices a connect has.
-    // This one costs a GitHub round trip, so it FAILS SOFT: a failed lookup
-    // returns `connectable: null` (meaning "could not ask") rather than taking
-    // down the list of what is already connected, which needs no GitHub at all.
-    //
-    // `[]` is NOT the same answer, and is not only "the App reaches nothing":
-    // a deployment with no GitHub App installation configured returns an empty
-    // list too (`checkRepoConfigsNode:listInstallationRepos` short-circuits on
-    // a null installation id). The platform does not distinguish those, so this
-    // boundary cannot either — say so rather than implying a distinction the
-    // wire does not carry.
-    let connectable: Array<{ repo: string }> | null = null;
-    try {
-      const repos = ((await client.action(
-        "github/checkRepoConfigsNode:listInstallationRepos" as any,
-        { organizationId } as any,
-      )) ?? []) as Array<Record<string, any>>;
-      connectable = repos.map((repo) => ({
-        repo: String(repo.fullName ?? repo.repoFullName ?? ""),
-      }));
-    } catch (error) {
-      // Fail SOFT, but never silent: the caller still gets the connected list,
-      // and the reason the other half is missing reaches the logs rather than
-      // being inferred from a `null` nobody can explain.
-      reportRouteFailure(
-        "[v1.evalChecks] installation repositories unavailable",
-        error,
-        {
-          source: "v1.evalChecks.listInstallationRepos",
-          hop: "mcpjam_internal",
-        },
-      );
-      connectable = null;
-    }
-
+  // Availability travels in the response rather than being flattened into an
+  // empty list: "not enabled for this organization" and "enabled, nothing
+  // connected" are different situations, and only one of them is fixed by
+  // connecting a repository.
+  const enabled = availability?.state === "enabled";
+  if (!enabled) {
     return v1Resource(c, {
       organizationId,
-      available: true,
-      items: rows.map(toCheckRepoDto),
-      connectable,
+      available: false,
+      items: [],
+      connectable: null,
     });
-  },
-);
+  }
+
+  let rows: Array<Record<string, any>>;
+  try {
+    rows = ((await client.query(
+      "github/checkRepoConfigs:listForOrganization" as any,
+      { organizationId } as any,
+    )) ?? []) as Array<Record<string, any>>;
+  } catch (error) {
+    // Same masked-refusal reading as the availability read above (MJ-021).
+    throw translateConvexReadError(error, {
+      scope: "v1.evalChecks",
+      redactedIsRefusal: true,
+    });
+  }
+
+  // The repositories the App can actually reach — the choices a connect has.
+  // This one costs a GitHub round trip, so it FAILS SOFT: a failed lookup
+  // returns `connectable: null` (meaning "could not ask") rather than taking
+  // down the list of what is already connected, which needs no GitHub at all.
+  //
+  // `[]` is NOT the same answer, and is not only "the App reaches nothing":
+  // a deployment with no GitHub App installation configured returns an empty
+  // list too (`checkRepoConfigsNode:listInstallationRepos` short-circuits on
+  // a null installation id). The platform does not distinguish those, so this
+  // boundary cannot either — say so rather than implying a distinction the
+  // wire does not carry.
+  let connectable: Array<{ repo: string }> | null = null;
+  try {
+    const repos = ((await client.action(
+      "github/checkRepoConfigsNode:listInstallationRepos" as any,
+      { organizationId } as any,
+    )) ?? []) as Array<Record<string, any>>;
+    connectable = repos.map((repo) => ({
+      repo: String(repo.fullName ?? repo.repoFullName ?? ""),
+    }));
+  } catch (error) {
+    // Fail SOFT, but never silent: the caller still gets the connected list,
+    // and the reason the other half is missing reaches the logs rather than
+    // being inferred from a `null` nobody can explain.
+    reportRouteFailure(
+      "[v1.evalChecks] installation repositories unavailable",
+      error,
+      {
+        source: "v1.evalChecks.listInstallationRepos",
+        hop: "mcpjam_internal",
+      },
+    );
+    connectable = null;
+  }
+
+  return v1Resource(c, {
+    organizationId,
+    available: true,
+    items: rows.map(toCheckRepoDto),
+    connectable,
+  });
+});
 
 // POST /v1/organizations/:organizationId/eval-check-repos
 // Connect a repository so its pull requests run one eval suite.

@@ -151,7 +151,7 @@ const updatePersonaSchema = z
 
 async function parseBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -160,7 +160,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -168,7 +168,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;
@@ -176,12 +176,12 @@ async function parseBody<T>(
 
 async function listPersonaRows(
   client: ConvexHttpClient,
-  projectId: string
+  projectId: string,
 ): Promise<PersonaRow[]> {
   try {
     return ((await client.query(
       "personas:listPersonas" as never,
-      { projectId } as never
+      { projectId } as never,
     )) ?? []) as PersonaRow[];
   } catch (error) {
     throw translateReadError(error);
@@ -198,10 +198,10 @@ async function listPersonaRows(
 export async function requirePersonaInProject(
   client: ConvexHttpClient,
   projectId: string,
-  personaId: string
+  personaId: string,
 ): Promise<PersonaRow> {
   const row = (await listPersonaRows(client, projectId)).find(
-    (candidate) => String(candidate._id) === personaId
+    (candidate) => String(candidate._id) === personaId,
   );
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Persona not found");
@@ -237,7 +237,7 @@ personas.get("/projects/:projectId/personas", async (c) => {
   // Archived personas are filtered backend-side.
   return v1PageJson(
     c,
-    rows.map((row) => toPersonaDto(row, projectId))
+    rows.map((row) => toPersonaDto(row, projectId)),
   );
 });
 
@@ -248,7 +248,7 @@ personas.get("/projects/:projectId/personas/:personaId", async (c) => {
   const row = await requirePersonaInProject(
     client,
     projectId,
-    c.req.param("personaId")
+    c.req.param("personaId"),
   );
   return v1Resource(c, toPersonaDto(row, projectId));
 });
@@ -288,7 +288,7 @@ personas.post("/projects/:projectId/personas", async (c) => {
         // so provenance is a property of the create call, not of the content.
         source: "manual",
         ...(idempotencyKey ? { idempotencyKey } : {}),
-      } as never
+      } as never,
     )) as PersonaRow;
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Persona" });
@@ -320,7 +320,7 @@ personas.patch("/projects/:projectId/personas/:personaId", async (c) => {
         ...(body.avatarPalette !== undefined
           ? { avatarPalette: body.avatarPalette }
           : {}),
-      } as never
+      } as never,
     )) as PersonaRow;
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Persona" });
@@ -354,7 +354,7 @@ personas.delete("/projects/:projectId/personas/:personaId", async (c) => {
   try {
     await client.mutation(
       "personas:deletePersona" as never,
-      { personaRefId: personaId } as never
+      { personaRefId: personaId } as never,
     );
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Persona" });

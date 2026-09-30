@@ -270,7 +270,11 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
     );
   }
   if (!run) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "Readiness run not found",
+    );
   }
   return v1Resource(c, toRunDto(run, projectId));
 });
@@ -336,10 +340,9 @@ readiness.post(
     const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     try {
-      await convex.mutation(
-        "claudeReadinessRuns:cancelReadinessRun" as any,
-        { runId },
-      );
+      await convex.mutation("claudeReadinessRuns:cancelReadinessRun" as any, {
+        runId,
+      });
     } catch (error) {
       throw translateConvexError(error, { resource: "Readiness run" });
     }

@@ -54,7 +54,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -94,7 +94,7 @@ serverGroups.get("/projects/:projectId/server-groups", async (c) => {
   try {
     rows = (await readClient.query(
       "serverAttachments:listServerAttachments" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as ServerGroupRow[] | null | undefined;
   } catch (error) {
     // The project-scoped list read. A plain membership refusal — masked to
@@ -113,7 +113,7 @@ serverGroups.post("/projects/:projectId/server-groups", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     createServerGroupSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const convexClient = createConvexClient(await getConvexBearerForRequest(c));
   let created: ServerGroupRow;
@@ -127,7 +127,7 @@ serverGroups.post("/projects/:projectId/server-groups", async (c) => {
           ? { description: body.description }
           : {}),
         serverIds: body.serverIds,
-      } as any
+      } as any,
     )) as ServerGroupRow;
   } catch (error) {
     throw translateServerGroupError(error);

@@ -1495,8 +1495,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     }
 
     let lastEngineError:
-      | { message: string; code?: string; httpStatus?: number }
-      | undefined;
+      { message: string; code?: string; httpStatus?: number } | undefined;
 
     let turnMessages = durable?.messages ?? body.messages;
     if (durable) {
