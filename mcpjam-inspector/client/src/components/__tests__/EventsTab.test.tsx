@@ -460,7 +460,7 @@ describe("EventsTab (local)", () => {
     });
 
     const data = await screen.findByTestId("event-data");
-    expect(data.textContent).toContain(payload.replace(/"/g, '\\"'));
+    expect(data.textContent).toContain(JSON.stringify(payload));
     expect(data.textContent).toContain("**bold**");
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("a[href^='javascript']")).toBeNull();
