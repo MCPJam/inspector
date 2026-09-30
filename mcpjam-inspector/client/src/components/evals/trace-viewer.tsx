@@ -1,4 +1,5 @@
 import { readTraceRequestPayloads } from "@/shared/live-chat-trace";
+import { isLiveChatPreviewSpanId } from "@/shared/live-chat-trace-preview";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
@@ -90,6 +91,21 @@ const TRANSCRIPT_NAVIGATION_AT_REST: TranscriptNavigation = {
   highlightedMessageIds: [],
   navigationKey: 0,
 };
+
+/** Adds the rows in `rowIds` not seen before; keeps `open` when there are none. */
+function withNewRowsOpen(
+  open: Set<string>,
+  rowIds: Set<string>,
+  seenRowIds: Set<string>
+): Set<string> {
+  let next: Set<string> | null = null;
+  for (const id of rowIds) {
+    if (seenRowIds.has(id) || open.has(id)) continue;
+    next ??= new Set(open);
+    next.add(id);
+  }
+  return next ?? open;
+}
 
 export type TraceViewerEvalToolCall = {
   toolName: string;
@@ -516,7 +532,7 @@ export function TraceViewer({
     return true;
   }, [promptGroups, expandedPromptIds, expandedStepIds, fullyExpandedStepIds]);
 
-  // Reset the timeline's zoom, filter and expansion when its spans change, by
+  // Reset the timeline's zoom and filter when its spans change, by
   // adjusting state during render rather than in an effect. A streaming reply
   // hands this viewer a new trace on every token, and an effect here set state
   // after each token's commit. A fast stream stacks enough of those in a row
@@ -532,8 +548,62 @@ export function TraceViewer({
     setTimelineResetIdentity(traceIdentityForToolbar);
     setTimelineViewportMaxMs(maxEndMsForToolbar);
     setTimelineFilter("all");
-    setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
-    setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
+  }
+
+  // Open every timeline row by default, but only when the rows change, during
+  // render for the same reason as above. Keying this on the spans' times too
+  // reopened a row the user had just closed, since a streaming bar grows on
+  // every token. While rows are only being added (new steps and tools, or the
+  // live preview rows giving way to the recorded ones), open just the new
+  // rows. Any other change, such as another trace, opens every row again.
+  const timelineRowIdsKey = useMemo(
+    () => recordedSpans?.map((span) => span.id).join("|") ?? "",
+    [recordedSpans]
+  );
+  const [openedTimelineRows, setOpenedTimelineRows] = useState<{
+    key: string;
+    spanIds: Set<string>;
+    promptIds: Set<string>;
+    stepIds: Set<string>;
+  } | null>(null);
+  if (openedTimelineRows?.key !== timelineRowIdsKey) {
+    const spanIds = new Set(recordedSpans?.map((span) => span.id) ?? []);
+    const promptIds = new Set(promptGroups.map((g) => g.key));
+    const stepIds = collectStepSpanIdsWithChildren(promptGroups);
+    setOpenedTimelineRows({
+      key: timelineRowIdsKey,
+      spanIds,
+      promptIds,
+      stepIds,
+    });
+
+    // Preview rows may only go away when the recorded rows replace them. If
+    // the new trace still has preview rows, it is another preview.
+    const previewGaveWayToRecorded = ![...spanIds].some(
+      isLiveChatPreviewSpanId
+    );
+    const onlyRowsAdded =
+      openedTimelineRows !== null &&
+      [...openedTimelineRows.spanIds].every(
+        (id) =>
+          spanIds.has(id) ||
+          (previewGaveWayToRecorded && isLiveChatPreviewSpanId(id))
+      );
+    if (onlyRowsAdded) {
+      setExpandedPromptIds(
+        withNewRowsOpen(
+          expandedPromptIds,
+          promptIds,
+          openedTimelineRows.promptIds
+        )
+      );
+      setExpandedStepIds(
+        withNewRowsOpen(expandedStepIds, stepIds, openedTimelineRows.stepIds)
+      );
+    } else {
+      setExpandedPromptIds(promptIds);
+      setExpandedStepIds(stepIds);
+    }
   }
 
   const adaptedTrace = useMemo(
