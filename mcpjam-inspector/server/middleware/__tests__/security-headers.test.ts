@@ -126,7 +126,7 @@ describe("securityHeadersMiddleware document policies", () => {
     expect(reportOnly.get("base-uri")).toEqual(["'self'"]);
   });
 
-  it("leaves non-HTML responses without a policy", async () => {
+  it("leaves non-HTML responses without a policy outside hosted mode", async () => {
     const res = await createApp().request("/api/data");
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
@@ -199,6 +199,17 @@ describe("securityHeadersMiddleware document policies", () => {
     expect(res.headers.get("Strict-Transport-Security")).toBeNull();
   });
 
+  it("sends the report-only policy on hosted non-document responses", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("/api/data");
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBe(
+      buildReportOnlyContentSecurityPolicy(),
+    );
+    // The document policies stay document-only.
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
+    expect(res.headers.get("Permissions-Policy")).toBeNull();
+  });
+
   it("denies unused hardware features and leaves SEP-1865 grants unlisted", async () => {
     const res = await createApp().request("/");
     const policy = res.headers.get("Permissions-Policy");
@@ -224,7 +235,8 @@ describe("securityHeadersMiddleware document policies", () => {
     }
   });
 
-  it("keeps a route's own policy", async () => {
+  it("keeps a route's own policy without a report-only beside it", async () => {
+    mockConfig.hosted = true;
     const res = await createApp().request("/own-policy");
     expect(res.headers.get("Content-Security-Policy")).toBe(
       "frame-ancestors https://host.test",
@@ -327,7 +339,7 @@ describe("securityHeadersMiddleware document policies", () => {
     );
   });
 
-  it("sends the report-only policy on a sampled share of documents", async () => {
+  it("carries report-uri on a sampled share while the policy is on every document", async () => {
     mockConfig.hosted = true;
     const app = createApp();
 
@@ -339,9 +351,13 @@ describe("securityHeadersMiddleware document policies", () => {
 
     vi.mocked(Math.random).mockReturnValue(CSP_REPORT_SAMPLE_RATE);
     const unsampled = await app.request("/document");
-    expect(
-      unsampled.headers.get("Content-Security-Policy-Report-Only"),
-    ).toBeNull();
+    const unsampledPolicy = unsampled.headers.get(
+      "Content-Security-Policy-Report-Only",
+    );
+    // The header is always there (MJ-016); only the report
+    // endpoint is sampled.
+    expect(unsampledPolicy).toMatch(/^default-src 'self'; /);
+    expect(unsampledPolicy).not.toMatch(/report-uri /);
     // The enforcing policy and Permissions-Policy are on every document.
     for (const res of [sampled, unsampled]) {
       expect(res.headers.get("Content-Security-Policy")).toBe(
@@ -356,7 +372,14 @@ describe("securityHeadersMiddleware document policies", () => {
     let reported = 0;
     for (let i = 0; i < 2000; i++) {
       const res = await app.request("/");
-      if (res.headers.has("Content-Security-Policy-Report-Only")) reported++;
+      expect(res.headers.has("Content-Security-Policy-Report-Only")).toBe(true);
+      if (
+        res.headers
+          .get("Content-Security-Policy-Report-Only")!
+          .includes("report-uri ")
+      ) {
+        reported++;
+      }
     }
     expect(CSP_REPORT_SAMPLE_RATE).toBe(0.05);
     expect(reported).toBeGreaterThan(40);
@@ -460,7 +483,23 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
     expect(policy.get("worker-src")).toEqual(["'self'", "blob:"]);
     expect(policy.get("base-uri")).toEqual(["'self'"]);
     expect(policy.get("report-uri")).toHaveLength(1);
-    expect(policy.has("default-src")).toBe(false);
+    expect(policy.get("default-src")).toEqual(["'self'"]);
+  });
+
+  it("drops only report-uri when the response is not sampled", async () => {
+    const sampled = directives(buildReportOnlyContentSecurityPolicy());
+    const unsampled = directives(
+      buildReportOnlyContentSecurityPolicy(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+      ),
+    );
+    expect(unsampled.has("report-uri")).toBe(false);
+    sampled.delete("report-uri");
+    expect(unsampled).toEqual(sampled);
   });
 
   it("reports to the Sentry security endpoint for the DSN", () => {

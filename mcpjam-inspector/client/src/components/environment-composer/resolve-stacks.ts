@@ -27,7 +27,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import {
-  selectionKey,
+  selectionConfigKey,
   type ModelSelection as SavedModelSelection,
 } from "@mcpjam/sdk/browser";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
@@ -141,6 +141,30 @@ function sharedFields(
 }
 
 /**
+ * Whether a named row's saved selection is the cell's. With a cell selection
+ * the two must agree on the full config (source, connection AND settings).
+ * With none, a row that carries settings (an effort or temperature) must not
+ * match: reusing it would run the cell with a setting it never asked for,
+ * while a plain selection with no settings still describes the same run.
+ */
+function sameSavedSelection(
+  row: SavedModelSelection | undefined,
+  cell: SavedModelSelection | undefined,
+): boolean {
+  if (cell) {
+    return (
+      row !== undefined && selectionConfigKey(row) === selectionConfigKey(cell)
+    );
+  }
+  const settings = row?.settings;
+  return (
+    settings === undefined ||
+    (settings.reasoningEffort === undefined &&
+      settings.temperature === undefined)
+  );
+}
+
+/**
  * A live NAMED environment that already IS this composition.
  *
  * Without this, composing a stack identical to an environment someone curated
@@ -181,9 +205,7 @@ function matchingNamedEnvironment(
     (env.serverSelection === undefined ||
       env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
-    (!modelSelection ||
-      (env.modelSelection !== undefined &&
-        selectionKey(env.modelSelection) === selectionKey(modelSelection))) &&
+    sameSavedSelection(env.modelSelection, modelSelection) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,

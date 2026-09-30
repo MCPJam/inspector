@@ -10,6 +10,7 @@
  * throws.
  */
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
 
@@ -78,6 +79,65 @@ const REDACTED_SERVER_ERROR = /\bserver error\b/i;
 const AUTHENTICATION_FAILURE =
   /\b(unauthenticated|invalid token|token (has )?expired|expired token|jwt)\b/i;
 
+/**
+ * The production-masked refusal on a SCOPING READ that otherwise reports
+ * through the WRITE translator, answered as the 404 it is — or `undefined`
+ * for anything else, so the caller's own translator keeps deciding.
+ *
+ * The read paths that translate with `translateConvexWriteError` (clients,
+ * images, environments, conformance and readiness runs, server groups) get
+ * prose refusals mapped to 404 by its fallbacks, but production Convex
+ * redacts a plain "Not a member of this project" to "Server Error", which
+ * matches no branch there and fell to its terminal 500 (MJ-021). Only a
+ * plain error is claimed: a `ConvexError` payload is a deliberate refusal
+ * whose mapping belongs to the write translator, and its message carries the
+ * same "Server Error" framing this would otherwise misread.
+ *
+ * Same caveat as `redactedIsRefusal` below: only for reads that scope a
+ * caller-supplied id, where answering 404 to the rare genuine crash costs one
+ * misleading status on a request that was about to fail anyway.
+ */
+export function redactedReadRefusalError(
+  error: unknown,
+  notFoundMessage: string,
+): WebRouteError | undefined {
+  if (error instanceof WebRouteError) return undefined;
+  if (hasConvexErrorData(error)) return undefined;
+  if (classifyConvexReadError(error).kind !== "redacted") return undefined;
+  logRedactedReadAsNotFound("v1.read-refusal", error);
+  return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
+}
+
+/**
+ * The one trace a redacted read answered as 404 leaves. Usually it is a
+ * caller naming an id they cannot see, so it never pages (`warn` is
+ * Axiom-only). But a genuine crash on the same read arrives as the same
+ * "Server Error", and without this line it would be a silent 404: logged,
+ * a route that starts answering 404 uniformly is something an operator can
+ * see and rate-alert on.
+ */
+function logRedactedReadAsNotFound(scope: string, error: unknown): void {
+  logger.warn(`[${scope}] redacted read failure answered as not found`, {
+    scope,
+    detail: redactForLog(error),
+  });
+}
+
+/**
+ * Whether a `ConvexError` payload rides on the error or its `cause` chain —
+ * the same bounded walk `convexErrorData` does in `convex-errors.ts`, asked
+ * as a yes/no before interpreting the production framing as a refusal.
+ */
+function hasConvexErrorData(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const data = (current as { data?: unknown }).data;
+    if (data !== undefined && data !== null) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export type ConvexReadFailure =
   | { kind: "membership" }
   | { kind: "authentication" }
@@ -132,9 +192,11 @@ export function translateConvexReadError(
      * real incidents and 404 would hide them.
      */
     redactedIsRefusal?: boolean;
-  }
+  },
 ): WebRouteError {
   if (error instanceof WebRouteError) return error;
+  const structured = translateStructuredConvexRefusal(error);
+  if (structured) return structured;
   const failure = classifyConvexReadError(error);
   // A caller-shaped id Convex's validator rejected cannot name a resource the
   // caller may see; not an incident, so no Sentry — see
@@ -160,24 +222,29 @@ export function translateConvexReadError(
     return new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      options.notFoundMessage ?? "Not found"
+      options.notFoundMessage ?? "Not found",
     );
   }
-  if (
-    failure.kind === "membership" ||
-    (failure.kind === "redacted" && options.redactedIsRefusal === true)
-  ) {
+  if (failure.kind === "redacted" && options.redactedIsRefusal === true) {
+    logRedactedReadAsNotFound(options.scope, error);
     return new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      options.notFoundMessage ?? "Not found"
+      options.notFoundMessage ?? "Not found",
+    );
+  }
+  if (failure.kind === "membership") {
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      options.notFoundMessage ?? "Not found",
     );
   }
   if (failure.kind === "authentication") {
     return new WebRouteError(
       401,
       ErrorCode.UNAUTHORIZED,
-      "Invalid or expired credentials."
+      "Invalid or expired credentials.",
     );
   }
   // The REDACTED error, not the original — see `redactedErrorForCapture`.
@@ -188,6 +255,6 @@ export function translateConvexReadError(
   return new WebRouteError(
     502,
     ErrorCode.SERVER_UNREACHABLE,
-    "Upstream request failed"
+    "Upstream request failed",
   );
 }
