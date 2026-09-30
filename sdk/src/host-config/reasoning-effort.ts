@@ -149,10 +149,10 @@ function anthropicEfforts(name: string): readonly ModelReasoningEffort[] {
  * offer nothing.
  */
 function googleEfforts(name: string): readonly ModelReasoningEffort[] {
-  if (/^gemini-3\.\d+-pro(?:[.-]|$)/.test(name)) {
+  if (/^gemini-3\.\d+-pro(?:-preview)?(?:-\d+)?$/.test(name)) {
     return ["low", "medium", "high"];
   }
-  if (/^gemini-3-pro(?:[.-]|$)/.test(name)) return ["low", "high"];
+  if (/^gemini-3-pro(?:-preview)?(?:-\d+)?$/.test(name)) return ["low", "high"];
   if (/^gemini-3(?:\.\d+)?-flash(?:-preview)?(?:-\d+)?$/.test(name)) {
     return GOOGLE_REASONING_EFFORTS;
   }

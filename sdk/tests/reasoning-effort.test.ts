@@ -140,6 +140,12 @@ describe("supportedReasoningEfforts", () => {
     ]);
     // Unverified Gemini 3 families are hidden, not given the full set.
     expect(efforts("google", "gemini-3.1-flash-lite-image")).toEqual([]);
+    expect(efforts("google", "gemini-3-pro-image-preview")).toEqual([]);
+    expect(efforts("google", "gemini-3.1-pro-preview-customtools")).toEqual([]);
+    expect(efforts("google", "google/gemini-3-pro-preview")).toEqual([
+      "low",
+      "high",
+    ]);
     expect(efforts("google", "gemini-3-flash")).toEqual([
       "minimal",
       "low",
