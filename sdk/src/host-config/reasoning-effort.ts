@@ -104,7 +104,7 @@ function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
  */
 function anthropicSupportsEffort(name: string): boolean {
   const m =
-    /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d)(?!\d))?(?:[.-]|$)/.exec(
+    /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d{1,2})(?!\d))?(?:[.-]|$)/.exec(
       name
     );
   if (!m) return false;

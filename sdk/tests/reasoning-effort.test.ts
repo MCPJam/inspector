@@ -79,6 +79,10 @@ describe("supportedReasoningEfforts", () => {
       ...ANTHROPIC_REASONING_EFFORTS,
     ]);
     expect(efforts("anthropic", "claude-fable-5-1")).not.toEqual([]);
+    // Two-digit minors parse; a date suffix is not a minor.
+    expect(efforts("anthropic", "claude-opus-4.10")).not.toEqual([]);
+    expect(efforts("anthropic", "claude-sonnet-4-12")).not.toEqual([]);
+    expect(efforts("anthropic", "claude-opus-4-20250514")).toEqual([]);
     // Older / unverified Claude models reject output_config.effort.
     for (const old of [
       "claude-3-5-sonnet-latest",
