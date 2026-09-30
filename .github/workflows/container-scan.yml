@@ -49,10 +49,15 @@ on:
 permissions:
   contents: read
   security-events: write
+  # For the scheduled-failure issue below.
+  issues: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # Only PR runs supersede each other. schedule and workflow_dispatch share
+  # the refs/heads/main group, and a manual dispatch cancelling an in-flight
+  # Monday run would leave a silent gap in the weekly record.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scan:
@@ -126,3 +131,15 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           skip-setup-trivy: true
+
+      # GitHub emails scheduled-run failures only to whoever last edited the
+      # cron line; a red Monday run nobody else hears about is detection
+      # without a response. PR runs already surface through the PR itself.
+      - name: Open an issue on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Scheduled container scan failed: ${{ matrix.image }}" \
+            --body "The weekly Trivy scan of the ${{ matrix.image }} image failed — likely a new fixable CRITICAL in a base image (bump NODE_VERSION or the relevant base tag), or a broken build. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
