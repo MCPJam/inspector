@@ -333,3 +333,50 @@ describe("JudgesSection judge model picker (purpose: judge)", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe("JudgesSection — reasoning effort", () => {
+  const judge: ModelDefinition = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    hosted: true,
+    supportedReasoningEfforts: ["low", "high"],
+  };
+  const selection = {
+    modelId: "anthropic/claude-haiku-4.5",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+  };
+
+  it("writes the effort beside judgeModel on the saved judge selection", async () => {
+    const onChange = vi.fn();
+    render(
+      <JudgesSection
+        chrome="bare"
+        saveModelSelections
+        value={{
+          goalCompletion: {
+            enabled: true,
+            autoRun: true,
+            judgeModel: judge.id as string,
+            judgeSelection: selection,
+          },
+        }}
+        availableModels={[judge]}
+        onChange={onChange}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    await userEvent.click(await screen.findByRole("radio", { name: "High" }));
+    const next = onChange.mock.calls.at(-1)![0] as EvalJudgeConfig;
+    expect(next.goalCompletion?.judgeModel).toBe("anthropic/claude-haiku-4.5");
+    expect(
+      next.goalCompletion?.judgeSelection?.settings?.reasoningEffort,
+    ).toBe("high");
+  });
+
+  it("shows no chip for the managed default judge", () => {
+    renderBare({ goalCompletion: { enabled: true, autoRun: true } });
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+  });
+});

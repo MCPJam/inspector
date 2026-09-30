@@ -15,6 +15,7 @@ import {
 } from "./goal-completion-presentation";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
 import { JudgeModelPicker } from "./judge-model-picker";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
   DEFAULT_JUDGE_THRESHOLD as DEFAULT_THRESHOLD,
@@ -248,6 +249,23 @@ export function GoalCompletionCard({
                 onChange={(row) => setSelectedModelId(String(row.id))}
                 disabled={inFlight}
               />
+              {/* A run override carries the judge MODEL only, so the effort is
+                  the suite judge's, shown read-only (and only while this run
+                  grades with that same model). */}
+              {suiteConfig?.judgeSelection?.settings?.reasoningEffort &&
+              selectedModelId === suiteModel ? (
+                <SelectionEffortControl
+                  variant="chip"
+                  row={availableModels.find(
+                    (model) => String(model.id) === suiteModel,
+                  )}
+                  selection={suiteConfig.judgeSelection}
+                  purpose="judge"
+                  disabled
+                  disabledReason="This run grades with the suite judge's effort. Change it in the suite's judge settings."
+                  onChange={() => {}}
+                />
+              ) : null}
             </div>
             <Button
               type="button"

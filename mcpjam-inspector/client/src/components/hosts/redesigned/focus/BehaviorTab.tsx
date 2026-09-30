@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -42,10 +42,13 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
+import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import {
-  findModelForStoredChoice,
-  selectionBesideLegacyId,
-} from "@/components/chat-v2/shared/model-selection";
+  carryEffortToModel,
+  selectionReasoningEffort,
+} from "@/lib/reasoning-effort-selection";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -198,14 +201,19 @@ export function BehaviorTab({
   // mode, local keys otherwise) so org-only providers like Bedrock and
   // OpenRouter are selectable here too.
   const { availableModels, modelSelectionsSupported } = useAvailableModels();
+  // With a saved selection, the row it names (an org OpenRouter row and the
+  // hosted row of the same id are different rows); else the legacy id.
+  const resolvedModelRow = useMemo(
+    () =>
+      findModelForStoredChoice(
+        { modelId: draft.modelId, selection: draft.modelSelection },
+        availableModels,
+        undefined,
+      ),
+    [availableModels, draft.modelId, draft.modelSelection],
+  );
   const currentModel = useMemo<ModelDefinition>(() => {
-    // With a saved selection, the row it names (an org OpenRouter row and the
-    // hosted row of the same id are different rows); else the legacy id.
-    const match = findModelForStoredChoice(
-      { modelId: draft.modelId, selection: draft.modelSelection },
-      availableModels,
-      undefined,
-    );
+    const match = resolvedModelRow;
     if (match) return match;
     // Stale or org-revoked id (or an empty/still-loading draft): keep the
     // raw id visible in the trigger instead of silently coercing to an
@@ -215,7 +223,7 @@ export function BehaviorTab({
       name: draft.modelId || "Select model",
       provider: "" as ModelDefinition["provider"],
     };
-  }, [availableModels, draft.modelId, draft.modelSelection]);
+  }, [resolvedModelRow, draft.modelId]);
 
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
@@ -267,6 +275,8 @@ export function BehaviorTab({
   // selection would persist onto the host and reach nothing.
   const modelState = harnessControlState(draft.harness, "modelId");
   const tempState = harnessControlState(draft.harness, "temperature");
+  const effortState = harnessControlState(draft.harness, "reasoningEffort");
+  const [effortNotice, setEffortNotice] = useState<string | null>(null);
   /*
    * Tool approval is the one control whose answer is NOT a property of the
    * harness name.
@@ -327,21 +337,33 @@ export function BehaviorTab({
               <ModelSelector
                 currentModel={currentModel}
                 availableModels={availableModels}
-                onModelChange={(model) =>
+                onModelChange={(model) => {
+                  // Always written with the id: a selection left over from
+                  // the previous model would disagree with it. Only where the
+                  // deployment stores selections; else the legacy id alone,
+                  // which every deployment accepts. A saved effort follows
+                  // the pick only when the new model supports it.
+                  const carried = carryEffortToModel({
+                    row: model,
+                    previousEffort: selectionReasoningEffort(
+                      draft.modelSelection,
+                    ),
+                    purpose: HOST_MODEL_SELECTION_PURPOSE,
+                    selectionsSupported: modelSelectionsSupported,
+                    harness: draft.harness,
+                  });
+                  setEffortNotice(
+                    carried.dropped
+                      ? `${reasoningEffortLabel(carried.dropped)} effort was cleared: ${model.name} doesn't support it.`
+                      : carried.kept
+                        ? `Kept ${reasoningEffortLabel(carried.kept)} effort.`
+                        : null,
+                  );
                   update({
-                    modelId: String(model.id),
-                    // Always written with the id: a selection left over from
-                    // the previous model would disagree with it.
-                    // Only where the deployment stores selections; else the
-                    // legacy id alone, which every deployment accepts.
-                    modelSelection: modelSelectionsSupported
-                      ? selectionBesideLegacyId(
-                          model,
-                          HOST_MODEL_SELECTION_PURPOSE,
-                        )
-                      : undefined,
-                  })
-                }
+                    modelId: carried.modelId,
+                    modelSelection: carried.selection,
+                  });
+                }}
                 disabled={readOnly || !modelState.enforced}
                 align="end"
                 analyticsLocation="client_builder"
@@ -350,6 +372,42 @@ export function BehaviorTab({
             </div>
           }
         />
+
+        {effortState.enforced ? (
+          <FieldRow
+            label="Reasoning effort"
+            description={
+              effortNotice ??
+              "How hard the model thinks before answering. Set per model; leave on Default to use the model's own."
+            }
+            control={
+              <div className="w-[180px]">
+                <SelectionEffortControl
+                  variant="field"
+                  row={resolvedModelRow}
+                  selection={draft.modelSelection}
+                  purpose={HOST_MODEL_SELECTION_PURPOSE}
+                  selectionsSupported={modelSelectionsSupported}
+                  harness={draft.harness}
+                  bareIds="canonicalize"
+                  disabled={readOnly}
+                  disabledReason="This host is read-only."
+                  onChange={(write) => {
+                    setEffortNotice(null);
+                    update({
+                      modelId: write.modelId,
+                      modelSelection: write.selection,
+                    });
+                  }}
+                />
+              </div>
+            }
+          />
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            {effortState.note}
+          </p>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
