@@ -91,7 +91,7 @@
     },
     {
       "name": "Agent",
-      "description": "Headless agent turns over the public API: send a message history, the server runs one assistant turn with project-scoped workspace tools (eval reads + suite creation) on a pinned hosted model, and returns the reply plus created-resource references."
+      "description": "Headless agent turns over the public API: send a message history, the server runs one assistant turn with project-scoped workspace tools on a pinned hosted model, and returns the reply plus created-resource references. Tools are surface-gated: callers without a chat surface (plain API keys or JWTs) receive read-only tools only; write tools such as suite creation are available only when the request arrives over a Slack or Discord service auth with a conversationId."
     },
     {
       "name": "Swarms",
