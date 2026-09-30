@@ -987,16 +987,20 @@ describe("TraceViewer", () => {
       ).toBeInTheDocument();
     });
 
+    // Live preview spans carry `pv-` ids until the recorded spans replace them.
+    const previewTrace = (idPrefix: string) => ({
+      ...waterfallTrace,
+      spans: waterfallTrace.spans.map((span) => ({
+        ...span,
+        id: `${idPrefix}${span.id}`,
+        parentId: span.parentId ? `${idPrefix}${span.parentId}` : undefined,
+      })),
+    });
+
     it("keeps a closed row closed when the preview rows give way to the recorded ones", async () => {
-      const previewTrace = {
-        ...waterfallTrace,
-        spans: waterfallTrace.spans.map((span) => ({
-          ...span,
-          id: `pv-${span.id}`,
-          parentId: span.parentId ? `pv-${span.parentId}` : undefined,
-        })),
-      };
-      const { rerender } = render(<TraceViewer trace={previewTrace} />);
+      const { rerender } = render(
+        <TraceViewer trace={previewTrace("pv-")} />,
+      );
       openTraceTab();
 
       fireEvent.click(
@@ -1005,6 +1009,21 @@ describe("TraceViewer", () => {
       rerender(<TraceViewer trace={waterfallTrace} />);
       expect(
         screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+    });
+
+    it("opens every row again when another preview replaces this one", async () => {
+      const { rerender } = render(
+        <TraceViewer trace={previewTrace("pv-a-")} />,
+      );
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      rerender(<TraceViewer trace={previewTrace("pv-b-")} />);
+      expect(
+        screen.getByRole("button", { name: "Collapse Prompt 1" }),
       ).toBeInTheDocument();
     });
   });

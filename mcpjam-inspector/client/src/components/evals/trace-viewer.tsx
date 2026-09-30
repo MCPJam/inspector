@@ -577,10 +577,17 @@ export function TraceViewer({
       stepIds,
     });
 
+    // Preview rows may only go away when the recorded rows replace them. If
+    // the new trace still has preview rows, it is another preview.
+    const previewGaveWayToRecorded = ![...spanIds].some(
+      isLiveChatPreviewSpanId
+    );
     const onlyRowsAdded =
       openedTimelineRows !== null &&
       [...openedTimelineRows.spanIds].every(
-        (id) => spanIds.has(id) || isLiveChatPreviewSpanId(id)
+        (id) =>
+          spanIds.has(id) ||
+          (previewGaveWayToRecorded && isLiveChatPreviewSpanId(id))
       );
     if (onlyRowsAdded) {
       setExpandedPromptIds(
