@@ -7,6 +7,15 @@ ARG NODE_VERSION=24.14.0
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /usr/src/app
 
+# Patch the base at build time: the pinned node image trails Debian security
+# point releases (libgnutls30 CVE-2026-33845 / CVE-2026-42010), and its
+# bundled npm vendors node-tar 7.5.7 (CVE-2026-59873, gzip-bomb DoS) — the
+# runtime ENTRYPOINT is `npm start`, so npm ships in the final image. The
+# container-scan workflow gates on fixable CRITICALs; without this layer a
+# stale base fails CI until the upstream image tag catches up.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
+    && npm install -g npm@11
+
 ################################################################################
 # Install workspace dependencies with a single root lockfile.
 FROM base AS deps
