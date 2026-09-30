@@ -238,6 +238,22 @@ export function swarmTargetModelDefinition(
  * one is forwarded as the request body's `modelSelection` and a `local` one
  * never is. `undefined` for a legacy snapshot.
  */
+/**
+ * The reasoning effort the target's saved selection carries, when that
+ * selection names the pinned model. Read from the STORED selection rather than
+ * the backend-facing one, because a `local` selection is never forwarded yet
+ * still asks for its effort: the harness gate must see it either way.
+ */
+export function swarmTargetReasoningEffort(
+  target: Pick<PinnedHostExecutionSpec, "modelId" | "resolvedSelection">,
+) {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return undefined;
+  }
+  return selection.settings?.reasoningEffort;
+}
+
 export function swarmTargetBackendSelection(
   target: Pick<PinnedHostExecutionSpec, "modelId" | "resolvedSelection">,
 ): ModelSelection | undefined {
@@ -863,6 +879,11 @@ async function runJourneyFanOut(
                 // request body to override it — and passed explicitly so it
                 // STAYS identical if that ever stops being true.
                 hostModelId: modelId,
+                // The saved selection's effort: a harness that cannot apply it
+                // refuses the target here, before a box is booted.
+                ...(swarmTargetReasoningEffort(target) !== undefined
+                  ? { reasoningEffort: swarmTargetReasoningEffort(target) }
+                  : {}),
                 // TRI-STATE, read without throwing, and INVALID counts as ON —
                 // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
                 // (the web route's variant) THROWS a 409 on a malformed profile,
