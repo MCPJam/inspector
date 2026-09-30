@@ -4,10 +4,8 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { describe, expect, it } from "vitest";
 import {
-  ANTHROPIC_REASONING_EFFORTS,
-  GOOGLE_REASONING_EFFORTS,
-  OPENAI_REASONING_EFFORTS,
   reasoningEffortProviderOptions,
+  supportedReasoningEfforts,
 } from "@mcpjam/sdk/browser";
 
 /**
@@ -25,7 +23,7 @@ async function captureBody(
   providerOptions: Record<string, Record<string, unknown>>,
   response: unknown,
 ): Promise<Record<string, any>> {
-  let body: Record<string, any> = {};
+  let body: Record<string, any> | undefined;
   const fetch = (async (_url: unknown, init?: RequestInit) => {
     body = JSON.parse(String(init?.body));
     return new Response(JSON.stringify(response), {
@@ -37,7 +35,10 @@ async function captureBody(
     model: make(fetch),
     prompt: "hi",
     providerOptions: providerOptions as any,
-  }).catch(() => undefined);
+  }).catch((error) => {
+    if (body === undefined) throw error;
+  });
+  if (body === undefined) throw new Error("provider sent no request");
   return body;
 }
 
@@ -119,12 +120,21 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
   });
 
   it.each([
-    ["openai", "gpt-5", OPENAI_REASONING_EFFORTS],
-    ["anthropic", "claude-sonnet-4-5", ANTHROPIC_REASONING_EFFORTS],
-    ["google", "gemini-3-pro", GOOGLE_REASONING_EFFORTS],
+    ["openai", "gpt-5"],
+    ["openai", "gpt-5.1"],
+    ["openai", "gpt-5.2"],
+    ["openai", "o3"],
+    ["anthropic", "claude-sonnet-4-5"],
+    ["google", "gemini-3-pro"],
   ] as const)(
-    "%s: every level in the table survives the provider's own option schema",
-    async (providerKey, modelId, levels) => {
+    "%s %s: every level the table offers survives the provider's option schema",
+    async (providerKey, modelId) => {
+      const levels = supportedReasoningEfforts({
+        route: "direct",
+        providerKey,
+        modelId,
+      });
+      expect(levels.length).toBeGreaterThan(0);
       for (const effort of levels) {
         const options = reasoningEffortProviderOptions({
           providerKey,

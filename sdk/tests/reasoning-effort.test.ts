@@ -44,15 +44,33 @@ describe("supportedReasoningEfforts", () => {
         providerKey,
         modelId,
       });
+    // OpenAI levels are model-specific: none is 5.1+, xhigh is 5.2+.
     expect(efforts("openai", "gpt-5")).toEqual([
-      "none",
       "minimal",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(efforts("openai", "gpt-5.1")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(efforts("openai", "openai/gpt-5.2")).toEqual([
+      "none",
       "low",
       "medium",
       "high",
       "xhigh",
     ]);
-    expect(efforts("openai", "openai/o3-mini", "org")).toContain("high");
+    expect(efforts("openai", "gpt-5.1-codex-max")).toContain("xhigh");
+    expect(efforts("openai", "gpt-5.2-pro")).toEqual([]);
+    expect(efforts("openai", "openai/o3-mini", "org")).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
     expect(efforts("openai", "gpt-4o")).toEqual([]);
     expect(efforts("anthropic", "claude-sonnet-4-5")).toEqual([
       ...ANTHROPIC_REASONING_EFFORTS,

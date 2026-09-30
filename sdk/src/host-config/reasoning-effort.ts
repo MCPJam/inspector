@@ -74,6 +74,29 @@ function bareModelName(modelId: string): string {
 }
 
 /**
+ * OpenAI levels are model-specific (the provider package documents that
+ * `none` is GPT-5.1+ only and `xhigh` GPT-5.2+/Codex-Max only, and a wrong
+ * level is an API error). Families this does not know return none: the
+ * control is hidden rather than guessed. `-pro` models are hidden the same
+ * way (their accepted levels are narrower and not documented by the package).
+ */
+function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
+  if (/-pro(?:[.-]|$)/.test(name)) return [];
+  if (/^o[1-9](?:[.-]|$)/.test(name)) return ["low", "medium", "high"];
+  if (/^gpt-5\.1-codex-max(?:[.-]|$)/.test(name)) {
+    return ["low", "medium", "high", "xhigh"];
+  }
+  const minor = /^gpt-5\.(\d+)(?:[.-]|$)/.exec(name);
+  if (minor) {
+    return Number(minor[1]) >= 2
+      ? ["none", "low", "medium", "high", "xhigh"]
+      : ["none", "low", "medium", "high"];
+  }
+  if (/^gpt-5(?:-|$)/.test(name)) return ["minimal", "low", "medium", "high"];
+  return [];
+}
+
+/**
  * The efforts a provider/model pair accepts on a direct AI SDK call, from the
  * model families whose effort control the provider documents (OpenAI
  * reasoning models, Claude, Gemini 3+). Empty for anything else.
@@ -85,9 +108,7 @@ function directEfforts(
   const name = bareModelName(modelId);
   switch (providerKey) {
     case "openai":
-      return /^(gpt-5|o[1-9])(?:[.-]|$)/.test(name)
-        ? OPENAI_REASONING_EFFORTS
-        : [];
+      return openaiEfforts(name);
     case "anthropic":
       return /^claude-/.test(name) ? ANTHROPIC_REASONING_EFFORTS : [];
     case "google":
