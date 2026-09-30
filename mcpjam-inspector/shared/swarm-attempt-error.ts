@@ -74,12 +74,29 @@ const HOLDS_COMMITTED_SENTENCE =
   /MCPJam model limit reached for the moment\b|in-flight request\(s\) hold the remaining credits/i;
 
 /**
+ * `holds_committed`: other in-flight requests hold the last credits and
+ * release them as they finish. Read off the structured pair when the caller
+ * has it, and off the stored sentence when all it has is an attempt row.
+ *
+ * Split from {@link isTransientSpendRefusal} because a hold and a busy
+ * reservation are both waits but read differently to the user: a hold is about
+ * credits, a busy reservation is not.
+ */
+export function isHeldCreditsRefusal(
+  code?: string | null,
+  refusalReason?: string | null,
+  message?: string | null,
+): boolean {
+  if (code === "user_rate_limit" && refusalReason === "holds_committed")
+    return true;
+  return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
+}
+
+/**
  * A refusal that lifts in seconds on its own: a wait, never an exhausted
  * wallet.
  *
- * - `holds_committed`: other in-flight requests hold the last credits and
- *   release them as they finish. Read off the structured pair when the caller
- *   has it, and off the stored sentence when all it has is an attempt row.
+ * - `holds_committed`: see {@link isHeldCreditsRefusal}.
  * - `spending_reservation_busy` (503): MCPJam's own reservation lost its
  *   concurrency race on every retry and committed nothing, so the model was not
  *   called, so asking again is safe (`runSpendingReservationWithOccRetry` in
@@ -90,10 +107,10 @@ export function isTransientSpendRefusal(
   refusalReason?: string | null,
   message?: string | null,
 ): boolean {
-  if (code === "user_rate_limit" && refusalReason === "holds_committed")
-    return true;
-  if (code === "spending_reservation_busy") return true;
-  return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
+  return (
+    code === "spending_reservation_busy" ||
+    isHeldCreditsRefusal(code, refusalReason, message)
+  );
 }
 
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
