@@ -1369,7 +1369,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Proposals need a surface to render the control on AND an org to
     // attribute the spend to. Both come from the auth context, resolved by a
     // single helper so no route re-implements "which chat product is this".
-    // Callers with neither get the read/write tiers only — the gated tools are
+    // Callers without a surface get only read-only direct tools; gated tools are
     // omitted entirely rather than offered and then refused, so the model
     // never plans around an action it cannot take.
     const proposalSurface = durable?.surface ?? resolveProposalSurface(c, body);
