@@ -248,4 +248,20 @@ Results report the profile, each check's strength (MUST fails, SHOULD warns) and
 
 ## Implementation status
 
-Filled in as the work lands; see the PR description for the full per-gate evidence.
+As of 2026-09-30. This spans two PRs: MCPJam/inspector (SDK, CLI, inspector server and client, docs) and MCPJam/mcpjam-backend (`events-inbox/` Worker + Durable Object, Convex registry and jobs).
+
+| Phase | Status | Evidence |
+|---|---|---|
+| 0 ChatGPT observation | Tooling built; live observation **not yet run** | `CHATGPT_PROFILE` tags every field documented, observed (dated), policy or `unobserved`. `sdk/scripts/chatgpt-events-probe.ts` is the instrumented server and `summarizeProbeObservations` turns its log into dated facts. Running it needs a public HTTPS deployment connected to a ChatGPT plugin, which is outside the repo. |
+| 1 Contracts, wire, coordinator | Done | [`mcp-events-contracts.md`](./mcp-events-contracts.md). Tests: `sdk/tests/events-lifecycle.test.ts` (the lifecycle suite, also run against the hosted inbox client in the inspector server); `events-wire.integration.test.ts` (raw capability capture on both eras, and the sentinel secret absent from every captured frame across subscribe, refresh and a failed request whose error quotes it, while the server receives it exactly); Standard Webhooks tests against the published vector and an independent HMAC; push gates in `events-push.integration.test.ts` (two streams, heartbeat-only, dropped stream, cancelling one stream, rollover). |
+| 2 Webhook → agent vertical slice | Built; gates covered by unit/integration tests, not yet run on deployed infrastructure | Inbox: 61 tests (journal atomicity under an injected write failure, dispatch retry, lost response and expiry, the C3 table, rotation, backpressure, feed gaps). Convex: registry CAS and lease fencing, tombstones and late-delivery re-unsubscribe, idempotent enqueue, run keys, frozen inputs, FIFO, budgets, tool-journal parking, authorization loss, plus an inbox→Convex contract test. Inspector: keeper against the real fixture, executor against the fixture's tool with a scripted model (replay, park-on-unknown, spend refusal, prompt containment, transcript ordering). |
+| 3 Poll + conformance | Done | Poll goes through the same inbox append before the cursor advances (lifecycle suite, keeper tests). `runEventsConformance` covers MUST/SHOULD by profile, with allowed alternatives passing (`events-conformance.integration.test.ts`). |
+| 4 Surfaces | Done | Events tab (Inspect), Triggers tab (Explore), Tracing `webhook` rows, the Playground event card, local `/api/mcp/events/*` and hosted `/api/web/events/*` routes, and `mcpjam events list|poll|watch|subscribe|unsubscribe|conformance`. |
+| 5 Evals, Swarms, User Testing | Partial: needs owner design passes | Code-first `runEventStep` and the shared event-turn prompt are built; triggers attach to environments. Suite-file `event` steps and the swarm stage are proposed in [`mcp-events-phase5-design.md`](./mcp-events-phase5-design.md). |
+| 6 Push | Local done; hosted deferred | `EventsPushRuntime` is wired into the local runtime and the CLI. Hosted push stays deferred, as the support matrix says. |
+
+**Before first deploy:**
+- Set the Worker secrets and confirm `INSPECTOR_INTERNAL_ORIGIN` (see `events-inbox/README.md`).
+- Set the inspector env: `EVENTS_INBOX_ADMIN_TOKEN`, `EVENTS_INBOX_DISPATCH_TOKEN`, `EVENTS_INBOX_VIEWER_KEY`, `EVENTS_KEEPER_ENABLED=1`, `EVENTS_EXECUTOR_ENABLED=1`.
+- Confirm the policy numbers in open questions 1 and 2.
+- Raise the [working-group notes](./mcp-events-working-group-notes.md) upstream.

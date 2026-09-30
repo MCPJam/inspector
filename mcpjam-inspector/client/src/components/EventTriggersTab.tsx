@@ -52,9 +52,12 @@ function errorMessage(error: unknown, fallback: string): string {
 export const PARKED_EXPLANATION =
   "A tool call's outcome is unknown, so the run stopped instead of retrying. MCPJam never repeats an unknown write.";
 
+// Named for what RUNS, not for the stored value: `auto_deny` lets write
+// tools run and denies only a tool that would need a person to approve it
+// (nobody is watching an unattended run), so it is the more permissive one.
 const APPROVAL_POLICY_LABELS: Record<EventTriggerApprovalPolicy, string> = {
-  deny_writes: "Deny writes (read-only tools only)",
-  auto_deny: "Deny every approval request",
+  deny_writes: "Read-only tools only (writes denied)",
+  auto_deny: "Allow writes (tools needing approval are denied)",
 };
 
 function runStatusTone(status: string): string {

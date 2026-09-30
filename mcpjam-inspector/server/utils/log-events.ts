@@ -331,7 +331,7 @@ export type RequestEventMap = {
      * and a bare status code.
      */
     responsePreview?: string;
-    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
@@ -343,7 +343,8 @@ export type RequestEventMap = {
       | "scenario"
       | "eval"
       | "swarm"
-      | "api";
+      | "api"
+      | "event";
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -352,14 +353,15 @@ export type RequestEventMap = {
    * Its own event so the silent-drop class is measurable rather than inferred.
    */
   "chat.session.persist.skipped": {
-    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
     origin?:
       | "playground"
       | "mcpjam_agent"
       | "scenario"
       | "eval"
       | "swarm"
-      | "api";
+      | "api"
+      | "event";
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };

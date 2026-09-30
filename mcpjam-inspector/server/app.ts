@@ -21,6 +21,7 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import internalEvents from "./routes/internal/events.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -350,6 +351,10 @@ export async function createHonoApp() {
   // backend's own queue rather than from anything the caller named.
   app.route("/api/internal/chat-stage", internalChatStageDerivations);
   app.route("/api/internal/agent-turns", internalAgentTurns);
+  // MCP Events: the inbox Worker's dispatch (`/enqueue`, its own
+  // `x-events-inbox-token`) and the executor doorbell (`/dispatch`, service
+  // token). Mirror of the mount in server/index.ts.
+  app.route("/api/internal/events", internalEvents);
   // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
   // provisions a desktop and boots browserd end to end — and, like the other
   // internal routes, gated by the service token. Mirror of the mount in

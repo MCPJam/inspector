@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk";
+import { redactRpcMessageForLog } from "@mcpjam/sdk/events";
 import { logger } from "../utils/logger";
 import { nextRpcLogEventId } from "./rpc-log-event-id";
 import {
@@ -71,6 +72,18 @@ function stampEventId<E extends RpcLogEvent>(
   eventId: string,
 ): E & { eventId: string } {
   return { ...event, eventId };
+}
+
+function redactFrame(event: RpcMessageLogEvent): RpcMessageLogEvent {
+  let message: unknown;
+  try {
+    message = redactRpcMessageForLog(event.message);
+  } catch {
+    // A frame the redactor cannot walk is dropped to a marker rather than
+    // published unredacted.
+    message = { redacted: true, reason: "unredactable_frame" };
+  }
+  return message === event.message ? event : { ...event, message };
 }
 
 export function isRpcMessageLogEvent(
@@ -155,7 +168,18 @@ class RpcLogBus {
   private readonly bufferByServer = new Map<string, ServerBuffer>();
   private truncatedFrames = 0;
 
-  publish(event: RpcLogEvent): void {
+  publish(input: RpcLogEvent): void {
+    // Redaction backstop (contract C8). The SDK's logging transport already
+    // redacts webhook secrets before any logger sees a frame, but not every
+    // publisher goes through it — the harness MCP-proxy planes publish frames
+    // they relay themselves. Running the same stateless redactor here means a
+    // `delivery.secret` (or a `whsec_` value quoted back in an error) can never
+    // reach the replay buffer or a Logs subscriber from ANY path. It returns
+    // the frame itself when nothing needs redacting, so the common case costs
+    // one shallow check.
+    const event: RpcLogEvent = isRpcMessageLogEvent(input)
+      ? redactFrame(input)
+      : input;
     const probed = probeSerializedSize(
       isRpcMessageLogEvent(event) ? event.message : event.exchange,
       MAX_MESSAGE_BYTES,

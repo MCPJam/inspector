@@ -27,6 +27,7 @@ Event data is always shown as data. It is never rendered as markdown or HTML.
 
 A trigger pairs a subscription with a standing instruction ("when someone comments on this doc, reply"). When an event arrives, MCPJam runs an agent turn unattended with the tools of the environment you chose.
 
+- **Approval policy.** *Read-only tools only* (the default) lets the agent call only tools the server marks `readOnlyHint`. *Allow writes* also runs tools that change data, and still denies any tool that would need a person to approve it, because nobody is watching.
 - **Limits.** Each trigger has a rate limit (runs per hour) and a daily spending cap, checked before a run starts.
 - **Untrusted events.** The event is passed to the model as untrusted data, and the instruction is the only thing it follows.
 - **Parked runs.** If a tool call's outcome is unknown, for example because the runner stopped mid-call, the run is **parked** rather than retried. MCPJam never repeats a write it can't confirm.

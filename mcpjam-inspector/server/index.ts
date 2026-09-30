@@ -176,6 +176,7 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import internalEvents from "./routes/internal/events.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -216,6 +217,18 @@ import {
   startBenchWorker,
   type BenchWorkerHandle,
 } from "./services/bench-worker";
+import {
+  startEventsKeeper,
+  type EventsKeeperHandle,
+} from "./services/events/keeper.js";
+import {
+  startEventsExecutor,
+  type EventsExecutorHandle,
+} from "./services/events/executor.js";
+import {
+  isEventsExecutorEnabled,
+  isEventsKeeperEnabled,
+} from "./services/events/config.js";
 import {
   SERVER_PORT,
   CORS_OPTIONS,
@@ -561,6 +574,10 @@ app.route("/api/internal/evals", internalEvalJudgeCompletions);
 // backend's own queue rather than from anything the caller named.
 app.route("/api/internal/chat-stage", internalChatStageDerivations);
 app.route("/api/internal/agent-turns", internalAgentTurns);
+// MCP Events: the inbox Worker's dispatch (`/enqueue`, its own
+// `x-events-inbox-token`) and the executor doorbell (`/dispatch`, service
+// token). Mirror of the mount in server/app.ts.
+app.route("/api/internal/events", internalEvents);
 // W1 hosted-browser debug probe — mounted only when explicitly enabled (it
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.
@@ -1000,6 +1017,21 @@ if (isBenchWorkerEnabled()) {
 const productionChecksWorker: ProductionChecksWorkerHandle =
   startProductionChecksWorker();
 
+// MCP Events (hosted). The keeper leases due subscriptions from the Convex
+// registry and runs one coordinator step each (subscribe/refresh/poll/
+// unsubscribe); the executor claims scheduled trigger runs and executes them
+// as unattended turns. Both env-gated (`EVENTS_KEEPER_ENABLED`,
+// `EVENTS_EXECUTOR_ENABLED`); the inbox dispatch rings the executor through
+// `/api/internal/events/enqueue`.
+let eventsKeeper: EventsKeeperHandle | undefined;
+if (isEventsKeeperEnabled()) {
+  eventsKeeper = startEventsKeeper();
+}
+let eventsExecutor: EventsExecutorHandle | undefined;
+if (isEventsExecutorEnabled()) {
+  eventsExecutor = startEventsExecutor();
+}
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10,
@@ -1059,6 +1091,8 @@ async function shutdown() {
     await githubChecksWorker?.stop();
     await benchWorker?.stop();
     await productionChecksWorker.stop();
+    await eventsKeeper?.stop();
+    await eventsExecutor?.stop();
     stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
