@@ -15,6 +15,7 @@ import {
 import {
   parseFundingSummary,
   parseSessionFunding,
+  SWARM_SPONSORSHIP_CAPABILITY,
   SWARM_SPONSORSHIP_REJECTED_CODE,
   type SwarmFundingSummary,
   type SwarmSessionFunding,
@@ -367,6 +368,23 @@ function sponsoredCallHeaders(): Record<string, string> {
   return { "x-inspector-service-token": token };
 }
 
+/**
+ * The same proof, for the call that DECLARES the capability. The backend only
+ * honours `swarm-sponsorship-v1` on a request that carries it, because the
+ * capability is what lets a launch allocate platform money: a browser that puts
+ * the string in a request body must not be able to claim it. Attached exactly
+ * when the declared list carries the capability, which this process only
+ * declares while the token is set, so a server without one sends the same bare
+ * request it always has.
+ */
+function capabilityAttestationHeaders(
+  capabilities: readonly string[],
+): Record<string, string> | undefined {
+  return capabilities.includes(SWARM_SPONSORSHIP_CAPABILITY)
+    ? sponsoredCallHeaders()
+    : undefined;
+}
+
 async function getJson<T>(
   url: string,
   bearer: string,
@@ -527,6 +545,7 @@ export async function previewSwarmFunding(
   if (swarmSponsorshipCapabilities().length === 0) {
     return UNSUPPORTED_FUNDING_PREVIEW;
   }
+  const capabilities = swarmRunnerCapabilities();
   let data: Record<string, unknown>;
   try {
     data = await postJson<Record<string, unknown>>(
@@ -534,10 +553,12 @@ export async function previewSwarmFunding(
       bearer,
       {
         projectId: args.projectId,
-        runnerCapabilities: swarmRunnerCapabilities(),
+        runnerCapabilities: capabilities,
         runs: args.runs,
       },
       NON_LLM_TIMEOUT_MS,
+      undefined,
+      capabilityAttestationHeaders(capabilities),
     );
   } catch (error) {
     if (
@@ -624,6 +645,10 @@ export async function createJourneyRun(
     expectedSponsored?: number;
   },
 ): Promise<CreateJourneyRunResult> {
+  // Asserted by this process, never a caller: the runner is the only honest
+  // source for what it can execute. One list feeds the body and the
+  // attestation header, so they cannot disagree.
+  const capabilities = swarmRunnerCapabilities();
   const data = await postJson<{
     ok?: boolean;
     runId?: string;
@@ -658,11 +683,11 @@ export async function createJourneyRun(
       ...(args.expectedSponsored !== undefined
         ? { expectedSponsored: args.expectedSponsored }
         : {}),
-      // Asserted by this process, never a caller: the runner is the only
-      // honest source for what it can execute.
-      runnerCapabilities: swarmRunnerCapabilities(),
+      runnerCapabilities: capabilities,
     },
     NON_LLM_TIMEOUT_MS,
+    undefined,
+    capabilityAttestationHeaders(capabilities),
   );
   if (
     !data.ok ||

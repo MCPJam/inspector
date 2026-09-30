@@ -345,6 +345,31 @@ describe("swarm-agent sponsored swarm allowance — capability negotiation", () 
     expect(createBody().runnerCapabilities).toContain("swarm-sponsorship-v1");
   });
 
+  // The backend drops swarm-sponsorship-v1 from a request that does not carry
+  // the service token, so the declaration and the proof travel together.
+  const createHeaders = () =>
+    fetchMock.mock.calls[0]![1].headers as Record<string, string>;
+
+  it("attests the declared capability with the service token on run creation", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockResolvedValue(Response.json(okCreateResponse()));
+
+    await createJourneyRun(CONVEX_HTTP_URL, "user-bearer", CREATE_ARGS);
+
+    expect(createBody().runnerCapabilities).toContain("swarm-sponsorship-v1");
+    expect(createHeaders()["x-inspector-service-token"]).toBe("svc-token");
+    expect(createHeaders().Authorization).toBe("Bearer user-bearer");
+  });
+
+  it("sends no service token on run creation when it does not declare the capability", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    fetchMock.mockResolvedValue(Response.json(okCreateResponse()));
+
+    await createJourneyRun(CONVEX_HTTP_URL, "user-bearer", CREATE_ARGS);
+
+    expect(createHeaders()).not.toHaveProperty("x-inspector-service-token");
+  });
+
   it("sends expectedSponsored only when the caller supplied it, including zero", async () => {
     fetchMock.mockImplementation(async () =>
       Response.json(okCreateResponse()),
@@ -449,6 +474,14 @@ describe("swarm-agent sponsored swarm allowance — capability negotiation", () 
     );
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.runnerCapabilities).toContain("swarm-sponsorship-v1");
+    // The preview must see the allocation a launch would get, so it is
+    // attested exactly like the launch; unattested, the backend would answer
+    // for a runner that cannot be sponsored.
+    expect(
+      (init as RequestInit & { headers: Record<string, string> }).headers[
+        "x-inspector-service-token"
+      ],
+    ).toBe("svc-token");
     expect(body.runs).toEqual([{ journeyRefId: "j1", sessionsPerTarget: 3 }]);
     expect(preview).toEqual({
       supported: true,
