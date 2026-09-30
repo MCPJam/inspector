@@ -124,8 +124,12 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
     ["openai", "gpt-5.1"],
     ["openai", "gpt-5.2"],
     ["openai", "o3"],
+    ["openai", "gpt-5.2-codex"],
+    ["anthropic", "claude-opus-4-5"],
+    ["anthropic", "claude-opus-4-7"],
     ["anthropic", "claude-sonnet-4-6"],
     ["google", "gemini-3-pro"],
+    ["google", "gemini-3.1-pro-preview"],
     ["google", "gemini-3-flash"],
   ] as const)(
     "%s %s: every level the table offers survives the provider's option schema",

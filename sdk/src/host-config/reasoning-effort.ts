@@ -75,64 +75,86 @@ function bareModelName(modelId: string): string {
 
 /**
  * OpenAI levels are model-specific (the provider package documents that
- * `none` is GPT-5.1+ only and `xhigh` GPT-5.2+/Codex-Max only, and a wrong
+ * `none` is GPT-5.1 only and `xhigh` GPT-5.1-Codex-Max / GPT-5.2+, and a wrong
  * level is an API error). Families this does not know return none: the
  * control is hidden rather than guessed. `-pro` and `-chat` models are hidden
- * the same way.
+ * the same way (pro takes narrower levels; the provider classes `gpt-5*-chat*`
+ * as non-reasoning). Codex models never take `none`.
  */
 function openaiEfforts(name: string): readonly ModelReasoningEffort[] {
-  // `-pro` and `-chat` variants: pro takes narrower levels, and the provider
-  // classes `gpt-5*-chat*` as non-reasoning models.
   if (/-(?:pro|chat)(?:[.-]|$)/.test(name)) return [];
   if (/^o[1-9](?:[.-]|$)/.test(name)) return ["low", "medium", "high"];
+  const codex = /-codex(?:[.-]|$)/.test(name);
   if (/^gpt-5\.1-codex-max(?:[.-]|$)/.test(name)) {
     return ["low", "medium", "high", "xhigh"];
   }
   const minor = /^gpt-5\.(\d+)(?:[.-]|$)/.exec(name);
   if (minor) {
-    return Number(minor[1]) >= 2
+    const m = Number(minor[1]);
+    if (codex) {
+      return m >= 2
+        ? ["low", "medium", "high", "xhigh"]
+        : ["low", "medium", "high"];
+    }
+    return m >= 2
       ? ["none", "low", "medium", "high", "xhigh"]
       : ["none", "low", "medium", "high"];
   }
-  if (/^gpt-5(?:-|$)/.test(name)) return ["minimal", "low", "medium", "high"];
+  if (/^gpt-5(?:-|$)/.test(name)) {
+    return codex
+      ? ["low", "medium", "high"]
+      : ["minimal", "low", "medium", "high"];
+  }
   return [];
 }
 
 /**
- * Claude models that implement `output_config.effort` (and adaptive
- * thinking): Opus 4.5+, Sonnet 4.6+, and the Fable family. Older Claude
- * (3.x, 4.0/4.1) reject the fields, and Haiku is not verified, so those offer
- * nothing. A trailing date (`-20250514`) is not a minor version.
+ * Claude levels by model version (the provider package documents that effort
+ * arrived with Opus 4.5 with low/medium/high, `max` came with the adaptive-
+ * thinking models, and `xhigh` with Opus 4.7). Older Claude (3.x, 4.0/4.1)
+ * rejects the fields, and Haiku and unknown families are not verified, so
+ * they offer nothing. A trailing date (`-20250514`) is not a minor version.
  */
-function anthropicSupportsEffort(name: string): boolean {
+function anthropicEfforts(name: string): readonly ModelReasoningEffort[] {
   const m =
     /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d{1,2})(?!\d))?(?:[.-]|$)/.exec(
       name
     );
-  if (!m) return false;
+  if (!m) return [];
   const major = Number(m[2]);
   const minor = m[3] === undefined ? 0 : Number(m[3]);
+  const atLeast = (maj: number, min: number) =>
+    major > maj || (major === maj && minor >= min);
   switch (m[1]) {
     case "opus":
-      return major > 4 || (major === 4 && minor >= 5);
+      if (atLeast(4, 7)) return ["low", "medium", "high", "xhigh", "max"];
+      if (atLeast(4, 6)) return ["low", "medium", "high", "max"];
+      if (atLeast(4, 5)) return ["low", "medium", "high"];
+      return [];
     case "sonnet":
-      return major > 4 || (major === 4 && minor >= 6);
+      return atLeast(4, 6) ? ["low", "medium", "high", "max"] : [];
     case "fable":
-      return major >= 5;
+      return major >= 5 ? ["low", "medium", "high", "max"] : [];
     default:
-      return false;
+      return [];
   }
 }
 
 /**
- * Gemini 3+ thinking levels. Pro models take only low and high; the other
- * Gemini 3+ families (Flash) take the full set.
+ * Gemini 3+ thinking levels, per the provider package: 3.1 Pro takes low /
+ * medium / high, 3 Pro takes low / high, 3 Flash takes all four. Other
+ * families (Flash-Lite, image models, later versions) are not verified and
+ * offer nothing.
  */
 function googleEfforts(name: string): readonly ModelReasoningEffort[] {
-  if (!/^gemini-([3-9]|[1-9][0-9])(?:[.-]|$)/.test(name)) return [];
-  return /-pro(?:[.-]|$)/.test(name)
-    ? ["low", "high"]
-    : GOOGLE_REASONING_EFFORTS;
+  if (/^gemini-3\.\d+-pro(?:[.-]|$)/.test(name)) {
+    return ["low", "medium", "high"];
+  }
+  if (/^gemini-3-pro(?:[.-]|$)/.test(name)) return ["low", "high"];
+  if (/^gemini-3(?:\.\d+)?-flash(?:-preview)?(?:-\d+)?$/.test(name)) {
+    return GOOGLE_REASONING_EFFORTS;
+  }
+  return [];
 }
 
 /**
@@ -149,7 +171,7 @@ function directEfforts(
     case "openai":
       return openaiEfforts(name);
     case "anthropic":
-      return anthropicSupportsEffort(name) ? ANTHROPIC_REASONING_EFFORTS : [];
+      return anthropicEfforts(name);
     case "google":
       return googleEfforts(name);
     default:

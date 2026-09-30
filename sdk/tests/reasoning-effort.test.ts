@@ -65,6 +65,14 @@ describe("supportedReasoningEfforts", () => {
       "xhigh",
     ]);
     expect(efforts("openai", "gpt-5.1-codex-max")).toContain("xhigh");
+    // Codex never takes "none".
+    expect(efforts("openai", "gpt-5.2-codex")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(efforts("openai", "gpt-5-codex")).toEqual(["low", "medium", "high"]);
     expect(efforts("openai", "gpt-5.2-pro")).toEqual([]);
     for (const chat of [
       "gpt-5-chat-latest",
@@ -79,15 +87,30 @@ describe("supportedReasoningEfforts", () => {
       "high",
     ]);
     expect(efforts("openai", "gpt-4o")).toEqual([]);
-    expect(efforts("anthropic", "claude-sonnet-4-6")).toEqual([
-      ...ANTHROPIC_REASONING_EFFORTS,
-    ]);
+    // Per version: 4.5 low-high, 4.6 adds max, Opus 4.7+ adds xhigh.
     expect(efforts("anthropic", "anthropic/claude-opus-4-5")).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(efforts("anthropic", "claude-sonnet-4-6")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(efforts("anthropic", "claude-opus-4-6")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(efforts("anthropic", "claude-opus-4-7")).toEqual([
       ...ANTHROPIC_REASONING_EFFORTS,
     ]);
     expect(efforts("anthropic", "claude-fable-5-1")).not.toEqual([]);
     // Two-digit minors parse; a date suffix is not a minor.
-    expect(efforts("anthropic", "claude-opus-4.10")).not.toEqual([]);
+    expect(efforts("anthropic", "claude-opus-4.10")).toContain("xhigh");
     expect(efforts("anthropic", "claude-sonnet-4-12")).not.toEqual([]);
     expect(efforts("anthropic", "claude-opus-4-20250514")).toEqual([]);
     // Older / unverified Claude models reject output_config.effort.
@@ -101,6 +124,13 @@ describe("supportedReasoningEfforts", () => {
       expect(efforts("anthropic", old), old).toEqual([]);
     }
     expect(efforts("google", "gemini-3-pro")).toEqual(["low", "high"]);
+    expect(efforts("google", "gemini-3.1-pro-preview")).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    // Unverified Gemini 3 families are hidden, not given the full set.
+    expect(efforts("google", "gemini-3.1-flash-lite-image")).toEqual([]);
     expect(efforts("google", "gemini-3-flash")).toEqual([
       "minimal",
       "low",
