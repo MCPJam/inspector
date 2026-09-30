@@ -927,6 +927,110 @@ describe("TraceViewer", () => {
         screen.getByRole("button", { name: "Filter timeline rows: All" }),
       ).toBeInTheDocument();
     });
+
+    it("keeps a closed row closed while bars grow and rows are added", async () => {
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      for (let token = 1; token <= 3; token++) {
+        rerender(<TraceViewer trace={traceAtToken(token)} />);
+      }
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+
+      // A new prompt still opens by default.
+      const withNextPrompt = traceAtToken(4);
+      rerender(
+        <TraceViewer
+          trace={{
+            ...withNextPrompt,
+            messages: [
+              ...withNextPrompt.messages,
+              { role: "user", content: "Thanks" },
+            ],
+            spans: [
+              ...withNextPrompt.spans,
+              {
+                id: "p2-step0",
+                name: "Step 1",
+                category: "step" as const,
+                startMs: 300,
+                endMs: 360,
+                promptIndex: 2,
+                stepIndex: 0,
+                status: "ok" as const,
+              },
+              {
+                id: "p2-llm0",
+                parentId: "p2-step0",
+                name: "LLM",
+                category: "llm" as const,
+                startMs: 300,
+                endMs: 360,
+                promptIndex: 2,
+                stepIndex: 0,
+                status: "ok" as const,
+              },
+            ],
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Collapse Prompt 3" }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps a closed row closed when the preview rows give way to the recorded ones", async () => {
+      const previewTrace = {
+        ...waterfallTrace,
+        spans: waterfallTrace.spans.map((span) => ({
+          ...span,
+          id: `pv-${span.id}`,
+          parentId: span.parentId ? `pv-${span.parentId}` : undefined,
+        })),
+      };
+      const { rerender } = render(<TraceViewer trace={previewTrace} />);
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      rerender(<TraceViewer trace={waterfallTrace} />);
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("opens every timeline row again for a different trace", async () => {
+    const { rerender } = render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+    );
+    rerender(
+      <TraceViewer
+        trace={{
+          ...waterfallTrace,
+          spans: waterfallTrace.spans.map((span) => ({
+            ...span,
+            id: `other-${span.id}`,
+            parentId: span.parentId ? `other-${span.parentId}` : undefined,
+          })),
+        }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+    ).toBeInTheDocument();
   });
 
   it("does not render a reset button in the recorded trace toolbar", async () => {
