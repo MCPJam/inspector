@@ -14,10 +14,16 @@ on:
   pull_request:
     branches:
       - main
+    # The images' vulnerability surface is the base images (Dockerfiles) and
+    # the installed dependency set (lockfile) — not application source, which
+    # dependency-audit and Snyk already gate on every PR. Scanning on source
+    # changes would add three image builds to every PR for no new signal.
     paths:
       - "mcpjam-inspector/Dockerfile"
       - "slack-app/Dockerfile"
       - "discord-app/Dockerfile"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/container-scan.yml"
   schedule:
     # Weekly, independent of code changes: new CVEs are published against the
