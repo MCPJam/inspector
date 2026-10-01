@@ -527,6 +527,17 @@ function resolveTar() {
 }
 
 /**
+ * Arguments that list an archive with this tar.
+ *
+ * Reading the archive back needs `--force-local` for the same reason writing
+ * it does: GNU tar reads the colon in `D:\a\_temp\…` as an rmt `host:path`
+ * spec. bsdtar has no such flag, so it is GNU-only here too.
+ */
+export function archiveListArgs(tar, archivePath) {
+  return [...(tar.gnu ? ["--force-local"] : []), "-tzf", archivePath];
+}
+
+/**
  * Refuse an archive carrying AppleDouble members.
  *
  * The suppression above is a flag, and a flag is a claim. This reads the
@@ -538,10 +549,10 @@ function resolveTar() {
  * Listing an archive works on every tar this build runs under, so this is not
  * conditional on which one produced it.
  */
-function assertNoAppleDoubleMembers(tarBin, archivePath) {
+function assertNoAppleDoubleMembers(tar, archivePath) {
   let listing;
   try {
-    listing = execFileSync(tarBin, ["-tzf", archivePath], {
+    listing = execFileSync(tar.bin, archiveListArgs(tar, archivePath), {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     });
@@ -808,7 +819,7 @@ async function main() {
       ],
       { stdio: "inherit", env: { ...process.env, COPYFILE_DISABLE: "1" } },
     );
-    assertNoAppleDoubleMembers(tar.bin, archivePath);
+    assertNoAppleDoubleMembers(tar, archivePath);
     const archiveSha = sha256File(archivePath);
     writeFileSync(
       join(outRoot, `${stem}.tar.gz.sha256`),

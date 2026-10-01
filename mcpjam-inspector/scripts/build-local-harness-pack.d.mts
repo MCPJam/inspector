@@ -18,6 +18,12 @@ export declare function computeTreeDigest(root: string): {
  */
 export declare function flattenHardLinks(root: string): number;
 
+/** Arguments that list an archive; GNU tar needs `--force-local` on Windows paths. */
+export declare function archiveListArgs(
+  tar: { bin: string; gnu: boolean },
+  archivePath: string,
+): string[];
+
 /** Install the patched recipe, adding the runtime .npmrc only after install. */
 export declare function installClaudeCodePackRecipe(
   packRoot: string,
