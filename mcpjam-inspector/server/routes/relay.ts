@@ -10,6 +10,7 @@ import {
   edgeAttestationConfigured,
   getAttestedClientIp,
   getClientIp,
+  ipRateLimitKey,
 } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 
@@ -31,8 +32,8 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * never derived from the request, so there is no SSRF surface. Abuse is
  * bounded by path-scoped body limits, a body read deadline, buffering
  * budgets, bounded payload reads, hosted-only per-IP rate limits (a coarse
- * one on everything, a tighter one on the ingest subpaths), and the 30s
- * upstream timeout.
+ * one on everything, a tighter one on the ingest subpaths and launch
+ * events), and the 30s upstream timeout.
  * Requests are forwarded for our own PostHog project only (see "Project
  * pinning" below).
  */
@@ -171,17 +172,29 @@ setInterval(flushRelayStats, STATS_FLUSH_INTERVAL_MS).unref();
 //
 // - RATE_LIMIT_PER_MIN covers everything the relay serves; 600/min is ~10x
 //   the busiest real posthog-js client, mostly asset and config reads.
-// - INGEST_LIMIT_PER_MIN covers only the ingest subpaths — the requests that
-//   write into the PostHog project (MJ-015). posthog-js batches captures and
-//   replay slices into a flush every few seconds, so a real browser stays
-//   well under one ingest request per second, and 60/min leaves several
-//   times that headroom. The pooled bucket for unattested requests gets
-//   the multiple the other pooled windows use (passthrough-rate-limit.ts)
-//   because it covers many callers at once.
+// - INGEST_LIMIT_PER_MIN covers the requests that write telemetry: the
+//   ingest subpaths, which write into the PostHog project (MJ-015), and
+//   launch events. posthog-js batches captures and replay slices into a
+//   flush every few seconds, so a real browser stays well under one ingest
+//   request per second, and 60/min leaves several times that headroom.
+//
+// Per-client budgets are keyed by the attested address, an IPv6 address by
+// its /64 (ipRateLimitKey). Ingest requests without an attested address
+// share one bucket, sized by what "unattested" means in this deployment:
+//
+// - With an edge secret configured, every request through the edge is
+//   attested, so the shared bucket only holds traffic that reached the
+//   service some other way. It gets the per-client budget, once, for all
+//   of that traffic together.
+// - Without one, nothing is attested and the shared bucket covers every
+//   caller, so it gets the multiple the other pooled windows use
+//   (passthrough-rate-limit.ts).
 // ---------------------------------------------------------------------------
 
 const RATE_LIMIT_PER_MIN = 600;
 export const RELAY_INGEST_LIMIT_PER_MIN = 60;
+export const RELAY_UNATTESTED_INGEST_LIMIT_PER_MIN = 60;
+export const RELAY_POOLED_INGEST_LIMIT_PER_MIN = 4 * RELAY_INGEST_LIMIT_PER_MIN;
 const RATE_WINDOW_MS = 60_000;
 const UNATTESTED_CLIENT_KEY = "unattested";
 
@@ -191,7 +204,11 @@ const ingestWindows = createFixedWindowMap(
   RATE_WINDOW_MS,
 );
 const unattestedIngestWindows = createFixedWindowMap(
-  4 * RELAY_INGEST_LIMIT_PER_MIN,
+  RELAY_UNATTESTED_INGEST_LIMIT_PER_MIN,
+  RATE_WINDOW_MS,
+);
+const pooledIngestWindows = createFixedWindowMap(
+  RELAY_POOLED_INGEST_LIMIT_PER_MIN,
   RATE_WINDOW_MS,
 );
 
@@ -201,23 +218,29 @@ function isIngestSubpath(subpath: string): boolean {
   return /^\/(?:e|i\/v0\/e|s|i\/v1\/(?:logs|metrics))\/?$/.test(subpath);
 }
 
-function relayClientIp(c: Context): string | null {
+// The attested client's bucket key, or null when there is none.
+function attestedClientKey(c: Context): string | null {
   // Without a configured secret, direct-origin callers can forge ingress headers.
-  return edgeAttestationConfigured() ? getAttestedClientIp(c) : null;
+  if (!edgeAttestationConfigured()) return null;
+  const ip = getAttestedClientIp(c);
+  return ip === null ? null : ipRateLimitKey(ip);
 }
 
 function relayClientKey(c: Context): string {
-  return relayClientIp(c) ?? UNATTESTED_CLIENT_KEY;
+  return attestedClientKey(c) ?? UNATTESTED_CLIENT_KEY;
 }
 
-function relayRateLimit(c: Context, subpath: string): Response | null {
+function relayRateLimit(c: Context, ingest: boolean): Response | null {
   if (!HOSTED_MODE) return null;
-  const attestedIp = relayClientIp(c);
-  let refusedMs = relayWindows.charge(attestedIp ?? UNATTESTED_CLIENT_KEY);
-  if (refusedMs === null && isIngestSubpath(subpath)) {
-    refusedMs = attestedIp
-      ? ingestWindows.charge(attestedIp)
-      : unattestedIngestWindows.charge(UNATTESTED_CLIENT_KEY);
+  const clientKey = attestedClientKey(c);
+  let refusedMs = relayWindows.charge(clientKey ?? UNATTESTED_CLIENT_KEY);
+  if (refusedMs === null && ingest) {
+    const sharedWindows = edgeAttestationConfigured()
+      ? unattestedIngestWindows
+      : pooledIngestWindows;
+    refusedMs = clientKey
+      ? ingestWindows.charge(clientKey)
+      : sharedWindows.charge(UNATTESTED_CLIENT_KEY);
   }
   if (refusedMs === null) return null;
   stats.rateLimitRejects++;
@@ -1141,10 +1164,11 @@ async function checkProjectTokens(
 
 const relayRoutes = new Hono();
 
-// Anonymous by design, like PostHog capture. Bounded and validated separately
-// from the opaque PostHog proxy; never forwards this payload upstream twice.
+// Anonymous by design, like PostHog capture, and charged to the same ingest
+// budget. Bounded and validated separately from the opaque PostHog proxy;
+// never forwards this payload upstream twice.
 relayRoutes.post("/launch-engagement", makeBodyLimit(2048), async (c) => {
-  const limited = relayRateLimit(c, "/launch-engagement");
+  const limited = relayRateLimit(c, true);
   if (limited) return limited;
   const parsed = launchEngagementSchema.safeParse(
     await c.req.json().catch(() => null),
@@ -1157,7 +1181,7 @@ relayRoutes.post("/launch-engagement", makeBodyLimit(2048), async (c) => {
 relayRoutes.all("*", async (c) => {
   const url = new URL(c.req.url);
   const subpath = stripRelayPrefix(url.pathname);
-  const limited = relayRateLimit(c, subpath);
+  const limited = relayRateLimit(c, isIngestSubpath(subpath));
   if (limited) {
     return limited;
   }
