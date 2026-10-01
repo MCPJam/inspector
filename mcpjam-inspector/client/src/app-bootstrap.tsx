@@ -13,8 +13,9 @@ import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extension
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
-import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
+import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
+import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
+import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
@@ -107,7 +108,9 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
       isEnsuringUser={isEnsuringUser}
       isUserReady={isUserReady}
     >
-      {children}
+      <AuthRecoveryBoundary ready={isUserReady}>
+        {children}
+      </AuthRecoveryBoundary>
     </DbUserReadyProvider>
   );
 }
@@ -256,7 +259,8 @@ if (isInIframe) {
   // Convex URL above does: the deployed bundle is shared across environments
   // and only the serving process knows which WorkOS environment it belongs to.
   const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
-    string | undefined;
+    | string
+    | undefined;
   // Coerced to "" rather than typed as `string`: the previous `as string` cast
   // claimed a value that may not exist, and AuthKit already fails loudly on a
   // falsy client id. The warning below is the one that should fire first.
@@ -348,6 +352,7 @@ if (isInIframe) {
   const convex = new ConvexReactClient(convexUrl, {
     authRefreshTokenLeewaySeconds: 60,
   });
+  installConvexAuthRecovery(convex);
   traceConvexQueries(convex, convexUrl);
   normalizeInitialLegacyHashBookmark();
 
@@ -415,13 +420,15 @@ if (isInIframe) {
       }}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
+      <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
         <SignOutBoundary>
-          <AuthBootstrap>
-            <AppRouterProvider />
-          </AuthBootstrap>
+          <AuthRecoveryBoundary>
+            <AuthBootstrap>
+              <AppRouterProvider />
+            </AuthBootstrap>
+          </AuthRecoveryBoundary>
         </SignOutBoundary>
-      </ConvexProviderWithAuthKit>
+      </ConvexProviderWithAuth>
     </AuthKitProvider>
   );
 
