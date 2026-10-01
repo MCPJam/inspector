@@ -114,8 +114,13 @@ test("TCP forwarding and a Host-rewriting proxy cannot acquire credentials", asy
   });
   const proxy = createHttpServer((req, res) => {
     const upstream = httpRequest(
-      new URL(req.url!, target),
       {
+        // The upstream is always the app under test; only the path comes from
+        // the incoming request. An absolute req.url must not retarget it.
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: req.url,
         method: req.method,
         headers: {
           ...req.headers,
