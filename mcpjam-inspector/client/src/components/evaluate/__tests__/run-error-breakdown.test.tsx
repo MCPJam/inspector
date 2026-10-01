@@ -19,27 +19,26 @@ const breakdown: RunErrorBreakdownView = {
   groups: [
     {
       cause: "serverError",
-      owner: "yourServer",
       title: "Your MCP server returned an error",
-      nextStep: "Open a result to read the error your server sent back.",
+      errors: [{ message: "Missing required input filterId", count: 26 }],
       count: 26,
     },
   ],
 };
 
 describe("RunErrorBreakdownDescription", () => {
-  it("says who needs to act and what to do", () => {
+  it("lists recorded errors with counts in a scrollable region", () => {
     render(<RunErrorBreakdownDescription breakdown={breakdown} />);
     expect(
-      screen.getByText(
-        "Your server: Your MCP server returned an error (26 of 26)",
-      ),
+      screen.getByText("Your MCP server returned an error (26 results)"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Open a result to read the error your server sent back.",
-      ),
+      screen.getByText("Missing required input filterId: 26 results"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Run errors" })).toHaveClass(
+      "max-h-[min(16rem,40vh)]",
+      "overflow-y-auto",
+    );
   });
 });
 
@@ -60,10 +59,27 @@ describe("useRunErrorBreakdownToast", () => {
     expect(toastWarning).toHaveBeenCalledTimes(1);
     expect(toastWarning).toHaveBeenCalledWith(
       breakdown.headline,
-      expect.objectContaining({ id: "run-error-breakdown-run_1" }),
+      expect.objectContaining({
+        id: "run-error-breakdown-run_1",
+        duration: 20000,
+        closeButton: true,
+      }),
     );
 
     rerender({ runId: "run_2", value: breakdown });
     expect(toastWarning).toHaveBeenCalledTimes(2);
   });
+});
+
+it("waits for a breakdown and survives remounts without another toast", () => {
+  toastWarning.mockClear();
+  const first = renderHook(
+    ({ value }) => useRunErrorBreakdownToast("remount", value),
+    { initialProps: { value: null as RunErrorBreakdownView | null } },
+  );
+  expect(toastWarning).not.toHaveBeenCalled();
+  first.rerender({ value: breakdown });
+  first.unmount();
+  renderHook(() => useRunErrorBreakdownToast("remount", breakdown));
+  expect(toastWarning).toHaveBeenCalledTimes(1);
 });

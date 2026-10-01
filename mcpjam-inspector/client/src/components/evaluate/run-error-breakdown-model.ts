@@ -1,29 +1,9 @@
-/**
- * "Most of this run errored — here is whose problem each error is."
- *
- * A run where every result is an error used to show a verdict and a table of
- * red rows, and nothing that told the reader whether their server broke, their
- * test was wrong, or MCPJam failed. Users left thinking the product was broken
- * (PLB-136). This module groups the errored results by who has to act, with
- * one next step per group, so the page can say it in one place.
- *
- * ── What counts as an error ─────────────────────────────────────────────────
- *
- * An ERROR is a result that could not be judged on its merits: the server
- * returned an error, the connection failed, the model provider failed, the
- * evaluator failed. A case that ran cleanly and got the wrong answer (wrong
- * tool, wrong arguments, a failed assertion) is a FAILURE, not an error, and
- * is left out on purpose — the rest of the page already explains those.
- *
- * ── Where the cause comes from ──────────────────────────────────────────────
- *
- * The iteration's stage chain first: its reasons are the contract's own
- * classification and need no guessing. Only when the chain says nothing do we
- * read the recorded error text, through the same `describeError` origin table
- * every other error surface uses. Anything still unsettled lands in `unknown`
- * rather than being assigned to someone.
- */
-import { describeError, originOf, type ErrorOrigin } from "@mcpjam/sdk/browser";
+import {
+  describeError,
+  originOf,
+  redactForTelemetry,
+  type ErrorOrigin,
+} from "@mcpjam/sdk/browser";
 import type {
   EvalRunDecisionChain,
   EvalRunDecisionDiagnostic,
@@ -38,7 +18,7 @@ import {
 import type { EvalIteration } from "../evals/types";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 
-/** Why a result errored, grouped by who has to act on it. */
+/** Recorded error categories. */
 export type RunErrorCause =
   | "serverUnreachable"
   | "serverError"
@@ -47,15 +27,11 @@ export type RunErrorCause =
   | "platform"
   | "unknown";
 
-/** Who the reader should look at. Not blame: the next place to go. */
-export type RunErrorOwner = "yourServer" | "yourTest" | "mcpjam" | "unclear";
-
 export type RunErrorGroup = {
   cause: RunErrorCause;
-  owner: RunErrorOwner;
   title: string;
-  nextStep: string;
   count: number;
+  errors: Array<{ message: string; count: number }>;
 };
 
 export type RunErrorBreakdown = {
@@ -66,49 +42,14 @@ export type RunErrorBreakdown = {
   groups: RunErrorGroup[];
 };
 
-const CAUSE_COPY: Record<
-  RunErrorCause,
-  { owner: RunErrorOwner; title: string; nextStep: string }
-> = {
-  serverUnreachable: {
-    owner: "yourServer",
-    title: "MCPJam couldn't connect to your MCP server",
-    nextStep:
-      "Open Servers, reconnect the server this suite uses, then run it again.",
-  },
-  serverError: {
-    owner: "yourServer",
-    title: "Your MCP server returned an error",
-    nextStep:
-      "Open a result to read the error your server sent back. The fix is usually in the tool's code or its input schema.",
-  },
-  testInput: {
-    owner: "yourTest",
-    title: "Your server rejected the tool inputs saved in the test",
-    nextStep:
-      "Edit the test and check the tool call's inputs. Required fields may be missing or in the wrong shape. If the inputs are right, the problem is in your server.",
-  },
-  settings: {
-    owner: "yourTest",
-    title: "A test or workspace setting stopped the run",
-    nextStep:
-      "Open a result to see which setting. Common causes are a model key or credit limit, a tool policy, or the grader setup.",
-  },
-  platform: {
-    owner: "mcpjam",
-    title: "MCPJam or the AI model provider failed",
-    nextStep:
-      "This isn't your server. Run the suite again. If it keeps happening, let us know.",
-  },
-  unknown: {
-    owner: "unclear",
-    title: "The cause wasn't recorded",
-    nextStep: "Open a result to see the full error.",
-  },
+const CAUSE_COPY: Record<RunErrorCause, string> = {
+  serverUnreachable: "Couldn't connect to your MCP server",
+  serverError: "Your MCP server returned an error",
+  testInput: "Your server rejected the tool inputs saved in the test",
+  settings: "A test or workspace setting stopped the run",
+  platform: "MCPJam or the AI model provider failed",
+  unknown: "The cause wasn't recorded",
 };
-
-/** Show the breakdown only when errors are most of the run, not a stray one. */
-const MIN_ERRORED_SHARE = 0.5;
 
 /** Lifecycle states that never finished, so they are neither errors nor passes. */
 const UNFINISHED_STATUSES = new Set<EvalIteration["status"]>([
@@ -201,6 +142,14 @@ export function classifyIterationError(
   if (UNFINISHED_STATUSES.has(iteration.status)) return null;
 
   const reason = chain ? stoppingReason(chain) : null;
+  return classifyReason(iteration, reason, iteration.error);
+}
+
+function classifyReason(
+  iteration: EvalIteration,
+  reason: StageReason | null,
+  error: string | undefined,
+): RunErrorCause | null {
   const reasonCause = reason ? ERROR_REASON_CAUSE[reason] : undefined;
   const erroredByLifecycle =
     ERRORED_STATUSES.has(iteration.status) || Boolean(iteration.error?.trim());
@@ -224,12 +173,12 @@ export function classifyIterationError(
     return reasonCause;
   }
   return (
-    causeFromText(iteration.error) ??
+    causeFromText(error) ??
     (reasonCause === "platform" ? "platform" : "unknown")
   );
 }
 
-/** Order groups by who acts, so the reader's own fixes come first. */
+/** Keep cause categories in a stable order. */
 const CAUSE_ORDER: RunErrorCause[] = [
   "serverUnreachable",
   "serverError",
@@ -239,62 +188,127 @@ const CAUSE_ORDER: RunErrorCause[] = [
   "unknown",
 ];
 
-/**
- * The breakdown for a run, or `null` when errors are not most of it.
- *
- * `diagnostics` and `chains` are the page's existing reads; either may be
- * partial. An iteration neither covers falls back to its own stored metadata,
- * and finally to its error text.
- */
+/** Only recorded messages are summarized. Older rows can fall back to their cause. */
+function recordedErrors(
+  iteration: EvalIteration,
+): Array<{ reason: StageReason; message: string }> {
+  const value = iteration.metadata?.evalErrors;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      typeof entry.message !== "string" ||
+      typeof entry.reason !== "string" ||
+      !Object.hasOwn(ERROR_REASON_CAUSE, entry.reason)
+    )
+      return [];
+    return [{ reason: entry.reason as StageReason, message: entry.message }];
+  });
+}
+
+function messageText(message: string): string {
+  const redacted = redactForTelemetry(message);
+  return typeof redacted === "string"
+    ? redacted.trim().replace(/\s+/g, " ")
+    : "";
+}
+
 export function buildRunErrorBreakdown(input: {
   iterations: readonly EvalIteration[];
   diagnostics?: readonly EvalRunDecisionDiagnostic[];
   chains?: ReadonlyMap<string, EvalRunDecisionChain>;
 }): RunErrorBreakdown | null {
-  const diagnosticChains = new Map(
-    (input.diagnostics ?? []).map((item) => [item.iterationId, item.chain]),
+  const diagnostics = new Map(
+    (input.diagnostics ?? []).map((item) => [item.iterationId, item]),
   );
-
-  let finished = 0;
-  const groups = new Map<RunErrorCause, RunErrorGroup>();
+  const finishedIds = new Set<string>();
+  const erroredIds = new Set<string>();
+  const groups = new Map<
+    RunErrorCause,
+    {
+      ids: Set<string>;
+      errors: Map<string, Set<string>>;
+    }
+  >();
   for (const iteration of input.iterations) {
-    if (UNFINISHED_STATUSES.has(iteration.status)) continue;
-    finished += 1;
+    if (
+      UNFINISHED_STATUSES.has(iteration.status) ||
+      finishedIds.has(iteration._id)
+    )
+      continue;
+    finishedIds.add(iteration._id);
     if (iteration.result === "passed") continue;
-
+    const diagnostic = diagnostics.get(iteration._id);
     const chain =
-      diagnosticChains.get(iteration._id) ??
+      diagnostic?.chain ??
       input.chains?.get(iteration._id) ??
       chainForQuickRunIteration(iteration);
-    const cause = classifyIterationError(iteration, chain);
-    if (!cause) continue;
-
-    const existing = groups.get(cause);
-    if (existing) {
-      existing.count += 1;
-    } else {
-      groups.set(cause, { cause, ...CAUSE_COPY[cause], count: 1 });
+    const primary = classifyIterationError(iteration, chain);
+    const entries = new Map<RunErrorCause, Set<string>>();
+    const add = (cause: RunErrorCause, message: string) => {
+      const messages = entries.get(cause) ?? new Set<string>();
+      const text = messageText(message);
+      if (text) messages.add(text);
+      entries.set(cause, messages);
+    };
+    for (const entry of recordedErrors(iteration)) {
+      const cause =
+        entry.message.trim() === iteration.error?.trim() && primary
+          ? primary
+          : classifyReason(iteration, entry.reason, entry.message);
+      if (cause) add(cause, entry.message);
+    }
+    if (primary) {
+      const message =
+        iteration.error?.trim() || diagnostic?.observed?.failure?.trim();
+      if (message) add(primary, message);
+      else if (!entries.has(primary)) add(primary, "");
+    }
+    if (!entries.size) continue;
+    erroredIds.add(iteration._id);
+    for (const [cause, messages] of entries) {
+      const group = groups.get(cause) ?? {
+        ids: new Set<string>(),
+        errors: new Map<string, Set<string>>(),
+      };
+      group.ids.add(iteration._id);
+      for (const message of messages) {
+        const ids = group.errors.get(message) ?? new Set<string>();
+        ids.add(iteration._id);
+        group.errors.set(message, ids);
+      }
+      groups.set(cause, group);
     }
   }
-
-  const errored = [...groups.values()].reduce(
-    (sum, group) => sum + group.count,
-    0,
-  );
-  if (finished === 0 || errored === 0) return null;
-  if (errored / finished < MIN_ERRORED_SHARE) return null;
-
+  const finished = finishedIds.size;
+  const errored = erroredIds.size;
+  if (!errored) return null;
   const headline =
     errored === finished
       ? finished === 1
         ? "The only result in this run ended in an error."
         : `All ${finished} results in this run ended in an error.`
       : `${errored} of ${finished} results in this run ended in an error.`;
-
   return {
     errored,
     finished,
     headline,
-    groups: CAUSE_ORDER.flatMap((cause) => groups.get(cause) ?? []),
+    groups: CAUSE_ORDER.flatMap((cause) => {
+      const group = groups.get(cause);
+      return group
+        ? [
+            {
+              cause,
+              title: CAUSE_COPY[cause],
+              count: group.ids.size,
+              errors: [...group.errors].map(([message, ids]) => ({
+                message,
+                count: ids.size,
+              })),
+            },
+          ]
+        : [];
+    }),
   };
 }

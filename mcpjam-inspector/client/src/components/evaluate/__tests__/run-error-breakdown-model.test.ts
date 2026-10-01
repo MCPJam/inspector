@@ -182,7 +182,6 @@ describe("buildRunErrorBreakdown", () => {
     expect(breakdown!.groups).toEqual([
       expect.objectContaining({
         cause: "serverError",
-        owner: "yourServer",
         count: 3,
       }),
     ]);
@@ -209,7 +208,7 @@ describe("buildRunErrorBreakdown", () => {
     ]);
   });
 
-  it("stays quiet when errors are not most of the run", () => {
+  it("shows one error among many passes", () => {
     const iterations = [
       iteration("err"),
       iteration("p1", { result: "passed" }),
@@ -220,7 +219,7 @@ describe("buildRunErrorBreakdown", () => {
         iterations,
         chains: new Map([["err", toolErrorChain]]),
       }),
-    ).toBeNull();
+    ).toMatchObject({ errored: 1, finished: 3 });
   });
 
   it("stays quiet when the run failed on its merits", () => {
@@ -245,5 +244,77 @@ describe("buildRunErrorBreakdown", () => {
     expect(breakdown!.headline).toBe(
       "The only result in this run ended in an error.",
     );
+  });
+});
+
+describe("recorded error rows", () => {
+  it("keeps eight different errors and counts distinct results", () => {
+    const errors = Array.from({ length: 8 }, (_, i) => ({
+      reason: "toolError",
+      message: `Missing input field${i}`,
+    }));
+    const a = iteration("a", {
+      metadata: { evalErrors: [...errors, errors[0]] },
+    });
+    const b = iteration("b", { metadata: { evalErrors: [errors[0]] } });
+    const result = buildRunErrorBreakdown({ iterations: [a, b, a] })!;
+    expect(result).toMatchObject({ errored: 2, finished: 2 });
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].count).toBe(2);
+    expect(result.groups[0].errors).toHaveLength(8);
+    expect(result.groups[0].errors[0]).toEqual({
+      message: "Missing input field0",
+      count: 2,
+    });
+  });
+
+  it("counts a result under multiple recorded causes only once in the headline", () => {
+    const result = buildRunErrorBreakdown({
+      iterations: [
+        iteration("a", {
+          metadata: {
+            evalErrors: [
+              { reason: "toolError", message: "Missing input" },
+              { reason: "connectFailed", message: "Connection closed" },
+            ],
+          },
+        }),
+      ],
+    })!;
+    expect(result.errored).toBe(1);
+    expect(result.groups.map((group) => group.cause)).toEqual([
+      "serverUnreachable",
+      "serverError",
+    ]);
+  });
+
+  it("keeps a cause without inventing a message for old results", () => {
+    const result = buildRunErrorBreakdown({
+      iterations: [iteration("a")],
+      chains: new Map([["a", toolErrorChain]]),
+    })!;
+    expect(result.groups[0]).toMatchObject({
+      cause: "serverError",
+      errors: [],
+    });
+  });
+
+  it("uses the diagnostic before chain and raw error metadata", () => {
+    const row = iteration("a", {
+      error: "Something failed",
+      metadata: {
+        evalErrors: [{ reason: "setupAborted", message: "Something failed" }],
+      },
+    });
+    const result = buildRunErrorBreakdown({
+      iterations: [row],
+      chains: new Map([["a", providerErrorChain]]),
+      diagnostics: [{ iterationId: "a", chain: toolErrorChain }] as never,
+    })!;
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      cause: "serverError",
+      errors: [{ message: "Something failed", count: 1 }],
+    });
   });
 });

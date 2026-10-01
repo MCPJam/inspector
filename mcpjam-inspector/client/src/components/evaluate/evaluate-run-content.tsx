@@ -105,7 +105,10 @@ export function SingleRunContent({
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
   // decision to read, and asking anyway spends a request per poll to be told so.
-  const active = decisionSummaryEnabled && isTerminalEvalRunStatus(run.status);
+  const active =
+    Boolean(projectId) &&
+    decisionSummaryEnabled &&
+    isTerminalEvalRunStatus(run.status);
 
   const detail = useEvalRunDecisionDetail({
     projectId,
@@ -195,14 +198,25 @@ export function SingleRunContent({
   // run or an in-flight read would give it.
   const errorBreakdown = useMemo(
     () =>
-      isTerminalEvalRunStatus(run.status) && detail.status !== "loading"
+      isTerminalEvalRunStatus(run.status) &&
+      (!active ||
+        (!["disabled", "loading"].includes(detail.status) &&
+          !["disabled", "loading"].includes(chains.status)))
         ? buildRunErrorBreakdown({
             iterations,
             diagnostics: detail.diagnostics,
             chains: chains.chains,
           })
         : null,
-    [run.status, detail.status, iterations, detail.diagnostics, chains.chains],
+    [
+      active,
+      run.status,
+      detail.status,
+      iterations,
+      detail.diagnostics,
+      chains.chains,
+      chains.status,
+    ],
   );
   useRunErrorBreakdownToast(String(run._id), errorBreakdown);
 

@@ -47,6 +47,7 @@ import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
 
 type MemberReport = {
+  pending: boolean;
   view: RunVerdictHeroView;
   diagnostics: readonly EvalRunDecisionDiagnostic[];
   chains: ReadonlyMap<string, EvalRunDecisionChain>;
@@ -167,21 +168,35 @@ export function CombinedRunContent({
   const chains = new Map(
     selectedReports.flatMap((report) => [...report.chains]),
   );
-  // Once every member's decision read settled (`view.pending` covers both the
-  // reads still in flight and the members not yet reported): the toast fires
-  // once per launch, so it must not fire on a partial picture.
+  // The toast always covers the entire launch, independently of table filters.
+  const launchRuns = [
+    ...new Map(
+      matrix.targets.map((target) => [target.run._id, target.run]),
+    ).values(),
+  ];
+  const launchReports = launchRuns.flatMap((run) => reports.get(run._id) ?? []);
   const errorBreakdown =
     !history.loading &&
-    !view.pending &&
-    selectedRuns.length > 0 &&
-    selectedRuns.every((run) => isTerminalEvalRunStatus(run.status))
+    history.errorCount === 0 &&
+    launchRuns.length > 0 &&
+    launchRuns.every(
+      (run) =>
+        history.details.has(run._id) && isTerminalEvalRunStatus(run.status),
+    ) &&
+    launchReports.length === launchRuns.length &&
+    launchReports.every((report) => !report.pending)
       ? buildRunErrorBreakdown({
-          iterations: selectedIterations,
-          diagnostics,
-          chains,
+          iterations: matrix.targets.flatMap((target) => target.iterations),
+          diagnostics: launchReports.flatMap((report) => report.diagnostics),
+          chains: new Map(
+            launchReports.flatMap((report) => [...report.chains]),
+          ),
         })
       : null;
-  useRunErrorBreakdownToast(String(routeRun._id), errorBreakdown);
+  useRunErrorBreakdownToast(
+    String(routeRun.runGroupId ?? routeRun._id),
+    errorBreakdown,
+  );
   const clearPairingFilters = () => {
     setClient(ALL_EVAL_FILTER_VALUES);
     setModel(ALL_EVAL_FILTER_VALUES);
@@ -438,7 +453,8 @@ function MemberDecision({
   enabled: boolean;
   onReport: (id: string, report: MemberReport) => void;
 }) {
-  const active = enabled && isTerminalEvalRunStatus(run.status);
+  const active =
+    Boolean(projectId) && enabled && isTerminalEvalRunStatus(run.status);
   const detail = useEvalRunDecisionDetail({
     projectId,
     runId: run._id,
@@ -448,6 +464,10 @@ function MemberDecision({
   const chains = useEvalRunIterationChains({ projectId, run, enabled: active });
   const report = useMemo(
     () => ({
+      pending:
+        active &&
+        (["disabled", "loading"].includes(detail.status) ||
+          ["disabled", "loading"].includes(chains.status)),
       view: buildRunVerdictHero({ run, iterations, decision: detail }),
       diagnostics: detail.diagnostics,
       chains: chains.chains,
@@ -455,16 +475,19 @@ function MemberDecision({
     [
       run,
       iterations,
+      active,
       detail.status,
       detail.summary,
       detail.diagnostics,
       chains.chains,
+      chains.status,
     ],
   );
   // Decision hooks can return fresh empty arrays while loading. Publish only
   // a changed reading, not a new array identity from the parent's own render.
   const fingerprint = JSON.stringify([
     report.view,
+    report.pending,
     report.diagnostics,
     [...report.chains],
   ]);
