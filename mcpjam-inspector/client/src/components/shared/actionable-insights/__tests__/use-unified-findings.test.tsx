@@ -817,3 +817,56 @@ describe("automatic analysis failures", () => {
     expect(result.current.findings).toEqual([]);
   });
 });
+
+it("restores a persisted report failure and retries the free build once", async () => {
+  const failed = structuredClone(ENVELOPE);
+  failed.unifiedFindings!.job = {
+    kind: "build",
+    status: "failed",
+    startedAt: 100,
+    updatedAt: 200,
+    errorCode: "build_retries_exhausted",
+    errorMessage: "Couldn’t generate the report",
+  };
+  const borrowed = generation();
+  let finish: ((value: { jobId: string }) => void) | undefined;
+  mutation.fn.mockImplementation(
+    () =>
+      new Promise<{ jobId: string }>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const { result, rerender } = renderHook(
+    ({ envelope }) =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: borrowed,
+      }),
+    { initialProps: { envelope: failed } },
+  );
+  expect(result.current.build.pending).toBe(false);
+  expect(result.current.build.error).toBe("Couldn’t generate the report");
+  expect(result.current.build.errorCode).toBe("build_retries_exhausted");
+  expect(result.current.findings).toHaveLength(1);
+  act(() => {
+    result.current.build.onRun();
+    result.current.build.onRun();
+  });
+  expect(mutation.fn).toHaveBeenCalledTimes(1);
+  expect(mutation.fn).toHaveBeenCalledWith({
+    suiteRunId: "run_1",
+    force: true,
+  });
+  expect(borrowed.requestInsight).not.toHaveBeenCalled();
+  expect(result.current.build.pending).toBe(true);
+  expect(result.current.build.error).toBeNull();
+  const pending = structuredClone(failed);
+  pending.unifiedFindings!.job!.status = "pending";
+  rerender({ envelope: pending });
+  await act(async () => {
+    finish?.({ jobId: "retry" });
+  });
+  expect(result.current.build.pending).toBe(true);
+  expect(result.current.findings).toHaveLength(1);
+});
