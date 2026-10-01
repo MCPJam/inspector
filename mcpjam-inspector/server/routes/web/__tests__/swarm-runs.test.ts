@@ -616,6 +616,59 @@ describe("web routes — swarm funding preview", () => {
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body).runs).toEqual([]);
   });
 
+  // The backend rejects an out-of-range iterations count with a 400 and the
+  // reason as a plain `error` string. That is the caller's request to fix, so it
+  // stays a 400 with the reason (the Inspector does not repeat the bound, which
+  // would drift from the backend's), not a 500 from an unhandled rethrow.
+  it("answers a request the backend refused as a 400 with its reason, not a 500", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            code: "invalid_request",
+            error: "sessionsPerTarget must be between 1 and 5",
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      {
+        projectId: "proj-1",
+        runs: [{ journeyRefId: "journey-1", sessionsPerTarget: 99 }],
+      },
+      token,
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(400);
+    expect(JSON.stringify(data)).toContain(
+      "sessionsPerTarget must be between 1 and 5",
+    );
+    // Never the deployment URL the upstream error message carries.
+    expect(JSON.stringify(data)).not.toContain("convex.site");
+  });
+
+  it("still fails a backend server error as a server error", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(
+      async () => new Response("boom", { status: 502 }),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      BODY,
+      token,
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(500);
+  });
+
   it("validates the body", async () => {
     for (const body of [
       { runs: [{ journeyRefId: "j" }] },
