@@ -369,11 +369,15 @@ describe("sponsored swarm conversations: the org spend cap is scoped to credit-f
       errorCode: "spend_cap_exceeded",
       fundingScope: "credits",
     });
+    // The platform stop closes the SPONSORED leftovers. The credit-funded ones
+    // already had their own sweep above, and a credit-funded attempt left
+    // behind by a failed claim or terminal write must not be closed with the
+    // sponsored reason (the stale-run sweep backstops it, as before).
     expect(calls[1]).toMatchObject({
       terminalStatus: "failed",
       errorCode: "platform_capacity",
+      fundingScope: "sponsored",
     });
-    expect(calls[1]).not.toHaveProperty("fundingScope");
   });
 });
 
@@ -598,7 +602,38 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
       terminalStatus: "failed",
       errorCode: "platform_capacity",
       errorMessage: SPONSORED_CAPACITY_MESSAGE,
+      // Sponsored only: this sweep must not relabel a credit-funded leftover.
+      fundingScope: "sponsored",
     });
+  });
+
+  // The sponsored scope belongs to the platform-stop sweep alone. A shutdown
+  // that lands with the platform stop is the run's terminal, and sweeps
+  // whatever is left whoever funded it.
+  it("still sweeps everything on a shutdown that coincides with the platform stop", async () => {
+    const controller = new AbortController();
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      controller.abort();
+      return capacityFailure;
+    });
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+        abortSignal: controller.signal,
+      }) as never,
+    );
+
+    const sweeps = finalizePendingAttemptsMock.mock.calls.map((c) => c[2]);
+    expect(sweeps.some((args) => args.errorCode === "runner_shutdown")).toBe(
+      true,
+    );
+    for (const args of sweeps) {
+      if (args.errorCode === "runner_shutdown") {
+        expect(args).not.toHaveProperty("fundingScope");
+      }
+    }
   });
 
   it("does not stop credit-funded conversations in the same run", async () => {

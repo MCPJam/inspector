@@ -2094,9 +2094,20 @@ async function runJourneyFanOut(
                   errorMessage: sponsoredStop.message,
                 }
               : undefined;
+    // The platform stop is the run's terminal only when nothing else is: a
+    // shutdown or the run clock sweeps whatever is left, whoever funded it.
+    // Alone, it closes the SPONSORED conversations it could not start. A
+    // credit-funded attempt can still be pending or running here after a
+    // best-effort failure (a claim or a terminal write that did not land), and
+    // closing it with the sponsored reason would mislabel it; the stale-run
+    // sweep backstops it, exactly as it did before sponsorship existed.
+    const restIsPlatformStop =
+      restTerminal !== undefined &&
+      !abortSignal?.aborted &&
+      runDeadline.firedClock() !== "run";
     const finalizeCalls: Array<{
       terminal: NonNullable<typeof spendCapTerminal | typeof restTerminal>;
-      fundingScope?: "credits";
+      fundingScope?: "credits" | "sponsored";
     }> = [
       ...(spendCapTerminal
         ? [
@@ -2108,7 +2119,16 @@ async function runJourneyFanOut(
             },
           ]
         : []),
-      ...(restTerminal ? [{ terminal: restTerminal }] : []),
+      ...(restTerminal
+        ? [
+            {
+              terminal: restTerminal,
+              ...(restIsPlatformStop
+                ? { fundingScope: "sponsored" as const }
+                : {}),
+            },
+          ]
+        : []),
     ];
     if (finalizeCalls.length > 0 && !stoppedByBackend) {
       const finalizeBearer = await getBearer().catch((error: unknown) => {
@@ -2508,8 +2528,11 @@ async function finalizeRun(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
-    /** Finalize credit-funded attempts only; sponsored ones are left alone. */
-    fundingScope?: "credits";
+    /**
+     * `credits`: finalize credit-funded attempts only, sponsored ones are left
+     * alone. `sponsored`: the reverse.
+     */
+    fundingScope?: "credits" | "sponsored";
   },
 ): Promise<void> {
   try {

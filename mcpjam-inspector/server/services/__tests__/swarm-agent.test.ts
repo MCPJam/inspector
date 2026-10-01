@@ -87,10 +87,15 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    // The exact capability list below depends on whether a service token is
+    // set: the sponsorship capability is declared only with one. Pin it unset
+    // so the contract does not change with the shell the suite runs in.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("POSTs projectId + journeyRefId + launchKey + maxHosts in the JSON body", async () => {

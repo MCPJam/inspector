@@ -18,7 +18,10 @@ import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { getRunningJourneyStreamHub } from "../../services/sessionSimulation/swarm-runner.js";
 import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
-import { previewSwarmFunding } from "../../services/swarm-agent.js";
+import {
+  previewSwarmFunding,
+  SwarmAgentError,
+} from "../../services/swarm-agent.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
 import { assertBearerToken } from "./errors.js";
@@ -209,9 +212,42 @@ swarmRuns.post("/funding-preview", async (c) =>
         "Server missing CONVEX_HTTP_URL configuration",
       );
     }
-    return previewSwarmFunding(convexHttpUrl, bearerToken, body);
+    try {
+      return await previewSwarmFunding(convexHttpUrl, bearerToken, body);
+    } catch (err) {
+      // The backend answers a preview it cannot make (iterations out of range,
+      // a run it cannot read) with a 400 and the reason as a plain `error`
+      // string. That is the caller's request to fix, so it stays a 400 with the
+      // reason; rethrown as is it surfaced as a 500. The Inspector does not
+      // repeat the backend's bounds, which would drift from them.
+      if (err instanceof SwarmAgentError && err.status === 400) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          previewRejectionReason(err),
+        );
+      }
+      throw err;
+    }
   }),
 );
+
+/** The reason in a backend 400 body, or a sentence of ours when it has none. */
+function previewRejectionReason(err: SwarmAgentError): string {
+  const fallback =
+    "The sponsored split could not be previewed for this request.";
+  try {
+    const reason = (JSON.parse(err.bodyText) as { error?: unknown }).error;
+    return typeof reason === "string" &&
+      reason.trim().length > 0 &&
+      reason.length <= 200 &&
+      !/[<\n\r]/.test(reason)
+      ? reason.trim()
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /**
  * Launch a multi-host swarm (journey-execution) run (PR 3d).
