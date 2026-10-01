@@ -37,6 +37,7 @@ import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
@@ -178,6 +179,7 @@ async function listPersonaRows(
   client: ConvexHttpClient,
   projectId: string,
 ): Promise<PersonaRow[]> {
+  requireProjectIdArg(projectId, "v1.personas");
   try {
     return ((await client.query(
       "personas:listPersonas" as never,
@@ -231,7 +233,8 @@ function idempotencyKeyOf(c: {
 
 // GET /v1/projects/:projectId/personas
 personas.get("/projects/:projectId/personas", async (c) => {
-  const projectId = c.req.param("projectId");
+  // Before the bearer and client: a malformed id is a 404 with no work done.
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.personas");
   const client = createConvexClient(await getConvexBearerForRequest(c));
   const rows = await listPersonaRows(client, projectId);
   // Archived personas are filtered backend-side.
