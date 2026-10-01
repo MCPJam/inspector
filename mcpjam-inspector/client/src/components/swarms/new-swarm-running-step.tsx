@@ -1138,7 +1138,11 @@ export function NewSwarmRunningStep({
   const sponsoredStop = useMemo(() => {
     let capacity = 0;
     let rejected = 0;
-    let rejectedMessage: string | null = null;
+    // Each distinct recorded reason once, in the order the attempts were read.
+    // Rejections in one run can have different causes, and what one reason says
+    // of a conversation (it was not charged) is not true of another (whether it
+    // was charged is not known), so no single reason may speak for all of them.
+    const rejectedMessages: string[] = [];
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "failed" || !isSponsoredStopCode(attempt.errorCode))
@@ -1147,12 +1151,17 @@ export function NewSwarmRunningStep({
           capacity += 1;
         } else {
           rejected += 1;
-          rejectedMessage ??= attempt.errorMessage ?? null;
+          const message = attempt.errorMessage?.trim();
+          if (message && !rejectedMessages.includes(message)) {
+            rejectedMessages.push(message);
+          }
         }
       }
     }
     const count = capacity + rejected;
-    return count === 0 ? null : { count, capacity, rejected, rejectedMessage };
+    return count === 0
+      ? null
+      : { count, capacity, rejected, rejectedMessages };
   }, [snapshots]);
 
   // The account-limit callout owns its cause — count, breakdown and the top-up
@@ -1345,12 +1354,21 @@ export function NewSwarmRunningStep({
                       them again later.
                     </p>
                   ) : null}
-                  {sponsoredStop.rejected > 0 ? (
-                    <p className="mt-0.5">
-                      {sponsoredStop.rejectedMessage ??
-                        "MCPJam could not confirm these conversations as sponsored, so they ended before finishing. Completed results are saved."}
-                    </p>
-                  ) : null}
+                  {sponsoredStop.rejected > 0
+                    ? sponsoredStop.rejectedMessages.length > 0
+                      ? sponsoredStop.rejectedMessages.map((message) => (
+                          <p key={message} className="mt-0.5">
+                            {message}
+                          </p>
+                        ))
+                      : (
+                          <p className="mt-0.5">
+                            {sponsoredStop.rejected === 1
+                              ? "MCPJam could not confirm this conversation as sponsored, so it ended before finishing. Completed results are saved."
+                              : "MCPJam could not confirm these conversations as sponsored, so they ended before finishing. Completed results are saved."}
+                          </p>
+                        )
+                    : null}
                 </div>
               ) : null}
               {/* Account limits remain visible even when another cause failed. */}

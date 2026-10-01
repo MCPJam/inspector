@@ -3392,7 +3392,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
           sponsored: 0,
           credits: 2,
           total: 2,
-          targets: [{ targetId: "t1", eligible: false, reason: "harness" }],
+          targets: [
+            { targetId: "t1", eligible: false, reason: "harness_target" },
+          ],
         },
       ],
     });
@@ -3403,7 +3405,9 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     );
     expect(
       screen.getByTestId("new-swarm-funding-explanation"),
-    ).toHaveTextContent(/can't use sponsored conversations/i);
+    ).toHaveTextContent(
+      /can't use sponsored conversations \(it runs a coding-agent harness\)/i,
+    );
   });
 
   it("shows nothing when sponsorship does not apply, and launches without an expected count", async () => {

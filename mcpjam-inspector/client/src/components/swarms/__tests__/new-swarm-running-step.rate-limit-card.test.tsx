@@ -730,6 +730,106 @@ describe("NewSwarmRunningStep — sponsored conversations the platform could not
       );
     });
 
+    // Rejections in one run can have different causes: an explicit refusal never
+    // reached a customer rail, while a claim that did not hold does not say. The
+    // first one's sentence ("not charged") cannot speak for the other.
+    it("shows every distinct reason, so one cause's 'not charged' is not said of another", () => {
+      attempts = [
+        {
+          ...attempt,
+          errorCode: "swarm_sponsorship_rejected",
+          errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+        },
+        {
+          ...attempt,
+          sessionIdx: 1,
+          chatSessionId: "other",
+          errorCode: "swarm_sponsorship_rejected",
+          errorMessage: SPONSORSHIP_UNCONFIRMED_MESSAGE,
+        },
+      ];
+      runFixture.summary = {
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+        rateLimited: 0,
+      };
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("2 sponsored conversations stopped.");
+      expect(callout).toHaveTextContent(SPONSORSHIP_REJECTED_MESSAGE);
+      expect(callout).toHaveTextContent(SPONSORSHIP_UNCONFIRMED_MESSAGE);
+    });
+
+    it("says a reason once however many conversations it stopped", () => {
+      attempts = [
+        {
+          ...attempt,
+          errorCode: "swarm_sponsorship_rejected",
+          errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+        },
+        {
+          ...attempt,
+          sessionIdx: 1,
+          chatSessionId: "other",
+          errorCode: "swarm_sponsorship_rejected",
+          errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+        },
+      ];
+      runFixture.summary = {
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+        rateLimited: 0,
+      };
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("2 sponsored conversations stopped.");
+      expect(
+        (callout.textContent ?? "").split(SPONSORSHIP_REJECTED_MESSAGE),
+      ).toHaveLength(2);
+    });
+
+    it("agrees with the count when no reason was recorded", () => {
+      attempt.errorCode = "swarm_sponsorship_rejected";
+      attempt.errorMessage = null;
+
+      const { unmount } = renderStep();
+      let callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("1 sponsored conversation stopped.");
+      expect(callout).toHaveTextContent(
+        /could not confirm this conversation as sponsored, so it ended/i,
+      );
+      expect(callout).not.toHaveTextContent(/these conversations|they ended/i);
+      unmount();
+
+      attempts = [
+        attempt,
+        {
+          ...attempt,
+          sessionIdx: 1,
+          chatSessionId: "other",
+          errorMessage: null,
+        },
+      ];
+      runFixture.summary = {
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+        rateLimited: 0,
+      };
+      renderStep();
+      callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("2 sponsored conversations stopped.");
+      expect(callout).toHaveTextContent(
+        /could not confirm these conversations as sponsored, so they ended/i,
+      );
+    });
+
     it("says each cause once when capacity and a rejection stopped different conversations", () => {
       attempts = [
         attempt,

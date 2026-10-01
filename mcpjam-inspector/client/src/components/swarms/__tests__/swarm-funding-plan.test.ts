@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SwarmFundingPreview } from "@/lib/swarm-api";
 import type { LaunchTarget } from "@/components/swarms/new-swarm-confirm-step";
 import {
+  alsoFailedNotice,
   creditFundingExplanation,
   fundingChangedNotice,
   fundingHeadline,
@@ -9,6 +10,7 @@ import {
   fundingReviewNotice,
   fundingSplitOf,
   launchRunOverrides,
+  withChosenIterations,
 } from "../swarm-funding-plan";
 
 const target = (overrides: Partial<LaunchTarget> = {}): LaunchTarget => ({
@@ -67,6 +69,78 @@ describe("launch overrides and preview runs", () => {
       { journeyRefId: "a", environmentIds: ["env-1"], sessionsPerTarget: 2 },
       { journeyRefId: "b" },
     ]);
+  });
+});
+
+// Goals created by a first launch attempt are frozen, but Confirm stays editable.
+// The counter's value now is measured against what the target already carries,
+// and the persisted target itself is never changed, so moving a counter and then
+// moving it back sends nothing.
+describe("withChosenIterations", () => {
+  const created = (overrides: Partial<LaunchTarget> = {}) =>
+    target({
+      journeyId: "j-new",
+      iterationsKey: "ana",
+      bornIterations: 3,
+      ...overrides,
+    });
+
+  it("leaves a goal alone while its counter still reads what the goal was born with", () => {
+    const targets = [created()];
+    const [same] = withChosenIterations(targets, { ana: 3 });
+    expect(same).toBe(targets[0]);
+    expect(launchRunOverrides(same!, null)).toEqual({});
+  });
+
+  it("makes a moved counter the run's override without changing the persisted target", () => {
+    const targets = [created()];
+    const [moved] = withChosenIterations(targets, { ana: 2 });
+    expect(launchRunOverrides(moved!, null)).toEqual({ sessionsPerTarget: 2 });
+    expect(targets[0]).not.toHaveProperty("sessionsPerTarget");
+
+    const [back] = withChosenIterations(targets, { ana: 3 });
+    expect(launchRunOverrides(back!, null)).toEqual({});
+  });
+
+  it("measures a reused goal against the count it already carries", () => {
+    const reused = target({
+      iterationsKey: "persona-1",
+      sessionsPerTarget: 2,
+      environmentIds: ["env-1"],
+    });
+    expect(withChosenIterations([reused], { "persona-1": 2 })[0]).toBe(reused);
+    expect(
+      withChosenIterations([reused], { "persona-1": 4 })[0],
+    ).toMatchObject({ sessionsPerTarget: 4 });
+  });
+
+  it("ignores a target with no key and a key the person never touched", () => {
+    const keyless = target({ sessionsPerTarget: 2 });
+    const untouched = created();
+    const out = withChosenIterations([keyless, untouched], { other: 5 });
+    expect(out[0]).toBe(keyless);
+    expect(out[1]).toBe(untouched);
+  });
+
+  it("keeps the order and the number of targets", () => {
+    const targets = [
+      created({ journeyId: "a", iterationsKey: "a" }),
+      created({ journeyId: "b", iterationsKey: "b" }),
+    ];
+    const out = withChosenIterations(targets, { a: 1, b: 3 });
+    expect(out.map((t) => t.journeyId)).toEqual(["a", "b"]);
+    expect(out.map((t) => t.sessionsPerTarget)).toEqual([1, undefined]);
+  });
+});
+
+describe("alsoFailedNotice", () => {
+  it("says what else failed in the same pass, ending in exactly one stop", () => {
+    expect(alsoFailedNotice("Goal creation failed")).toBe(
+      "Also, part of this launch failed: Goal creation failed.",
+    );
+    expect(alsoFailedNotice("  Run refused!  ")).toBe(
+      "Also, part of this launch failed: Run refused!",
+    );
   });
 });
 
