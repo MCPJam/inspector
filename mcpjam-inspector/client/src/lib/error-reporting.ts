@@ -9,6 +9,7 @@ import posthog from "posthog-js";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
+  isUnauthenticatedError,
 } from "./authorization-refusal";
 import {
   describeError,
@@ -86,7 +87,11 @@ export function reportPossiblyOurFailure(
     // Checked here as well as in `reportCaught`, so the documented return value
     // stays honest: without this a refusal would be dropped downstream and
     // still reported as sent.
-    if (isAuthorizationRefusal(error) || isSessionRevokedError(error))
+    if (
+      isAuthorizationRefusal(error) ||
+      isSessionRevokedError(error) ||
+      isUnauthenticatedError(error)
+    )
       return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
@@ -146,7 +151,12 @@ function toError(error: unknown): Error {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
-  if (isAuthorizationRefusal(error) || isSessionRevokedError(error)) return;
+  if (
+    isAuthorizationRefusal(error) ||
+    isSessionRevokedError(error) ||
+    isUnauthenticatedError(error)
+  )
+    return;
 
   const normalized = safeQueryError(toError(error));
   const queryTags = queryFailureTags(normalized.message);

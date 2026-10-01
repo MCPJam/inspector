@@ -1,7 +1,7 @@
-import { flushSync } from "react-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
+import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { reportCaught } from "@/lib/error-reporting";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
@@ -45,14 +45,6 @@ const AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS =
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Convex clears socket auth before notifying React when its fetcher returns
-// null. Commit the readiness gate first so protected subscriptions are removed
-// while the socket still has its old identity. This runs after async token I/O.
-function pauseQueriesBeforeAuthClear(): null {
-  flushSync(() => useSessionRefreshStore.getState().pauseQueries());
-  return null;
 }
 
 /**
