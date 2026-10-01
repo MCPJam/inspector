@@ -66,7 +66,13 @@ export type ToolAssertionResult = {
   argumentMismatchSlots: number;
   /** Slots satisfied only by a call in the wrong place; the order row carries these. */
   outOfOrderSlots: number;
-  /** Indexes into the calls passed in, ascending, for the calls this assertion was paired with. */
+  /**
+   * Indexes into the calls passed in, ascending, of the calls that back this
+   * result: the call that satisfies each slot (in place, or out of place when
+   * only the order row fails), or the same-name call a wrong-argument slot was
+   * made with. A call backs one slot at most, and a slot that never happened
+   * names none.
+   */
   pairedCallIndexes: number[];
   /** `toolCallId` of each of those calls that has one. */
   pairedCallIds: string[];
@@ -220,21 +226,60 @@ function evaluateTurn(
     turn.expectations[slotOwner[slot]!]!.argumentMatching;
 
   const graded = pairToolCalls(slots, matchable, turn.order, modeOfSlot);
-  // Order-agnostic pairing over the same slots and calls: it tells a call that
-  // never happened from one that happened in the wrong place.
-  const agnostic =
-    turn.order === "ignore"
-      ? graded
-      : pairToolCalls(slots, matchable, "ignore", modeOfSlot);
   const gradedMismatch = new Set(graded.argumentMismatchExpected);
-  const agnosticMismatch = new Set(agnostic.argumentMismatchExpected);
 
-  const classOfSlot = (slot: number): SlotClass => {
-    const lost = !graded.expectedToActual.has(slot) || gradedMismatch.has(slot);
-    if (!lost) return "ok";
-    if (!agnostic.expectedToActual.has(slot)) return "missing";
-    return agnosticMismatch.has(slot) ? "arguments" : "order";
-  };
+  // A slot is lost when the graded pairing left it without a call or paired it
+  // with one carrying the wrong arguments. A lost slot is then either a call
+  // that never happened, one made with the wrong arguments, or one made in the
+  // wrong place, and that is told by an order-agnostic pairing of the lost slots
+  // alone, over the calls no other slot holds.
+  //
+  // It has to be those calls. Pairing every slot order-agnostically and reading
+  // it beside the graded one lets one call stand as evidence for two slots: with
+  // `strict` and `A` expected twice against `[B, A]`, the graded pairing gives
+  // slot 1 the `A`, and an unrestricted order-agnostic pairing gives slot 0 the
+  // same `A`, so both read as satisfied when only one `A` exists. A call that
+  // cleanly satisfied a slot stays that slot's.
+  const lostSlots: number[] = [];
+  slots.forEach((_, slot) => {
+    if (!graded.expectedToActual.has(slot) || gradedMismatch.has(slot)) {
+      lostSlots.push(slot);
+    }
+  });
+  const heldCalls = new Set<number>();
+  graded.expectedToActual.forEach((call, slot) => {
+    if (!gradedMismatch.has(slot)) heldCalls.add(call);
+  });
+  const freeCalls: number[] = [];
+  matchable.forEach((_, call) => {
+    if (!heldCalls.has(call)) freeCalls.push(call);
+  });
+  const reassigned = pairToolCalls(
+    lostSlots.map((slot) => slots[slot]!),
+    freeCalls.map((call) => matchable[call]!),
+    "ignore",
+    (lost) => modeOfSlot(lostSlots[lost]!),
+  );
+  const reassignedMismatch = new Set(reassigned.argumentMismatchExpected);
+
+  // The class of each slot and the call (an index into `matchable`) that backs
+  // it: the graded call for a satisfied slot, the reassigned one for a slot lost
+  // to order or to its arguments, none for a call that never happened.
+  const classOfSlot: SlotClass[] = slots.map(() => "ok");
+  const callOfSlot: Array<number | undefined> = slots.map((_, slot) =>
+    gradedMismatch.has(slot) ? undefined : graded.expectedToActual.get(slot),
+  );
+  lostSlots.forEach((slot, lost) => {
+    const reassignedCall = reassigned.expectedToActual.get(lost);
+    callOfSlot[slot] =
+      reassignedCall === undefined ? undefined : freeCalls[reassignedCall];
+    classOfSlot[slot] =
+      reassignedCall === undefined
+        ? "missing"
+        : reassignedMismatch.has(lost)
+          ? "arguments"
+          : "order";
+  });
 
   const assertions: ToolAssertionResult[] = turn.expectations.map(
     (expectation, owner) => {
@@ -244,13 +289,11 @@ function evaluateTurn(
       const paired = new Set<number>();
       slotOwner.forEach((slotOf, slot) => {
         if (slotOf !== owner) return;
-        const cls = classOfSlot(slot);
+        const cls = classOfSlot[slot];
         if (cls === "missing") missingSlots += 1;
         else if (cls === "arguments") argumentMismatchSlots += 1;
         else if (cls === "order") outOfOrderSlots += 1;
-        const call =
-          graded.expectedToActual.get(slot) ??
-          agnostic.expectedToActual.get(slot);
+        const call = callOfSlot[slot];
         if (call !== undefined) paired.add(rawIndex[call]!);
       });
       const invalid = expectation.invalidMinCount === true;

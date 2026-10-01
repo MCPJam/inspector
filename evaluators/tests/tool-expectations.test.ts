@@ -458,7 +458,154 @@ describe("agreement with the matcher where the promotion loses nothing", () => {
           matcher.missing.length + matcher.argumentMismatches.length,
         );
       }
+
+      // One call is evidence for one assertion at most, and a call offered as
+      // evidence for a PASSING assertion actually satisfies it. (Every
+      // assertion here has a `minCount` of 1, so one call per assertion.)
+      const evidence = result.assertions.flatMap((a) => a.pairedCallIndexes);
+      expect(new Set(evidence).size, label).toBe(evidence.length);
+      result.assertions.forEach((assertion, i) => {
+        if (!assertion.passed) return;
+        const expectation = turn!.expectations[i]!;
+        for (const index of assertion.pairedCallIndexes) {
+          expect(
+            evaluateToolCalls(
+              [{ toolName: expectation.toolName, arguments: expectation.args }],
+              [calls[index]!],
+              { argumentMatching: expectation.argumentMatching },
+            ).passed,
+            `${label}, evidence for ${expectation.stepId}`,
+          ).toBe(true);
+        }
+      });
     }
+  });
+});
+
+describe("one call is never evidence for two slots", () => {
+  const compileOne = (
+    steps: ToolExpectationStep[],
+    matchOptions?: EvalMatchOptions,
+  ) => compileToolExpectations(steps, { matchOptions })[0]!;
+
+  it("counts a call once when strict order loses a slot to its position", () => {
+    // Two `A`s are required and only one was made. Slot 1 is satisfied in
+    // place by that `A`; slot 0 cannot also claim it for being out of order.
+    const turn = compileOne(
+      [prompt("p1"), expectCall("a1", "A", {}, { minCount: 2 })],
+      { toolCallOrder: "strict" },
+    );
+    const calls = [call("B"), call("A", {}, "only-a")];
+    const result = evaluateTurnExpectations(turn, calls);
+    expect(result.assertions[0]).toMatchObject({
+      passed: false,
+      failureKind: "missing",
+      missingSlots: 1,
+      outOfOrderSlots: 0,
+      pairedCallIndexes: [1],
+    });
+    expect(result.passed).toBe(false);
+  });
+
+  it("fails the pinned turn, whose order is exempt, when a call is missing", () => {
+    const [turn] = compileToolExpectations(
+      [pinnedCall("c1"), expectCall("a1", "A", {}, { minCount: 2 })],
+      { matchOptions: { toolCallOrder: "strict" } },
+    );
+    const result = evaluateTurnExpectations(turn!, [call("B"), call("A")]);
+    expect(result.sequence.passed).toBe(true);
+    expect(result.assertions[0]).toMatchObject({
+      passed: false,
+      failureKind: "missing",
+    });
+    expect(result.passed).toBe(false);
+  });
+
+  it("fails the assertion at its position, so a run halts there", () => {
+    const turn = compileOne(
+      [prompt("p1"), expectCall("a1", "A", {}, { minCount: 2 })],
+      { toolCallOrder: "strict" },
+    );
+    expect(
+      evaluateAssertionAtPosition(turn, "a1", [call("B"), call("A")]),
+    ).toMatchObject({ passed: false, failureKind: "missing" });
+  });
+
+  it("does not hand two assertions the same call", () => {
+    const turn = compileOne(
+      [prompt("p1"), expectCall("a1", "A"), expectCall("a2", "A")],
+      { toolCallOrder: "strict" },
+    );
+    const result = evaluateTurnExpectations(turn, [call("B"), call("A")]);
+    // The `A` at index 1 sits where a2 expects its call, so a2 holds it and a1,
+    // which would need a second `A`, is the one missing.
+    expect(result.assertions.map((a) => a.passed)).toEqual([false, true]);
+    expect(result.assertions.flatMap((a) => a.pairedCallIndexes)).toEqual([1]);
+  });
+});
+
+describe("the call evidence behind an assertion", () => {
+  const compileOne = (
+    steps: ToolExpectationStep[],
+    matchOptions?: EvalMatchOptions,
+  ) => compileToolExpectations(steps, { matchOptions })[0]!;
+
+  it("points at the call that satisfies it, not the one beside it in order", () => {
+    // Swapped under strict order: both calls happened, in the wrong places.
+    // Each assertion's evidence is the call that has ITS arguments.
+    const turn = compileOne(
+      [
+        prompt("p1"),
+        expectCall("a1", "A", { x: 1 }),
+        expectCall("a2", "A", { x: 2 }),
+      ],
+      { toolCallOrder: "strict" },
+    );
+    const result = evaluateTurnExpectations(turn, [
+      call("A", { x: 2 }, "two"),
+      call("A", { x: 1 }, "one"),
+    ]);
+    expect(result.assertions).toMatchObject([
+      {
+        passed: true,
+        outOfOrderSlots: 1,
+        pairedCallIndexes: [1],
+        pairedCallIds: ["one"],
+      },
+      {
+        passed: true,
+        outOfOrderSlots: 1,
+        pairedCallIndexes: [0],
+        pairedCallIds: ["two"],
+      },
+    ]);
+    expect(result.sequence.passed).toBe(false);
+  });
+
+  it("points at the wrong-argument call for an arguments failure", () => {
+    const turn = compileOne([prompt("p1"), expectCall("a1", "A", { x: 1 })], {
+      toolCallOrder: "strict",
+    });
+    const result = evaluateTurnExpectations(turn, [
+      call("B"),
+      call("A", { x: 2 }, "wrong"),
+    ]);
+    expect(result.assertions[0]).toMatchObject({
+      passed: false,
+      failureKind: "arguments",
+      pairedCallIds: ["wrong"],
+    });
+  });
+
+  it("names no call for one that never happened", () => {
+    const turn = compileOne([prompt("p1"), expectCall("a1", "A")]);
+    expect(
+      evaluateTurnExpectations(turn, [call("B", {}, "b")]).assertions[0],
+    ).toMatchObject({
+      passed: false,
+      pairedCallIndexes: [],
+      pairedCallIds: [],
+    });
   });
 });
 
@@ -469,12 +616,12 @@ describe("an authored minCount", () => {
       expectCall("a1", "A", { x: 1 }, { minCount: 1e9 }),
       expectCall("a2", "B"),
     ]);
-    const started = Date.now();
+    // A regression here allocates a billion slots and hangs or exhausts memory,
+    // which the test's own timeout catches; a wall-clock bound would only flake.
     const result = evaluateTurnExpectations(turn!, [
       call("A", { x: 1 }),
       call("B"),
     ]);
-    expect(Date.now() - started).toBeLessThan(1000);
     // One call for a1 exists; the other 999,999,999 do not.
     expect(result.assertions[0]).toMatchObject({
       passed: false,
@@ -532,20 +679,35 @@ describe("an authored minCount", () => {
       const mode = (slot: number) =>
         turn!.expectations[owner[slot]!]!.argumentMatching;
       const graded = pairToolCalls(slots, calls, order, mode);
-      const agnostic = pairToolCalls(slots, calls, "ignore", mode);
       const counts = turn!.expectations.map(() => ({
         missingSlots: 0,
         argumentMismatchSlots: 0,
         outOfOrderSlots: 0,
       }));
-      slots.forEach((_, slot) => {
-        const lost =
-          !graded.expectedToActual.has(slot) ||
-          graded.argumentMismatchExpected.includes(slot);
-        if (!lost) return;
+      const lostSlots = slots
+        .map((_, slot) => slot)
+        .filter(
+          (slot) =>
+            !graded.expectedToActual.has(slot) ||
+            graded.argumentMismatchExpected.includes(slot),
+        );
+      // Calls that cleanly satisfied a slot stay with it; the lost slots share
+      // the rest, order-agnostically.
+      const held = new Set<number>();
+      graded.expectedToActual.forEach((call, slot) => {
+        if (!graded.argumentMismatchExpected.includes(slot)) held.add(call);
+      });
+      const free = calls.map((_, i) => i).filter((i) => !held.has(i));
+      const reassigned = pairToolCalls(
+        lostSlots.map((slot) => slots[slot]!),
+        free.map((i) => calls[i]!),
+        "ignore",
+        (lost) => mode(lostSlots[lost]!),
+      );
+      lostSlots.forEach((slot, lost) => {
         const own = counts[owner[slot]!]!;
-        if (!agnostic.expectedToActual.has(slot)) own.missingSlots += 1;
-        else if (agnostic.argumentMismatchExpected.includes(slot))
+        if (!reassigned.expectedToActual.has(lost)) own.missingSlots += 1;
+        else if (reassigned.argumentMismatchExpected.includes(lost))
           own.argumentMismatchSlots += 1;
         else own.outOfOrderSlots += 1;
       });
