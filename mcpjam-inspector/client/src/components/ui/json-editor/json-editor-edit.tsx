@@ -654,6 +654,12 @@ export function JsonEditorEdit({
                   willChange: "transform",
                 }}
               >
+                {/* Every byte of highlightedHtml comes from highlightJson
+                    (chat-ui/src/internal/json-tokens.ts), which HTML-escapes
+                    each token value and each untokenized segment before
+                    wrapping it in a literal <span>; its test suite pins that
+                    markup is escaped in every emitted position. Nothing else
+                    is interpolated here. */}
                 <div
                   dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
                 />
