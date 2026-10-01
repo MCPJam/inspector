@@ -135,6 +135,19 @@ function normalizeCspApplicationIntent(
       candidate.cspDirectives && typeof candidate.cspDirectives === "object"
         ? candidate.cspDirectives
         : undefined,
+    cspSubtypePolicy:
+      candidate.cspSubtypePolicy &&
+      typeof candidate.cspSubtypePolicy === "object"
+        ? candidate.cspSubtypePolicy
+        : undefined,
+    clientContext:
+      candidate.clientContext &&
+      typeof candidate.clientContext === "object" &&
+      typeof candidate.clientContext.clientName === "string" &&
+      candidate.clientContext.capabilities &&
+      typeof candidate.clientContext.capabilities === "object"
+        ? candidate.clientContext
+        : undefined,
     permissive: candidate.permissive,
   };
 }
@@ -4349,6 +4362,17 @@ export function MCPAppsRendererSurface({
         backgroundColor: mergedStyleVariables["--color-background-primary"],
       }
     : undefined;
+  const cspClientContext = {
+    surface: "inline" as const,
+    clientName: hostStyleDefinition.chatUi.label ?? "Selected client",
+    declaredCsp: widgetCsp,
+    capabilities: {
+      cspConnectDomains: earlyEffectiveMcpAppsCapabilities.cspConnectDomains,
+      cspResourceDomains: earlyEffectiveMcpAppsCapabilities.cspResourceDomains,
+      cspFrameDomains: earlyEffectiveMcpAppsCapabilities.cspFrameDomains,
+      cspBaseUriDomains: earlyEffectiveMcpAppsCapabilities.cspBaseUriDomains,
+    },
+  };
   const iframe = (
     <SandboxedIframe
       ref={sandboxRef}
@@ -4368,6 +4392,7 @@ export function MCPAppsRendererSurface({
       allowFeatures={effectiveSandbox.allowFeatures}
       cspDirectives={effectiveSandbox.cspDirectives}
       cspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+      clientContext={cspClientContext}
       browserStorage={effectiveSandbox.browserStorage}
       colorScheme={resolvedTheme}
       recordMode={recordMode}
@@ -4562,6 +4587,7 @@ export function MCPAppsRendererSurface({
         widgetAllowFeatures={effectiveSandbox.allowFeatures}
         widgetCspDirectives={effectiveSandbox.cspDirectives}
         widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+        widgetClientContext={cspClientContext}
         widgetBrowserStorage={effectiveSandbox.browserStorage}
         widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}

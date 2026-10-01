@@ -61,6 +61,7 @@ export interface McpAppsModalProps {
   widgetAllowFeatures: Record<string, string> | undefined;
   widgetCspDirectives: Record<string, string[]> | undefined;
   widgetCspSubtypePolicy: CspSubtypePolicy | undefined;
+  widgetClientContext?: import("./widget-host").CspClientContext;
   /**
    * Host policy for the tool result the modal widget is born with. The
    * modal's `oncalltool` path already inherits this via the renderer's
@@ -141,6 +142,7 @@ export function McpAppsModal({
   widgetAllowFeatures,
   widgetCspDirectives,
   widgetCspSubtypePolicy,
+  widgetClientContext,
   widgetToolResult,
   widgetBrowserStorage,
   hostContextRef,
@@ -434,12 +436,33 @@ export function McpAppsModal({
     effectiveHostCapabilities,
   ]);
 
+  const modalCspMountRef = useRef<string | number | undefined>(undefined);
+  const clearCspMount = host.debug?.clearCspMount;
+  useEffect(
+    () => () => {
+      if (modalCspMountRef.current !== undefined) {
+        clearCspMount?.(toolCallId, modalCspMountRef.current);
+        modalCspMountRef.current = undefined;
+      }
+    },
+    [open, modalHtml, toolCallId, clearCspMount]
+  );
+
   const handleModalMessage = (event: MessageEvent) => {
     const data = event.data;
     if (!data) return;
 
-    // Forward CSP violations to parent handler
-    if (data.type === "mcp-apps:csp-violation") {
+    if (
+      data.type === "mcpjam:csp-applied" &&
+      (typeof data.mountId === "string" || typeof data.mountId === "number")
+    ) {
+      modalCspMountRef.current = data.mountId;
+    }
+    // Forward CSP violations and their mount-specific policy to the parent handler
+    if (
+      data.type === "mcp-apps:csp-violation" ||
+      data.type === "mcpjam:csp-applied"
+    ) {
       onCspViolation(event);
     }
     // `mcpjam:view-mode` also arrives here (the modal mounts its own view).
@@ -467,6 +490,11 @@ export function McpAppsModal({
             allowFeatures={widgetAllowFeatures}
             cspDirectives={widgetCspDirectives}
             cspSubtypePolicy={widgetCspSubtypePolicy}
+            clientContext={
+              widgetClientContext
+                ? { ...widgetClientContext, surface: "modal" }
+                : undefined
+            }
             browserStorage={widgetBrowserStorage}
             colorScheme={modalColorScheme}
             onMessage={handleModalMessage}

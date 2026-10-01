@@ -291,6 +291,64 @@ describe("sandbox-proxy mountInner", () => {
     });
   });
 
+  it("echoes client restrictions from the real resource-ready handler", () => {
+    const dom = new JSDOM(
+      html.replace(
+        '"__MCPJAM_HOST_ORIGINS__"',
+        JSON.stringify(["http://localhost:6274"]),
+      ),
+      {
+        url: "http://localhost:6274/api/apps/mcp-apps/sandbox-proxy",
+        runScripts: "dangerously",
+      },
+    );
+    try {
+      const posted: unknown[] = [];
+      dom.window.postMessage = (data: unknown) => {
+        posted.push(data);
+      };
+      const csp = { resourceDomains: ["https://assets.example"] };
+      const cspSubtypePolicy = { cspResourceDomains: { image: false } };
+      const clientContext = {
+        clientName: "Goose",
+        declaredCsp: csp,
+        capabilities: {
+          cspResourceDomains: { image: false },
+          cspFrameDomains: false,
+          cspBaseUriDomains: false,
+        },
+      };
+      dom.window.dispatchEvent(
+        new dom.window.MessageEvent("message", {
+          source: dom.window,
+          origin: "http://localhost:6274",
+          data: {
+            jsonrpc: "2.0",
+            method: "ui/notifications/sandbox-resource-ready",
+            params: {
+              html: WIDGET,
+              csp,
+              cspSubtypePolicy,
+              clientContext,
+              permissive: false,
+            },
+          },
+        }),
+      );
+      const applied = posted.find(
+        (data) => (data as { type?: string }).type === "mcpjam:csp-applied",
+      );
+      expect(applied).toEqual(
+        expect.objectContaining({
+          intent: { csp, cspSubtypePolicy, clientContext, permissive: false },
+          csp: expect.stringContaining("img-src data: blob:"),
+        }),
+      );
+    } finally {
+      dom.window.close();
+    }
+  });
+
   it("removes the previous frame and repoints `inner` on every mount", () => {
     const { dom, h } = harness();
     const placeholder = h.createInnerFrame(

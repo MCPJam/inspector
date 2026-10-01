@@ -127,6 +127,9 @@ const mockPlaygroundStoreState = {
   deviceType: "desktop" as const,
 };
 
+vi.mock("sonner", () => ({ toast: { info: vi.fn(), dismiss: vi.fn() } }));
+vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
+
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
   AppBridge: mockAppBridgeCtor,
@@ -279,6 +282,9 @@ import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { InspectorWidgetHostProvider } from "../use-widget-host";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { toast } from "sonner";
+import { captureSentryMessage } from "@/lib/sentry";
 import {
   registerArtifactUrls,
   resetArtifactUrlsForTests,
@@ -3395,6 +3401,127 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([]);
     expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+  });
+
+  it("shows grouped client-limit details after an app boots and does not page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const widgets = useWidgetDebugStore.getState().widgets;
+    stableStoreFns.setWidgetAppliedCsp.mockImplementation(
+      (toolCallId, applied) => {
+        widgets.set(toolCallId, {
+          csp: { appliedPoliciesByMount: { [applied.mountId]: applied } },
+        } as any);
+      },
+    );
+    const origin = "https://api.tommy-local.ngrok.app";
+    const policy =
+      "default-src 'none'; img-src data: blob:; font-src data: blob:";
+    const clientContext = {
+      clientName: "Goose",
+      surface: "inline",
+      declaredCsp: { resourceDomains: [origin] },
+      capabilities: { cspResourceDomains: { image: false, font: false } },
+    };
+    let unmount: (() => void) | undefined;
+    try {
+      ({ unmount } = render(
+        <ScenarioHostStyleProvider value="goose">
+          <HostedRenderer {...baseProps} />
+        </ScenarioHostStyleProvider>,
+      ));
+      await vi.waitFor(() =>
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy(),
+      );
+      act(() => triggerReady());
+      expect(sandboxedIframePropsRef.current.clientContext).toEqual(
+        expect.objectContaining({
+          clientName: "Goose",
+          surface: "inline",
+          capabilities: expect.any(Object),
+        }),
+      );
+      const send = (data: Record<string, unknown>) =>
+        act(() => sandboxedIframePropsRef.current.onMessage({ data }));
+      const applied = (mountId: string) =>
+        send({
+          type: "mcpjam:csp-applied",
+          mountId,
+          csp: policy,
+          intent: {
+            csp: { resourceDomains: [origin] },
+            cspSubtypePolicy: clientContext.capabilities,
+            clientContext,
+            permissive: false,
+          },
+        });
+      const blocked = (directive: string, mountId = "proxy:1") =>
+        send({
+          type: "mcp-apps:csp-violation",
+          mountId,
+          directive,
+          blockedUri: origin + "/asset",
+          originalPolicy: policy,
+          disposition: "enforce",
+        });
+      applied("proxy:1");
+      expect(stableStoreFns.setWidgetAppliedCsp).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          intent: expect.objectContaining({
+            clientContext,
+            cspSubtypePolicy: clientContext.capabilities,
+          }),
+        }),
+      );
+      blocked("img-src");
+      blocked("font-src");
+      expect(toast.info).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      const [title, options] = vi.mocked(toast.info).mock.calls[0];
+      expect(title).toBe("This was blocked by Goose’s CSP limits.");
+      expect(options?.duration).toBe(8000);
+      const details = render(<>{options?.description}</>);
+      expect(
+        details.getByText(
+          "cspResourceDomains.image is unsupported — img-src data: blob:.",
+        ),
+      ).toBeTruthy();
+      expect(
+        details.getByText(
+          "cspResourceDomains.font is unsupported — font-src data: blob:.",
+        ),
+      ).toBeTruthy();
+      details.unmount();
+      expect(captureSentryMessage).toHaveBeenCalledTimes(2);
+      for (const [message, context] of vi.mocked(captureSentryMessage).mock
+        .calls) {
+        expect(message).toBe("MCP App CSP violation");
+        expect(context?.level).toBe("info");
+      }
+      blocked("img-src");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      applied("proxy:2");
+      expect(toast.dismiss).toHaveBeenCalledWith(options?.id);
+      blocked("img-src", "proxy:1");
+      expect(captureSentryMessage).toHaveBeenCalledTimes(2);
+      blocked("img-src", "proxy:2");
+      unmount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+      expect(toast.info).toHaveBeenCalledTimes(1);
+    } finally {
+      unmount?.();
+      stableStoreFns.setWidgetAppliedCsp.mockReset();
+      widgets.clear();
+      vi.useRealTimers();
+    }
   });
 
   // ── Blocked-App notice ──────────────────────────────────────────────────

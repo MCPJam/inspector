@@ -19,6 +19,40 @@ describe("widget-debug-store — applied CSP", () => {
     useWidgetDebugStore.getState().clear();
   });
 
+  it("keeps client restrictions and declared domains tied to their exact mount", () => {
+    const intent = {
+      permissive: false,
+      cspSubtypePolicy: { cspResourceDomains: { image: false } },
+      clientContext: {
+        clientName: "Goose",
+        declaredCsp: { resourceDomains: ["https://assets.example"] },
+        capabilities: { cspFrameDomains: false, cspBaseUriDomains: false },
+      },
+    };
+    const store = useWidgetDebugStore.getState();
+    store.setWidgetAppliedCsp("snapshot", {
+      mountId: "proxy:1",
+      headerString: HEADER,
+      mode: "widget-declared",
+      intent,
+    });
+    store.setWidgetAppliedCsp("snapshot", {
+      mountId: "proxy:2",
+      headerString: HEADER,
+      mode: "widget-declared",
+      intent: {
+        ...intent,
+        clientContext: { ...intent.clientContext, clientName: "New client" },
+      },
+    });
+    const snapshots = useWidgetDebugStore.getState().widgets.get("snapshot")!
+      .csp!.appliedPoliciesByMount!;
+    expect(snapshots["proxy:1"].intent).toEqual(intent);
+    expect(snapshots["proxy:2"].intent?.clientContext?.clientName).toBe(
+      "New client",
+    );
+  });
+
   it("merges the applied header into an existing csp record", () => {
     const store = useWidgetDebugStore.getState();
     store.setWidgetDebugInfo("t1", { toolName: "demo" });
