@@ -1,4 +1,19 @@
 FROM node:24-alpine
+# The base image's npm bundles dependencies that are behind their upstream
+# security fixes: npm 11.21.0 carries the patched tar and ip-address, and the
+# pinned overlays cover the two packages (dependency-free) no npm release has
+# caught up on. Same rationale as mcpjam-inspector/Dockerfile — delete once the
+# node:24 image bundles an npm whose own copies have caught up.
+RUN npm install -g npm@11.21.0 --no-audit --no-fund \
+  && cd /tmp \
+  && npm pack brace-expansion@5.0.12 undici@6.29.0 --silent \
+  && tar -xzf brace-expansion-5.0.12.tgz \
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+  && mv package /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+  && tar -xzf undici-6.29.0.tgz \
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \
+  && mv package /usr/local/lib/node_modules/npm/node_modules/undici \
+  && rm /tmp/brace-expansion-5.0.12.tgz /tmp/undici-6.29.0.tgz
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY sdk/package.json sdk/
