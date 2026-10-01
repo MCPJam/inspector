@@ -4,10 +4,12 @@ import type { CspPolicyComparison } from "@/components/chat-v2/thread/csp-workbe
 import {
   parseCspHeader,
   resolveDirective,
+  compareCspPolicies,
 } from "@/components/chat-v2/thread/csp-workbench/csp-header";
 import { captureSentryMessage } from "./sentry";
 
 const MAX_POLICY_LENGTH = 16_000;
+const CONNECT_SUBTYPES = ["fetch", "xhr", "websocket"] as const;
 const REDACTED_SOURCE_RE = /^'?(nonce|sha256|sha384|sha512)-/i;
 
 function parentDirective(directive: string): string {
@@ -21,15 +23,148 @@ function parentDirective(directive: string): string {
   return normalized;
 }
 
+function resourceSubtypeForDirective(directive: string) {
+  const types = {
+    "script-src": "script",
+    "style-src": "stylesheet",
+    "img-src": "image",
+    "font-src": "font",
+    "media-src": "media",
+  } as const;
+  return types[directive as keyof typeof types];
+}
+
+function isConnectSubtype(
+  subtype: string,
+): subtype is "fetch" | "xhr" | "websocket" {
+  return subtype === "fetch" || subtype === "xhr" || subtype === "websocket";
+}
+
+export interface ClientCspBlock {
+  capability: string;
+  directive: string;
+  rule: string;
+}
+
+/** Identify client limits only when a declared source was deliberately removed. */
+export function intentionalClientCspBlocks(args: {
+  violation: CspViolation;
+  appliedPolicy?: string;
+  intent?: CspApplicationIntent;
+}): ClientCspBlock[] {
+  const { violation, appliedPolicy, intent } = args;
+  const context = intent?.clientContext;
+  if (
+    !context ||
+    !appliedPolicy ||
+    intent?.permissive ||
+    violation.disposition !== "enforce"
+  )
+    return [];
+  if (
+    violation.originalPolicy &&
+    !(
+      violation.originalPolicy === "host CSP subtype policy" &&
+      parentDirective(violation.effectiveDirective || violation.directive) ===
+        "connect-src" &&
+      violation.subtype &&
+      isConnectSubtype(violation.subtype)
+    ) &&
+    compareCspPolicies(appliedPolicy, violation.originalPolicy).status !==
+      "matching"
+  )
+    return [];
+  const directive = parentDirective(
+    violation.effectiveDirective || violation.directive,
+  );
+  const sources =
+    resolveDirective(parseCspHeader(appliedPolicy), directive) ?? [];
+  const declaredSources = intendedSources(
+    { csp: context.declaredCsp, permissive: false },
+    directive,
+  );
+  if (!clearlyAllowsUrl(violation.blockedUri, declaredSources)) return [];
+  // A limit only caused this block if the actual mount recipe excluded it.
+  if (
+    clearlyAllowsUrl(
+      violation.blockedUri,
+      intendedSources(intent, directive, violation.subtype),
+    )
+  )
+    return [];
+  const policy = intent.cspSubtypePolicy;
+  const blocked = !clearlyAllowsUrl(violation.blockedUri, sources);
+  const resourceSubtype = resourceSubtypeForDirective(directive);
+  const capabilities: string[] = [];
+  if (
+    resourceSubtype &&
+    blocked &&
+    policy?.cspResourceDomains?.[resourceSubtype] === false
+  ) {
+    capabilities.push(`cspResourceDomains.${resourceSubtype}`);
+  } else if (directive === "connect-src") {
+    if (violation.subtype && isConnectSubtype(violation.subtype)) {
+      if (policy?.cspConnectDomains?.[violation.subtype] === false)
+        capabilities.push(`cspConnectDomains.${violation.subtype}`);
+    } else if (
+      blocked &&
+      CONNECT_SUBTYPES.every(
+        (key) => policy?.cspConnectDomains?.[key] === false,
+      )
+    ) {
+      capabilities.push(
+        "cspConnectDomains.fetch",
+        "cspConnectDomains.xhr",
+        "cspConnectDomains.websocket",
+      );
+    }
+  } else if (
+    directive === "frame-src" &&
+    blocked &&
+    context.capabilities.cspFrameDomains === false
+  ) {
+    capabilities.push("cspFrameDomains");
+  } else if (
+    directive === "base-uri" &&
+    blocked &&
+    context.capabilities.cspBaseUriDomains === false
+  ) {
+    capabilities.push("cspBaseUriDomains");
+  }
+  return capabilities.map((capability) => ({
+    capability,
+    directive,
+    rule:
+      directive +
+      " " +
+      (sources.length ? sources.join(" ") : "'none'") +
+      (!blocked && violation.subtype
+        ? `; the client blocks ${violation.subtype} requests`
+        : ""),
+  }));
+}
+
 function intendedSources(
   intent: CspApplicationIntent,
   directive: string,
+  subtype?: CspViolation["subtype"],
 ): string[] {
   const normalized = parentDirective(directive);
   const sources = new Set<string>();
   const csp = intent.csp;
+  const resourceSubtype = resourceSubtypeForDirective(normalized);
+  const policy = intent.cspSubtypePolicy;
+  const resourceAllowed =
+    !resourceSubtype || policy?.cspResourceDomains?.[resourceSubtype] !== false;
+  const connectAllowed =
+    subtype && isConnectSubtype(subtype)
+      ? policy?.cspConnectDomains?.[subtype] !== false
+      : !CONNECT_SUBTYPES.every(
+          (key) => policy?.cspConnectDomains?.[key] === false,
+        );
   if (normalized === "connect-src") {
-    csp?.connectDomains?.forEach((source) => sources.add(source));
+    if (connectAllowed)
+      csp?.connectDomains?.forEach((source) => sources.add(source));
   } else if (normalized === "frame-src") {
     csp?.frameDomains?.forEach((source) => sources.add(source));
   } else if (normalized === "base-uri") {
@@ -41,7 +176,8 @@ function intendedSources(
     normalized === "font-src" ||
     normalized === "media-src"
   ) {
-    csp?.resourceDomains?.forEach((source) => sources.add(source));
+    if (resourceAllowed)
+      csp?.resourceDomains?.forEach((source) => sources.add(source));
   }
   intent.cspDirectives?.[normalized]?.forEach((source) => sources.add(source));
   intent.cspDirectives?.[directive.toLowerCase()]?.forEach((source) =>
@@ -121,7 +257,10 @@ export function failedToApplyCsp(args: {
   );
   const intendedAllows =
     intent.permissive ||
-    clearlyAllowsUrl(violation.blockedUri, intendedSources(intent, directive));
+    clearlyAllowsUrl(
+      violation.blockedUri,
+      intendedSources(intent, directive, violation.subtype),
+    );
   if (!intendedAllows) return false;
 
   const appliedSources = resolveDirective(
@@ -192,6 +331,7 @@ export class CspViolationTelemetryLimiter {
     const entries = this.seen.get(mountKey) ?? new Set<string>();
     const signature = [
       violation.effectiveDirective || violation.directive,
+      violation.subtype ?? "",
       violation.blockedUri,
       violation.sourceFile ?? "",
       violation.lineNumber ?? "",
@@ -232,7 +372,7 @@ export function reportCspViolationToSentry(args: {
     intent: args.intent,
   });
   const intentSources = args.intent
-    ? intendedSources(args.intent, directive).map(
+    ? intendedSources(args.intent, directive, violation.subtype).map(
         (source) => sanitizeUrl(source) ?? source,
       )
     : undefined;
@@ -270,6 +410,12 @@ export function reportCspViolationToSentry(args: {
           originalPolicyTruncated: original?.truncated,
           differingDirectives: comparison.differingDirectives,
           intendedSources: intentSources,
+          intentionalClientLimits: intentionalClientCspBlocks(args).map(
+            (block) => block.capability,
+          ),
+          clientName: args.intent?.clientContext?.clientName,
+          clientCspCapabilities: args.intent?.clientContext?.capabilities,
+          cspSubtypePolicy: args.intent?.cspSubtypePolicy,
         },
       },
     );

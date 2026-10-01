@@ -668,7 +668,17 @@ environments.get(
         { projectId, environmentId } as any,
       )) as ResolvedEnvironmentRow | null;
     } catch (error) {
-      throw translateResolveError(error);
+      // The route's only read, so it is the one that scopes both path ids.
+      // A malformed id, or a plain failure masked to "Server Error" in
+      // production, answers the same 404 as `readEnvironment` instead of the
+      // write translator's terminal 500; coded `ENV_*` refusals carry data
+      // and still reach `translateResolveError` (MJ-021).
+      throw (
+        redactedReadRefusalError(
+          error,
+          "Environment or project not found, or you do not have access to it.",
+        ) ?? translateResolveError(error)
+      );
     }
     if (!resolved || !resolved.environmentRef) {
       throw new WebRouteError(
