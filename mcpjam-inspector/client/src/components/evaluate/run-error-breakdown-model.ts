@@ -56,8 +56,6 @@ export type RunErrorGroup = {
   title: string;
   nextStep: string;
   count: number;
-  /** One errored iteration to open as an example. */
-  exampleIterationId: string;
 };
 
 export type RunErrorBreakdown = {
@@ -275,12 +273,7 @@ export function buildRunErrorBreakdown(input: {
     if (existing) {
       existing.count += 1;
     } else {
-      groups.set(cause, {
-        cause,
-        ...CAUSE_COPY[cause],
-        count: 1,
-        exampleIterationId: iteration._id,
-      });
+      groups.set(cause, { cause, ...CAUSE_COPY[cause], count: 1 });
     }
   }
 

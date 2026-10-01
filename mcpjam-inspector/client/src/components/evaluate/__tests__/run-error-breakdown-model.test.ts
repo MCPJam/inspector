@@ -184,7 +184,6 @@ describe("buildRunErrorBreakdown", () => {
         cause: "serverError",
         owner: "yourServer",
         count: 3,
-        exampleIterationId: "a",
       }),
     ]);
   });

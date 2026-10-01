@@ -42,7 +42,7 @@ import {
 } from "./run-verdict-hero-deltas";
 import { HeroExplanation, RunVerdictHero } from "./run-verdict-hero";
 import { UnifiedFindingsSection } from "./unified-findings-section";
-import { RunErrorBreakdown } from "./run-error-breakdown";
+import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
 
@@ -167,8 +167,12 @@ export function CombinedRunContent({
   const chains = new Map(
     selectedReports.flatMap((report) => [...report.chains]),
   );
+  // Once every member's decision read settled (`view.pending` covers both the
+  // reads still in flight and the members not yet reported): the toast fires
+  // once per launch, so it must not fire on a partial picture.
   const errorBreakdown =
     !history.loading &&
+    !view.pending &&
     selectedRuns.length > 0 &&
     selectedRuns.every((run) => isTerminalEvalRunStatus(run.status))
       ? buildRunErrorBreakdown({
@@ -177,12 +181,7 @@ export function CombinedRunContent({
           chains,
         })
       : null;
-  const openErroredIteration = (iterationId: string) => {
-    const iteration = selectedIterations.find((row) => row._id === iterationId);
-    if (iteration?.testCaseId) {
-      onOpenIteration?.({ testCaseId: iteration.testCaseId, iterationId });
-    }
-  };
+  useRunErrorBreakdownToast(String(routeRun._id), errorBreakdown);
   const clearPairingFilters = () => {
     setClient(ALL_EVAL_FILTER_VALUES);
     setModel(ALL_EVAL_FILTER_VALUES);
@@ -266,12 +265,6 @@ export function CombinedRunContent({
             view={view}
             headerVerdict={fullVerdict}
             explanation={null}
-          />
-          <RunErrorBreakdown
-            breakdown={errorBreakdown}
-            {...(onOpenIteration
-              ? { onOpenIteration: openErroredIteration }
-              : {})}
           />
           {findingsRun ? (
             <div data-testid="combined-run-findings">

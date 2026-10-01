@@ -54,7 +54,7 @@ import {
 } from "./run-verdict-hero-deltas";
 import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
-import { RunErrorBreakdown } from "./run-error-breakdown";
+import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 
 export function EvaluateRunContent(
@@ -190,19 +190,21 @@ export function SingleRunContent({
     enabled: active,
   });
 
-  // Terminal runs only: a running run's errors are still arriving, and a
-  // banner that grows row by row reads as the run getting worse.
+  // Terminal runs only, and only once the decision read settled: the toast
+  // fires once per run, so it must not fire on the partial picture a running
+  // run or an in-flight read would give it.
   const errorBreakdown = useMemo(
     () =>
-      isTerminalEvalRunStatus(run.status)
+      isTerminalEvalRunStatus(run.status) && detail.status !== "loading"
         ? buildRunErrorBreakdown({
             iterations,
             diagnostics: detail.diagnostics,
             chains: chains.chains,
           })
         : null,
-    [run.status, iterations, detail.diagnostics, chains.chains],
+    [run.status, detail.status, iterations, detail.diagnostics, chains.chains],
   );
+  useRunErrorBreakdownToast(String(run._id), errorBreakdown);
 
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({
@@ -393,11 +395,6 @@ export function SingleRunContent({
             </Button>
           ) : null
         }
-      />
-
-      <RunErrorBreakdown
-        breakdown={errorBreakdown}
-        {...(onOpenIteration ? { onOpenIteration: openEvidenceIteration } : {})}
       />
 
       {changeSummary ? (

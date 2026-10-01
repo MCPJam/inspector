@@ -1,10 +1,11 @@
 /**
- * The "most of this run errored" callout. Every string comes from
- * {@link buildRunErrorBreakdown}; this file only lays it out.
+ * The "most of this run errored" toast. Every string comes from
+ * {@link buildRunErrorBreakdown}; this file only lays it out and decides when
+ * it fires.
  */
-import { ArrowUpRight, TriangleAlert } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import { useEffect, useRef } from "react";
 
+import { toast } from "@/lib/toast";
 import type {
   RunErrorBreakdown as RunErrorBreakdownView,
   RunErrorOwner,
@@ -17,68 +18,53 @@ const OWNER_LABEL: Record<RunErrorOwner, string> = {
   unclear: "Unclear",
 };
 
-export function RunErrorBreakdown({
+/** Long enough to read a few groups; the toaster's close button ends it early. */
+const BREAKDOWN_TOAST_DURATION_MS = 20_000;
+
+export function RunErrorBreakdownDescription({
   breakdown,
-  onOpenIteration,
 }: {
-  breakdown: RunErrorBreakdownView | null;
-  onOpenIteration?: (iterationId: string) => void;
+  breakdown: RunErrorBreakdownView;
 }) {
-  if (!breakdown) return null;
   return (
-    <section
-      role="status"
-      aria-label="Why results errored"
-      className="mx-5 mb-4 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3"
-      data-testid="run-error-breakdown"
-    >
-      <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-        <TriangleAlert className="size-4 text-warning" aria-hidden />
-        {breakdown.headline}
-      </h4>
-      <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Here is what caused them and who needs to act.
-      </p>
-      <ul className="mt-3 space-y-3">
-        {breakdown.groups.map((group) => (
-          <li
-            key={group.cause}
-            className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2"
-            data-testid="run-error-group"
-            data-cause={group.cause}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <span className="rounded border border-border/60 bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {OWNER_LABEL[group.owner]}
-                </span>
-                <span className="text-sm font-medium text-foreground">
-                  {group.title}
-                </span>
-                <span className="text-sm tabular-nums text-muted-foreground">
-                  ({group.count} of {breakdown.finished})
-                </span>
-              </div>
-              <p className="mt-1 max-w-[72ch] text-sm leading-relaxed text-foreground">
-                {group.nextStep}
-              </p>
-            </div>
-            {onOpenIteration ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 shrink-0"
-                onClick={() => onOpenIteration(group.exampleIterationId)}
-                data-testid="run-error-group-open"
-              >
-                Open one
-                <ArrowUpRight className="h-3.5 w-3.5" />
-              </Button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <ul className="mt-1 space-y-2" data-testid="run-error-breakdown">
+      {breakdown.groups.map((group) => (
+        <li
+          key={group.cause}
+          data-testid="run-error-group"
+          data-cause={group.cause}
+        >
+          <div className="font-medium text-foreground">
+            {OWNER_LABEL[group.owner]}: {group.title} ({group.count} of{" "}
+            {breakdown.finished})
+          </div>
+          <div className="text-muted-foreground">{group.nextStep}</div>
+        </li>
+      ))}
+    </ul>
   );
+}
+
+/**
+ * Toast the breakdown once per run, when it first becomes available.
+ *
+ * Keyed on the run, not the render: the page re-renders on every poll and on
+ * every decision read, and the same run must not toast again each time. The
+ * toast id is the run's too, so a remount updates the open toast instead of
+ * stacking a second one.
+ */
+export function useRunErrorBreakdownToast(
+  runId: string,
+  breakdown: RunErrorBreakdownView | null,
+) {
+  const toastedRunIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!breakdown || toastedRunIdRef.current === runId) return;
+    toastedRunIdRef.current = runId;
+    toast.warning(breakdown.headline, {
+      id: `run-error-breakdown-${runId}`,
+      description: <RunErrorBreakdownDescription breakdown={breakdown} />,
+      duration: BREAKDOWN_TOAST_DURATION_MS,
+    });
+  }, [runId, breakdown]);
 }
