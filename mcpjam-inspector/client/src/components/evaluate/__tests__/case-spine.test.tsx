@@ -863,6 +863,153 @@ describe("a multi-prompt case", () => {
   });
 });
 
+describe("Expect a tool call, under every prompt", () => {
+  const twoPrompts: TestStep[] = [
+    { id: "p1", kind: "prompt", prompt: "Which account am I?" },
+    { id: "c1", kind: "assert", assertion: { type: "noToolErrors" } },
+    { id: "p2", kind: "prompt", prompt: "And my org?" },
+    { id: "c2", kind: "assert", assertion: { type: "noToolErrors" } },
+  ];
+  const expectButton = (row: HTMLElement) =>
+    within(row).queryByRole("button", { name: "Expect a tool call" });
+  const written = (onStepsChange: ReturnType<typeof vi.fn>) =>
+    onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+
+  it("is offered under each prompt that has no tool yet", async () => {
+    await openSpine({ steps: twoPrompts, availableTools: [] });
+    const [first, second] = screen.getAllByTestId("spine-action-row");
+    expect(expectButton(first!)).toBeInTheDocument();
+    expect(expectButton(second!)).toBeInTheDocument();
+  });
+
+  it("writes the tool into the prompt it was asked under", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({
+      steps: twoPrompts,
+      availableTools: [],
+      onStepsChange,
+    });
+    const second = screen.getAllByTestId("spine-action-row")[1]!;
+    await user.click(expectButton(second)!);
+    await user.type(within(second).getByLabelText("Add a tool"), "get_org");
+    await user.click(within(second).getByRole("button", { name: "Add tool" }));
+
+    const steps = written(onStepsChange);
+    // At the end of prompt 2's block, so it grades prompt 2's turn and never
+    // jumps ahead of the check already there; nothing else moved.
+    expect(steps.map((step) => step.id)).toEqual([
+      "p1",
+      "c1",
+      "p2",
+      "c2",
+      steps[4]!.id,
+    ]);
+    expect(steps[4]).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "get_org" },
+    });
+  });
+
+  it("swaps the button for the tool once one is added", async () => {
+    const user = await openSpine({ steps: twoPrompts, availableTools: [] });
+    const [, second] = screen.getAllByTestId("spine-action-row");
+    await user.click(expectButton(second!)!);
+    await user.type(within(second!).getByLabelText("Add a tool"), "get_org");
+    await user.click(within(second!).getByRole("button", { name: "Add tool" }));
+    const rows = screen.getAllByTestId("spine-action-row");
+    expect(
+      within(rows[1]!).getAllByTestId("simple-case-tool-row"),
+    ).toHaveLength(1);
+    expect(expectButton(rows[1]!)).not.toBeInTheDocument();
+    // The first prompt is still asking.
+    expect(within(rows[0]!).queryByTestId("simple-case-tool-row")).toBeNull();
+  });
+
+  it("writes into the first prompt's turn when asked under the first prompt", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({
+      steps: twoPrompts,
+      availableTools: [],
+      onStepsChange,
+    });
+    const first = screen.getAllByTestId("spine-action-row")[0]!;
+    await user.click(expectButton(first)!);
+    await user.type(within(first).getByLabelText("Add a tool"), "get_me");
+    await user.click(within(first).getByRole("button", { name: "Add tool" }));
+    const steps = written(onStepsChange);
+    const added = steps.findIndex(
+      (step) =>
+        step.kind === "assert" &&
+        "type" in step.assertion &&
+        step.assertion.type === "toolCalledWith",
+    );
+    expect(added).toBeGreaterThan(0);
+    expect(added).toBeLessThan(steps.findIndex((step) => step.id === "p2"));
+  });
+
+  it("leaves a prompt that already has a tool with the tool, not the button", async () => {
+    await openSpine({
+      steps: [
+        ...twoPrompts.slice(0, 3),
+        {
+          id: "t2",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "get_org",
+            args: { args: {} },
+          },
+        },
+      ],
+      availableTools: [{ name: "get_org" }],
+    });
+    const [, second] = screen.getAllByTestId("spine-action-row");
+    expect(expectButton(second!)).not.toBeInTheDocument();
+    expect(within(second!).getAllByTestId("simple-case-tool-row")).toHaveLength(
+      1,
+    );
+  });
+
+  it("is not offered under a prompt on a case that says no tool is called", async () => {
+    await openSpine({
+      steps: twoPrompts,
+      toolsChoice: "noTool",
+      isNegativeTest: true,
+    });
+    for (const row of screen.getAllByTestId("spine-action-row")) {
+      expect(expectButton(row)).not.toBeInTheDocument();
+    }
+  });
+
+  it("is not offered when read-only, on a pinned-first case, or before there is a prompt", async () => {
+    const { unmount } = render(
+      <CaseSpine
+        steps={twoPrompts}
+        readOnly
+        onStepsChange={vi.fn()}
+        onMatchOptionsChange={vi.fn()}
+        onExpectedOutputChange={vi.fn()}
+        onPredicatesChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Expect a tool call" }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    const pinned = render(<StatefulSpine steps={pinnedFirst} />);
+    expect(
+      screen.queryByRole("button", { name: "Expect a tool call" }),
+    ).not.toBeInTheDocument();
+    pinned.unmount();
+
+    render(<StatefulSpine steps={[]} />);
+    expect(
+      screen.queryByRole("button", { name: "Expect a tool call" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("the suite's evaluators on the spine", () => {
   it("fold into one line that opens to the rows", async () => {
     const user = await openSpine({
