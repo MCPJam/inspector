@@ -3878,7 +3878,7 @@ export function MCPAppsRendererSurface({
   const handleCspViolation = useCallback(
     (event: MessageEvent) => {
       const data = event.data;
-      if (!data) return;
+      if (data?.type !== "mcp-apps:csp-violation") return;
 
       const {
         directive,
@@ -3956,6 +3956,30 @@ export function MCPAppsRendererSurface({
     ]
   );
 
+  // Record the policy for either surface without reporting a violation.
+  const handleCspApplied = (event: MessageEvent) => {
+    const data = event.data;
+    if (data?.type !== "mcpjam:csp-applied") return;
+    const mountId = normalizeCspMountId(data.mountId);
+    if (
+      mountId !== undefined &&
+      typeof data.csp === "string" &&
+      data.csp.length > 0
+    ) {
+      setWidgetAppliedCspStore(toolCallIdRef.current, {
+        mountId,
+        headerString: data.csp,
+        mode: data.mode === "permissive" ? "permissive" : "widget-declared",
+        intent: normalizeCspApplicationIntent(data.intent),
+      });
+      logWidgetDebug("ui-to-host", "debug/csp-applied", {
+        mountId,
+        mode: data.mode,
+        headerLength: data.csp.length,
+      });
+    }
+  };
+
   const handleSandboxMessage = (event: MessageEvent) => {
     const data = event.data;
     if (!data) return;
@@ -3966,29 +3990,8 @@ export function MCPAppsRendererSurface({
       return;
     }
 
-    // The CSP string the proxy injected for this mount. Arrives just before
-    // that mount's `mcpjam:view-mode`. This records what MCPJam applied;
-    // each violation's `originalPolicy` separately records the policy that
-    // caused that specific violation.
     if (data.type === "mcpjam:csp-applied") {
-      const mountId = normalizeCspMountId(data.mountId);
-      if (
-        mountId !== undefined &&
-        typeof data.csp === "string" &&
-        data.csp.length > 0
-      ) {
-        setWidgetAppliedCspStore(toolCallIdRef.current, {
-          mountId,
-          headerString: data.csp,
-          mode: data.mode === "permissive" ? "permissive" : "widget-declared",
-          intent: normalizeCspApplicationIntent(data.intent),
-        });
-        logWidgetDebug("ui-to-host", "debug/csp-applied", {
-          mountId,
-          mode: data.mode,
-          headerLength: data.csp.length,
-        });
-      }
+      handleCspApplied(event);
       return;
     }
 
@@ -4618,6 +4621,7 @@ export function MCPAppsRendererSurface({
           })
         }
         onCspViolation={handleCspViolation}
+        onCspApplied={handleCspApplied}
       />
 
       {checkoutSession != null && Checkout && (

@@ -47,13 +47,18 @@ describe("grouped client CSP toast", () => {
     expect(show.mock.calls[1][0]).toBe(id);
   });
 
-  it("does not reopen an expired or dismissed toast for repeated blocks", () => {
-    group.report("app", "proxy:1", "Goose", [image]);
-    vi.advanceTimersByTime(10000);
-    group.report("app", "proxy:1", "Goose", [image]);
-    vi.advanceTimersByTime(1000);
-    expect(show).toHaveBeenCalledTimes(1);
-  });
+  it.each(["expired", "dismissed"])(
+    "does not reopen a %s toast for repeated blocks",
+    (state) => {
+      group.report("app", "proxy:1", "Goose", [image]);
+      vi.advanceTimersByTime(250);
+      if (state === "dismissed") dismiss(show.mock.calls[0][0]);
+      else vi.advanceTimersByTime(10000);
+      group.report("app", "proxy:1", "Goose", [image]);
+      vi.advanceTimersByTime(1000);
+      expect(show).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("cancels old pending notifications and ignores stale mount events", () => {
     group.report("app", "proxy:1", "Goose", [image]);

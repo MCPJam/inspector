@@ -167,7 +167,7 @@ export type ResolvedMcpAppsCapabilities = {
 /**
  * getHostStyleOrDefault / DEFAULT_HOST_STYLE result — typed to the renderer's
  * AUDITED reads only: `.mcp.{resolveStyleVariables,fontCss,platform}` and
- * `.chatUi.resolveChatBackground` (+ `.id`). The real `HostStyleDefinition` has
+ * `.chatUi.{label,resolveChatBackground}` (+ `.id`). The real `HostStyleDefinition` has
  * more (the full profile/chat-ui graph); the adapter assigns it (assignable to
  * this minimal surface), so the package never replicates that graph.
  */

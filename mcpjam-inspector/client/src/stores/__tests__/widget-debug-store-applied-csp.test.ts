@@ -34,23 +34,24 @@ describe("widget-debug-store — applied CSP", () => {
       mountId: "proxy:1",
       headerString: HEADER,
       mode: "widget-declared",
-      intent,
+      intent: structuredClone(intent),
     });
     store.setWidgetAppliedCsp("snapshot", {
       mountId: "proxy:2",
       headerString: HEADER,
       mode: "widget-declared",
-      intent: {
+      intent: structuredClone({
         ...intent,
         clientContext: { ...intent.clientContext, clientName: "New client" },
-      },
+      }),
     });
     const snapshots = useWidgetDebugStore.getState().widgets.get("snapshot")!
       .csp!.appliedPoliciesByMount!;
     expect(snapshots["proxy:1"].intent).toEqual(intent);
-    expect(snapshots["proxy:2"].intent?.clientContext?.clientName).toBe(
-      "New client",
-    );
+    expect(snapshots["proxy:2"].intent).toEqual({
+      ...intent,
+      clientContext: { ...intent.clientContext, clientName: "New client" },
+    });
   });
 
   it("merges the applied header into an existing csp record", () => {

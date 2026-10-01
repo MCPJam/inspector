@@ -125,6 +125,7 @@ export interface McpAppsModalProps {
     message: unknown;
   }) => void;
   onCspViolation: (event: MessageEvent) => void;
+  onCspApplied: (event: MessageEvent) => void;
 }
 
 export function McpAppsModal({
@@ -160,6 +161,7 @@ export function McpAppsModal({
   themeModeRef,
   addUiLog,
   onCspViolation,
+  onCspApplied,
 }: McpAppsModalProps) {
   const host = useWidgetHost();
   const Modal = host.components?.Modal;
@@ -458,11 +460,9 @@ export function McpAppsModal({
     ) {
       modalCspMountRef.current = data.mountId;
     }
-    // Forward CSP violations and their mount-specific policy to the parent handler
-    if (
-      data.type === "mcp-apps:csp-violation" ||
-      data.type === "mcpjam:csp-applied"
-    ) {
+    if (data.type === "mcpjam:csp-applied") {
+      onCspApplied(event);
+    } else if (data.type === "mcp-apps:csp-violation") {
       onCspViolation(event);
     }
     // `mcpjam:view-mode` also arrives here (the modal mounts its own view).

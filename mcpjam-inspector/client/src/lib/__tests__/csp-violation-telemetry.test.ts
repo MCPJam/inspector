@@ -243,19 +243,42 @@ describe("intentional client CSP limits", () => {
     expect(failedToApplyCsp(args)).toBe(false);
   });
 
-  it("explains a guarded fetch even when connect-src allows its origin", () => {
-    expect(
-      intentionalClientCspBlocks({
+  it.each(["fetch", "xhr", "websocket"] as const)(
+    "explains guarded %s even when connect-src allows its origin",
+    (subtype) => {
+      const args = {
         violation: {
           ...imageViolation,
           directive: "connect-src",
-          subtype: "fetch",
+          subtype,
+          originalPolicy: "host CSP subtype policy",
         },
         appliedPolicy: policy,
-        intent,
-      })[0].capability,
-    ).toBe("cspConnectDomains.fetch");
-  });
+        intent: {
+          ...intent,
+          cspSubtypePolicy: { cspConnectDomains: { [subtype]: false } },
+        },
+      };
+      expect(intentionalClientCspBlocks(args)[0].capability).toBe(
+        `cspConnectDomains.${subtype}`,
+      );
+      reportCspViolationToSentry({
+        ...args,
+        toolCallId: "t1",
+        serverId: "s1",
+        comparison: { status: "different", differingDirectives: ["connect-src"] },
+      });
+      expect(captureSentryMessage).toHaveBeenLastCalledWith(
+        "MCP App CSP violation",
+        expect.objectContaining({
+          level: "info",
+          extra: expect.objectContaining({
+            intentionalClientLimits: [`cspConnectDomains.${subtype}`],
+          }),
+        }),
+      );
+    },
+  );
 
   it("does not guess a connection subtype when only one is unsupported", () => {
     expect(

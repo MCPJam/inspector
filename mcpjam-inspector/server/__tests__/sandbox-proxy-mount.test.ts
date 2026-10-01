@@ -303,9 +303,9 @@ describe("sandbox-proxy mountInner", () => {
       },
     );
     try {
-      const posted: unknown[] = [];
-      dom.window.postMessage = (data: unknown) => {
-        posted.push(data);
+      const posted: [unknown, unknown][] = [];
+      dom.window.postMessage = (data: unknown, targetOrigin: unknown) => {
+        posted.push([data, targetOrigin]);
       };
       const csp = { resourceDomains: ["https://assets.example"] };
       const cspSubtypePolicy = { cspResourceDomains: { image: false } };
@@ -336,9 +336,10 @@ describe("sandbox-proxy mountInner", () => {
         }),
       );
       const applied = posted.find(
-        (data) => (data as { type?: string }).type === "mcpjam:csp-applied",
+        ([data]) => (data as { type?: string }).type === "mcpjam:csp-applied",
       );
-      expect(applied).toEqual(
+      expect(applied?.[1]).toBe("http://localhost:6274");
+      expect(applied?.[0]).toEqual(
         expect.objectContaining({
           intent: { csp, cspSubtypePolicy, clientContext, permissive: false },
           csp: expect.stringContaining("img-src data: blob:"),

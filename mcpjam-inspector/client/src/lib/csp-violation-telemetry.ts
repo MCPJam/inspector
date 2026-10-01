@@ -63,6 +63,13 @@ export function intentionalClientCspBlocks(args: {
     return [];
   if (
     violation.originalPolicy &&
+    !(
+      violation.originalPolicy === "host CSP subtype policy" &&
+      parentDirective(violation.effectiveDirective || violation.directive) ===
+        "connect-src" &&
+      violation.subtype &&
+      isConnectSubtype(violation.subtype)
+    ) &&
     compareCspPolicies(appliedPolicy, violation.originalPolicy).status !==
       "matching"
   )

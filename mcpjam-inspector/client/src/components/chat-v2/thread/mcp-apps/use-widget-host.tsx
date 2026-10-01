@@ -354,7 +354,7 @@ export function useWidgetHost(): WidgetHostImpl {
             <ul>
               {blocks.map((block) => (
                 <li key={block.capability}>
-                  {block.capability} is unsupported — {block.rule}.
+                  {block.capability} is unsupported: {block.rule}.
                 </li>
               ))}
             </ul>
