@@ -648,6 +648,57 @@ describe("web routes — swarm funding preview", () => {
     expect(JSON.stringify(data)).not.toContain("convex.site");
   });
 
+  // A backend body is not trusted to be a sentence. The reason passes only when
+  // it is one short plain line, by the same rule a launch refusal's reason is
+  // held to; anything else is replaced by a sentence of ours. A form feed and the
+  // Unicode separators break a line on screen as surely as a newline does.
+  describe("a refused preview whose reason is not one plain sentence", () => {
+    const FALLBACK = "could not be previewed for this request";
+    const refuse = async (body: BodyInit) => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+      fetchMock.mockImplementation(
+        async () => new Response(body, { status: 400 }),
+      );
+      const response = await postJson(
+        app,
+        "/api/web/swarm/funding-preview",
+        BODY,
+        token,
+      );
+      return expectJson<any>(response);
+    };
+
+    it.each([
+      ["markup", "<html>bad gateway</html>"],
+      ["a newline", "first\nsecond"],
+      ["a carriage return", "first\rsecond"],
+      ["a form feed", "first\fsecond"],
+      ["a Unicode line separator", "first second"],
+      ["a Unicode paragraph separator", "first second"],
+      ["more than a sentence", "x".repeat(301)],
+      ["nothing but spaces", "   "],
+    ])("says our own sentence for %s", async (_label, reason) => {
+      const { status, data } = await refuse(JSON.stringify({ error: reason }));
+
+      expect(status).toBe(400);
+      expect(JSON.stringify(data)).toContain(FALLBACK);
+      expect(JSON.stringify(data)).not.toContain("first");
+      expect(JSON.stringify(data)).not.toContain("bad gateway");
+      expect(JSON.stringify(data)).not.toContain("xxxxxxxx");
+    });
+
+    it.each([
+      ["a body that is not JSON", "Bad Request"],
+      ["a body with no reason", JSON.stringify({ ok: false })],
+      ["a reason that is not a string", JSON.stringify({ error: { a: 1 } })],
+    ])("says our own sentence for %s", async (_label, body) => {
+      const { status, data } = await refuse(body);
+
+      expect(status).toBe(400);
+      expect(JSON.stringify(data)).toContain(FALLBACK);
+    });
+  });
+
   it("still fails a backend server error as a server error", async () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
     fetchMock.mockImplementation(

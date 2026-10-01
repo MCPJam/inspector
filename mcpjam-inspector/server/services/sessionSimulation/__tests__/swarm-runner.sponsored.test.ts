@@ -636,6 +636,55 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
     }
   });
 
+  // The run's clock is a run terminal like a shutdown, and it outranks the
+  // platform stop: it sweeps whatever is left whoever funded it, so it carries no
+  // scope. Scoped to sponsored, it would leave a credit-funded attempt that never
+  // started pending until the backend's stale-run cron.
+  it("still sweeps everything when the run clock cuts off a credit-funded conversation after the platform stop", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.runtime.sponsorship) return capacityFailure;
+      // A credit-funded conversation still running when the run's clock fires.
+      // The real core reports a session it cut off as failed.
+      await new Promise<void>((resolve) => {
+        if (adapter.abortSignal.aborted) return resolve();
+        adapter.abortSignal.addEventListener("abort", () => resolve(), {
+          once: true,
+        });
+      });
+      return { outcome: "failed" };
+    });
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "starter", "starter"),
+          ...funding(B.targetId, "credits", "credits"),
+        ],
+        budgets: {
+          turnTimeoutMs: 5 * 60_000,
+          unitTimeoutMs: 20 * 60_000,
+          // Short enough to fire while the credit-funded conversation is parked.
+          runTimeoutMs: 50,
+          turnRetries: 2,
+          sources: {
+            turnTimeoutMs: "default",
+            unitTimeoutMs: "default",
+            runTimeoutMs: "default",
+            turnRetries: "default",
+          },
+        },
+      }) as never,
+    );
+
+    // One conversation per target started; the second of each never did.
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+    const sweeps = finalizePendingAttemptsMock.mock.calls.map((c) => c[2]);
+    expect(sweeps.map((args) => args.errorCode)).toEqual(["run_timeout"]);
+    expect(sweeps[0]).not.toHaveProperty("fundingScope");
+  });
+
   it("does not stop credit-funded conversations in the same run", async () => {
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
       adapter.runtime.sponsorship ? capacityFailure : { outcome: "succeeded" },

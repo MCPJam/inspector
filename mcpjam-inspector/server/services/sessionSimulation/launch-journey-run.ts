@@ -212,7 +212,7 @@ export function launchFailureMessage(err: SwarmAgentError): string {
  * unexamined" promise true of the less likely case and false of the more
  * likely one.
  */
-function showableReason(value: unknown): string | null {
+export function showableReason(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (!text) return null;
