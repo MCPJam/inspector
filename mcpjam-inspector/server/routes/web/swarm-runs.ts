@@ -16,7 +16,10 @@ import {
 import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { getRunningJourneyStreamHub } from "../../services/sessionSimulation/swarm-runner.js";
-import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
+import {
+  launchJourneyRun,
+  showableReason,
+} from "../../services/sessionSimulation/launch-journey-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
   previewSwarmFunding,
@@ -232,18 +235,17 @@ swarmRuns.post("/funding-preview", async (c) =>
   }),
 );
 
-/** The reason in a backend 400 body, or a sentence of ours when it has none. */
+/**
+ * The reason in a backend 400 body, or a sentence of ours when it has none.
+ * Held to the same bar as a launch refusal's reason: one short plain sentence,
+ * never markup, never a line break of any kind.
+ */
 function previewRejectionReason(err: SwarmAgentError): string {
   const fallback =
     "The sponsored split could not be previewed for this request.";
   try {
     const reason = (JSON.parse(err.bodyText) as { error?: unknown }).error;
-    return typeof reason === "string" &&
-      reason.trim().length > 0 &&
-      reason.length <= 200 &&
-      !/[<\n\r]/.test(reason)
-      ? reason.trim()
-      : fallback;
+    return showableReason(reason) ?? fallback;
   } catch {
     return fallback;
   }
