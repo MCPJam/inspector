@@ -83,6 +83,7 @@ import { HOSTED_MODE } from "../../config.js";
 // drift, which is the failure this whole layer exists to prevent.
 import { requirePersonaInProject } from "./personas.js";
 import { requireSwarmInProject } from "./swarms.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const goals = new Hono();
 
@@ -729,7 +730,7 @@ both(
   "/projects/:projectId/goals",
   "/projects/:projectId/journeys",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.goals");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     let rows: JourneyRow[] | null;
     try {

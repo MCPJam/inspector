@@ -96,11 +96,6 @@
             ]
           },
           {
-            "group": "Computer",
-            "icon": "monitor",
-            "pages": ["inspector/computer", "inspector/claude-code-host"]
-          },
-          {
             "group": "Embedding",
             "icon": "code",
             "pages": ["inspector/launch-from-code", "inspector/docs-server"]
