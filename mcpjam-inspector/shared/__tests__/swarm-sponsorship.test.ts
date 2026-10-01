@@ -5,6 +5,7 @@ import {
   parseSessionFunding,
   SPONSORED_CAPACITY_MESSAGE,
   SPONSORSHIP_REJECTED_MESSAGE,
+  SPONSORSHIP_UNCONFIRMED_MESSAGE,
   sponsoredPlatformFailure,
 } from "../swarm-sponsorship";
 import { isCreditExhaustion } from "../credit-exhaustion";
@@ -38,6 +39,38 @@ describe("sponsoredPlatformFailure", () => {
     ).toBe(SPONSORSHIP_REJECTED_MESSAGE);
   });
 
+  // The backend's own refusals (403/409) guarantee the step never reached a
+  // customer rail. `agent_billing_rejected` does not: the stream handler raises
+  // it for a 404 (nothing ran) AND for a platform answer that came back without
+  // the paid confirmation, which had already admitted the step. The stored copy
+  // cannot tell them apart, so it must not assert "not charged" for it.
+  it("does not claim nothing was charged when the platform confirmation was missing", () => {
+    for (const input of [
+      { code: "agent_billing_rejected" },
+      {
+        message:
+          "This MCPJam deployment did not confirm that the turn was billed to MCPJam, so Ask MCPJam stopped. (agent_billing_rejected, HTTP 503)",
+      },
+    ]) {
+      const failure = sponsoredPlatformFailure(input);
+      expect(failure?.code).toBe("swarm_sponsorship_rejected");
+      expect(failure?.message).toBe(SPONSORSHIP_UNCONFIRMED_MESSAGE);
+    }
+    expect(SPONSORSHIP_UNCONFIRMED_MESSAGE).not.toMatch(
+      /\bnot charged\b|\bwasn't charged\b|\bnothing was charged\b/i,
+    );
+    expect(SPONSORSHIP_UNCONFIRMED_MESSAGE).toMatch(/contact support/i);
+  });
+
+  it("still says an explicit backend refusal was not charged", () => {
+    for (const code of ["swarm_sponsorship_rejected", "sponsorship_rejected"]) {
+      expect(sponsoredPlatformFailure({ code })?.message).toBe(
+        SPONSORSHIP_REJECTED_MESSAGE,
+      );
+    }
+    expect(SPONSORSHIP_REJECTED_MESSAGE).toMatch(/not charged/i);
+  });
+
   it("ignores ordinary failures and org credit exhaustion", () => {
     expect(
       sponsoredPlatformFailure({ message: "Tool timed out" }),
@@ -55,6 +88,7 @@ describe("sponsoredPlatformFailure", () => {
     for (const message of [
       SPONSORED_CAPACITY_MESSAGE,
       SPONSORSHIP_REJECTED_MESSAGE,
+      SPONSORSHIP_UNCONFIRMED_MESSAGE,
     ]) {
       expect(message).not.toMatch(/upgrade|top.?up|buy|free|guarantee/i);
       expect(isCreditExhaustion(message)).toBe(false);

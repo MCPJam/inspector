@@ -36,6 +36,7 @@ import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
 import {
   fundingPreviewRuns,
   fundingSplitOf,
+  withChosenIterations,
 } from "@/components/swarms/swarm-funding-plan";
 import {
   describeReusedEnvironmentMove,
@@ -98,6 +99,19 @@ export type LaunchTarget = {
    * not the intensity preset — is what the run will execute. Absent on created
    * targets, which are born with the preset's config. */
   sessionsPerTarget?: number | null;
+  /**
+   * Which iterations counter on Confirm sizes this target (`iterationsByPersona`
+   * is keyed by the proposed persona's local key, or a reused persona's id). A
+   * target a previous attempt persisted keeps this so a counter changed since
+   * can still reach the preview and the launch (see `withChosenIterations`).
+   */
+  iterationsKey?: string;
+  /**
+   * The iterations a just-created goal was born with, so a counter that has
+   * since moved is told apart from one that has not (a goal born with the
+   * counter's current value needs no per-run override). Created targets only.
+   */
+  bornIterations?: number;
 };
 
 export type ConfirmLaunchPayload = {
@@ -1046,6 +1060,7 @@ export function NewSwarmConfirmStep({
     (reusedResolved[persona._id]?.targets ?? []).map((target) => ({
       ...target,
       sessionsPerTarget: reusedIterationsFor(persona._id),
+      iterationsKey: persona._id,
     }))
   );
   /**
@@ -1112,7 +1127,14 @@ export function NewSwarmConfirmStep({
   // reused goals always, and all of them once a previous attempt created the
   // new ones. Goals that do not exist yet are the "pending" remainder the
   // summary says so about.
-  const previewTargets = createdTargets ?? activeReusedTargets;
+  //
+  // The created goals are frozen once a launch attempt made them, but the
+  // iterations beside them are not: ask about the runs as they will now launch,
+  // or lowering a counter to fit the allowance would change the estimate and
+  // nothing else.
+  const previewTargets = createdTargets
+    ? withChosenIterations(createdTargets, iterationsByPersona)
+    : activeReusedTargets;
   // Not memoized: `previewTargets` is a fresh array each render, and the hook
   // keys on the serialized runs, so identity does not matter here.
   const previewRuns =

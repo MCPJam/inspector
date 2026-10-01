@@ -124,8 +124,19 @@ export interface SponsoredPlatformFailure {
 export const SPONSORED_CAPACITY_MESSAGE =
   "MCPJam's sponsored capacity was unavailable, so this conversation stopped before it finished. Evidence gathered so far is kept. You can run it again later.";
 
+/** An explicit backend refusal (403/409): it never reached a customer rail. */
 export const SPONSORSHIP_REJECTED_MESSAGE =
   "MCPJam could not confirm this conversation as sponsored, so it stopped before it finished. Evidence gathered so far is kept. It was not charged to your organization's credits.";
+
+/**
+ * `agent_billing_rejected`: the claim did not hold, and it does not say whether
+ * anything was billed. The stream handler raises it for a backend without the
+ * platform route (nothing ran) and for a platform answer that came back without
+ * its paid confirmation (the step had already been admitted), and the stored
+ * copy cannot tell them apart, so it must not promise "not charged".
+ */
+export const SPONSORSHIP_UNCONFIRMED_MESSAGE =
+  "MCPJam could not confirm this conversation as sponsored, so it stopped before it finished. Evidence gathered so far is kept. If your organization's credits were charged for it, contact support.";
 
 /**
  * Whether a failure on a SPONSORED conversation is the platform's, and if so
@@ -145,7 +156,12 @@ export function sponsoredPlatformFailure(input: {
     (input.message ? SPONSORED_PLATFORM_FAILURE.exec(input.message) : null);
   if (!match) return undefined;
   const found = match[1]!.toLowerCase();
-  return /sponsorship_rejected|agent_billing_rejected/.test(found)
+  if (found === "agent_billing_rejected")
+    return {
+      code: "swarm_sponsorship_rejected",
+      message: SPONSORSHIP_UNCONFIRMED_MESSAGE,
+    };
+  return /sponsorship_rejected/.test(found)
     ? {
         code: "swarm_sponsorship_rejected",
         message: SPONSORSHIP_REJECTED_MESSAGE,
