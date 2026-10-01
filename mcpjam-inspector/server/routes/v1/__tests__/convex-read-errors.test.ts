@@ -24,8 +24,10 @@ vi.mock("../../../utils/logger.js", () => ({
 
 import {
   classifyConvexReadError,
+  redactedReadRefusalError,
   translateConvexReadError,
 } from "../convex-read-errors.js";
+import { WebRouteError } from "../../web/errors.js";
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.clearAllMocks());
@@ -281,5 +283,72 @@ describe("translateConvexReadError", () => {
     expect(translateConvexReadError(already, { scope: "v1.test" })).toBe(
       already
     );
+  });
+});
+
+describe("redactedReadRefusalError", () => {
+  const NOT_FOUND = "Client not found";
+
+  it("answers a production-masked failure with the route's 404", () => {
+    const err = redactedReadRefusalError(
+      new Error("[Request ID: abc] Server Error"),
+      NOT_FOUND
+    );
+    expect(err?.status).toBe(404);
+    expect(err?.message).toBe(NOT_FOUND);
+    expect(errorMock).not.toHaveBeenCalled();
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    expect(warnMock.mock.calls[0]![0]).toContain("redacted read failure");
+  });
+
+  it("answers a validator-rejected id with the same 404", () => {
+    // The write translator has no branch for this shape, so the read routes
+    // that fall back to it answered a malformed id with its terminal 500.
+    const err = redactedReadRefusalError(
+      new Error(
+        '[Request ID: abc] Server Error\nArgumentValidationError: Value does not match validator.\nValidator: v.id("projects")'
+      ),
+      NOT_FOUND
+    );
+    expect(err?.status).toBe(404);
+    expect(err?.message).toBe(NOT_FOUND);
+    expect(errorMock).not.toHaveBeenCalled();
+    // Deploy skew produces the same shape for every caller, so it leaves the
+    // same Axiom-only trace the read translator does.
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    expect(warnMock.mock.calls[0]![0]).toContain(
+      "convex rejected read arguments"
+    );
+  });
+
+  it.each([
+    [
+      "a ConvexError payload",
+      Object.assign(new Error("[Request ID: abc] Server Error"), {
+        data: { code: "NOT_FOUND", message: "nope" },
+      }),
+    ],
+    [
+      "a ConvexError payload on a wrapper's cause",
+      Object.assign(new Error("ArgumentValidationError: wrapped"), {
+        cause: { data: "A deliberate refusal" },
+      }),
+    ],
+    ["a stated membership refusal", new Error("Not a member of this project")],
+    ["a bad credential", new Error("Unauthenticated")],
+    ["a network failure", new Error("fetch failed")],
+    ["a WebRouteError", translate("boom")],
+  ])("leaves %s to the caller's own translator", (_label, error) => {
+    expect(redactedReadRefusalError(error, NOT_FOUND)).toBeUndefined();
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("is only ever a 404", () => {
+    const err = redactedReadRefusalError(
+      new Error("Server Error"),
+      NOT_FOUND
+    );
+    expect(err).toBeInstanceOf(WebRouteError);
+    expect(err?.code).toBe("NOT_FOUND");
   });
 });

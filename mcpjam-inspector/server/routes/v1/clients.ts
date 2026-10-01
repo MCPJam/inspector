@@ -284,26 +284,31 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
   return client;
 }
 
+/**
+ * Convex collapses "project missing", "not a project member", and "client
+ * missing" into the same generic error, and the v1 surface deliberately
+ * doesn't leak which. Keep the message neutral rather than asserting "Client
+ * not found" — the failure on the list/create paths is usually the PROJECT
+ * (bad id or no membership), where a client-specific message misleads.
+ */
+const PROJECT_OR_CLIENT_NOT_FOUND =
+  "Project or client not found, or you do not have access to it.";
+
 function translateConvexWriteError(error: unknown): WebRouteError {
   return translateConvexError(error, {
     resource: "Client",
-    // Convex collapses "project missing", "not a project member", and "client
-    // missing" into the same generic error, and the v1 surface deliberately
-    // doesn't leak which. Keep the message neutral rather than asserting
-    // "Client not found" — the failure on the list/create paths is usually the
-    // PROJECT (bad id or no membership), where a client-specific message
-    // misleads.
-    notFoundMessage:
-      "Project or client not found, or you do not have access to it.",
+    notFoundMessage: PROJECT_OR_CLIENT_NOT_FOUND,
     fallbackMessage: "Client write rejected by the platform",
   });
 }
 
 /**
- * The scoping read behind every client route: `resolveClientId` and the list
- * handler both authorize the caller-supplied project id through it. A plain
- * membership refusal — masked to "Server Error" in production — answers the
- * neutral 404 instead of the write translator's terminal 500 (MJ-021).
+ * The project-scoped list read. The list handler authorizes the
+ * caller-supplied project id through it; `resolveClientId` reaches it only as
+ * its version-skew fallback, and otherwise authorizes through
+ * `hosts:resolveHostByNameOrId` with the same reading (see the catch there). A
+ * plain membership refusal — masked to "Server Error" in production — answers
+ * the neutral 404 instead of the write translator's terminal 500 (MJ-021).
  */
 async function listHostRows(
   convexAuthToken: string,
@@ -317,18 +322,32 @@ async function listHostRows(
     )) ?? []) as HostListRow[];
   } catch (error) {
     throw (
-      redactedReadRefusalError(
-        error,
-        "Project or client not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, PROJECT_OR_CLIENT_NOT_FOUND) ??
+      translateConvexWriteError(error)
     );
   }
 }
+
+/**
+ * Which question a failed detail read answers.
+ *
+ *   - `"scope"`: the read is the caller's own lookup of a caller-supplied id —
+ *     the detail GET, or the preflight before a write. The legacy `/hosts`
+ *     paths have no resolver in front of it, so here it is the FIRST Convex
+ *     call to see the path's projectId. A production-masked refusal or a
+ *     malformed id answers the same 404 an unknown client does (MJ-021).
+ *   - `"readBack"`: the re-read after a committed write, of an id the write
+ *     just accepted. A failure there is ours, so it keeps the write
+ *     translator's observable 500 rather than telling the caller the client
+ *     they just wrote is gone.
+ */
+type HostDetailRead = "scope" | "readBack";
 
 async function readHostDetail(
   convexAuthToken: string,
   projectId: string,
   hostId: string,
+  read: HostDetailRead,
 ): Promise<HostDetailRow> {
   const readClient = createConvexClient(convexAuthToken);
   let detail: HostDetailRow | null;
@@ -344,7 +363,11 @@ async function readHostDetail(
       } as any,
     )) as HostDetailRow | null;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    throw (
+      (read === "scope"
+        ? redactedReadRefusalError(error, "Client not found")
+        : undefined) ?? translateConvexWriteError(error)
+    );
   }
   if (!detail) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Client not found");
@@ -394,7 +417,16 @@ async function resolveClientId(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Client not found");
   } catch (error) {
     if (error instanceof WebRouteError) throw error;
-    if (!isMissingConvexFunction(error)) throw translateConvexWriteError(error);
+    // The resolver authorizes the caller-supplied project id itself (a plain
+    // membership refusal, masked to "Server Error" in production) and takes it
+    // as `v.id('projects')`, so a malformed one is rejected before it runs.
+    // Both answer the neutral 404 an unknown client gets (MJ-021).
+    if (!isMissingConvexFunction(error)) {
+      throw (
+        redactedReadRefusalError(error, PROJECT_OR_CLIENT_NOT_FOUND) ??
+        translateConvexWriteError(error)
+      );
+    }
   }
 
   const rows = (await listHostRows(convexAuthToken, projectId)).filter(
@@ -767,7 +799,7 @@ async function getHandler(c: Context, surface: Surface) {
   const projectId = pathParam(c, "projectId");
   const token = await getConvexBearerForRequest(c);
   const clientId = await resolveSelector(c, token, surface);
-  const detail = await readHostDetail(token, projectId, clientId);
+  const detail = await readHostDetail(token, projectId, clientId, "scope");
   // A hidden backing row reached by ID on the canonical surface is a 404, not
   // a read: the default-exclusion rule is about what a client IS, so it cannot
   // hold for names and lapse for ids.
@@ -810,7 +842,12 @@ async function createHandler(c: Context, surface: Surface) {
   } catch (error) {
     throw translateConvexWriteError(error);
   }
-  const detail = await readHostDetail(token, projectId, created.hostId);
+  const detail = await readHostDetail(
+    token,
+    projectId,
+    created.hostId,
+    "readBack",
+  );
   if (surface.legacy) {
     markDeprecated(c);
     return v1Resource(c, toLegacyHostDetailDto(detail), 201);
@@ -873,7 +910,7 @@ async function updateClientHandler(c: Context) {
       // The whole-config branch keeps `updateHost`'s replacement semantics; the
       // preflight read is only for the specific model-clearing 400.
       assertConfigKeepsPinnedModel(
-        await readHostDetail(token, projectId, clientId),
+        await readHostDetail(token, projectId, clientId, "scope"),
         body.config,
       );
       await convexClient.mutation(
@@ -906,7 +943,9 @@ async function updateClientHandler(c: Context) {
   }
   return v1Resource(
     c,
-    toClientDetailDto(await readHostDetail(token, projectId, clientId)),
+    toClientDetailDto(
+      await readHostDetail(token, projectId, clientId, "readBack"),
+    ),
   );
 }
 
@@ -921,7 +960,7 @@ async function updateHostAliasHandler(c: Context) {
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.config !== undefined) {
     assertConfigKeepsPinnedModel(
-      await readHostDetail(token, projectId, hostId),
+      await readHostDetail(token, projectId, hostId, "scope"),
       body.config,
     );
     updateArgs.input = normalizeConfigForWrite(body.config);
@@ -935,7 +974,9 @@ async function updateHostAliasHandler(c: Context) {
   markDeprecated(c);
   return v1Resource(
     c,
-    toLegacyHostDetailDto(await readHostDetail(token, projectId, hostId)),
+    toLegacyHostDetailDto(
+      await readHostDetail(token, projectId, hostId, "readBack"),
+    ),
   );
 }
 
@@ -965,7 +1006,7 @@ async function setServersHandler(c: Context, surface: Surface) {
   }
   return detailResponse(
     c,
-    await readHostDetail(token, projectId, clientId),
+    await readHostDetail(token, projectId, clientId, "readBack"),
     surface.legacy,
   );
 }
@@ -985,7 +1026,7 @@ async function duplicateHandler(c: Context, surface: Surface) {
   // route could keep producing the state `create` now refuses — and unlike an
   // edit to a legacy row, nothing is stranded by refusing: the source still
   // exists, and pinning its model makes the copy legal.
-  const source = await readHostDetail(token, projectId, clientId);
+  const source = await readHostDetail(token, projectId, clientId, "scope");
   if (!hostConfigPinsAModel(source.config)) {
     throw new WebRouteError(
       400,
@@ -1004,7 +1045,12 @@ async function duplicateHandler(c: Context, surface: Surface) {
   } catch (error) {
     throw translateConvexWriteError(error);
   }
-  const detail = await readHostDetail(token, projectId, created.hostId);
+  const detail = await readHostDetail(
+    token,
+    projectId,
+    created.hostId,
+    "readBack",
+  );
   if (surface.legacy) {
     markDeprecated(c);
     return v1Resource(c, toLegacyHostDetailDto(detail), 201);
