@@ -66,6 +66,16 @@ const CONVEX_ID = "js7abc0def1ghj2klm3nop4qrs5tuv6w";
 const masked = () =>
   new Error("[CONVEX Q(fn)] [Request ID: 7d1b] Server Error");
 
+/**
+ * What a non-production deployment rejects with when a caller-supplied id
+ * does not parse as the `v.id(...)` the function declares. (Production
+ * redacts this to `masked()` above.)
+ */
+const invalidArgument = () =>
+  new Error(
+    '[CONVEX Q(fn)] [Request ID: 7d1b] Server Error\nArgumentValidationError: Value does not match validator.\nPath: .projectId\nValue: "projotherxxxxxxxxxxxxxxxxxxxxxxx"\nValidator: v.id("projects")',
+  );
+
 /** What `ConvexHttpClient` rejects with for a `ConvexError`. */
 function convexError(data: Record<string, unknown>): Error {
   return Object.assign(
@@ -92,6 +102,8 @@ async function expectNoConvexFraming(response: Response) {
   expect(text).not.toContain("Uncaught");
   expect(text).not.toContain("CONVEX Q(");
   expect(text).not.toContain("Server Error");
+  expect(text).not.toContain("ArgumentValidationError");
+  expect(text).not.toContain("Validator");
 }
 
 interface ReadFamily {
@@ -111,13 +123,13 @@ const READ_FAMILIES: ReadFamily[] = [
   {
     family: "servers",
     module: "../servers.js",
-    path: "/api/v1/projects/proj-other/servers/srv-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/servers/srv-1",
     message: "Server not found",
   },
   {
     family: "agent jobs",
     module: "../agent.js",
-    path: "/api/v1/projects/proj-other/agent/jobs/job-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/agent/jobs/job-1",
     message: "Agent job not found.",
   },
   {
@@ -129,49 +141,49 @@ const READ_FAMILIES: ReadFamily[] = [
   {
     family: "goals",
     module: "../goals.js",
-    path: "/api/v1/projects/proj-other/goals",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/goals",
     message: "Not found",
   },
   {
     family: "personas",
     module: "../personas.js",
-    path: "/api/v1/projects/proj-other/personas",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/personas",
     message: "Not found",
   },
   {
     family: "secrets",
     module: "../secrets.js",
-    path: "/api/v1/projects/proj-other/secrets",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/secrets",
     message: "Not found",
   },
   {
     family: "swarms",
     module: "../swarms.js",
-    path: "/api/v1/projects/proj-other/swarms",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/swarms",
     message: "Not found",
   },
   {
     family: "swarm insights",
     module: "../swarm-insights.js",
-    path: "/api/v1/projects/proj-other/goals-overview",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/goals-overview",
     message: "Not found",
   },
   {
     family: "plugins",
     module: "../plugins.js",
-    path: "/api/v1/projects/proj-other/plugins",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/plugins",
     message: "Plugin or project not found, or you do not have access.",
   },
   {
     family: "skills",
     module: "../skills.js",
-    path: "/api/v1/projects/proj-other/skills",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/skills",
     message: "Skill or project not found, or you do not have access.",
   },
   {
     family: "capabilities",
     module: "../capabilities.js",
-    path: "/api/v1/projects/proj-other/capabilities",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/capabilities",
     message: "Project not found",
   },
   {
@@ -189,40 +201,62 @@ const READ_FAMILIES: ReadFamily[] = [
   {
     family: "conformance runs",
     module: "../conformance-runs.js",
-    path: "/api/v1/projects/proj-other/conformance-runs",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs",
     message: "Conformance runs not found",
   },
   {
     family: "readiness runs",
     module: "../readiness.js",
-    path: "/api/v1/projects/proj-other/readiness-runs/run-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run-1",
     message: "Readiness run not found",
   },
   {
     family: "images",
     module: "../images.js",
-    path: "/api/v1/projects/proj-other/images",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/images",
     message:
       "Environment or project not found, or you do not have access to it.",
   },
   {
     family: "environments",
     module: "../environments.js",
-    path: "/api/v1/projects/proj-other/environments",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/environments",
     message:
       "Environment or project not found, or you do not have access to it.",
   },
   {
     family: "server groups",
     module: "../server-groups.js",
-    path: "/api/v1/projects/proj-other/server-groups",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/server-groups",
     message: "Server group not found",
   },
   {
     family: "clients",
     module: "../clients.js",
-    path: "/api/v1/projects/proj-other/clients",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/clients",
     message: "Project or client not found, or you do not have access to it.",
+  },
+  {
+    // Scoped by `hosts:resolveHostByNameOrId`, not the list read.
+    family: "client detail",
+    module: "../clients.js",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/clients/cl-1",
+    message: "Project or client not found, or you do not have access to it.",
+  },
+  {
+    // The deprecated alias has no resolver: `hosts:getHost` is the scoping
+    // read, and its unknown-id answer is "Client not found".
+    family: "legacy host detail",
+    module: "../clients.js",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/hosts/h-1",
+    message: "Client not found",
+  },
+  {
+    family: "environment resolve",
+    module: "../environments.js",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/environments/env-1/resolve",
+    message:
+      "Environment or project not found, or you do not have access to it.",
   },
 ];
 
@@ -266,7 +300,7 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
     };
 
     const response = await createApp(router).request(
-      "/api/v1/projects/proj-other/servers/srv-1",
+      "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/servers/srv-1",
     );
 
     expect(response.status).toBe(403);
@@ -280,7 +314,7 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
     };
 
     const response = await createApp(router).request(
-      "/api/v1/projects/proj-other/secrets",
+      "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/secrets",
     );
 
     expect(response.status).toBe(401);
@@ -518,4 +552,182 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
       expect(convex.mutation).not.toHaveBeenCalled();
     },
   );
+});
+
+/**
+ * The read families that fall back to the WRITE translator. It has no branch
+ * for a validator-rejected argument, so before this a malformed id on any of
+ * them reached its terminal 500.
+ */
+const WRITE_TRANSLATOR_READS = new Set([
+  "conformance runs",
+  "readiness runs",
+  "images",
+  "environments",
+  "server groups",
+  "clients",
+  "client detail",
+  "legacy host detail",
+  "environment resolve",
+]);
+
+describe("read routes on the write translator (MJ-021)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    config.hosted = false;
+    vi.stubEnv("CONVEX_URL", "https://convex.test");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex-http.test");
+    vi.spyOn(logger, "event").mockImplementation(() => {});
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  for (const { family, module, path, message } of READ_FAMILIES.filter(
+    ({ family }) => WRITE_TRANSLATOR_READS.has(family),
+  )) {
+    it(`${family}: a malformed id answers 404, not 500`, async () => {
+      convex.query.mockRejectedValue(invalidArgument());
+      const { default: router } = (await import(module)) as { default: Hono };
+
+      const response = await createApp(router).request(path);
+
+      expect(response.status).toBe(404);
+      await expectNoConvexFraming(response);
+      expect(await response.json()).toEqual({ code: "NOT_FOUND", message });
+      // Not an incident, but not silent: deploy skew answers the same 404.
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("convex rejected read arguments"),
+        expect.anything(),
+      );
+    });
+  }
+
+  it.each([
+    ["a production-masked refusal", masked],
+    ["a malformed id", invalidArgument],
+  ])("blueprint validation answers 404 to %s", async (_label, failure) => {
+    convex.query.mockRejectedValue(failure());
+    const { default: router } = await import("../images.js");
+
+    const response = await createApp(router).request(
+      "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/images/validate",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ blueprint: "base: ubuntu" }),
+      },
+    );
+
+    expect(response.status).toBe(404);
+    await expectNoConvexFraming(response);
+    expect(await response.json()).toEqual({
+      code: "NOT_FOUND",
+      message:
+        "Environment or project not found, or you do not have access to it.",
+    });
+  });
+
+  it("keeps a stated client-resolver refusal on the write translator", async () => {
+    // A `ConvexError` is a deliberate answer, not a masked one: the resolver's
+    // own NOT_FOUND keeps its mapping and is not re-read here.
+    convex.query.mockRejectedValue(
+      convexError({ code: "NOT_FOUND", message: 'No client named "x"' }),
+    );
+    const { default: router } = await import("../clients.js");
+
+    const response = await createApp(router).request(
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/x",
+    );
+
+    expect(response.status).toBe(404);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("[v1.read-refusal]"),
+      expect.anything(),
+    );
+  });
+
+  describe("client writes are unchanged", () => {
+    const resolved = async (name: string) => {
+      if (name === "hosts:resolveHostByNameOrId") {
+        return { hostId: "h1", name: "Alpha" };
+      }
+      if (name === "hosts:getHost") {
+        return {
+          hostId: "h1",
+          name: "Alpha",
+          config: { modelId: "gpt-4o-mini" },
+        };
+      }
+      return null;
+    };
+    const postServers = (router: Hono) =>
+      createApp(router).request("/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/servers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverIds: ["srv-1"], expectedConfigId: "hc1" }),
+      });
+
+    it("a validation refusal from the write keeps its 400", async () => {
+      convex.query.mockImplementation(resolved);
+      convex.mutation.mockRejectedValue(
+        convexError({ code: "VALIDATION", message: "Unknown server id" }),
+      );
+      const { default: router } = await import("../clients.js");
+
+      const response = await postServers(router);
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "Unknown server id",
+      });
+    });
+
+    it.each([
+      ["a production-masked failure", masked],
+      ["a validator rejection", invalidArgument],
+    ])(
+      "%s on the write is not re-read as a missing client",
+      async (_label, failure) => {
+        convex.query.mockImplementation(resolved);
+        convex.mutation.mockRejectedValue(failure());
+        const { default: router } = await import("../clients.js");
+
+        const response = await postServers(router);
+
+        expect(response.status).toBe(500);
+        await expectNoConvexFraming(response);
+        expect((await response.json()).code).toBe("INTERNAL_ERROR");
+      },
+    );
+
+    it("a masked failure re-reading the written client stays a 500", async () => {
+      // The read-back follows a committed write of an id the backend just
+      // accepted: a failure there is ours, and 404 would report the client
+      // the caller just wrote as gone.
+      let committed = false;
+      convex.query.mockImplementation(async (name: string) => {
+        if (committed && name === "hosts:getHost") throw masked();
+        return resolved(name);
+      });
+      convex.mutation.mockImplementation(async () => {
+        committed = true;
+        return undefined;
+      });
+      const { default: router } = await import("../clients.js");
+
+      const response = await postServers(router);
+
+      expect(committed).toBe(true);
+      expect(response.status).toBe(500);
+      await expectNoConvexFraming(response);
+      expect((await response.json()).code).toBe("INTERNAL_ERROR");
+    });
+  });
 });
