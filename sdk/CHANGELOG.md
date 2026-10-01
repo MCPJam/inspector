@@ -1,5 +1,11 @@
 # `@mcpjam/sdk` changelog
 
+## 8.20.1
+
+### Patch Changes
+
+- [#5784](https://github.com/MCPJam/inspector/pull/5784) [`345686f`](https://github.com/MCPJam/inspector/commit/345686f5dabd9d8120d3968b85876cfc15a3005b) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK updates. Fix case import environment selection and report recurring import errors, capture stale code-split chunk failures in browser Sentry, and explain intentional client CSP blocks without unnecessary alerts.
+
 ## 8.20.0
 
 ### Minor Changes
