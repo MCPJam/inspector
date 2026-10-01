@@ -861,6 +861,7 @@ it("restores a persisted report failure and retries the free build once", async 
   expect(borrowed.requestInsight).not.toHaveBeenCalled();
   expect(result.current.build.pending).toBe(true);
   expect(result.current.build.error).toBeNull();
+  expect(result.current.build.errorCode).toBeUndefined();
   const pending = structuredClone(failed);
   pending.unifiedFindings!.job!.status = "pending";
   rerender({ envelope: pending });
@@ -869,4 +870,29 @@ it("restores a persisted report failure and retries the free build once", async 
   });
   expect(result.current.build.pending).toBe(true);
   expect(result.current.findings).toHaveLength(1);
+});
+
+it("does not attach a persisted job code to a local build request error", async () => {
+  const failed = structuredClone(ENVELOPE);
+  failed.unifiedFindings!.job = {
+    kind: "build",
+    status: "failed",
+    startedAt: 100,
+    updatedAt: 200,
+    errorCode: "snapshot_too_large",
+    errorMessage: "The previous snapshot was too large.",
+  };
+  mutation.fn.mockRejectedValueOnce(new Error("The retry request failed."));
+  const { result } = renderHook(() =>
+    useUnifiedFindings({
+      suiteRunId: "run_1",
+      envelope: failed,
+      generation: generation(),
+    }),
+  );
+  expect(result.current.build.errorCode).toBe("snapshot_too_large");
+  await act(async () => result.current.build.onRun());
+  expect(result.current.build.pending).toBe(false);
+  expect(result.current.build.error).toBe("The retry request failed.");
+  expect(result.current.build.errorCode).toBeUndefined();
 });

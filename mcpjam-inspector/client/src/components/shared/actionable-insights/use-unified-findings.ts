@@ -419,7 +419,10 @@ export function useUnifiedFindings(args: {
             experiment?.job?.errorCode ??
             "The build failed.")
           : null),
-      ...(jobFailed && experiment?.job?.errorCode
+      ...(buildError === null &&
+      !buildRequested &&
+      jobFailed &&
+      experiment?.job?.errorCode
         ? { errorCode: experiment.job.errorCode }
         : {}),
       onRun: onBuild,
