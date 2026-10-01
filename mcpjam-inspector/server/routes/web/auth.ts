@@ -1518,11 +1518,15 @@ export async function createAuthorizedManager(
   let confidentialCimdProviderForOrgResolved = false;
   for (const serverId of uniqueServerIds) {
     const auth = batch.results[serverId];
+    // Both refusals name the server. A caller that batched several servers
+    // (the tools batch route) reads `details.serverId` to leave that one out
+    // and retry the rest, instead of showing one server's refusal on all.
     if (!auth) {
       throw new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,
         `Authorization response is missing result for server "${serverId}"`,
+        { serverId },
       );
     }
     if (!auth.ok) {
@@ -1530,6 +1534,7 @@ export async function createAuthorizedManager(
         auth.status,
         auth.code as ErrorCode,
         auth.message,
+        { serverId, serverName: serverNamesById?.[serverId] ?? null },
       );
     }
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
@@ -2940,6 +2945,18 @@ function blockedEgressRouteError(error: unknown): WebRouteError | undefined {
   return undefined;
 }
 
+/**
+ * The route error for a failure of one dialed MCP server: the egress guard's
+ * refusal first (400, the caller's to change: MJ-020, MJ-021), then
+ * `mapTargetServerError`. `withEphemeralConnection`'s catch and the batch
+ * routes that report one server's failure inside a 200 answer through this
+ * same function, so a server fails the same way inside a batch as on its own
+ * request.
+ */
+export function mapEphemeralServerFailure(error: unknown): WebRouteError {
+  return mapTargetServerError(blockedEgressRouteError(error) ?? error);
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
@@ -3024,12 +3041,12 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     //
     // A target the egress guard refused is the caller's to change, not a
     // connection that failed: 400, with the guard's own message
-    // (MJ-020, MJ-021).
+    // (MJ-020, MJ-021). See `mapEphemeralServerFailure`.
     //
     // Hosted, what the response says about the failure is then reduced for
     // every route on this helper (MJ-001) — see `projectRouteFailure`.
     const projected = projectRouteFailure(
-      mapTargetServerError(blockedEgressRouteError(error) ?? error),
+      mapEphemeralServerFailure(error),
       error,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );

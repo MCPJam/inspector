@@ -2,13 +2,14 @@ import { Hono } from "hono";
 import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
+  mapEphemeralServerFailure,
   projectRouteFailure,
   toolsListSchema,
   toolsListMultiSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
 } from "./auth.js";
-import { ErrorCode, mapTargetServerError, WebRouteError } from "./errors.js";
+import { ErrorCode, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
 import { listTools, listToolsMulti } from "../../utils/route-handlers.js";
@@ -89,10 +90,12 @@ tools.post("/list", async (c) =>
 
 /**
  * One server's failure inside a batch, answered as its own request would
- * have been: `mapTargetServerError` picks the status and code, and the hosted
- * projection (MJ-001) reduces the message, so a batch says no more about a
- * target than a single-server call does. The client rebuilds its usual
- * `WebApiError` from these three fields.
+ * have been: `mapEphemeralServerFailure` picks the status and code (the
+ * egress guard's 400 included, since the manager dials lazily and a refused
+ * target surfaces inside `listTools`), and the hosted projection (MJ-001)
+ * reduces the message, so a batch says no more about a target than a
+ * single-server call does. The client rebuilds its usual `WebApiError` from
+ * these three fields.
  */
 function batchFailure(error: unknown): {
   status: number;
@@ -100,7 +103,7 @@ function batchFailure(error: unknown): {
   message: string;
 } {
   const { routeError } = projectRouteFailure(
-    mapTargetServerError(error),
+    mapEphemeralServerFailure(error),
     error,
     undefined,
   );

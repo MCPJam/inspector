@@ -118,6 +118,55 @@ describe("mcp-tools-api hosted mode", () => {
     expect(Object.keys(result.results).sort()).toEqual(["Notion", "srv-same"]);
   });
 
+  it("keeps a refused server's error and asks again for the rest", async () => {
+    // The route authorizes the batch as a whole and one server's refusal
+    // answers the request, naming that server.
+    const refusal = new WebApiError(
+      403,
+      "FORBIDDEN",
+      "Access denied",
+      undefined,
+      { serverId: "srv-b" },
+    );
+    listHostedToolsMultiMock
+      .mockRejectedValueOnce(refusal)
+      .mockResolvedValueOnce({
+        results: { "srv-a": { tools: [{ name: "a" }], toolsMetadata: {} } },
+      });
+
+    const result = await listToolsForServers(["A", "B"]);
+
+    expect(listHostedToolsMultiMock).toHaveBeenCalledTimes(2);
+    expect(listHostedToolsMultiMock).toHaveBeenLastCalledWith({
+      serverNamesOrIds: ["A"],
+      modelId: undefined,
+    });
+    expect(Object.keys(result.results)).toEqual(["A"]);
+    expect(result.errors.B).toBe(refusal);
+  });
+
+  it("fails the batch on a refusal that names a server outside it", async () => {
+    const refusal = new WebApiError(
+      403,
+      "FORBIDDEN",
+      "Access denied",
+      undefined,
+      { serverId: "srv-elsewhere" },
+    );
+    listHostedToolsMultiMock.mockRejectedValueOnce(refusal);
+
+    await expect(listToolsForServers(["A", "B"])).rejects.toBe(refusal);
+    expect(listHostedToolsMultiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the batch on a refusal that names no server", async () => {
+    const refusal = new WebApiError(401, "UNAUTHORIZED", "Session expired");
+    listHostedToolsMultiMock.mockRejectedValueOnce(refusal);
+
+    await expect(listToolsForServers(["A", "B"])).rejects.toBe(refusal);
+    expect(listHostedToolsMultiMock).toHaveBeenCalledTimes(1);
+  });
+
   it("aggregates tools metadata from one batch request", async () => {
     listHostedToolsMultiMock.mockResolvedValueOnce({
       results: {
