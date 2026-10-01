@@ -47,6 +47,10 @@ export interface AggregatedToolsState {
  *   - resolve clicks to a `(serverId, toolName)` tuple, avoiding the
  *     last-seen-wins collision behavior baked into `ToolServerMap`.
  */
+function failureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Failed to fetch tools";
+}
+
 export function useAggregatedTools(
   serverNames: string[],
   options: { unavailableServerNames?: ReadonlyArray<string> } = {}
@@ -136,12 +140,10 @@ export function useAggregatedTools(
         refresh: forceRefresh,
       });
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to fetch tools";
       batch = {
         results: {},
         errors: Object.fromEntries(
-          fetchableNames.map((serverId) => [serverId, message]),
+          fetchableNames.map((serverId) => [serverId, err]),
         ),
       };
     }
@@ -151,7 +153,10 @@ export function useAggregatedTools(
     const results = fetchableNames.map((serverId) => ({
       serverId,
       tools: batch.results[serverId]?.tools ?? [],
-      error: batch.errors[serverId] ?? null,
+      error:
+        serverId in batch.errors
+          ? failureMessage(batch.errors[serverId])
+          : null,
     }));
 
     setToolsByServer(() => {

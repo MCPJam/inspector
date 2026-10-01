@@ -296,12 +296,21 @@ describe("web hosted rpc logs", () => {
 
     const { status, data } = await expectJson<{
       results: Record<string, { tools: Array<{ name: string }> }>;
-      errors: Record<string, string>;
+      errors: Record<string, { status: number; code: string; message: string }>;
     }>(response);
 
     expect(status).toBe(200);
     expect(Object.keys(data.results)).toEqual(["srv-1"]);
-    expect(data.errors).toEqual({ "srv-down": "connect ECONNREFUSED" });
+    // Mapped as a single-server call's failure would be (`mapTargetServerError`:
+    // a connection failure to the caller's own server is a 502 with the
+    // described message), so the client can rebuild the same error.
+    expect(data.errors).toEqual({
+      "srv-down": {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: expect.stringContaining("connect ECONNREFUSED"),
+      },
+    });
   });
 
   it("keeps hosted rpc logs request-scoped with no cross-request carryover", async () => {

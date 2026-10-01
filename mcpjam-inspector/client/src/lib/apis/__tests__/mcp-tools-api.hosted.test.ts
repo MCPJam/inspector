@@ -20,6 +20,7 @@ vi.mock("@/lib/apis/web/context", () => ({
 }));
 
 import { getToolsMetadata, listToolsForServers } from "../mcp-tools-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
 describe("mcp-tools-api hosted mode", () => {
   beforeEach(() => {
@@ -37,7 +38,13 @@ describe("mcp-tools-api hosted mode", () => {
           toolsMetadata: { draw: { ui: { resourceUri: "ui://draw" } } },
         },
       },
-      errors: { "srv-other": "connect ECONNREFUSED" },
+      errors: {
+        "srv-other": {
+          status: 424,
+          code: "SERVER_UNREACHABLE",
+          message: "connect ECONNREFUSED",
+        },
+      },
     });
 
     const result = await listToolsForServers(["Excalidraw", "Other"], {
@@ -54,7 +61,14 @@ describe("mcp-tools-api hosted mode", () => {
     expect(result.results.Excalidraw.tools[0]._meta).toEqual({
       ui: { resourceUri: "ui://draw" },
     });
-    expect(result.errors).toEqual({ Other: "connect ECONNREFUSED" });
+    // The same error a single-server call would have thrown, status and all.
+    const other = result.errors.Other as WebApiError;
+    expect(other).toBeInstanceOf(WebApiError);
+    expect(other).toMatchObject({
+      status: 424,
+      code: "SERVER_UNREACHABLE",
+      message: "connect ECONNREFUSED",
+    });
   });
 
   it("reports a name the context does not know on its own and lists the rest", async () => {
@@ -74,9 +88,9 @@ describe("mcp-tools-api hosted mode", () => {
       modelId: undefined,
     });
     expect(Object.keys(result.results)).toEqual(["Excalidraw"]);
-    expect(result.errors).toEqual({
-      Ghost: 'Hosted server not found for "Ghost"',
-    });
+    expect(result.errors.Ghost).toEqual(
+      new Error('Hosted server not found for "Ghost"'),
+    );
   });
 
   it("makes no request when no name resolves", async () => {
@@ -89,7 +103,7 @@ describe("mcp-tools-api hosted mode", () => {
     expect(listHostedToolsMultiMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       results: {},
-      errors: { Ghost: "Hosted server not found" },
+      errors: { Ghost: new Error("Hosted server not found") },
     });
   });
 
@@ -137,16 +151,22 @@ describe("mcp-tools-api hosted mode", () => {
     ]);
   });
 
-  it("fails the aggregate when any server in the batch failed", async () => {
+  it("fails the aggregate with the failed server's own error", async () => {
     // Unchanged from the per-server days: the chat clears every tool on this
-    // error rather than offering the model a partial set.
+    // error rather than offering the model a partial set, and its scenario
+    // branch reads the status off it.
     listHostedToolsMultiMock.mockResolvedValueOnce({
       results: { "srv-a": { tools: [], toolsMetadata: {} } },
-      errors: { "srv-b": "connect ECONNREFUSED" },
+      errors: {
+        "srv-b": { status: 403, code: "FORBIDDEN", message: "Forbidden" },
+      },
     });
 
-    await expect(getToolsMetadata(["A", "B"])).rejects.toThrow(
-      "connect ECONNREFUSED",
+    const error = await getToolsMetadata(["A", "B"]).catch(
+      (caught: unknown) => caught,
     );
+
+    expect(error).toBeInstanceOf(WebApiError);
+    expect(error).toMatchObject({ status: 403, code: "FORBIDDEN" });
   });
 });

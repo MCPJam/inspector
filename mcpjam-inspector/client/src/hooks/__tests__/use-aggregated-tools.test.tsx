@@ -80,7 +80,7 @@ describe("useAggregatedTools", () => {
   it("keeps the other servers' tools when one server fails inside the batch", async () => {
     vi.mocked(listToolsForServers).mockResolvedValue({
       ...toolsFor(["stateless"]),
-      errors: { Excalidraw: "connect ECONNREFUSED" },
+      errors: { Excalidraw: new Error("connect ECONNREFUSED") },
     });
 
     const { result } = renderHook(() =>

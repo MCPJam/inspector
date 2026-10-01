@@ -113,16 +113,17 @@ describe("listToolsMulti", () => {
       tokenCount: 150,
     });
     expect(result.results.b.tools).toEqual([{ name: "b-tool" }]);
-    expect(result).not.toHaveProperty("errors");
+    expect(result).not.toHaveProperty("failures");
     expect(manager.listTools).toHaveBeenCalledWith("b", undefined, {
       cacheMode: "bypass",
     });
   });
 
-  it("reports a failing server in errors and keeps the others", async () => {
+  it("hands back a failing server's throw and keeps the others", async () => {
+    const refused = new Error("connect ECONNREFUSED");
     const manager = createMockManager({
       listTools: vi.fn(async (serverId: string) => {
-        if (serverId === "down") throw new Error("connect ECONNREFUSED");
+        if (serverId === "down") throw refused;
         return { tools: [{ name: `${serverId}-tool` }] };
       }),
     });
@@ -132,6 +133,7 @@ describe("listToolsMulti", () => {
     });
 
     expect(Object.keys(result.results)).toEqual(["up"]);
-    expect(result.errors).toEqual({ down: "connect ECONNREFUSED" });
+    // The throw itself, so the route can map it as it maps a single call.
+    expect(result.failures).toEqual({ down: refused });
   });
 });

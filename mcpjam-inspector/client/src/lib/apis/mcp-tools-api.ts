@@ -150,8 +150,14 @@ export async function listTools({
 export type ListToolsForServersResult = {
   /** Keyed by the server name or id the caller passed. */
   results: Record<string, ListToolsResultWithMetadata>;
-  /** Servers whose listing failed, keyed the same way. */
-  errors: Record<string, string>;
+  /**
+   * The error each failed server's listing threw, keyed the same way: a
+   * `WebApiError` in both modes for a failure the server answered (hosted
+   * rebuilds it from the batch's per-server status, code and message), or a
+   * name the context could not resolve. Kept as an error, not a message, so
+   * `getToolsMetadata` can rethrow what a single-server call would have.
+   */
+  errors: Record<string, unknown>;
 };
 
 /**
@@ -175,14 +181,13 @@ export async function listToolsForServers(
       // the batch. The route keys its answer by hosted server id; callers
       // think in the names they passed, and two names can share an id.
       const namesByHostedId: Record<string, string[]> = {};
-      const errors: Record<string, string> = {};
+      const errors: Record<string, unknown> = {};
       for (const serverId of serverIds) {
         try {
           const hostedId = resolveHostedServerId(serverId);
           (namesByHostedId[hostedId] ??= []).push(serverId);
         } catch (error) {
-          errors[serverId] =
-            error instanceof Error ? error.message : "Failed to fetch tools";
+          errors[serverId] = error;
         }
       }
       const results: Record<string, ListToolsResultWithMetadata> = {};
@@ -203,18 +208,26 @@ export async function listToolsForServers(
           results[name] = attached;
         }
       }
-      for (const [hostedId, message] of Object.entries(
-        (body?.errors ?? {}) as Record<string, string>,
+      for (const [hostedId, failure] of Object.entries(
+        (body?.errors ?? {}) as Record<
+          string,
+          { status: number; code: string; message: string }
+        >,
       )) {
+        const error = new WebApiError(
+          failure.status,
+          failure.code,
+          failure.message,
+        );
         for (const name of namesByHostedId[hostedId] ?? [hostedId]) {
-          errors[name] = message;
+          errors[name] = error;
         }
       }
       return { results, errors };
     },
     local: async () => {
       const results: Record<string, ListToolsResultWithMetadata> = {};
-      const errors: Record<string, string> = {};
+      const errors: Record<string, unknown> = {};
       await Promise.all(
         serverIds.map(async (serverId) => {
           try {
@@ -224,8 +237,7 @@ export async function listToolsForServers(
               refresh: options.refresh,
             });
           } catch (error) {
-            errors[serverId] =
-              error instanceof Error ? error.message : "Failed to fetch tools";
+            errors[serverId] = error;
           }
         }),
       );
@@ -444,12 +456,13 @@ export async function getToolsMetadata(
   const { results, errors } = await listToolsForServers(serverIds, {
     modelId,
   });
-  // One failing server still fails the whole aggregate, as it did when each
-  // server was its own request: the chat clears every tool on this error
-  // rather than offering the model a partial set.
-  const failed = Object.entries(errors)[0];
-  if (failed) {
-    throw new Error(failed[1]);
+  // One failing server still fails the whole aggregate, with the error its
+  // own request would have thrown, as it did when each server was its own
+  // request: the chat clears every tool on this error rather than offering
+  // the model a partial set, and reads the status off it.
+  const failed = Object.values(errors)[0];
+  if (failed !== undefined) {
+    throw failed;
   }
 
   for (const [serverId, data] of Object.entries(results)) {

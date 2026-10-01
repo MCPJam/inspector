@@ -2,12 +2,13 @@ import { Hono } from "hono";
 import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
+  projectRouteFailure,
   toolsListSchema,
   toolsListMultiSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
 } from "./auth.js";
-import { ErrorCode, WebRouteError } from "./errors.js";
+import { ErrorCode, mapTargetServerError, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
 import { listTools, listToolsMulti } from "../../utils/route-handlers.js";
@@ -86,10 +87,43 @@ tools.post("/list", async (c) =>
   ),
 );
 
+/**
+ * One server's failure inside a batch, answered as its own request would
+ * have been: `mapTargetServerError` picks the status and code, and the hosted
+ * projection (MJ-001) reduces the message, so a batch says no more about a
+ * target than a single-server call does. The client rebuilds its usual
+ * `WebApiError` from these three fields.
+ */
+function batchFailure(error: unknown): {
+  status: number;
+  code: ErrorCode;
+  message: string;
+} {
+  const { routeError } = projectRouteFailure(
+    mapTargetServerError(error),
+    error,
+    undefined,
+  );
+  return {
+    status: routeError.status,
+    code: routeError.code,
+    message: routeError.message,
+  };
+}
+
 tools.post("/list-multi", async (c) =>
-  withEphemeralConnection(c, toolsListMultiSchema, (manager, body) =>
-    listToolsMulti(manager, { ...body, cacheMode: "bypass" }),
-  ),
+  withEphemeralConnection(c, toolsListMultiSchema, async (manager, body) => {
+    const { results, failures } = await listToolsMulti(manager, {
+      ...body,
+      cacheMode: "bypass",
+    });
+    if (!failures) return { results };
+    const errors: Record<string, ReturnType<typeof batchFailure>> = {};
+    for (const [serverId, failure] of Object.entries(failures)) {
+      errors[serverId] = batchFailure(failure);
+    }
+    return { results, errors };
+  }),
 );
 
 tools.post("/execute", async (c) =>
