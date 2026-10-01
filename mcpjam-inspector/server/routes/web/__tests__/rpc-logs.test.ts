@@ -28,6 +28,7 @@ vi.mock("@mcpjam/sdk", async () => {
     }
 
     async listTools(serverId: string) {
+      if (serverId === "srv-down") throw new Error("connect ECONNREFUSED");
       this.rpcLogger?.({
         direction: "send",
         serverId,
@@ -245,6 +246,62 @@ describe("web hosted rpc logs", () => {
         }),
       ])
     );
+  });
+
+  it("attaches rpc logs with aligned server names to the tools batch", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-2"],
+        serverNames: ["Notion", "GitHub"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, { tools: Array<{ name: string }> }>;
+      _rpcLogs: Array<{ serverId: string; serverName: string }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(data.results).toEqual({
+      "srv-1": { tools: [{ name: "tool-srv-1" }], toolsMetadata: {} },
+      "srv-2": { tools: [{ name: "tool-srv-2" }], toolsMetadata: {} },
+    });
+    expect(data._rpcLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ serverId: "srv-1", serverName: "Notion" }),
+        expect.objectContaining({ serverId: "srv-2", serverName: "GitHub" }),
+      ]),
+    );
+  });
+
+  it("reports a server that fails inside the tools batch without failing the batch", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-down"],
+        serverNames: ["Notion", "Down"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, { tools: Array<{ name: string }> }>;
+      errors: Record<string, string>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(Object.keys(data.results)).toEqual(["srv-1"]);
+    expect(data.errors).toEqual({ "srv-down": "connect ECONNREFUSED" });
   });
 
   it("keeps hosted rpc logs request-scoped with no cross-request carryover", async () => {

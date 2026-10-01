@@ -3,13 +3,14 @@ import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   toolsListSchema,
+  toolsListMultiSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
 } from "./auth.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
-import { listTools } from "../../utils/route-handlers.js";
+import { listTools, listToolsMulti } from "../../utils/route-handlers.js";
 import { detectCreatedTask } from "../../utils/task-route-handlers.js";
 import { toRegistryTaskStatus } from "../../../shared/hosted-tasks.js";
 import { recordCreatedTask } from "../../services/hosted-task-registry.js";
@@ -82,6 +83,12 @@ tools.post("/list", async (c) =>
     // Hosted direct-ops read the server's live surface — never a cached
     // body — so raw/conformance evidence can't be masked by a stale serve.
     listTools(manager, { ...body, cacheMode: "bypass" }),
+  ),
+);
+
+tools.post("/list-multi", async (c) =>
+  withEphemeralConnection(c, toolsListMultiSchema, (manager, body) =>
+    listToolsMulti(manager, { ...body, cacheMode: "bypass" }),
   ),
 );
 

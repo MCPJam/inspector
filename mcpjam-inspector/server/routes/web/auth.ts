@@ -318,7 +318,8 @@ export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = z.object({
+/** The batch counterpart of `projectServerSchema`: one request, several servers. */
+export const projectServerBatchSchema = z.object({
   projectId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).optional(),
@@ -338,6 +339,12 @@ export const promptsListMultiSchema = z.object({
   // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
   scenarioId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
+});
+
+export const promptsListMultiSchema = projectServerBatchSchema;
+
+export const toolsListMultiSchema = projectServerBatchSchema.extend({
+  modelId: z.string().optional(),
 });
 
 export const promptsGetSchema = projectServerSchema.extend({

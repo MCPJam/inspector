@@ -71,3 +71,39 @@ export async function listTools(
     tokenCountError,
   };
 }
+
+/**
+ * `listTools` for a server set in one request. The hosted passthrough limiter
+ * counts requests per session token, so a client listing every server one by
+ * one met it on large workspaces (PLB-158). Each entry is what the
+ * single-server call returns; a server that fails lands in `errors` and does
+ * not fail the batch, as `listPromptsMulti` does.
+ */
+export async function listToolsMulti(
+  manager: Manager,
+  params: {
+    serverIds: string[];
+    modelId?: string;
+    cacheMode?: CacheMode;
+  },
+) {
+  const results: Record<string, Awaited<ReturnType<typeof listTools>>> = {};
+  const errors: Record<string, string> = {};
+
+  await Promise.all(
+    params.serverIds.map(async (serverId) => {
+      try {
+        results[serverId] = await listTools(manager, {
+          serverId,
+          modelId: params.modelId,
+          cacheMode: params.cacheMode,
+        });
+      } catch (error) {
+        errors[serverId] =
+          error instanceof Error ? error.message : "Unknown error";
+      }
+    }),
+  );
+
+  return Object.keys(errors).length > 0 ? { results, errors } : { results };
+}
