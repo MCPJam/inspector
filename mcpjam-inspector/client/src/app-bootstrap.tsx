@@ -225,6 +225,20 @@ if (isInIframe) {
   );
 } else if (
   import.meta.env.DEV &&
+  window.location.pathname === "/__e2e/oauth-debugger"
+) {
+  // This isolated harness uses fake MCP servers, not an app account. Keep it
+  // outside auth providers so unavailable test credentials cannot block it.
+  // The route itself is also DEV-only; production keeps the normal auth gate.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  root.render(
+    <StrictMode>
+      <AppRouterProvider />
+    </StrictMode>,
+  );
+} else if (
+  import.meta.env.DEV &&
   window.location.pathname.startsWith("/__preview/plan-limit")
 ) {
   // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
