@@ -321,7 +321,14 @@ images.post("/projects/:projectId/images/validate", async (c) => {
       { projectId, blueprint: body.blueprint } as any,
     )) as typeof result;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    // Saves nothing, so this is a read — and the only one on the route, so it
+    // scopes the path's project id: same reading as the list (MJ-021).
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexWriteError(error)
+    );
   }
   return v1Resource(c, result);
 });
