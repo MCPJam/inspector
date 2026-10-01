@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // its `main()` when it is the entry point, so importing it is side-effect free.
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
+  archiveListArgs,
   computeTreeDigest as buildScriptDigest,
   flattenHardLinks,
 } from "../../../../../scripts/build-local-harness-pack.mjs";
@@ -74,6 +75,25 @@ describe("the pack build and the server agree on what a digest is", () => {
     const after = buildScriptDigest(root).digest;
     expect(after).not.toBe(before);
     expect(after).toBe(await computeTreeDigest(root));
+  });
+});
+
+describe("the archive is read back with the tar that wrote it", () => {
+  it("lists a Windows path with GNU tar as a local file, not a remote host", () => {
+    // The 1.0.0 win32 build wrote its archive and then failed listing it:
+    // GNU tar read `D:\a\_temp\…` as `host:path` ("Cannot connect to D").
+    // Conformance builds with --skip-archive, so only a real publish reached it.
+    const archive = "D:\\a\\_temp\\pack-out\\pack.tar.gz";
+    expect(archiveListArgs({ bin: "tar", gnu: true }, archive)).toEqual([
+      "--force-local",
+      "-tzf",
+      archive,
+    ]);
+    // bsdtar has no such flag and would refuse it.
+    expect(archiveListArgs({ bin: "tar", gnu: false }, archive)).toEqual([
+      "-tzf",
+      archive,
+    ]);
   });
 });
 

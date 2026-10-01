@@ -18,3 +18,9 @@ export declare function computeTreeDigest(root: string): {
  * be copied. See the script for why the archive depends on it.
  */
 export declare function flattenHardLinks(root: string): number;
+
+/** Arguments that list an archive; GNU tar needs `--force-local` on Windows paths. */
+export declare function archiveListArgs(
+  tar: { bin: string; gnu: boolean },
+  archivePath: string,
+): string[];
