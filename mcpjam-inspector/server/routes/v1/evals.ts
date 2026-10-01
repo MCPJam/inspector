@@ -234,6 +234,7 @@ import {
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
+import { canonicalJudgeModelId } from "./judge-model-id.js";
 import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
@@ -5424,7 +5425,17 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
       "testSuites:resolveOrCreateFileOwnedSuite" as any,
       {
         projectId,
-        ...(body.judge !== undefined ? { judge: body.judge } : {}),
+        ...(body.judge !== undefined
+          ? {
+              judge:
+                body.judge?.model !== undefined
+                  ? {
+                      ...body.judge,
+                      model: canonicalJudgeModelId(body.judge.model),
+                    }
+                  : body.judge,
+            }
+          : {}),
         declaredSuiteId: body.declaredSuiteId,
         name: body.name,
         ...(body.description !== undefined
@@ -5802,7 +5813,8 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   // re-stating an override returns to suite-config grading on its own.
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
-  if (parsed.model !== undefined) override.judgeModel = parsed.model;
+  if (parsed.model !== undefined)
+    override.judgeModel = canonicalJudgeModelId(parsed.model);
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {
@@ -8536,7 +8548,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       if (s.judge.enabled !== undefined)
         goalCompletion.enabled = s.judge.enabled;
       if (s.judge.model !== undefined)
-        goalCompletion.judgeModel = s.judge.model;
+        goalCompletion.judgeModel = canonicalJudgeModelId(s.judge.model);
       if (s.judge.autoRun !== undefined)
         goalCompletion.autoRun = s.judge.autoRun;
       if (s.judge.threshold !== undefined)
