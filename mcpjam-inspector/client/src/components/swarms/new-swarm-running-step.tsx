@@ -681,6 +681,7 @@ export function NewSwarmRunningStep({
   environments = [],
   hosts = [],
   chrome = "wizard",
+  launchNotice = null,
   onLeave,
   onOpenSession,
   onRunsComplete,
@@ -703,6 +704,13 @@ export function NewSwarmRunningStep({
    * the detail header and live strip already own that chrome.
    */
   chrome?: "wizard" | "page";
+  /**
+   * What the launch that produced these runs wants said, kept on screen until
+   * dismissed. A launch that stopped partway explains itself in a toast, and
+   * this screen then shows only the runs that did launch with no trace of the
+   * rest.
+   */
+  launchNotice?: string | null;
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
    * the run — that is "Stop run", a separate, confirmed control.
@@ -753,6 +761,7 @@ export function NewSwarmRunningStep({
     {},
   );
   const [selection, setSelection] = useState<RunningSelection | null>(null);
+  const [launchNoticeDismissed, setLaunchNoticeDismissed] = useState(false);
 
   const onSnapshot = useMemo(
     () => (runId: string, snapshot: RunLiveSnapshot | null) => {
@@ -1122,18 +1131,28 @@ export function NewSwarmRunningStep({
   // Sponsored conversations that ended because MCPJam's platform could not pay
   // for them. Kept apart from the account limit above: nothing here is lifted
   // with credits, so the callout offers no purchase.
+  //
+  // Capacity is transient and a rejection is not (a token, a model that is no
+  // longer included, a membership), so they are counted apart and a rejection
+  // says what the backend recorded rather than promising it will pass.
   const sponsoredStop = useMemo(() => {
-    let count = 0;
-    let message: string | null = null;
+    let capacity = 0;
+    let rejected = 0;
+    let rejectedMessage: string | null = null;
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "failed" || !isSponsoredStopCode(attempt.errorCode))
           continue;
-        count += 1;
-        message ??= attempt.errorMessage ?? null;
+        if (attempt.errorCode === "platform_capacity") {
+          capacity += 1;
+        } else {
+          rejected += 1;
+          rejectedMessage ??= attempt.errorMessage ?? null;
+        }
       }
     }
-    return count === 0 ? null : { count, message };
+    const count = capacity + rejected;
+    return count === 0 ? null : { count, capacity, rejected, rejectedMessage };
   }, [snapshots]);
 
   // The account-limit callout owns its cause — count, breakdown and the top-up
@@ -1172,8 +1191,10 @@ export function NewSwarmRunningStep({
     [mergedStream.sessions, selection],
   );
 
+  const launchNoticeVisible = launchNotice !== null && !launchNoticeDismissed;
   const showIntro =
     chrome === "wizard" ||
+    launchNoticeVisible ||
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
     accountLimit !== null ||
@@ -1251,6 +1272,24 @@ export function NewSwarmRunningStep({
                   </div>
                 </div>
               ) : null}
+              {launchNoticeVisible ? (
+                <div
+                  className="flex items-start gap-2 rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-launch-notice"
+                  role="status"
+                >
+                  <p className="min-w-0 flex-1">{launchNotice}</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setLaunchNoticeDismissed(true)}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              ) : null}
               {missingPlannedClients.length > 0 ? (
                 <p
                   className="text-sm text-amber-700 dark:text-amber-300"
@@ -1295,12 +1334,23 @@ export function NewSwarmRunningStep({
                       ? "1 sponsored conversation stopped."
                       : `${sponsoredStop.count} sponsored conversations stopped.`}
                   </p>
-                  <p className="mt-0.5">
-                    MCPJam&apos;s sponsored capacity was unavailable, so they
-                    ended before finishing. Completed results are saved and
-                    nothing was moved to your organization&apos;s credits.
-                    Run them again later.
-                  </p>
+                  {sponsoredStop.capacity > 0 ? (
+                    <p className="mt-0.5">
+                      MCPJam&apos;s sponsored capacity was unavailable, so{" "}
+                      {sponsoredStop.rejected > 0
+                        ? `${sponsoredStop.capacity} of them`
+                        : "they"}{" "}
+                      ended before finishing. Completed results are saved and
+                      nothing was moved to your organization&apos;s credits. Run
+                      them again later.
+                    </p>
+                  ) : null}
+                  {sponsoredStop.rejected > 0 ? (
+                    <p className="mt-0.5">
+                      {sponsoredStop.rejectedMessage ??
+                        "MCPJam could not confirm these conversations as sponsored, so they ended before finishing. Completed results are saved."}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               {/* Account limits remain visible even when another cause failed. */}

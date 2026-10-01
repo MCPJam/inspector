@@ -178,6 +178,116 @@ describe("creditFundingExplanation", () => {
     expect(text).toMatch(/org credits/);
   });
 
+  // The old sentence said sponsored conversations "cover MCPJam-hosted models in
+  // emulated environments" for EVERY ineligible target. A target held back by the
+  // price gate is exactly that, so the sentence contradicted itself. Each reason
+  // now says its own cause and nothing broader.
+  describe("names why, per reason", () => {
+    const explain = (
+      targets: Array<{ targetId: string; reason?: string }>,
+    ): string =>
+      creditFundingExplanation(
+        preview({
+          remaining: 500,
+          runs: [
+            {
+              sponsored: 0,
+              credits: targets.length,
+              total: targets.length,
+              targets: targets.map((t) => ({ ...t, eligible: false })),
+            },
+          ],
+        }),
+        { sponsored: 0, credits: targets.length, total: targets.length },
+      ) ?? "";
+
+    it("a price-gated model is not described as an unsupported kind of target", () => {
+      const text = explain([{ targetId: "a", reason: "model_not_included" }]);
+      expect(text).toBe(
+        "One target can't use sponsored conversations (its model isn't included in them), so its conversations use org credits.",
+      );
+      expect(text).not.toMatch(/emulated environments|MCPJam-hosted models/i);
+    });
+
+    it.each([
+      ["byok_model", /it uses your own model key/],
+      ["harness_target", /it runs a coding-agent harness/],
+      ["computer_target", /it uses a computer or shell/],
+      ["unresolved", /its setup could not be read/],
+    ])("%s", (reason, clause) => {
+      expect(explain([{ targetId: "a", reason }])).toMatch(clause);
+    });
+
+    it("pluralizes per group", () => {
+      expect(
+        explain([
+          { targetId: "a", reason: "model_not_included" },
+          { targetId: "b", reason: "model_not_included" },
+        ]),
+      ).toBe(
+        "2 targets can't use sponsored conversations (their models aren't included in them), so their conversations use org credits.",
+      );
+    });
+
+    it("says each distinct cause once", () => {
+      const text = explain([
+        { targetId: "a", reason: "model_not_included" },
+        { targetId: "b", reason: "harness_target" },
+        { targetId: "c", reason: "model_not_included" },
+      ]);
+      expect(text).toMatch(
+        /2 targets can't use sponsored conversations \(their models/,
+      );
+      expect(text).toMatch(
+        /One target can't use sponsored conversations \(it runs a coding-agent harness\)/,
+      );
+    });
+
+    it("names a run-wide cause as the cause, whichever target carries it", () => {
+      expect(
+        explain([{ targetId: "a", reason: "judge_model_not_included" }]),
+      ).toMatch(/the judge model isn't included in them/);
+      expect(
+        explain([{ targetId: "a", reason: "persona_model_not_included" }]),
+      ).toMatch(/the persona model isn't included in them/);
+    });
+
+    it("counts a target once however many runs carry it", () => {
+      const text =
+        creditFundingExplanation(
+          preview({
+            runs: [
+              {
+                sponsored: 0,
+                credits: 1,
+                total: 1,
+                targets: [
+                  { targetId: "a", eligible: false, reason: "byok_model" },
+                ],
+              },
+              {
+                sponsored: 0,
+                credits: 1,
+                total: 1,
+                targets: [
+                  { targetId: "a", eligible: false, reason: "byok_model" },
+                ],
+              },
+            ],
+          }),
+          { sponsored: 0, credits: 2, total: 2 },
+        ) ?? "";
+      expect(text).toMatch(/^One target can't use sponsored conversations/);
+    });
+
+    it("says nothing it does not know for a reason it has no wording for", () => {
+      const text = explain([{ targetId: "a", reason: "something_new" }]);
+      expect(text).toBe(
+        "One target can't use sponsored conversations, so its conversations use org credits.",
+      );
+    });
+  });
+
   it("says when the allowance is used up or short", () => {
     expect(creditFundingExplanation(preview({ remaining: 0 }), split)).toMatch(
       /allowance is used up/i,
@@ -229,5 +339,41 @@ describe("notices", () => {
     expect(partial).toMatch(/Launched 2 of 3 runs/);
     expect(partial).toMatch(/remaining runs were not started/);
     expect(partial).not.toMatch(/retry|retrying/i);
+  });
+
+  // `totalConversations` is the refused run's size, not the launch's. "now 0
+  // sponsored conversations of 1" beside a 15-conversation split read as a
+  // contradiction, so the numbers are said to belong to that run.
+  it("a 409 notice says its numbers belong to the refused run", () => {
+    const none = fundingChangedNotice({
+      launched: 0,
+      total: 15,
+      actualSponsored: 0,
+      totalConversations: 1,
+    });
+    expect(none).toMatch(/a run now has 0 of its 1 conversation sponsored/);
+    expect(none).not.toMatch(/conversations? of \d/);
+    const partial = fundingChangedNotice({
+      launched: 2,
+      total: 15,
+      actualSponsored: 1,
+      totalConversations: 4,
+    });
+    expect(partial).toMatch(/it now has 1 of its 4 conversations sponsored/);
+    expect(partial).not.toMatch(/conversations? of \d/);
+  });
+
+  // Goals launches a run with no preview and no expected count, so sending
+  // someone there "to see the updated split" launched the rest on a split nobody
+  // looked at, the very thing this notice exists to prevent.
+  it("a partial-launch notice points back to the flow that shows the split", () => {
+    const partial = fundingChangedNotice({
+      launched: 2,
+      total: 3,
+      actualSponsored: 1,
+      totalConversations: 3,
+    });
+    expect(partial).not.toMatch(/from Goals|to see the updated split/i);
+    expect(partial).toMatch(/New swarm/);
   });
 });

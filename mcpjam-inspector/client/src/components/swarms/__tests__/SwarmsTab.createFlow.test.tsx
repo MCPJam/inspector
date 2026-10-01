@@ -3608,4 +3608,147 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
       ),
     );
   });
+
+  /** Two generated goals, both brand new: the first launch creates them. */
+  async function openNewGoalsConfirm() {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+  }
+  const alertText = () =>
+    screen
+      .queryAllByRole("alert")
+      .map((node) => node.textContent ?? "")
+      .join(" ");
+
+  // The review stop returns before the launch's own summary, so a goal that
+  // failed to create used to vanish from the screen: it was simply missing from
+  // the launch, with no message.
+  it("a split-review stop still says a goal could not be created", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openNewGoalsConfirm();
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/can use sponsored conversations/i);
+    await waitFor(() =>
+      expect(alertText()).toMatch(/Goal service unavailable/),
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  // Run N's expected count assumes every earlier run launched. When one failed
+  // without consuming anything and the allowance was the limit, run N is offered
+  // more than the preview said and is refused (409). That stop returned before
+  // `firstError` was read, so a deterministic failure looped forever on "review
+  // the split" without ever showing what was actually wrong.
+  it("a 409 does not hide the failure of an earlier run in the same pass", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(2);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockRejectedValueOnce(new Error("Network down"))
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/changed before this launch started/i);
+    await waitFor(() => expect(alertText()).toMatch(/Network down/));
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the partial-launch explanation on the Running screen, with any earlier failure, until dismissed", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(3);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(new Error("Network down"))
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    const notice = screen.getByTestId("new-swarm-running-launch-notice");
+    expect(notice).toHaveTextContent(
+      /Launched 1 of 3 runs[\s\S]*remaining runs were not started[\s\S]*none were moved to org credits/i,
+    );
+    expect(notice).toHaveTextContent(/Network down/);
+    fireEvent.click(within(notice).getByRole("button", { name: /dismiss/i }));
+    expect(
+      screen.queryByTestId("new-swarm-running-launch-notice"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The goals are real after the first launch attempt, and Confirm stays
+  // editable. Lowering or raising a persona's iterations (the natural reaction
+  // to "review the split") changed the estimate on screen but neither the split
+  // that was previewed nor what launched, because both read the frozen targets.
+  it("applies iterations changed after the review stop to the preview and to the launch", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    // The split is asked about the run as it will now launch.
+    await waitFor(() =>
+      expect(
+        fundingPreviewMock.mock.calls.some(
+          (call) =>
+            (call[1] as Array<{ sessionsPerTarget?: number }>)[0]
+              ?.sessionsPerTarget === 2,
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    // The goals were created once and stay created.
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    expect(launchArgs().map((a) => a.sessionsPerTarget)).toEqual([
+      2,
+      undefined,
+    ]);
+  });
+
+  it("sends no iterations override for a goal whose counter was never changed", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    for (const args of launchArgs()) {
+      expect(args).not.toHaveProperty("sessionsPerTarget");
+    }
+  });
 });

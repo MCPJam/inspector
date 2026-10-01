@@ -83,12 +83,14 @@ import {
   generateSwarmPersonaBatch,
 } from "@/lib/swarm-api";
 import {
+  alsoFailedNotice,
   fundingChangedNotice,
   fundingPreviewRuns,
   fundingReviewNotice,
   fundingUnverifiedNotice,
   fundingSplitOf,
   launchRunOverrides,
+  withChosenIterations,
   type FundingSplit,
 } from "@/components/swarms/swarm-funding-plan";
 import {
@@ -637,6 +639,10 @@ export function NewSwarmCreateFlow({
   // stopped on it, and the sentence explaining why it stopped.
   const [fundingRefreshKey, setFundingRefreshKey] = useState(0);
   const [fundingNotice, setFundingNotice] = useState<string | null>(null);
+  // What the Running screen says about a launch that stopped partway. The toast
+  // that announces it disappears, and the screen then shows only the runs that
+  // did launch, so the explanation stays until it is dismissed.
+  const [launchNotice, setLaunchNotice] = useState<string | null>(null);
   /**
    * The wave id for THIS swarm, minted once and reused across a retry.
    *
@@ -1344,6 +1350,7 @@ export function NewSwarmCreateFlow({
 
       setErrorMessage(null);
       setFundingNotice(null);
+      setLaunchNotice(null);
 
       let firstError: string | null = null;
       /**
@@ -1507,6 +1514,11 @@ export function NewSwarmCreateFlow({
             // Draft rows with blank goals are authoring placeholders — skip
             // the whole persona rather than create an empty shell.
             if (journeys.length === 0) continue;
+            // What this persona's goals are born with. Kept on each created
+            // target so a counter moved after the first launch attempt can
+            // still reach the launch (see `withChosenIterations`).
+            const bornIterations =
+              iterationsByPersona[persona.key] ?? DEFAULT_SWARM_ITERATIONS;
 
             let personaRefId: string;
             try {
@@ -1545,9 +1557,7 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerTarget:
-                      iterationsByPersona[persona.key] ??
-                      DEFAULT_SWARM_ITERATIONS,
+                    sessionsPerTarget: bornIterations,
                     maxTurns: preset.maxTurns,
                     setupWrites: true,
                   },
@@ -1571,6 +1581,8 @@ export function NewSwarmCreateFlow({
                   personaRole: persona.role,
                   avatarShape: persona.avatarShape,
                   avatarPalette: persona.avatarPalette,
+                  iterationsKey: persona.key,
+                  bornIterations,
                 });
               } catch (err) {
                 firstError ??= errorMessageOf(
@@ -1590,6 +1602,11 @@ export function NewSwarmCreateFlow({
             persistedEnvironmentKeyRef.current = environmentSelectionKey;
           }
         }
+
+        // The goals a previous attempt created are frozen; the iterations
+        // beside them are not. Confirm stays editable after a stop for review,
+        // so a counter moved since reaches the preview and the launch here.
+        targets = withChosenIterations(targets, iterationsByPersona);
 
         // ── Sponsored split: verify, then launch what was shown ───────────
         //
@@ -1624,10 +1641,14 @@ export function NewSwarmCreateFlow({
         // split on screen that is an ordinary launch. With sponsored
         // conversations shown, launching unchecked could move some onto org
         // credits, so stop, refresh what is shown, and let them launch again.
+        //
+        // Both stops return before the launch's own summary, so a failure from
+        // earlier in this pass (a goal that could not be created) is said here.
         if (!fundingSplit && (payload.funding.shownSponsored ?? 0) > 0) {
           setFundingNotice(
             fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
           );
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           setFundingRefreshKey((key) => key + 1);
           return;
         }
@@ -1637,6 +1658,7 @@ export function NewSwarmCreateFlow({
             setFundingNotice(
               fundingReviewNotice({ shown, now: fundingSplit }),
             );
+            if (firstError) setErrorMessage(alsoFailedNotice(firstError));
             setFundingRefreshKey((key) => key + 1);
             return;
           }
@@ -1770,11 +1792,19 @@ export function NewSwarmCreateFlow({
         setFundingRefreshKey((key) => key + 1);
         if (launched === 0 || launchedBatch.length === 0) {
           setFundingNotice(notice);
+          // A run that failed earlier in this pass is often why the split moved
+          // (it did not take the share the preview counted on it); without it
+          // a deterministic failure loops on "review the split" forever.
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           return;
         }
-        // Runs that did launch are real and stay on the Running screen.
+        // Runs that did launch are real and stay on the Running screen, with
+        // the explanation kept there beyond the toast.
         toast.warning(notice);
         setFundingNotice(null);
+        setLaunchNotice(
+          firstError ? `${notice} ${alsoFailedNotice(firstError)}` : notice,
+        );
         launchedRunLabelsRef.current = runLabels;
         setLaunchedRuns(launchedBatch);
         setStep("running");
@@ -2187,6 +2217,7 @@ export function NewSwarmCreateFlow({
             fallbackColumns={runningFallbackColumns}
             environments={envList}
             hosts={hosts}
+            launchNotice={launchNotice}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
             onRunsComplete={() => setRunsComplete(true)}

@@ -8,9 +8,19 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
  * Only the second gets this card — offering a billing CTA for the first would
  * be a false promise, which is the whole reason the ticket rejects a modal.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
+import {
+  SPONSORSHIP_REJECTED_MESSAGE,
+  SPONSORSHIP_UNCONFIRMED_MESSAGE,
+} from "@/shared/swarm-sponsorship";
 const appNavigate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/app-navigation", () => ({ useAppNavigate: () => appNavigate }));
 
@@ -160,6 +170,7 @@ function renderStep(
     { key: "environment:env-1", label: "Prod-like" },
   ],
   environments: Array<typeof ENV_1> = [ENV_1],
+  props: { launchNotice?: string | null } = {},
 ) {
   return render(
     <div className="h-[40rem]">
@@ -180,6 +191,7 @@ function renderStep(
         environments={environments}
         onLeave={vi.fn()}
         onOpenSession={vi.fn()}
+        {...props}
       />
     </div>,
   );
@@ -587,6 +599,32 @@ it("does not offer a credit purchase for an organization spend budget", async ()
   expect(screen.queryByRole("button", { name: "View credit options" })).not.toBeInTheDocument();
 });
 
+// A launch that stopped partway explains itself once, in a toast, and the
+// Running screen then shows only the runs that did launch. The explanation has
+// to stay where the person is looking until they dismiss it.
+describe("NewSwarmRunningStep — launch notice", () => {
+  const NOTICE =
+    "Launched 2 of 15 runs. Sponsored conversations changed for the next run, so the remaining runs were not started and none were moved to org credits.";
+
+  it("keeps a launch-time explanation on screen until it is dismissed", () => {
+    renderStep(undefined, undefined, { launchNotice: NOTICE });
+
+    const notice = screen.getByTestId("new-swarm-running-launch-notice");
+    expect(notice).toHaveTextContent(NOTICE);
+    fireEvent.click(within(notice).getByRole("button", { name: /dismiss/i }));
+    expect(
+      screen.queryByTestId("new-swarm-running-launch-notice"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows nothing when the launch had nothing to explain", () => {
+    renderStep();
+    expect(
+      screen.queryByTestId("new-swarm-running-launch-notice"),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("NewSwarmRunningStep — sponsored conversations the platform could not pay for", () => {
   const STOP_MESSAGE =
     "MCPJam's sponsored capacity was unavailable, so this conversation stopped before it finished. Evidence gathered so far is kept. You can run it again later.";
@@ -657,5 +695,66 @@ describe("NewSwarmRunningStep — sponsored conversations the platform could not
     expect(
       screen.getByTestId("new-swarm-running-account-limit"),
     ).toBeInTheDocument();
+  });
+
+  // A rejection (token, model no longer included, membership) is not transient:
+  // telling the person to run it again later is wrong, and the stored reason is
+  // already the right sentence.
+  describe("a rejection is not a capacity problem", () => {
+    it("shows the stored reason and does not promise capacity will return", () => {
+      attempt.errorCode = "swarm_sponsorship_rejected";
+      attempt.errorMessage = SPONSORSHIP_REJECTED_MESSAGE;
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("1 sponsored conversation stopped.");
+      expect(callout).toHaveTextContent(SPONSORSHIP_REJECTED_MESSAGE);
+      expect(callout).not.toHaveTextContent(/capacity was unavailable/i);
+      expect(callout).not.toHaveTextContent(/run them again later/i);
+      expect(
+        screen.queryByRole("button", { name: /credit options/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not say nothing was charged when the platform's confirmation was missing", () => {
+      attempt.errorCode = "swarm_sponsorship_rejected";
+      attempt.errorMessage = SPONSORSHIP_UNCONFIRMED_MESSAGE;
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent(/contact support/i);
+      expect(callout).not.toHaveTextContent(
+        /not charged|nothing was moved|nothing was charged/i,
+      );
+    });
+
+    it("says each cause once when capacity and a rejection stopped different conversations", () => {
+      attempts = [
+        attempt,
+        {
+          ...attempt,
+          sessionIdx: 1,
+          chatSessionId: "other",
+          status: "failed",
+          errorCode: "swarm_sponsorship_rejected",
+          errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+        },
+      ];
+      runFixture.summary = {
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+        rateLimited: 0,
+      };
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("2 sponsored conversations stopped.");
+      expect(callout).toHaveTextContent(/capacity was unavailable/i);
+      expect(callout).toHaveTextContent(SPONSORSHIP_REJECTED_MESSAGE);
+    });
   });
 });
