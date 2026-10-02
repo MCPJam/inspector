@@ -96,14 +96,22 @@ function harnessIdOf(value: unknown): SupportedLocalHarnessId | null {
     : null;
 }
 
+/**
+ * The ONE answer to "which harness" for a request, read by the rollout gate
+ * and by every handler alike. A POST names it in the JSON body only (a query
+ * parameter on a POST is ignored), a GET in the query only: were the gate and
+ * a handler to read different places, `?harnessId=claude-code` with a Codex
+ * body would pass Claude Code's rollout and then install or authorize Codex.
+ * Hono caches the parsed body, so the handler's own read sees the same one.
+ */
 async function requestHarnessId(c: {
   req: { method: string; query(name: string): string | undefined; json(): Promise<unknown> };
 }): Promise<SupportedLocalHarnessId | null> {
-  const fromQuery = c.req.query("harnessId");
-  if (fromQuery !== undefined) return harnessIdOf(fromQuery);
-  if (c.req.method !== "POST") return "claude-code";
-  const body = (await c.req.json().catch(() => null)) as { harnessId?: unknown } | null;
-  return harnessIdOf(body?.harnessId);
+  if (c.req.method === "POST") {
+    const body = (await c.req.json().catch(() => null)) as { harnessId?: unknown } | null;
+    return harnessIdOf(body?.harnessId);
+  }
+  return harnessIdOf(c.req.query("harnessId"));
 }
 
 localHarness.use("/*", bearerAuthMiddleware, requireVerifiedAuth());
@@ -138,7 +146,7 @@ for (const path of ["/setup", "/readiness"] as const) {
     const body = await c.req.json().catch(() => null);
     if (!body || typeof body.projectId !== "string" || !body.projectId) return c.json({ error: "projectId is required" }, 400);
     if (path === "/setup" && body.accepted !== true) return c.json({ error: "Local execution authorization is required" }, 400);
-    const harnessId = harnessIdOf(body.harnessId);
+    const harnessId = await requestHarnessId(c);
     if (harnessId === null) return c.json({ error: "Unknown local harness" }, 400);
     try {
       const bearer = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
@@ -195,7 +203,7 @@ function displayRoot(canonicalPath: string): string {
  * from, with no absolute paths and no secrets.
  */
 localHarness.get("/availability", async (c) => {
-  const harnessId = harnessIdOf(c.req.query("harnessId"))!;
+  const harnessId = (await requestHarnessId(c))!;
   const platform = currentLocalPlatform(process.platform);
   const manifest = LOCAL_HARNESS_MANIFEST[harnessId];
 
@@ -344,7 +352,7 @@ localHarness.get("/availability", async (c) => {
  * pre-consent check does.
  */
 localHarness.get("/runtime/status", async (c) => {
-  const harnessId = harnessIdOf(c.req.query("harnessId"))!;
+  const harnessId = (await requestHarnessId(c))!;
   const verify = c.req.query("verify") === "1";
   return c.json(
     verify
@@ -378,7 +386,7 @@ localHarness.post("/runtime/install", async (c) => {
     harnessId?: unknown;
     expectedPack?: { packVersion?: unknown; treeDigest?: unknown };
   } | null;
-  const harnessId = harnessIdOf(body?.harnessId)!;
+  const harnessId = (await requestHarnessId(c))!;
   // The pack the CLIENT approved, compared against what this build expects
   // before a byte moves. A server that updated between the dialog opening and
   // the click would otherwise download a runtime whose identity the user was
@@ -567,7 +575,7 @@ localHarness.post("/consent/grant", async (c) => {
     return c.json({ error: workspace.message }, 400);
   }
 
-  const harnessId = harnessIdOf(body?.harnessId)!;
+  const harnessId = (await requestHarnessId(c))!;
   const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
   if (runtimeStatus.state !== "ready") {
     return c.json(

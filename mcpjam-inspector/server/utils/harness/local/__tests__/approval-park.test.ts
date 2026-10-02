@@ -220,6 +220,36 @@ describe("every way a parked session ends invalidates its decision", () => {
     expect(park().parked).toBe(false);
   });
 
+  it("a stopped earlier process never refuses the next turn's park", () => {
+    // Stop, then the next turn resumes the same session on a NEW process
+    // (a new bridge token) and pauses on an approval of its own.
+    park();
+    noteParkedLocalSessionEnded("s1");
+    const next = park({ generation: "gen-2", pendingApprovalIds: ["a2"] });
+    expect(next.parked).toBe(true);
+    expect(claim({ generation: "gen-2", approvalIds: ["a2"] })).toMatchObject({ ok: true });
+  });
+
+  it("a superseded earlier pause never refuses the next turn's park", async () => {
+    // The member sends a new prompt instead of answering: the old pause is
+    // invalidated, and the new turn's process pauses within the minute.
+    park();
+    await invalidateParkedLocalSession("s1", "superseded");
+    expect(park({ generation: "gen-2", pendingApprovalIds: ["a2"] }).parked).toBe(true);
+    expect(claim({ generation: "gen-2", approvalIds: ["a2"] })).toMatchObject({ ok: true });
+  });
+
+  it("a Stop leaves its record only for the tombstone window", () => {
+    park();
+    noteParkedLocalSessionEnded("s1");
+    expect(claim()).toMatchObject({ ok: false, reason: "terminal" });
+    advance(59_999);
+    expect(describeParkedLocalSession("s1")).toMatchObject({ state: "terminal" });
+    advance(1);
+    expect(describeParkedLocalSession("s1")).toBeNull();
+    expect(claim()).toMatchObject({ ok: false, reason: "absent" });
+  });
+
   it("an absent session says so, and suggests a fresh turn", () => {
     const refused = claim({ sessionId: "nope" });
     expect(refused).toMatchObject({ ok: false, reason: "absent" });

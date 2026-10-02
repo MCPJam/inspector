@@ -637,4 +637,22 @@ describe("each local harness is addressed by its own id", () => {
     expect(await response.json()).toMatchObject({ error: expect.stringContaining("Local Codex") });
     accountRollout.mockImplementation(async () => true);
   });
+
+  it("gates a POST on the harness its body names, whatever the query says", async () => {
+    // The gate and the handler must read one id: a query naming a harness
+    // that IS rolled out cannot carry a body acting on one that is not.
+    accountRollout.mockImplementation(async (...args: unknown[]) => args[2] !== "codex");
+    try {
+      for (const path of ["runtime/install", "consent/grant", "workspace-grant"]) {
+        const response = await createApp().request(
+          `/api/mcp/local-harness/${path}?harnessId=claude-code`,
+          { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "codex" }) },
+        );
+        expect(response.status, path).toBe(403);
+        expect(accountRollout).toHaveBeenLastCalledWith(expect.anything(), undefined, "codex");
+      }
+    } finally {
+      accountRollout.mockImplementation(async () => true);
+    }
+  });
 });

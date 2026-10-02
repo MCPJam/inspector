@@ -276,10 +276,12 @@ Full hashes, including `codex-code-mode-host`, `codex-path/rg` and linux `codex-
 
 ---
 
-## What this means for the product (read-only observations; nothing was changed)
+## What the probes found in the product, as it was then
 
-1. **`codex-home.ts` renders `tool_timeout_sec = 0` for the relay, not 3600.** In 0.149.1, 0 makes every relay call fail instantly (*"timed out awaiting tools/call after 0ns"*). The default is 300 s, which is too short for a human approval. 3600 is verified to hold a 70 s call.
-2. **Relay calls are also gated by codex's own MCP approval.**
+Recorded before any change; "What changed in the product because of it" above lists what was then fixed.
+
+1. **`codex-home.ts` rendered `tool_timeout_sec = 0` for the relay** (now 3600). In 0.149.1, 0 makes every relay call fail instantly (*"timed out awaiting tools/call after 0ns"*). The default is 300 s, which is too short for a human approval. 3600 is verified to hold a 70 s call.
+2. **Relay calls were also gated by codex's own MCP approval** (now `default_tools_approval_mode = "approve"` on the relay).
    - Allow-all (`never`): every call is refused.
    - Allow-reads/edits (`untrusted`): codex sends `mcpServer/elicitation/request` (`codex_approval_kind: "mcp_tool_call"`), which `approval-controller.ts` `handleElicitation()` always declines, so every call is rejected.
    - Setting `default_tools_approval_mode = "approve"` on the relay's `[mcp_servers.*]` makes calls run with no codex-side prompt under both policies (verified). That leaves the host-side gate as the single authority.

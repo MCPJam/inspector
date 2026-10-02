@@ -801,7 +801,7 @@ export function useLocalHarnessController(
       | { ok: true; workspace: { workspaceGrantId: string; displayRoot: string } }
       | LocalHarnessError
     > => {
-      const result = await registerLocalHarnessWorkspace(selection);
+      const result = await registerLocalHarnessWorkspace(selection, harnessId);
       if (!result.ok) return result;
       const registered = {
         workspaceGrantId: result.workspaceGrantId,
@@ -811,7 +811,7 @@ export function useLocalHarnessController(
       setWorkspace(registered);
       return { ok: true, workspace: registered };
     },
-    [],
+    [harnessId],
   );
 
   const adoptWorkspace = useCallback(

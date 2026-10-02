@@ -525,10 +525,16 @@ export type RegisterWorkspaceResult =
  */
 export async function registerLocalHarnessWorkspace(
   selection: { path: string } | { useSuggested: true },
+  // The harness whose setup is choosing the folder: the server checks THAT
+  // harness's rollout before it records a grant.
+  harnessId: LocalHarnessClientId = "claude-code",
 ): Promise<RegisterWorkspaceResult> {
   let response: Response;
   try {
-    response = await localHarnessRequest("workspace-grant", selection);
+    response = await localHarnessRequest("workspace-grant", {
+      ...selection,
+      ...(harnessId !== "claude-code" ? { harnessId } : {}),
+    });
   } catch (error) {
     return NETWORK_ERROR(
       error instanceof Error ? error.message : "the request failed",

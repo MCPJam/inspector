@@ -951,12 +951,33 @@ describe("PlaygroundMain — local Claude Code", () => {
       render(<PlaygroundMain {...defaultProps} />);
       type("keep my draft");
       fireEvent.click(screen.getByRole("button", { name: "Set up" }));
-      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true);
+      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "claude-code");
       expect(screen.getByText("Preparing Claude Code on this machine…")).toBeInTheDocument();
       await act(async () => { finish(); });
       expect(mockLocalHarness.state.refresh).toHaveBeenCalled();
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
       expect(screen.getByTestId("chat-input-field")).toHaveValue("keep my draft");
+    });
+    it("sets up and renews the previewed harness, not Claude Code", async () => {
+      // A Codex host's Set up and Send must reach Codex's own readiness:
+      // Claude Code's would store a consent the Codex transport never reads.
+      mockHarnessState.harnessId = "codex";
+      const state = mockLocalHarness.state as Record<string, unknown>;
+      state.harnessId = "codex";
+      state.harnessName = "Codex";
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+        await waitFor(() =>
+          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "codex"),
+        );
+        await waitFor(() => expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument());
+        type("pwd"); await submit();
+        expect(ensureReadyMock).toHaveBeenLastCalledWith(expect.any(String), false, undefined, undefined, "codex");
+      } finally {
+        delete state.harnessId;
+        delete state.harnessName;
+      }
     });
     it("renews readiness and sends without another setup dialog", async () => {
       render(<PlaygroundMain {...defaultProps} />);

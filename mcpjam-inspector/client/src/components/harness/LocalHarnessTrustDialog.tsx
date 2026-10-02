@@ -361,7 +361,11 @@ export function LocalHarnessTrustDialog({
               …
             </dd>
             <dt>Permissions</dt>
-            <dd>edits in folder, commands ask</dd>
+            <dd>
+              {isCodex
+                ? "commands and file changes ask; evals and swarms sandboxed"
+                : "edits in folder, commands ask"}
+            </dd>
             <dt>Policy</dt>
             <dd className="font-mono">{availability?.policyVersion ?? "—"}</dd>
             <dt>Expires</dt>

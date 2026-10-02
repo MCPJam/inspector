@@ -3794,16 +3794,24 @@ export function PlaygroundMain({
       localHarnessPreparingRef.current = true;
       setLocalHarnessPreparing(true);
       try {
-        await ensureLocalHarnessReady(convexProjectId, setup);
+        // The previewed harness's own readiness and setup: each local harness
+        // has its own runtime, authorization and stored consent.
+        await ensureLocalHarnessReady(
+          convexProjectId,
+          setup,
+          undefined,
+          undefined,
+          localHarness.harnessId ?? "claude-code",
+        );
         return true;
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Claude Code is not ready. Retry setup from the client settings.");
+        toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
         return false;
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase]);
+    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {

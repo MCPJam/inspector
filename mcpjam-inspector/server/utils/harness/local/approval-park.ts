@@ -161,12 +161,17 @@ export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
     throw new Error("a parked session must be waiting on at least one approval");
   }
   const existing = parked.get(args.sessionId);
-  if (existing?.state === "terminal") return false;
   if (existing && existing.generation !== args.generation) {
-    // A different process now owns this id. The old record's runtime is not
-    // the one waiting; drop it without ending the new one.
+    // A different process now owns this id. The old record (a live one, or
+    // the tombstone of one that was stopped or superseded) is not the one
+    // waiting; drop it without ending the new one. Checked BEFORE the
+    // terminal test: a tombstone of an earlier process must never refuse
+    // the current one.
     if (existing.timer) clock.clearTimer(existing.timer);
     parked.delete(args.sessionId);
+  } else if (existing?.state === "terminal") {
+    // THIS process was stopped while its turn was winding down.
+    return false;
   }
   const prior = parked.get(args.sessionId);
   const now = clock.now();
@@ -306,6 +311,16 @@ export function releaseParkedLocalSession(sessionId: string): void {
   parked.delete(sessionId);
 }
 
+/** How long a terminal record stays to answer a late claim honestly. */
+const TOMBSTONE_TTL_MS = 60_000;
+
+/** Drop `entry` after the tombstone window, unless a newer record replaced it. */
+function expireTombstone(sessionId: string, entry: ParkedLocalSession): void {
+  entry.timer = clock.setTimer(() => {
+    if (parked.get(sessionId) === entry) parked.delete(sessionId);
+  }, TOMBSTONE_TTL_MS);
+}
+
 /**
  * End a parked (or continuing) session for good. Idempotent. Pending decisions
  * become unanswerable at once — synchronously, before any teardown await — and
@@ -334,13 +349,7 @@ export async function invalidateParkedLocalSession(
   } finally {
     // Kept as a tombstone only long enough to answer a late claim honestly;
     // dropped when no newer record replaced it.
-    const current = parked.get(sessionId);
-    if (current === entry) {
-      const timer = clock.setTimer(() => {
-        if (parked.get(sessionId) === entry) parked.delete(sessionId);
-      }, 60_000);
-      entry.timer = timer;
-    }
+    if (parked.get(sessionId) === entry) expireTombstone(sessionId, entry);
   }
 }
 
@@ -355,7 +364,9 @@ export function noteParkedLocalSessionEnded(sessionId: string): void {
   entry.invalidatedBy = "stopped";
   entry.pending.clear();
   if (entry.timer) clock.clearTimer(entry.timer);
-  entry.timer = null;
+  // The same tombstone window as an invalidation, so a Stop never leaves a
+  // record behind for good.
+  expireTombstone(sessionId, entry);
 }
 
 /** For a reconnecting UI and the status route: what is this session waiting on? */
