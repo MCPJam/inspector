@@ -156,6 +156,229 @@ describe("web auth manager batching", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a refused server out of the batch when asked to tolerate refusals", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          "server-a": {
+            ok: false,
+            status: 403,
+            code: "FORBIDDEN",
+            message: "server-a failed",
+          },
+          "server-b": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-b.example.com/mcp",
+            },
+          },
+          // An explicit-OAuth server with no token is refused in pass 1 too.
+          "server-c": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-c.example.com/mcp",
+              useOAuth: true,
+            },
+          },
+        },
+      }),
+    ) as typeof fetch;
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-a", "server-b", "server-c"],
+      10_000,
+      undefined,
+      undefined,
+      { serverNames: ["A", "B", "C"], tolerateServerRefusals: true },
+    );
+
+    // Each refusal is the error the server's own request would have thrown.
+    expect(result.refusedServers?.["server-a"]).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      message: "server-a failed",
+      details: { serverId: "server-a", serverName: "A" },
+    });
+    expect(result.refusedServers?.["server-c"]).toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      details: { oauthRequired: true, serverId: "server-c" },
+    });
+    expect(Object.keys(result.refusedServers ?? {})).toEqual([
+      "server-a",
+      "server-c",
+    ]);
+    // The manager holds the servers that were admitted, and only those.
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "server-b",
+    ]);
+  });
+
+  it("records a pass-2 refusal per server when tolerating refusals", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          "server-xaa": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-xaa.example.com/mcp",
+              authMethod: "xaa",
+            },
+          },
+          "server-plain": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-plain.example.com/mcp",
+            },
+          },
+        },
+      }),
+    ) as typeof fetch;
+
+    // No `xaaIssuer`: the XAA server fails in pass 2, where the mint would
+    // start. Without the option that throw is the batch's; with it, the
+    // sibling still connects.
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-xaa", "server-plain"],
+      10_000,
+      undefined,
+      undefined,
+      { tolerateServerRefusals: true },
+    );
+
+    expect(result.refusedServers?.["server-xaa"]).toMatchObject({
+      status: 500,
+      code: "INTERNAL_ERROR",
+    });
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "server-plain",
+    ]);
+  });
+
+  it("records a failed required recovery per server when tolerating refusals", async () => {
+    // Pass 1b: the batch could not refresh a private-authorization-server
+    // credential, the local refresh fails too, and the server is explicit
+    // OAuth, so the recovery was required. Its sibling still connects.
+    global.fetch = vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return Response.json({
+          results: {
+            "server-private": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthUnavailableReason: "private_authorization_server",
+              serverConfig: {
+                transportType: "http",
+                url: "http://localhost:8000/mcp",
+                headers: {},
+                useOAuth: true,
+              },
+            },
+            "server-b": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-b.example.com/mcp",
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return Response.json(
+          {
+            success: false,
+            code: "private_authorization_server",
+            message: "Authorization server is on a private address.",
+            refresh: {
+              authorizationServerUrl: "http://localhost:9000",
+              serverUrl: "http://localhost:8000/mcp",
+              oauthResourceUrl: "http://localhost:8000",
+              clientId: "client-1",
+              refreshToken: "stored-refresh-token",
+            },
+          },
+          { status: 409 },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+    localRefreshMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-private", "server-b"],
+      10_000,
+      undefined,
+      undefined,
+      { tolerateServerRefusals: true },
+    );
+
+    expect(result.refusedServers?.["server-private"]).toBeInstanceOf(Error);
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "server-b",
+    ]);
+  });
+
+  it("does not report refusals unless asked to tolerate them", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          "server-b": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-b.example.com/mcp",
+            },
+          },
+        },
+      }),
+    ) as typeof fetch;
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-b"],
+      10_000,
+    );
+
+    expect(result.refusedServers).toBeUndefined();
+  });
+
   it("passes an explicitly selected single connection to admission", async () => {
     global.fetch = vi.fn(async () => Response.json({ results: { "server-1": {
       ok: true, role: "member", accessLevel: "project_member", permissions: { chatOnly: false },
