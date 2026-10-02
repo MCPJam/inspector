@@ -757,7 +757,9 @@ export async function executeClaimedEventRun(
         ...(pinned ?? {}),
       });
     } catch (error) {
-      if (!isOwnerAuthorizationRefusal(error)) throw error;
+      // Only the subscription's own server parks the subscription; a refusal
+      // for another server of the environment fails this run like any error.
+      if (!isOwnerAuthorizationRefusal(error, input.subscription.serverId)) throw error;
       logger.warn("[events-executor] owner authorization refused", {
         ...logContext,
         error: shortError(error),

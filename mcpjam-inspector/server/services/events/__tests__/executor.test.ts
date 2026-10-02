@@ -393,7 +393,7 @@ describe("executeClaimedEventRun", () => {
         401,
         ErrorCode.UNAUTHORIZED,
         'Server "events" requires OAuth authentication. Please complete the OAuth flow first.',
-        { oauthRequired: true },
+        { oauthRequired: true, serverId: SERVER_ID },
       ),
     );
     const outcome = await executeClaimedEventRun(pinned, { ...deps, connect: undefined });
@@ -410,6 +410,19 @@ describe("executeClaimedEventRun", () => {
       status: "failed",
       error: "authorization_lost",
     });
+  });
+
+  it("fails, without parking, when another server of the environment is refused", async () => {
+    const { deps } = await liveDeps();
+    authorizeMock.createAuthorizedManager.mockRejectedValueOnce(
+      new WebRouteError(401, ErrorCode.UNAUTHORIZED, 'Server "docs" requires OAuth authentication.', {
+        oauthRequired: true,
+        serverId: "srv_other",
+      }),
+    );
+    const outcome = await executeClaimedEventRun(claim(), { ...deps, connect: undefined });
+    expect(outcome.status).toBe("failed");
+    expect(outcome).not.toMatchObject({ error: "authorization_lost" });
   });
 
   it("parks with tool_outcome_unknown instead of re-executing", async () => {

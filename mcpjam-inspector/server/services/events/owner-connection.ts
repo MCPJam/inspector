@@ -24,10 +24,16 @@ export function pinnedConnectionIds(
 /**
  * Whether connecting as the owner failed for want of authorization: the
  * authorize step refused (the owner's pinned connection is gone or needs
- * reconnecting, or the owner lost access), not an outage.
+ * reconnecting, or the owner lost access), not an outage. With `serverId`,
+ * only a refusal that names another server is excluded — a run's environment
+ * can hold servers besides the subscription's own.
  */
-export function isOwnerAuthorizationRefusal(error: unknown): boolean {
-  return error instanceof WebRouteError && (error.status === 401 || error.status === 403);
+export function isOwnerAuthorizationRefusal(error: unknown, serverId?: string): boolean {
+  if (!(error instanceof WebRouteError) || (error.status !== 401 && error.status !== 403)) {
+    return false;
+  }
+  const refused = error.details?.serverId;
+  return serverId === undefined || typeof refused !== "string" || refused === serverId;
 }
 
 /**
