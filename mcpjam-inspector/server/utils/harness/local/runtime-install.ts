@@ -302,13 +302,11 @@ export function packSourceFor(
       ? { kind: "url", location: value }
       : { kind: "file", location: value.replace(/^file:\/\//, "") };
   }
-  // Packs are attached to the Inspector release itself, and stamped with the
-  // same version, so the tag is `v<version>` — the tag `release.yml` already
-  // creates. No separate release, no separate tag to keep in step.
+  // Pack releases have their own version, independent of Inspector releases.
   return {
     kind: "url",
     location:
-      `https://github.com/MCPJam/inspector/releases/download/v${packVersion}/` +
+      `https://github.com/MCPJam/inspector/releases/download/local-harness-pack-v${packVersion}/` +
       `local-harness-pack-${platformKey}-${packVersion}.tar.gz`,
   };
 }

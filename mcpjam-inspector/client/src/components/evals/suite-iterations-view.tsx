@@ -52,6 +52,7 @@ import {
   compareRunsBySequence,
   evalSuitePinsSandboxImage,
   generationEnvironmentChoices,
+  generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -1874,6 +1875,7 @@ export function SuiteIterationsView({
           projectId={projectId}
           suiteId={suite._id}
           environmentChoices={generationEnvironmentChoices(suite)}
+          environmentId={generationEnvironmentId(suite)}
         />
       )}
       {/* Header */}
@@ -2285,6 +2287,11 @@ export function SuiteIterationsView({
                   }
                   isGeneratingTestCases={isGeneratingTestCases}
                   onRunClick={handleRunClick}
+                  // Not gated on `hideRunActions`: Evaluate always sets it
+                  // (it hides the legacy rail's controls), and this table is
+                  // Evaluate's own.
+                  onDeleteRun={canDeleteRuns ? onDirectDeleteRun : undefined}
+                  canDeleteRun={canDeleteRun}
                   onTestCaseClick={(testCaseId) =>
                     navigation.toTestEdit(suite._id, testCaseId)
                   }

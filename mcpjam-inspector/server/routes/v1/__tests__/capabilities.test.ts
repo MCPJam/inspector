@@ -33,7 +33,7 @@ import capabilities from "../capabilities.js";
 import { v1OnError } from "../envelope.js";
 import { EVAL_VOCABULARY_CAPABILITY } from "../eval-vocabulary.js";
 
-const PROJECT = "proj_a";
+const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 function makeApp() {
   const app = new Hono();
