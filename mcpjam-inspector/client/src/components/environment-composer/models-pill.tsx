@@ -33,6 +33,7 @@ import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
   modelRowKey,
+  selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
 import {
   modelTargetKey,
@@ -222,14 +223,25 @@ export function ModelsPill({
       return;
     }
     if (explicit.includes(modelId)) {
-      // Another row with this id was picked: this one takes its place (every
-      // target of the id moves onto the picked row's selection).
+      // Another row with this id was picked: this one takes its place. Every
+      // target of the id moves onto the picked row's selection and keeps its
+      // own settings, so Sonnet·Low + Sonnet·High stay two targets.
+      const base = selectionBesideLegacyId(model, "evalTarget");
+      const moved = targets
+        .filter((target) => target.modelId === modelId)
+        .map((target) => {
+          const settings = target.selection?.settings;
+          return modelTarget(
+            modelId,
+            base ? (settings ? { ...base, settings } : base) : undefined,
+          );
+        });
       emit(
         {
           ...value,
           explicitTargets: [
             ...targets.filter((target) => target.modelId !== modelId),
-            added,
+            ...(moved.length > 0 ? moved : [added]),
           ],
         },
         model,

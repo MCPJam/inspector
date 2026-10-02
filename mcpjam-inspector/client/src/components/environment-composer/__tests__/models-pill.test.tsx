@@ -320,6 +320,45 @@ describe("ModelsPill on the one picker", () => {
     });
   });
 
+  it("keeps two efforts of the id as two targets when the row is swapped", async () => {
+    mockModels.availableModels = [hosted, orgTwin];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [
+        {
+          modelId: "openai/gpt-4o",
+          selection: { ...orgSelection, settings: { reasoningEffort: "low" } },
+        },
+        {
+          modelId: "openai/gpt-4o",
+          selection: { ...orgSelection, settings: { reasoningEffort: "high" } },
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Free models" }));
+    await user.click(option(/^GPT-4o$/));
+
+    const last = onChange.mock.calls.at(-1)![0];
+    expect(last.explicitTargets).toEqual([
+      {
+        modelId: "openai/gpt-4o",
+        selection: expect.objectContaining({
+          source: "hosted",
+          settings: { reasoningEffort: "low" },
+        }),
+      },
+      {
+        modelId: "openai/gpt-4o",
+        selection: expect.objectContaining({
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+        }),
+      },
+    ]);
+  });
+
   it("reads a legacy id with no selection as the hosted row", async () => {
     mockModels.availableModels = [hosted, orgTwin];
     const user = userEvent.setup();
