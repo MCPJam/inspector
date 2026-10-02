@@ -27,7 +27,7 @@
       }
     },
     "codex": {
-      "fingerprint": "sha256:b574566d1707f0b22cd9efe51ae9feca417d2637660e72a545c77e7ebd1d13d0",
+      "fingerprint": "sha256:c3cb6c6b63f87c02b74af61b8bae25e85fb0687ffe73afe2cb305e652c957c09",
       "inputs": {
         "pack-dependency-closure": "sha256:9de7dc7ed47f2220d975f893a5bb908ff7f1aaf145c96f564fa4cdfba43f3092",
         ".github/workflows/local-harness-pack.yml": "sha256:a7065616c9abd39c3e4e66d2acf8f634b908aaf42bdda30bccc4a970d4423163",
@@ -43,18 +43,18 @@
         "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml": "sha256:d407b5b539f6fb5e0a80706f0d9345687c6c356076e07234ae3de7525ca12d8c",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/app-server-client.ts": "sha256:4e82cc1bba69fb1c3c3370953d480271b402ab606a41957b92b6bdf74937e078",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/app-server-protocol.ts": "sha256:6c143c853bc76cc1c276a6e5268ec9f43adb937d8ee015d06389fd952a95162c",
-        "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/approval-controller.ts": "sha256:95ae8e1f03aaed4ed6e7b1f56dd63ca9d9f43cc0730a8eff86956ff9b94984e9",
+        "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/approval-controller.ts": "sha256:443702e916634fe55e230a2c6db7ebaa64442beebc7d0701fc1e3b2bfe88e69b",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/codex-home.ts": "sha256:2d0159f317f75a0b8ac42979120c11186a1771366049439b5c78e489792ea72d",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/host-tool-catalog.ts": "sha256:03bd9eeba09c4afae22cd03f1557e0b0468bae117035b60ebc9af4d5ec89bffc",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/host-tool-relay.ts": "sha256:5d506468b46c3704a0b8c9fe93d9cd83ca76668349cdac8dfe3b9b49f280d4d9",
-        "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/host-tools-mcp.ts": "sha256:b31df00e049b52efc03697bdbe3a3f04872860ac76d7886b42424d664a741573",
-        "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/index.ts": "sha256:3d616f998c6a97f32ded3b6e6db2d8a8cffbb5fa24823331e3ee08de11166068",
+        "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/host-tools-mcp.ts": "sha256:8cba150214010dae179b32ed256e47ad03b35a271b4c1307e50ff7869479ef12",
+        "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/index.ts": "sha256:adff0a963d33c2b00a0772205be45e4671f865b0eab09d685b5e14e7850205ee",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/mcp-isolation.ts": "sha256:fdd69336ab07290740aa33c22bd055c9557cc9bcefd3c34f1540afa5b0859abe",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/step-tracker.ts": "sha256:9898416cc334c29597926a249c7167e5da2b46997b92dfce96a842b6c48a801c",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/stream-translator.ts": "sha256:f3a39fb83d2fbe3db8c046ca959022bd9c43e5bd32e5467753b98d9f34b7ac29",
         "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/usage.ts": "sha256:cb32e98cea5f26c235e27f7a69015a97a975e049968cae537e348a451f41a139",
         "mcpjam-inspector/server/utils/harness/codex-appserver/codex-appserver-bootstrap.ts": "sha256:7953b046954af4c5a50b7cb6197f5517471831010b8c1cc82f13cb9167ff0954",
-        "mcpjam-inspector/server/utils/harness/codex-appserver/shared/sandbox-policy.ts": "sha256:7e9d9519aacb563d1b7e59bd9876f8ec9205338f9e2a0d741576f6fbfa9a5c1a",
+        "mcpjam-inspector/server/utils/harness/codex-appserver/shared/sandbox-policy.ts": "sha256:36bfc7608e0ba484f0a9aeb27471f9fd4b41b2827ea5c41ae30c03342337d5e0",
         "mcpjam-inspector/server/utils/harness/codex-appserver/shared/tool-names.ts": "sha256:35927b497eb506033a5476a36665969222e0bc1a3a1cbe4d19957cb088a6a7c9",
         "mcpjam-inspector/server/utils/harness/codex-appserver/shared/turn-fingerprint.ts": "sha256:24cebd9625ad3a1e81cecbd8bdcd16f029f178762cb5223b0cf805677c9f3d32",
         "mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs": "sha256:278f2ac6ca25c64cb4d6421b7c0847efcc945e12e152fcac39501933c238f98f",
@@ -63,8 +63,8 @@
         "mcpjam-inspector/tools/mcpjam-job-launcher/go.sum": "sha256:ef3aadfe3bfc56cc423184cffdf0fed07e86d45ac3a8eaef5a852f5559fa1fa9",
         "mcpjam-inspector/tools/mcpjam-job-launcher/main.go": "sha256:c3c5a24c16ff609cb7660845b8460d32134c4d4073928cb45b94e5cb6b93a57d",
         "mcpjam-inspector/tools/mcpjam-job-launcher/main_test.go": "sha256:a132f51debb45404e804cf7e06b2a5ab2aedea8f5b9c20cdecb2fea7ad3d1735",
-        "recipe/bridge.mjs": "sha256:aaba571efef69f55be264d2460c4db84ee27e6ea103fbe344efb95dcf846ed96",
-        "recipe/host-tools-mcp.mjs": "sha256:a5531d50894837c0eba9913527380e7ec33e0fc0066ecf9a486a753c0d94514b",
+        "recipe/bridge.mjs": "sha256:8efb238f22c214b19851ca184b86bf58433b47ab0b0beb1272c79edc70eebc4c",
+        "recipe/host-tools-mcp.mjs": "sha256:cb2e2f5993ccb3801cc76d52622db40d7cf126e78a706309b8bd3dcf94db8c8f",
         "recipe/package.json": "sha256:2aa418148bd46e701e2757734f4b9c7ea2bc137cb93e1c969482fc3de35d1de1",
         "recipe/pnpm-lock.yaml": "sha256:d407b5b539f6fb5e0a80706f0d9345687c6c356076e07234ae3de7525ca12d8c"
       }

@@ -271,10 +271,12 @@ export function LocalHarnessTrustDialog({
                 not use a personal Codex or ChatGPT subscription. The folder is
                 where it starts. In chat it asks before every command and file change,
                 reads included. In evals and swarms nobody is there to ask, so
-                its commands run in Codex's own sandbox: they can write only
-                that run's folder and a private temp folder, and have no
-                network. Reads are not restricted, and MCP tools run in MCPJam
-                under your tool policy, outside that sandbox.
+                Codex runs there only on platforms where MCPJam has verified
+                Codex's own sandbox: its commands can write only that run's
+                folder and a private temp folder, and have no network.
+                Elsewhere evals and swarms do not run Codex on this computer.
+                Reads are not restricted, and MCP tools run in MCPJam under
+                your tool policy, outside that sandbox.
               </>
             ) : (
               <>
@@ -363,7 +365,7 @@ export function LocalHarnessTrustDialog({
             <dt>Permissions</dt>
             <dd>
               {isCodex
-                ? "commands and file changes ask; evals and swarms sandboxed"
+                ? "commands and file changes ask; evals and swarms only where sandboxed"
                 : "edits in folder, commands ask"}
             </dd>
             <dt>Policy</dt>
