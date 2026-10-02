@@ -13,6 +13,7 @@ import {
   REVOKE_SESSION_PATH,
   SIGN_OUT_REVOKE_TOKEN_TIMEOUT_MS,
 } from "@/lib/auth/revoke-session";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const authState = vi.hoisted(() => ({
   signInMock: vi.fn(),
@@ -187,13 +188,16 @@ describe("SidebarUser", () => {
     authState.signOutMock.mockImplementation(() => {
       latchedWhenSignOutRan = isSignOutInProgress();
     });
+    useSessionRefreshStore.setState({ queriesPaused: false });
 
     render(<SidebarUser />);
 
     fireEvent.click(screen.getByText("Log out"));
 
-    // Latched synchronously, before the revocation step even starts.
+    // Latched synchronously, before the revocation step even starts, and the
+    // gated subscriptions are gone before Convex can lose its identity.
     expect(isSignOutInProgress()).toBe(true);
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
     await waitFor(() => expect(authState.signOutMock).toHaveBeenCalled());
     expect(latchedWhenSignOutRan).toBe(true);
   });
