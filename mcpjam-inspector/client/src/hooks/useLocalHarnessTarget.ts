@@ -405,6 +405,10 @@ export function useLocalHarnessController(
     workspaceHarnessRef.current = harnessId;
     workspaceRef.current = null;
     setWorkspace(null);
+    // Install attempts are per harness too: an id latched from the previous
+    // harness's install would read every poll of this one's as a superseded
+    // straggler and drop it.
+    observedAttemptRef.current = null;
   }, [harnessId]);
 
   const [pendingApproval, setPendingApproval] =
@@ -816,6 +820,16 @@ export function useLocalHarnessController(
     > => {
       const result = await registerLocalHarnessWorkspace(selection, harnessId);
       if (!result.ok) return result;
+      // The harness changed while the folder was being registered: this
+      // registration belongs to a setup that is no longer on screen.
+      if (workspaceHarnessRef.current !== harnessId) {
+        return {
+          ok: false as const,
+          kind: "conflict" as const,
+          status: null,
+          message: "The client changed while the folder was being set up. Choose the folder again.",
+        };
+      }
       const registered = {
         workspaceGrantId: result.workspaceGrantId,
         displayRoot: result.displayRoot,

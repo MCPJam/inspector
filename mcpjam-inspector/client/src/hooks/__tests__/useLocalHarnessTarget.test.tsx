@@ -1125,6 +1125,63 @@ describe("a Codex controller is its own harness", () => {
     expect(registerWorkspaceMock).toHaveBeenCalledWith({ useSuggested: true }, "codex");
   });
 
+  it("drops a folder registration that finishes after the harness changed", async () => {
+    let release!: (value: unknown) => void;
+    registerWorkspaceMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    let pending!: Promise<{ ok: boolean }>;
+    act(() => {
+      pending = rendered.result.current.chooseWorkspace({ useSuggested: true });
+    });
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.harnessId).toBe("codex"));
+    let outcome!: { ok: boolean };
+    await act(async () => {
+      release({ ok: true, workspaceGrantId: "ws_cc", displayRoot: "~/cc" });
+      outcome = await pending;
+    });
+    expect(outcome.ok).toBe(false);
+    expect(rendered.result.current.workspace).toBeNull();
+  });
+
+  it("watches Codex's own install attempt after switching from Claude Code's", async () => {
+    fetchAvailabilityMock.mockImplementation(async (_project: string, harness?: string) => ({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: harness === "codex"
+          ? { state: "downloading", packVersion: "3.4.0", percent: 5, attemptId: "att_codex" }
+          : { state: "absent", packVersion: "3.4.0" },
+      },
+    }));
+    startInstallMock.mockResolvedValue({
+      ok: true,
+      kind: "accepted",
+      attemptId: "att_cc",
+      status: { state: "downloading", packVersion: "3.4.0", percent: 0, attemptId: "att_cc" },
+      statusUrl: "/s",
+      retryAfterSeconds: 1,
+    });
+    fetchRuntimeStatusMock.mockImplementation(async (args?: { harnessId?: string }) => ({
+      ok: true,
+      status: args?.harnessId === "codex"
+        ? { state: "downloading", packVersion: "3.4.0", percent: 40, attemptId: "att_codex" }
+        : { state: "downloading", packVersion: "3.4.0", percent: 1, attemptId: "att_cc" },
+    }));
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+      rendered.result.current.captureApproval({ expectations: EXPECTATIONS, scopeKey: "host-1:claude-code" });
+      await rendered.result.current.startInstall();
+    });
+    // Claude Code's attempt is now the one being watched; switch to Codex,
+    // whose own install is already running under a different attempt id.
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.runtimeStatus?.percent).toBe(40), { timeout: 4_000 });
+  });
+
   it("does not carry a folder chosen for Claude Code into Codex", async () => {
     const rendered = render();
     await waitFor(() => expect(rendered.result.current.loading).toBe(false));
