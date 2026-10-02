@@ -1121,5 +1121,23 @@ describe("a Codex controller is its own harness", () => {
       await result.current.startInstall();
     });
     expect(startInstallMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: "codex" }));
+    // The folder is registered under Codex's own rollout, not Claude Code's.
+    expect(registerWorkspaceMock).toHaveBeenCalledWith({ useSuggested: true }, "codex");
+  });
+
+  it("does not carry a folder chosen for Claude Code into Codex", async () => {
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+    });
+    expect(rendered.result.current.workspace).not.toBeNull();
+
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.harnessId).toBe("codex"));
+    expect(rendered.result.current.workspace).toBeNull();
+    expect(
+      rendered.result.current.captureApproval({ expectations: EXPECTATIONS, scopeKey: "host-1:codex" }),
+    ).toBeNull();
   });
 });

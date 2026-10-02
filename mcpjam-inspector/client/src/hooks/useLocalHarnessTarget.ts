@@ -393,6 +393,19 @@ export function useLocalHarnessController(
     workspaceGrantId: string;
     displayRoot: string;
   } | null>(null);
+  /**
+   * A folder chosen for one harness is not a choice for another. Switching
+   * the previewed host from Claude Code to Codex must not carry the folder
+   * picked in Claude Code's setup into Codex's dialog and approval; a stored
+   * Codex consent still supplies Codex's own folder.
+   */
+  const workspaceHarnessRef = useRef(harnessId);
+  useEffect(() => {
+    if (workspaceHarnessRef.current === harnessId) return;
+    workspaceHarnessRef.current = harnessId;
+    workspaceRef.current = null;
+    setWorkspace(null);
+  }, [harnessId]);
 
   const [pendingApproval, setPendingApproval] =
     useState<LocalHarnessPendingApproval | null>(null);
