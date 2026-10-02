@@ -1988,10 +1988,7 @@ export async function drainAssistantTurn(
   // so `resolveTurnRuntime` adds it once the rail is known.
   const mergedExtraBodyFields =
     journeyRunId !== undefined
-      ? {
-          ...(extraBodyFields ?? {}),
-          journeyRunId,
-        }
+      ? { ...(extraBodyFields ?? {}), journeyRunId }
       : extraBodyFields;
 
   // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union.
