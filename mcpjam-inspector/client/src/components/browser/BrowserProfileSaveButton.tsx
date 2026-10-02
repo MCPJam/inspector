@@ -3,6 +3,7 @@ import { useState } from "react";
 import { DropdownMenuItem } from "@mcpjam/design-system/dropdown-menu";
 import { toast } from "@/lib/toast";
 import { saveBrowserProfile } from "@/lib/browser-profiles/client";
+import { useBrowserProfileArchivesAvailable } from "@/lib/browser-profiles/availability";
 
 export interface BrowserProfileArchiveResult {
   archive: Blob;
@@ -20,6 +21,7 @@ export function BrowserProfileSaveButton({
   disabled?: boolean;
 }) {
   const [saving, setSaving] = useState(false);
+  const available = useBrowserProfileArchivesAvailable();
 
   const onSave = async () => {
     const name = window.prompt("Name this browser profile", "My browser");
@@ -47,6 +49,20 @@ export function BrowserProfileSaveButton({
       setSaving(false);
     }
   };
+
+  if (!available) {
+    return (
+      <DropdownMenuItem disabled>
+        <Save className="h-3.5 w-3.5" />
+        <span className="flex flex-col">
+          Save profile for other chats…
+          <span className="text-xs text-muted-foreground">
+            Not available on this server
+          </span>
+        </span>
+      </DropdownMenuItem>
+    );
+  }
 
   return (
     <DropdownMenuItem

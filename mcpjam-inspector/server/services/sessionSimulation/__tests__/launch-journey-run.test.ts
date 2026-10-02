@@ -17,10 +17,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * a replayed launch key must acknowledge the original and start NOTHING.
  */
 
-const { createRunMock, startRunMock, rolloutMock } = vi.hoisted(() => ({
+const { createRunMock, startRunMock, rolloutMock, queryMock, localMock, ensureMock } = vi.hoisted(() => ({
   createRunMock: vi.fn(),
   startRunMock: vi.fn(),
-  rolloutMock: vi.fn(),
+  rolloutMock: vi.fn(), queryMock: vi.fn(), localMock: vi.fn(), ensureMock: vi.fn(),
 }));
 
 vi.mock("../../swarm-agent.js", async (importOriginal) => {
@@ -32,11 +32,15 @@ vi.mock("../../../routes/web/auth.js", () => ({
   createAuthorizedManager: vi.fn(),
 }));
 vi.mock("../../evals/route-helpers.js", () => ({
-  createConvexClient: vi.fn(),
+  createConvexClient: () => ({ query: queryMock }),
 }));
 vi.mock("../../../utils/computers/browser-rollout.js", () => ({
   rolloutEnabled: rolloutMock,
 }));
+
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: localMock }));
+vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: ensureMock }));
+vi.mock("../../../utils/harness/local/acting-user.js", () => ({ resolveLocalHarnessActor: async () => ({ userId: "user-1" }) }));
 
 import { launchJourneyRun } from "../launch-journey-run.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
@@ -70,6 +74,12 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
   startRunMock.mockResolvedValue(undefined);
   rolloutMock.mockResolvedValue(false);
+  localMock.mockResolvedValue(true);
+  queryMock.mockImplementation(async (name: string) => {
+    if (name === "journeys:getJourney") return { hostIds: ["h1"] };
+    if (name === "projectEnvironments:getEnvironment") return { hostId: "h1" };
+    if (name === "hosts:getHost") return { config: {} };
+  });
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -528,4 +538,15 @@ describe("launchJourneyRun", () => {
       environmentIds: ["env_1", "env_2"],
     });
   });
+});
+
+it.each([undefined, "codex", "claude-code"].flatMap(harness => [false, true].map(environment => ({ harness, environment }))))("only checks local readiness for $harness with environment=$environment", async ({ harness, environment }) => {
+  const original = queryMock.getMockImplementation()!;
+  queryMock.mockImplementation(async (name: string, ...args: any[]) => name === "hosts:getHost" ? { config: { harness } } : original(name, ...args));
+  createRunMock.mockResolvedValue(created());
+  await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", ...(environment ? { environmentIds: ["env_1"] } : {}) });
+  expect(localMock).toHaveBeenCalledTimes(harness === "claude-code" ? 1 : 0);
+  expect(ensureMock).toHaveBeenCalledTimes(harness === "claude-code" ? 1 : 0);
+  expect(createRunMock.mock.calls[0][2].runtimeVenue).toBe(harness === "claude-code" ? "local" : "hosted");
+  await settle();
 });

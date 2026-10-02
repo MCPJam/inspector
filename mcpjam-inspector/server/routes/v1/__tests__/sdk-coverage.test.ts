@@ -97,6 +97,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
     "listTraceDestinationBackfills",
   "get /me": "getMe",
+  // Platform feedback — a report about MCPJam itself, sent to the team.
+  "post /feedback": "sendFeedback",
   "get /models": "listModels",
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",

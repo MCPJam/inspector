@@ -25,13 +25,18 @@ export function spendRefusalOf(error: unknown): SpendRefusal | undefined {
     return undefined;
   if (!(error instanceof Error)) return undefined;
   const info = humanizeSwarmAttemptError(error.message);
-  return info.refusalReason ? info : undefined;
+  return info.refusalReason || isTransientSpendRefusal(info.code)
+    ? info
+    : undefined;
 }
 
 /** Shared by all persona and host calls in one session. */
 export class AdmissionWaitBudget {
   remainingMs: number;
-  constructor(totalMs = 5 * 60_000, readonly maxAttemptsPerCall = 8) {
+  constructor(
+    totalMs = 5 * 60_000,
+    readonly maxAttemptsPerCall = 8,
+  ) {
     this.remainingMs = totalMs;
   }
   take(delayMs: number): boolean {

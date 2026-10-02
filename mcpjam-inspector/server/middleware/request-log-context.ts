@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { matchedRoutes } from "hono/route";
 import { randomUUID } from "node:crypto";
 import {
   resolveEnvironment,
@@ -108,6 +109,15 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
 
   // routePath is set by the matched handler after next(); read it now
   const route = c.req.routePath || "unmatched";
+  // A middleware that answers first (a rate limiter's 429) leaves `route` at
+  // its own mount pattern. The next concrete route after it is the handler the
+  // request was headed for, as a pattern, so path parameters never reach the
+  // log. Later wildcards (the dev `/*` mount, the SPA fallback) are not it.
+  const targetRoute = route.endsWith("*")
+    ? matchedRoutes(c)
+        .slice(c.req.routeIndex + 1)
+        .find((r) => !r.path.endsWith("*"))?.path
+    : undefined;
 
   const status = c.res.status;
   const reqLogger = getRequestLogger(c, "http");
@@ -116,6 +126,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     ...(c.var.requestLogContext as RequestLogContext),
     component: "http",
     route,
+    ...(targetRoute ? { targetRoute } : {}),
     statusCode: status,
   };
   c.set("requestLogContext", enriched);

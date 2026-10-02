@@ -1,3 +1,4 @@
+vi.mock("../../../utils/harness/local/run-resources.js", async () => ({ ...(await vi.importActual("../../../utils/harness/local/run-resources.js")), isLocalHarnessVenue: () => false }));
 /**
  * swarm-runner.sandbox.test.ts — the per-attempt ephemeral sandbox (B-isolation).
  *
