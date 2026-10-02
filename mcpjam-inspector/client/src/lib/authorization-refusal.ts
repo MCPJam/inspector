@@ -27,13 +27,7 @@ import { ConvexError } from "convex/values";
  * `AUTH_WRAPPERS.md` for the convention.
  */
 export function isAuthorizationRefusal(error: unknown): boolean {
-  if (!(error instanceof ConvexError)) return false;
-  const data: unknown = error.data;
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { kind?: unknown }).kind === "forbidden"
-  );
+  return hasKind(error, "forbidden");
 }
 
 /**
@@ -51,11 +45,32 @@ export function isAuthorizationRefusal(error: unknown): boolean {
  * INSPECTOR-CLIENT-2H9 was 13 of these from one sign-out.
  */
 export function isSessionRevokedError(error: unknown): boolean {
+  return hasKind(error, "session_revoked");
+}
+
+/**
+ * Did the backend refuse because the request carried no identity at all?
+ *
+ * `ConvexError({ kind: 'unauthenticated' })` (`UNAUTHENTICATED_KIND` in the
+ * backend's `lib/actors.ts`) is what `requireIdentity` throws. Nearly every
+ * one of these is a live subscription Convex re-ran in the moment between
+ * this tab's auth being cleared and re-established (a sign-out, a Retry on
+ * the session banner, a loading flip); the readiness gate re-subscribes a
+ * second or two later. 331 of 337 in one week ran that way (PLB-159).
+ *
+ * Not a fault, so it stays out of the error sinks. Unlike a revoked session
+ * there is nothing to do about it: auth is already on its way back.
+ */
+export function isUnauthenticatedError(error: unknown): boolean {
+  return hasKind(error, "unauthenticated");
+}
+
+function hasKind(error: unknown, kind: string): boolean {
   if (!(error instanceof ConvexError)) return false;
   const data: unknown = error.data;
   return (
     typeof data === "object" &&
     data !== null &&
-    (data as { kind?: unknown }).kind === "session_revoked"
+    (data as { kind?: unknown }).kind === kind
   );
 }
