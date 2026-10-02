@@ -77,6 +77,8 @@ vi.mock("@/shared/types", async (importOriginal) => {
   return { ...actual, isMCPJamProvidedModel: vi.fn().mockReturnValue(true) };
 });
 
+import { MCPClientManager } from "@mcpjam/sdk";
+import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
 const MARKER = /UNEXPECTED_MARKER/;
@@ -229,5 +231,44 @@ describe("hosted chat turn (MJ-001)", () => {
           part.data.message.result?.tools,
       ),
     ).toBe(true);
+  });
+
+  it("fails a hung server's tool listing with our own 424 and drops the connect", async () => {
+    // A server that accepts the request and never answers. The abort is the
+    // evidence the stuck connect was cancelled rather than left to run out
+    // the manager's own per-request timeout and retries.
+    let aborted = false;
+    upstream.current = (request) =>
+      new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(request.signal.reason);
+        });
+      });
+    const disconnectAll = vi.spyOn(
+      MCPClientManager.prototype,
+      "disconnectAllServers",
+    );
+    const { prepareChatV2 } = await vi.importActual<
+      typeof import("../../../utils/chat-v2-orchestration.js")
+    >("../../../utils/chat-v2-orchestration.js");
+    prepareChatV2Mock.mockImplementation((args: any) => {
+      // The hosted turn asks for the real budget; shortened here so the test
+      // does not wait 30 s.
+      expect(args.toolListingTimeoutMs).toBe(WEB_CHAT_TOOL_LISTING_TIMEOUT_MS);
+      return prepareChatV2({ ...args, toolListingTimeoutMs: 50 });
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", body, token);
+
+    expect(response.status).toBe(424);
+    const payload = (await response.json()) as any;
+    expect(payload.code).toBe("TIMEOUT");
+    expect(payload.message).toMatch(/MCP server ".*" timed out/);
+    expect(disconnectAll).toHaveBeenCalled();
+    expect(aborted).toBe(true);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    disconnectAll.mockRestore();
   });
 });

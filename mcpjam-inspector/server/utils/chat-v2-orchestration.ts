@@ -696,6 +696,17 @@ export interface PrepareChatV2Options {
    * before the model sees the catalog.
    */
   toolDescriptionOverrides?: Readonly<Record<string, string>>;
+  /**
+   * Upper bound, in ms, on connecting to the selected servers and listing
+   * their tools. On expiry the turn fails with a `MCP server "<name>" timed
+   * out` error, marked as the user's hop like any other dead server.
+   *
+   * Opt-in: absent means no deadline, which keeps local, eval and agent turns
+   * unchanged. The hosted web turn sets it because nothing else bounds this
+   * await before the first byte, and the edge gives up long before the
+   * manager's own per-request timeout and retries do.
+   */
+  toolListingTimeoutMs?: number;
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -1285,6 +1296,62 @@ export interface PrepareChatV2Result {
 }
 
 /**
+ * Races a tool listing against `timeoutMs`; with no budget it is the listing.
+ *
+ * The listing that loses is abandoned, not cancelled — the caller's manager
+ * cleanup (`disconnectAllServers`) is what stops the stuck connect. Its
+ * eventual rejection is swallowed here so it cannot surface as unhandled.
+ */
+async function withinToolListingBudget<T>(
+  listing: Promise<T>,
+  timeoutMs: number | undefined,
+  describeServers: () => string,
+): Promise<T> {
+  if (timeoutMs === undefined) return listing;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      listing,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          listing.catch(() => {});
+          reject(
+            new Error(
+              `MCP server ${describeServers()} timed out: connecting and listing tools took longer than ${Math.round(timeoutMs / 1000)}s.`,
+            ),
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    // Leaving the timer live would hold the event loop open for the rest of
+    // the budget on every healthy turn.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * `"a", "b"` — the selected servers still not connected when the budget ran
+ * out, by their host label. Falls back to every selected server when all of
+ * them report connected (the listing itself is what hung).
+ */
+function describeUnconnectedServers(
+  mcpClientManager: InstanceType<typeof MCPClientManager>,
+  serverIds: readonly string[],
+  groups: ConnectionsByServerId | undefined,
+  serverLabels: Record<string, string> | undefined,
+): string {
+  const unconnected = serverIds.filter((id) =>
+    (groups?.[id]?.map((c) => c.key) ?? [id]).some(
+      (key) => mcpClientManager.getConnectionStatus(key) !== "connected",
+    ),
+  );
+  return (unconnected.length ? unconnected : serverIds)
+    .map((id) => `"${serverLabels?.[id] ?? id}"`)
+    .join(", ");
+}
+
+/**
  * Prepare tools, system prompt, temperature, and message scrubber for chat-v2.
  *
  * Throws if Anthropic tool name validation fails.
@@ -1314,6 +1381,7 @@ export async function prepareChatV2(
     serverLabels,
     toolCallCancellation,
     toolDescriptionOverrides,
+    toolListingTimeoutMs,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -1352,14 +1420,25 @@ export async function prepareChatV2(
   });
 
   // 1. Get MCP + skill tools
+  const listToolsWithinBudget = <T>(listing: Promise<T>): Promise<T> =>
+    withinToolListingBudget(listing, toolListingTimeoutMs, () =>
+      describeUnconnectedServers(
+        mcpClientManager,
+        selectedServers ?? mcpClientManager.listServers(),
+        selectedGroups,
+        serverLabels,
+      ),
+    );
   let mcpTools;
   try {
     mcpTools =
       selectedGroups && Object.keys(selectedGroups).length
         ? mergeConnectionToolsets(
-            await mcpClientManager.getToolsForAiSdkByServer(
-              knownSelectedServers,
-              toolOptions,
+            await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(
+                knownSelectedServers,
+                toolOptions,
+              ),
             ),
             selectedGroups,
             {
@@ -1369,9 +1448,11 @@ export async function prepareChatV2(
               },
             },
           )
-        : await mcpClientManager.getToolsForAiSdk(
-            knownSelectedServers,
-            toolOptions,
+        : await listToolsWithinBudget(
+            mcpClientManager.getToolsForAiSdk(
+              knownSelectedServers,
+              toolOptions,
+            ),
           );
   } catch (error) {
     // The ONE hop in this function that leaves MCPJam: listing tools reaches
