@@ -1179,6 +1179,12 @@ export function NewSwarmConfirmStep({
     fundingState.status === "ready" && previewRuns
       ? fundingSplitOf(fundingState.preview, previewRuns.length)
       : null;
+  // After a launch attempt, a counter changed and the split is being re-read.
+  // `shownSplit` is null until it lands, so a click now would send nothing to
+  // compare against and the launch would stop again with its first-review
+  // wording. Before any goal exists the launch's own check covers this, and a
+  // preview that never settles must not be able to stop a first launch.
+  const previewSettling = structureLocked && fundingState.status === "loading";
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1696,7 +1702,7 @@ export function NewSwarmConfirmStep({
           </Button>
           <Button
             type="button"
-            disabled={!canLaunch}
+            disabled={!canLaunch || previewSettling}
             data-testid="new-swarm-launch"
             onClick={() =>
               onLaunch({
