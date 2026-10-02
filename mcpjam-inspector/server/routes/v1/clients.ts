@@ -56,6 +56,7 @@ import {
 // a stale copy is a silent "that host cannot be created through the API").
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { markDeprecated as markDeprecatedResponse } from "./deprecation.js";
 import { logger } from "../../utils/logger.js";
@@ -314,6 +315,7 @@ async function listHostRows(
   convexAuthToken: string,
   projectId: string,
 ): Promise<HostListRow[]> {
+  requireProjectIdArg(projectId, "v1.clients");
   const readClient = createConvexClient(convexAuthToken);
   try {
     return ((await readClient.query(

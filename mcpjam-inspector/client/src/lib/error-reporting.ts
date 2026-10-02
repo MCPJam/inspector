@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   createQueryRequestCache,
   queryFailureTags,
@@ -172,10 +173,15 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       ? queryPageLocation(window.location.href)
       : undefined;
 
+  const recovery = useSessionRefreshStore.getState();
+  const recoveryTags =
+    recovery.recoveryId && Date.now() - recovery.recoveryAt < 300_000
+      ? { auth_recovery_id: recovery.recoveryId }
+      : {};
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source, ...queryTags },
+      tags: { source: options.source, ...queryTags, ...recoveryTags },
       ...(queryTags
         ? {
             extra: {

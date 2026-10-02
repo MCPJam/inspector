@@ -14,25 +14,11 @@ import {
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
 import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
 
-/**
- * Stable hook fed to `<ConvexProviderWithAuthKit useAuth={...}>`.
- *
- * Returns the same shape as `@workos-inc/authkit-react`'s `useAuth`, but
- * substitutes a guest token + placeholder user when there is no signed-in
- * WorkOS user. This makes Convex authenticate guests through the same
- * provider chain as authed users — no separate `<GuestConvexAuthBridge>`,
- * no `client.setAuth` race, no guest-specific code paths in feature
- * surfaces.
- *
- * The Convex/workos adapter (`@convex-dev/workos`) only inspects `!!user`
- * to decide `isAuthenticated` and calls `getAccessToken()` to fetch the
- * bearer. `GUEST_USER_PLACEHOLDER` exists solely to satisfy that check
- * for guests; nothing reads its fields.
- */
-
-const GUEST_USER_PLACEHOLDER = {
-  __guest: true as const,
-  id: "__guest__",
+/** Stable token getters for Convex's public custom-auth provider. */
+export type AuthTokenRequest = {
+  forceRefreshToken?: boolean;
+  signal?: AbortSignal;
+  onAttempt?: (mode: "guest" | "workos") => void;
 };
 
 const GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
@@ -71,6 +57,8 @@ async function fetchTokenWithRetry(
   fetchOnce: () => Promise<string | null>,
   opts: {
     source: string;
+    request?: AuthTokenRequest;
+    mode?: "guest" | "workos";
     isTerminalError?: (error: unknown) => boolean;
     /**
      * A null token that will stay null for the rest of the window (the
@@ -88,8 +76,11 @@ async function fetchTokenWithRetry(
     attempt <= AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length;
     attempt += 1
   ) {
+    if (opts.request?.signal?.aborted) return null;
+    opts.request?.onAttempt?.(opts.mode ?? "guest");
     try {
       const token = await fetchOnce();
+      if (opts.request?.signal?.aborted) return null;
       if (token) {
         // Whatever went wrong before is over — take any banner down.
         useSessionRefreshStore.getState().clear();
@@ -98,6 +89,7 @@ async function fetchTokenWithRetry(
       if (opts.isTerminalNull?.()) return pauseQueriesBeforeAuthClear();
       lastError = undefined;
     } catch (error) {
+      if (opts.request?.signal?.aborted) return null;
       if (opts.isTerminalError?.(error)) {
         useSessionRefreshStore.getState().notifyFailure("signed_out");
         return pauseQueriesBeforeAuthClear();
@@ -109,17 +101,25 @@ async function fetchTokenWithRetry(
     await delay(AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS[attempt]);
   }
 
-  // Failures throw their real cause, so the generic message fires only when
-  // every attempt returned no token without an error — for a guest, the
-  // server answering a create request with a 204 "no guest".
-  reportCaught(lastError ?? new Error(`${opts.source} returned no token`), {
-    source: opts.source,
-    level: "warning",
-    extra: {
-      attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1,
-      ...guestFailureExtra(lastError),
-    },
-  });
+  if (opts.request?.signal?.aborted) return null;
+
+  // Upstream error messages can contain credentials. Keep only allowlisted
+  // status/reason fields and a fixed message; reporting cannot block recovery.
+  try {
+    reportCaught(
+      new Error(`${opts.source} ${lastError ? "failed" : "returned no token"}`),
+      {
+        source: opts.source,
+        level: "warning",
+        extra: {
+          attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1,
+          ...guestFailureExtra(lastError),
+        },
+      },
+    );
+  } catch {
+    // Authentication must still reach the blocked state if reporting fails.
+  }
   // Convex is about to clearAuth() on this null. Surface a banner offering an
   // in-place retry, rather than letting the page crash into an error boundary
   // whose "Try again" cannot work while Convex sits in `noAuth`.
@@ -167,9 +167,9 @@ export function useUnifiedConvexAuth() {
   // constant would freeze the hostname before a test could stub it.
   const skipGuest = shouldSkipGuestSession();
   // Bumped when the user presses Retry on the session-refresh banner. It feeds
-  // both the memo below (new `getAccessToken` identity → Convex re-runs
+  // both the memo below (new `fetchAccessToken` identity → Convex re-runs
   // `setAuth`) and the guest bootstrap effect (a fully-lapsed guest has
-  // `user: null`, and the adapter only installs auth once `user` is truthy, so
+  // `isAuthenticated: false`, so
   // the guest must be re-minted before a re-auth can happen at all).
   const retryNonce = useSessionRefreshStore((s) => s.retryNonce);
   const [guestToken, setGuestToken] = useState<string | null>(
@@ -270,20 +270,28 @@ export function useUnifiedConvexAuth() {
     };
   }, [skipGuest, workos.isLoading, workos.user, retryNonce]);
 
-  // The WorkOS adapter keys its Convex token fetcher on these callbacks.
-  // Changing one clears socket auth, even when the refreshed token is valid.
+  // Convex keys its auth configuration on these callbacks.
+  // Changing one replaces authentication, even when the token is still valid.
   // Keep them stable across guest-token and WorkOS profile updates.
   const getWorkosAccessToken = useCallback(
-    () =>
-      fetchTokenWithRetry(() => workos.getAccessToken(), {
-        source: "workos_token_refresh",
-        isTerminalError: isLoginRequiredError,
-      }),
+    (request?: AuthTokenRequest) =>
+      fetchTokenWithRetry(
+        () =>
+          workos.getAccessToken({
+            forceRefresh: request?.forceRefreshToken ?? false,
+          }),
+        {
+          request,
+          mode: "workos",
+          source: "workos_token_refresh",
+          isTerminalError: isLoginRequiredError,
+        },
+      ),
     [workos.getAccessToken, workos.user?.id, retryNonce],
   );
 
   const getGuestAccessToken = useCallback(
-    async (opts?: { forceRefreshToken?: boolean }): Promise<string | null> => {
+    async (opts?: AuthTokenRequest): Promise<string | null> => {
       // Convex asks for a token, gets one, and authenticates the guest —
       // the true "activated as a guest" signal. Marking HERE (rather than
       // in the resolve effect) is immune to the effect-cancel race when a
@@ -300,9 +308,12 @@ export function useUnifiedConvexAuth() {
           () => forceRefreshGuestSessionOrThrow(),
           {
             source: "guest_token_refresh",
+            request: opts,
+            mode: "guest",
             isTerminalNull: () => getGuestSessionRefusal() !== null,
           },
         );
+        if (opts?.signal?.aborted) return null;
         setGuestToken(refreshed);
         return activate(refreshed);
       }
@@ -310,22 +321,22 @@ export function useUnifiedConvexAuth() {
       // Prefer the latest in-memory cache so a fresh token is used even
       // if React hasn't yet re-rendered with the new state.
       const cached = getCachedGuestSession()?.token;
-      if (cached) return activate(cached);
+      if (cached) {
+        opts?.onAttempt?.("guest");
+        return activate(cached);
+      }
 
-      // No usable cache. Mint one rather than falling back to the
-      // `guestToken` state copy: once the cache lapses into its expiry
-      // buffer that copy is the SAME expired token, and handing it back is
-      // indistinguishable from having no token at all. This path is the one
-      // that actually runs on Convex's scheduled refetch, because the
-      // `@convex-dev/workos` adapter calls `getAccessToken()` with no
-      // arguments and so never sets `forceRefreshToken`.
+      // Never fall back to a stale React state copy after the cache expires.
       const minted = await fetchTokenWithRetry(
         () => getOrCreateGuestSessionOrThrow().then((s) => s?.token ?? null),
         {
           source: "guest_token_refresh",
+          request: opts,
+          mode: "guest",
           isTerminalNull: () => getGuestSessionRefusal() !== null,
         },
       );
+      if (opts?.signal?.aborted) return null;
       setGuestToken(minted);
       return activate(minted);
     },
@@ -336,7 +347,7 @@ export function useUnifiedConvexAuth() {
     if (workos.user) {
       return {
         isLoading: workos.isLoading,
-        user: workos.user,
+        isAuthenticated: true,
         // authkit-js distinguishes two refresh failures: a network error is
         // rethrown with its state restored to AUTHENTICATED (retryable), while
         // a rejected refresh grant wipes the session, latches state to ERROR,
@@ -344,18 +355,18 @@ export function useUnifiedConvexAuth() {
         // re-throw). See `isLoginRequiredError` for why that error can only be
         // recognized by its message — matching on `name` silently classified
         // every dead session as transient.
-        getAccessToken: getWorkosAccessToken,
+        fetchAccessToken: getWorkosAccessToken,
       };
     }
 
     return {
       isLoading: workos.isLoading || guestLoading,
-      user: guestToken ? GUEST_USER_PLACEHOLDER : null,
+      isAuthenticated: guestToken !== null,
       // Deliberately NOT guarded by `skipGuest`, even though it can mint a
-      // guest of its own below: the adapter only calls this once `user` is
-      // truthy, and under `skipGuest` `guestToken` never becomes non-null, so
+      // guest of its own below: Convex only calls this when the hook reports
+      // authenticated, and under `skipGuest` `guestToken` stays null, so
       // it is unreachable there.
-      getAccessToken: getGuestAccessToken,
+      fetchAccessToken: getGuestAccessToken,
     };
   }, [
     workos.isLoading,
