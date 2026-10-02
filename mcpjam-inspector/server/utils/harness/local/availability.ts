@@ -105,19 +105,21 @@ export interface LocalHarnessActor {
 
 export function isActorEligibleForLocalHarness(
   actor: LocalHarnessActor,
+  scope: "attended" | "unattended" = "attended",
 ): boolean {
   return (
     !actor.isGuest &&
     !actor.isScenarioSession &&
-    !actor.isJourneySession &&
+    (scope === "unattended" || (!actor.isJourneySession &&
     (actor.executionScopeKind === undefined ||
-      actor.executionScopeKind === "project")
+      actor.executionScopeKind === "project")))
   );
 }
 
 export interface LocalHarnessAvailabilityQuery {
   target: LocalHarnessExecutionTarget;
   actor: LocalHarnessActor;
+  scope?: "attended" | "unattended";
   userId: string;
   projectId: string;
   /** Plaintext capability from the request header; never persisted. */
@@ -142,6 +144,24 @@ function unavailable(
   return { available: false, status, message };
 }
 
+/** Development-only evidence for exercising an unpublished runtime pack. */
+export function localHarnessManifestsForDevelopment(
+  manifests: Readonly<Record<string, LocalHarnessCompatibility>> = LOCAL_HARNESS_MANIFEST,
+): Readonly<Record<string, LocalHarnessCompatibility>> {
+  const version = process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION?.trim();
+  if (HOSTED_MODE || process.env.ENVIRONMENT !== "dev" || !version) {
+    return manifests;
+  }
+  return Object.fromEntries(
+    Object.entries(manifests).map(([id, manifest]) => [
+      id,
+      manifest.lifecycleConformanceVersion || id !== "claude-code"
+        ? manifest
+        : { ...manifest, lifecycleConformanceVersion: version },
+    ]),
+  );
+}
+
 export async function resolveLocalHarnessAvailability(
   query: LocalHarnessAvailabilityQuery,
 ): Promise<LocalHarnessAvailability> {
@@ -162,7 +182,7 @@ export async function resolveLocalHarnessAvailability(
         "(MCPJAM_LOCAL_HARNESS_ENABLED)",
     );
   }
-  if (!isActorEligibleForLocalHarness(query.actor)) {
+  if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {
     return unavailable(
       "actor-not-eligible",
       "local execution requires an attended, signed-in member running their " +
@@ -209,6 +229,7 @@ export async function resolveLocalHarnessAvailability(
   const target = query.target;
   const compatibility = resolveLocalCompatibility(
     {
+      scope: query.scope,
       harnessId: target.harnessId,
       platform: currentLocalPlatform(platform),
       targetKind: target.kind,
@@ -216,7 +237,7 @@ export async function resolveLocalHarnessAvailability(
       ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
       installedAdapterVersion: query.installedAdapterVersion,
     },
-    query.manifests ?? LOCAL_HARNESS_MANIFEST,
+    query.manifests ?? localHarnessManifestsForDevelopment(),
   );
   if (!compatibility.ok) {
     return unavailable(compatibility.status, compatibility.message);
@@ -268,6 +289,7 @@ export async function resolveLocalHarnessAvailability(
   }
 
   const binding: HarnessGrantBinding = {
+    scope: query.scope ?? "attended",
     userId: query.userId,
     machineId: target.machineId,
     projectId: query.projectId,

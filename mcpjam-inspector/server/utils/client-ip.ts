@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import type { Context } from "hono";
 import { getConnInfo } from "@hono/node-server/conninfo";
 
@@ -105,4 +106,43 @@ export function getAttestedClientIp(c: Context): string | null {
   }
 
   return null;
+}
+
+// The key a per-client rate limit buckets an address under. IPv4 is keyed as
+// it is. IPv6 is keyed by its /64, the prefix a single subscriber is normally
+// assigned, so the addresses of one assignment share a bucket. An IPv4-mapped
+// IPv6 address (::ffff:a.b.c.d, dotted or hex) is keyed as the IPv4 address
+// it carries. Anything that is not an IP address comes back as it is.
+export function ipRateLimitKey(ip: string): string {
+  const address = ip.trim();
+  if (isIP(address) !== 6) return address;
+  const groups = ipv6Groups(address.split("%")[0]);
+  // ::ffff:0:0/96, the IPv4-mapped block.
+  if (groups.slice(0, 6).join(":") === "0:0:0:0:0:65535") {
+    const [high, low] = groups.slice(6);
+    return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+  }
+  const prefix = groups.slice(0, 4).map((group) => group.toString(16));
+  return `${prefix.join(":")}::/64`;
+}
+
+// The eight 16-bit groups of an address `isIP` accepts as IPv6, zone removed.
+function ipv6Groups(address: string): number[] {
+  // A dotted IPv4 tail stands for the last two groups.
+  const v4Tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(address);
+  let text = address;
+  if (v4Tail) {
+    const [a, b, c, d] = v4Tail.slice(1).map(Number);
+    const high = ((a << 8) | b).toString(16);
+    const low = ((c << 8) | d).toString(16);
+    text = `${address.slice(0, v4Tail.index)}${high}:${low}`;
+  }
+  const parse = (part: string) =>
+    part === "" ? [] : part.split(":").map((group) => parseInt(group, 16));
+  const [head, tail] = text.split("::");
+  const left = parse(head);
+  if (tail === undefined) return left;
+  const right = parse(tail);
+  const zeros = new Array<number>(8 - left.length - right.length).fill(0);
+  return [...left, ...zeros, ...right];
 }
