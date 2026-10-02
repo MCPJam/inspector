@@ -8,6 +8,11 @@
  * Every tool counts its executions, so a test asserts what actually reached
  * the server — a denied `delete_note` must leave its counter at zero — rather
  * than what the client believed it sent.
+ *
+ * `signIn` makes named tools refuse with a sign-in challenge: `unauthorized`
+ * answers their `tools/call` with HTTP 401 and the given `WWW-Authenticate`
+ * (the call never runs); `meta` makes the tool return `isError: true` with
+ * the given `_meta["mcp/www_authenticate"]`.
  */
 
 import http from "node:http";
@@ -25,7 +30,14 @@ export type PolicyTargetFixture = {
 };
 
 export async function servePolicyTargetFixture(
-  options: { name?: string; extraTools?: string[] } = {}
+  options: {
+    name?: string;
+    extraTools?: string[];
+    signIn?: {
+      unauthorized?: Record<string, string>;
+      meta?: Record<string, string>;
+    };
+  } = {}
 ): Promise<PolicyTargetFixture> {
   const calls: Record<string, number> = {
     read_note: 0,
@@ -94,6 +106,14 @@ export async function servePolicyTargetFixture(
         { description: `Extra tool ${extra}.`, inputSchema: {} },
         async () => {
           calls[extra]! += 1;
+          const challenge = options.signIn?.meta?.[extra];
+          if (challenge !== undefined) {
+            return {
+              isError: true,
+              content: [{ type: "text" as const, text: "Sign in required." }],
+              _meta: { "mcp/www_authenticate": [challenge] },
+            };
+          }
           return { content: [{ type: "text" as const, text: extra }] };
         }
       );
@@ -109,9 +129,21 @@ export async function servePolicyTargetFixture(
     const request = input instanceof Request ? input : new Request(input, init);
     try {
       const body = (await request.clone().json()) as
-        { method?: unknown } | Array<{ method?: unknown }>;
+        | { method?: unknown; params?: { name?: unknown } }
+        | Array<{ method?: unknown; params?: { name?: unknown } }>;
       for (const message of Array.isArray(body) ? body : [body]) {
         if (typeof message?.method === "string") methods.push(message.method);
+        const toolName = message?.params?.name;
+        const challenge =
+          message?.method === "tools/call" && typeof toolName === "string"
+            ? options.signIn?.unauthorized?.[toolName]
+            : undefined;
+        if (challenge !== undefined) {
+          return new Response(null, {
+            status: 401,
+            headers: { "WWW-Authenticate": challenge },
+          });
+        }
       }
     } catch {
       // Not JSON (a GET for the event stream); nothing to record.

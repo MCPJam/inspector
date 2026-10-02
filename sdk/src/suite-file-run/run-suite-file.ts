@@ -91,9 +91,14 @@ import {
   createLocalToolPolicyGate,
   type LocalToolPolicyGate,
 } from "./tool-policy-gate.js";
+import {
+  createLocalAuthChallengeObserver,
+  type LocalAuthChallengeObserver,
+} from "./auth-challenge-observer.js";
 import { observeIteration, unstartedIteration } from "./trial-observation.js";
 import type {
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileIterationEvidence,
   SuiteFileRefusalAttribution,
@@ -214,6 +219,8 @@ function transportOf(config: MCPServerConfig): "stdio" | "http" {
 
 type IterationContext = {
   gate?: LocalToolPolicyGate;
+  /** Sign-in challenges this iteration's tool calls hit (never acted on). */
+  authChallenges: LocalAuthChallengeObserver;
   refusals: SuiteFileRefusalAttribution[];
   /** What the provider or platform said when it stopped the run. */
   refusalError?: string;
@@ -288,6 +295,7 @@ async function executeSuiteFile(
   let executed: Awaited<ReturnType<typeof executeCases>> | undefined;
   let failure: unknown;
   let snapshot: ToolPolicySnapshot | undefined;
+  let toolServers: ReadonlyMap<string, string> = new Map();
   try {
     // ── 4. credentials, then connect and discover ────────────────────────────
     progress({ type: "setup", stage: "credentials" });
@@ -431,6 +439,7 @@ async function executeSuiteFile(
     }
     const frozenTools = Object.freeze({ ...merged }) as ToolSet;
     const toolNames = Object.keys(frozenTools);
+    toolServers = new Map(ownerOf);
 
     if (plan.toolPolicy) {
       try {
@@ -547,6 +556,7 @@ async function executeSuiteFile(
     executed = await executeCases({
       plan,
       tools: frozenTools,
+      toolServers,
       snapshot,
       credentials,
       leaseScope,
@@ -647,6 +657,7 @@ async function executeSuiteFile(
 async function executeCases(args: {
   plan: SuiteFilePlan;
   tools: ToolSet;
+  toolServers: ReadonlyMap<string, string>;
   snapshot: ToolPolicySnapshot | undefined;
   credentials: ResolvedInferenceCredentials;
   leaseScope: McpjamModelLeaseScope | undefined;
@@ -786,10 +797,33 @@ function notStartedCase(
   };
 }
 
+/**
+ * One line per challenged server and case. Only the challenge's short tokens
+ * (`error`, `scope`) are quoted; its free-text description stays on the
+ * iteration evidence.
+ */
+function authRequiredIssueMessage(
+  first: SuiteFileAuthRequired,
+  challengedIterations: number,
+  totalIterations: number
+): string {
+  const server =
+    first.server !== undefined ? `Server "${first.server}"` : "A target server";
+  const detail = [
+    `${challengedIterations} of ${totalIterations} iteration${totalIterations === 1 ? "" : "s"}`,
+    first.challenge.error,
+    first.challenge.requiredScope !== undefined
+      ? `scope "${first.challenge.requiredScope}"`
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return `${server} asked for sign-in when "${first.toolName}" was called (${detail.join("; ")}). A local run never signs in: bind a credential for ${first.server !== undefined ? `"${first.server}"` : "that server"} and run again.`;
+}
+
 async function executeCase(args: {
   plan: SuiteFilePlan;
   planned: PlannedCase;
   tools: ToolSet;
+  toolServers: ReadonlyMap<string, string>;
   snapshot: ToolPolicySnapshot | undefined;
   credentials: ResolvedInferenceCredentials;
   leaseScope: McpjamModelLeaseScope | undefined;
@@ -845,7 +879,15 @@ async function executeCase(args: {
   } as ConstructorParameters<typeof HostRunner>[0]);
 
   const cloneFor = (overrides: Record<string, unknown>): HostExecutor => {
-    const context: IterationContext = { refusals: [] };
+    const context: IterationContext = {
+      refusals: [],
+      authChallenges: createLocalAuthChallengeObserver({
+        serverOf: (toolName) => args.toolServers.get(toolName),
+      }),
+    };
+    // Innermost, so it sees exactly what the server answered; a call the
+    // policy gate refuses never reaches it.
+    const observedTools = context.authChallenges.wrap(args.tools);
     if (args.snapshot) {
       context.gate = createLocalToolPolicyGate({
         snapshot: args.snapshot,
@@ -859,10 +901,10 @@ async function executeCase(args: {
       ...overrides,
       ...(context.gate
         ? {
-            tools: context.gate.wrap(args.tools),
+            tools: context.gate.wrap(observedTools),
             policyBlockedToolCallIds: context.gate.blockedToolCallIds,
           }
-        : {}),
+        : { tools: observedTools }),
       createLanguageModel: attributingModelFactory(
         baseFactory,
         model.rail,
@@ -958,6 +1000,10 @@ async function executeCase(args: {
   const evidence: SuiteFileIterationEvidence[] = [];
   const blocks: SuiteFileToolPolicyBlock[] = [];
   const refusals: SuiteFileRefusalAttribution[] = [];
+  const challenged = new Map<
+    string,
+    { first: SuiteFileAuthRequired; iterations: number[] }
+  >();
   for (let index = 0; index < planned.testCase.iterations; index += 1) {
     const iterationNumber = index + 1;
     const recorded = details[index];
@@ -1059,10 +1105,38 @@ async function executeCase(args: {
       });
     }
     observations.push(observed.observation);
-    evidence.push(observed.evidence);
+    const authRequired = context?.authChallenges.authRequired();
+    evidence.push(
+      authRequired ? { ...observed.evidence, authRequired } : observed.evidence
+    );
+    if (authRequired) {
+      const key = authRequired.server ?? "";
+      const entry = challenged.get(key);
+      if (entry) entry.iterations.push(iterationNumber);
+      else
+        challenged.set(key, {
+          first: authRequired,
+          iterations: [iterationNumber],
+        });
+    }
     blocks.push(...iterationBlocks);
     if (refusal !== undefined && iteration.status !== "completed")
       refusals.push(refusal);
+  }
+
+  for (const { first, iterations } of challenged.values()) {
+    issues.push({
+      code: "AUTHORIZATION_REQUIRED",
+      phase: "execution",
+      category: "authorization",
+      message: authRequiredIssueMessage(
+        first,
+        iterations.length,
+        planned.testCase.iterations
+      ),
+      caseId,
+      ...(iterations.length === 1 ? { iterationNumber: iterations[0] } : {}),
+    });
   }
 
   for (const kind of new Set(refusals)) {
