@@ -1,5 +1,7 @@
 import { Host } from "../src/host-config/index";
 import type { HostMcp } from "../src/host-config/index";
+import { canonicalToPublic } from "../src/host-config/host";
+import { canonicalizeHostConfigV2 } from "../src/host-config/internal";
 // Cross-entry check uses the browser entry (the Node `../src/index` barrel
 // transitively imports `.md` skill files that vitest's transform can't load;
 // the published `@mcpjam/sdk` main export is covered by `test:packaging`).
@@ -71,6 +73,47 @@ describe("Host — public surface", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.paginationTraversal = "firstPageOnly";
     expect(host.toJSON().mcp?.paginationTraversal).toBe("firstPageOnly");
+  });
+
+  it("round-trips toolListChanged through toJSON()", () => {
+    // `toolListChanged` was missing from CONFORMANCE_PROFILE_KEYS, so the
+    // public `Host` silently dropped it on the way in (hostMcpToProfile) and
+    // on the way out (profileToHostMcp).
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.toolListChanged = { listens: false, refetches: false };
+
+    const json = host.toJSON();
+    expect(json.mcp?.toolListChanged).toEqual({
+      listens: false,
+      refetches: false,
+    });
+    expect(new Host(json).toJSON()).toEqual(json);
+  });
+
+  it("toolListChanged alone keeps mcp present in toJSON()", () => {
+    // Guards isEmptyHostMcp for the same omission.
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.toolListChanged = { refetches: false };
+    expect(host.toJSON().mcp).toEqual({
+      toolListChanged: { refetches: false },
+    });
+  });
+
+  it("reads toolListChanged off a canonical profile (canonicalToPublic)", () => {
+    const json = canonicalToPublic(
+      canonicalizeHostConfigV2({
+        hostStyle: "mcpjam",
+        modelId: "test-model",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        connectionDefaults: { headers: {}, requestTimeout: 10000 },
+        clientCapabilities: {},
+        hostContext: {},
+        mcpProfile: { profileVersion: 1, toolListChanged: { listens: false } },
+      })
+    );
+    expect(json.mcp?.toolListChanged).toEqual({ listens: false });
   });
 
   it("exposes only public MCP vocabulary in toJSON() — no impl names leak", () => {
