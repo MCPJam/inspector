@@ -43,6 +43,7 @@ import type {
   TurnStartResult,
 } from "./app-server-protocol.js";
 import { createApprovalController } from "./approval-controller.js";
+import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
 import { prepareCodexHome } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
@@ -95,12 +96,14 @@ export class CodexPermissionRefusedError extends Error {
 /**
  * Permission mode → Codex's policy and sandbox. FAIL CLOSED.
  *
- * `untrusted` is what produces approval requests: Codex auto-approves the
- * commands it knows to be read-only and asks about everything else, which is
- * the closest honest mapping to "reads stay free, side effects are gated".
- * `allow-edits` maps the same way as `allow-reads` deliberately — Codex has no
- * middle policy that gates only writes, and the safe direction when the host
- * asked for approval is to ask more, not less.
+ * `untrusted` is what produces approval requests. Measured on 0.149.1
+ * (PROBES.md (c)): it asks about EVERY command — `pwd`, `ls` and `cat`
+ * included — and about every file change (both `apply_patch` forms), so an
+ * attended Codex turn prompts more than an attended Claude Code one, and the
+ * product must not claim reads are free. `allow-edits` maps the same way as
+ * `allow-reads` deliberately — Codex has no middle policy that gates only
+ * writes, and the safe direction when the host asked for approval is to ask
+ * more, not less.
  *
  * `allow-all` means nobody is there to approve. In a cloud sandbox the box is
  * the boundary, so that is `danger-full-access`. On a user's machine it is
@@ -155,6 +158,32 @@ export function toCodexPermissions(
           `than guessing how much access to grant.`,
       );
   }
+}
+
+/**
+ * The per-thread config layer: the host's `codexConfig`, plus a disable entry
+ * for every MCP server a system or managed layer declares (`mcp-isolation.ts`)
+ * so MCPJam's relay is the model's only MCP surface. The relay's own entry is
+ * rendered into `CODEX_HOME` and never overridden here.
+ */
+function withThreadConfig(
+  start: StartMessage,
+): { config?: Record<string, unknown> } {
+  const config = threadConfig(start);
+  return Object.keys(config).length > 0 ? { config } : {};
+}
+
+function threadConfig(start: StartMessage): Record<string, unknown> {
+  const config: Record<string, unknown> = { ...(start.codexConfig ?? {}) };
+  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME });
+  if (Object.keys(foreign).length > 0) {
+    const existing =
+      config.mcp_servers && typeof config.mcp_servers === "object"
+        ? (config.mcp_servers as Record<string, unknown>)
+        : {};
+    config.mcp_servers = { ...foreign, ...existing };
+  }
+  return config;
 }
 
 /** Configuration whose change cannot be applied to a live thread. */
@@ -396,7 +425,7 @@ async function main(): Promise<void> {
         ...(start.instructions
           ? { developerInstructions: start.instructions }
           : {}),
-        ...(start.codexConfig ? { config: start.codexConfig } : {}),
+        ...withThreadConfig(start),
         serviceName: "mcpjam-inspector",
       };
 

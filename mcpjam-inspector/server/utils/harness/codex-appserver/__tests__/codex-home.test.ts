@@ -41,11 +41,15 @@ describe("config.toml", () => {
       wire_api = "responses"
       supports_websockets = false
 
+      [features]
+      plugins = false
+
       [mcp_servers.mcpjam]
       command = "/usr/bin/node"
       args = ["/bootstrap/host-tools-mcp.mjs"]
       startup_timeout_sec = 30
       tool_timeout_sec = 3600
+      default_tools_approval_mode = "approve"
 
       [mcp_servers.mcpjam.env]
       MCPJAM_HOST_TOOL_RELAY_URL = "http://127.0.0.1:41234"
@@ -72,6 +76,22 @@ describe("config.toml", () => {
     });
     expect(toml).toContain("tool_timeout_sec = 3600");
     expect(toml).not.toMatch(/tool_timeout_sec = 0\b/);
+  });
+
+  it("leaves the gate on relayed tools to MCPJam alone", () => {
+    // Without this, codex refuses every relayed call under `never` and asks
+    // (and is declined) under `untrusted` — no host tool could ever run.
+    const toml = renderCodexConfigToml({
+      ...base,
+      hostToolsEntrypoint: "/b/host-tools-mcp.mjs",
+      relayUrl: "http://127.0.0.1:1",
+      relayCredential: "c",
+    });
+    expect(toml).toContain('default_tools_approval_mode = "approve"');
+  });
+
+  it("turns off codex's plugin sync, and its startup egress with it", () => {
+    expect(renderCodexConfigToml(base)).toMatch(/\[features\]\nplugins = false/);
   });
 
   it("keeps Codex on API-key auth over plain HTTP", () => {

@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
-  computeHarnessPackInputs,
   computePackInputs,
   defaultPackInputIo,
   SHARED_PACK_INPUTS,

@@ -90,6 +90,14 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
     // Neither the hosted proxy nor the local gateway speaks the realtime
     // WebSocket transport; Codex must stay on plain HTTP streaming.
     "supports_websockets = false",
+    "",
+    "[features]",
+    // Measured (PROBES.md (a2/a3)): by default codex contacts github.com,
+    // api.github.com and chatgpt.com at startup and clones ~100 MB of plugins
+    // into every fresh CODEX_HOME. None of it is MCPJam's, all of it is egress
+    // and disk the session never asked for, and on a user's machine it is
+    // traffic they did not agree to.
+    "plugins = false",
   ];
 
   if (input.hostToolsEntrypoint && input.relayUrl && input.relayCredential) {
@@ -108,6 +116,14 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
       // the wait is bounded at an hour, longer than any approval the host
       // keeps a session parked for. Never restore 0.
       "tool_timeout_sec = 3600",
+      // Codex gates MCP calls ITSELF (PROBES.md (d)): under `never` it refuses
+      // every relayed call ("requires approval, but approval policy is
+      // never"), and under `untrusted` it raises an `mcp_tool_call`
+      // elicitation the bridge declines. Either way no host tool ran. MCPJam's
+      // own gate — the framework's `toolApproval`, evaluated on the host
+      // before `execute` — is the single authority for relayed tools, so
+      // codex is told not to add a second one.
+      'default_tools_approval_mode = "approve"',
       "",
       `[mcp_servers.${RELAY_MCP_SERVER_NAME}.env]`,
       `MCPJAM_HOST_TOOL_RELAY_URL = ${tomlString(input.relayUrl)}`,
