@@ -18,6 +18,10 @@ import {
 import userEvent from "@testing-library/user-event";
 
 const grantConsent = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("@/lib/browser-profiles/availability", () => ({
+  useBrowserProfileArchivesAvailable: () => true,
+}));
+
 vi.mock("@/hooks/useLocalBrowserConsent", () => ({
   useLocalBrowserConsent: () => ({ grant: grantConsent }),
 }));

@@ -112,6 +112,10 @@
     {
       "name": "Registry",
       "description": "Search the scraped MCP directories (Claude, ChatGPT, and any future source), list curated/org registry cards, and install them into a project. Install writes a `servers` row and provenance — it does not open a live session. There is no catalog-uninstall route: delete the project server instead. Directory reads require a bearer (including minted guest tokens) but do not materialize a user. Card/connection reads and all writes are authed-non-guest."
+    },
+    {
+      "name": "Feedback",
+      "description": "Feedback about MCPJam itself (bugs, missing capabilities, confusing behavior), sent to the MCPJam team and kept for 180 days. The `send_feedback` MCP tool calls the same endpoint."
     }
   ],
   "paths": {
@@ -6735,7 +6739,8 @@
         "operationId": "createEvalIngestUploadUrl",
         "tags": ["Eval runs"],
         "summary": "Get an upload URL for a run artifact",
-        "description": "Mints a short-lived URL for uploading a widget blob or other artifact referenced by an ingested run.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "description": "Retired. Every request answers `410 Gone` with `code: \"FEATURE_NOT_SUPPORTED\"` and `details.code: \"SDK_UPGRADE_REQUIRED\"`. `@mcpjam/sdk` 8.17.0 and later upload a run artifact by sending its bytes to `POST /projects/{projectId}/eval-ingest/artifacts`, which returns the `storageId` the run's results reference. Upgrade the SDK if a report logs this answer.\n\nThe gateway passes the backend's status and body through verbatim.",
+        "deprecated": true,
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -6761,16 +6766,6 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "The backend's response, passed through.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EvalIngestResponse"
-                }
-              }
-            }
-          },
           "400": {
             "$ref": "#/components/responses/ValidationError"
           },
@@ -6782,6 +6777,16 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "410": {
+            "description": "The route is retired. The body names the upgrade: `details.code` is `SDK_UPGRADE_REQUIRED`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -13773,6 +13778,73 @@
           }
         }
       }
+    },
+    "/feedback": {
+      "post": {
+        "operationId": "sendFeedback",
+        "tags": [
+          "Feedback"
+        ],
+        "summary": "Send feedback to the MCPJam team",
+        "description": "Tell the MCPJam team about MCPJam itself (a bug, a missing capability, something confusing, or a docs gap) at the moment you hit it. THE TEXT IS SENT TO THE MCPJAM TEAM, outside your organization, and kept for 180 days. It is stored in MCPJam's own database and never published. Summarize: never include secrets, tokens, or raw tool output. When a call failed, include its `requestId` (the failing response's `x-request-id`) so the report can be joined to our logs.\n\nA `201` means the report is stored; notifying the team happens afterwards and cannot fail it. An identical report from you in the last 24 hours is answered with the existing report's id and `duplicate: true` instead of being filed again. Requires a signed-in account: guest tokens get `401`. Rate-limited per user (`429` with `Retry-After`); duplicates and key replays do not count.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe report key, validated STRICTLY. Replaying the SAME key with the SAME report returns the original receipt; reusing it for DIFFERENT content is a `409`. A header that is present but empty, or longer than 256 characters, is a `400`, never silently ignored. `x-mcpjam-idempotency-key` is accepted as an alternative spelling; sending both with different values is a `400`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The report.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The report is stored. `duplicate: true` means an identical report from you was already recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -15158,6 +15230,154 @@
             },
             "required": [
               "type"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "A call to toolName whose input matches EVERY pattern (all within one call) occurred at least min (default 1) and at most max times. min and max count MATCHING calls, not all calls: min 0, max 0 means no call matches, not that the tool was never called (use toolNeverCalled for that). Patterns are re2js regular expressions (no lookaround, no backreferences) matched against the canonical JSON of the arguments (sorted keys, no whitespace), or only the argument at path when set (a string value as-is, anything else as canonical JSON). A call whose subject exceeds 100000 characters is unreadable, and a verdict it could decide is unscored.",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolInputMatches"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "patterns": {
+                "description": "Every pattern must match the same call. Use alternation (A|B) inside one pattern for either.",
+                "minItems": 1,
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "flags": {
+                "description": "Applies to every pattern: i (ignore case), m (multiline), s (dot matches newline).",
+                "type": "string",
+                "enum": [
+                  "i",
+                  "m",
+                  "s",
+                  "im",
+                  "is",
+                  "ms",
+                  "ims"
+                ]
+              },
+              "path": {
+                "description": "JSON Pointer (RFC 6901) to ONE top-level argument key, such as /elements; inside the key, ~1 stands for / and ~0 for ~. Omit to match the whole arguments object. A call without the key does not match.",
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 257,
+                "pattern": "^\\/(?:[^/~]|~[01])+$"
+              },
+              "min": {
+                "description": "Minimum number of MATCHING calls (default 1). min 0 requires max.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "max": {
+                "description": "Maximum number of MATCHING calls; at least min (or 1 when min is omitted).",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory",
+                  "required"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolName",
+              "patterns"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "A tool result in scope (every result, or only toolName's) whose content matches EVERY pattern (all within one result) occurred at least min (default 1) and at most max times. min and max count MATCHING results, not all results: min 0, max 0 means no result matches. The content is the result's text, then structuredContent, then its JSON output part (JSON as canonical JSON), or, with path, the value at that key in structuredContent (in the JSON output part when there is no structuredContent). isError results are included. A result whose text was truncated for storage (when path is omitted), or whose subject exceeds 100000 characters, is unreadable; so are results an incomplete capture did not record. A verdict they could decide is unscored.",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolResultMatches"
+              },
+              "toolName": {
+                "description": "Omit to read every tool's results.",
+                "type": "string",
+                "minLength": 1
+              },
+              "patterns": {
+                "description": "Every pattern must match the same result. Use alternation (A|B) inside one pattern for either.",
+                "minItems": 1,
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "flags": {
+                "description": "Applies to every pattern: i (ignore case), m (multiline), s (dot matches newline).",
+                "type": "string",
+                "enum": [
+                  "i",
+                  "m",
+                  "s",
+                  "im",
+                  "is",
+                  "ms",
+                  "ims"
+                ]
+              },
+              "path": {
+                "description": "JSON Pointer (RFC 6901) to ONE top-level key of structuredContent (of the JSON output part when there is no structuredContent), such as /elements; inside the key, ~1 stands for / and ~0 for ~. Omit to match the whole result. A result without the key does not match.",
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 257,
+                "pattern": "^\\/(?:[^/~]|~[01])+$"
+              },
+              "min": {
+                "description": "Minimum number of MATCHING results (default 1). min 0 requires max.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "max": {
+                "description": "Maximum number of MATCHING results; at least min (or 1 when min is omitted).",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory",
+                  "required"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "patterns"
             ]
           },
           {
@@ -32658,9 +32878,11 @@
                     "noDestructiveToolCalled",
                     "argumentsMatchToolSchema",
                     "noRepeatedIdenticalCall",
+                    "toolInputMatches",
                     "noToolErrors",
                     "toolLatencyUnder",
                     "toolResultContains",
+                    "toolResultMatches",
                     "toolResultMatchesSchema",
                     "toolResultSizeUnder",
                     "toolErrorNamesInput",
@@ -34402,6 +34624,79 @@
           "updatedAt"
         ],
         "additionalProperties": false
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "missing_capability",
+              "confusing",
+              "docs",
+              "other"
+            ],
+            "description": "What sort of problem this is."
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "One line: what went wrong or what is missing. Trimmed. Appears in the team's notification."
+          },
+          "details": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried; there may be no request id. Summarize; never paste secrets, tokens, or raw tool output. Stored only in MCPJam's database, never emailed, and deleted after 180 days."
+          },
+          "operation": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "The tool, CLI command or app page in use."
+          },
+          "requestId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The failing call's `x-request-id`, when there is one."
+          },
+          "errorCode": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "The failing call's error code, e.g. `INTERNAL_ERROR`."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "A project you can see, when the report is about one; anything else is a `404`. Omit it otherwise: no project is assumed."
+          }
+        }
+      },
+      "FeedbackReceipt": {
+        "type": "object",
+        "required": [
+          "id",
+          "receivedAt",
+          "duplicate"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The stored report's id."
+          },
+          "receivedAt": {
+            "type": "number",
+            "description": "When the report was received, in epoch milliseconds."
+          },
+          "duplicate": {
+            "type": "boolean",
+            "description": "True when an identical report from you was already recorded in the last 24 hours; `id` is that report."
+          }
+        }
       }
     },
     "responses": {
