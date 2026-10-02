@@ -24,6 +24,9 @@ export function resolveClientSentryConfig() {
     // that share this `release` are indistinguishable to Sentry.
     dist: __BUILD_SURFACE__,
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+    // CI's E2E build sets this. That build talks to prod Convex and would
+    // otherwise report its test failures to the same project that pages us.
+    enabled: import.meta.env.VITE_DISABLE_SENTRY !== "true",
     // Literally the same predicate PostHog's `disable_session_recording`
     // uses, so the two recorders cannot drift: a self-hosted npx/Docker
     // browser session, and any session that LOADS on `/results/<token>`, is
