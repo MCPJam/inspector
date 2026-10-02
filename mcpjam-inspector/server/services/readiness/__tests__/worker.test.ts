@@ -386,7 +386,7 @@ describe("what leaves this process", () => {
       lease: LEASE,
       publisher: "claude",
       target: TARGET,
-      headers: { authorization: "Bearer sk-live-never-stored" },
+      mcpHeaders: { authorization: "Bearer sk-live-never-stored" },
       fetchFn: wireFetch(),
       includeLlmObservations: false,
       analyticsActor,

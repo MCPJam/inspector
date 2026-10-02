@@ -80,8 +80,12 @@ export interface RunReadinessOptions {
   fetchFn: typeof fetch;
   /** The DECLARED submission shape. Required for OpenAI, absent for Claude. */
   submissionMode?: OpenAISubmissionMode;
-  /** Headers the target needs, e.g. a saved server's credential. */
-  headers?: Record<string, string>;
+  /**
+   * Headers the MCP endpoint needs, e.g. a saved server's credential. The SDK
+   * sends them only on MCP requests to the endpoint's own origin, never on
+   * discovery.
+   */
+  mcpHeaders?: Record<string, string>;
   /** Cancellation. A cancelled run must stop dialling somebody else's server. */
   signal?: AbortSignal;
   /** Absent ⇒ this run cannot request observations and cannot spend. */
@@ -348,7 +352,7 @@ export async function runDirectoryReadiness(
       mode,
       fetchFn: options.fetchFn,
       timeoutMs: options.timeoutMs,
-      headers: options.headers,
+      mcpHeaders: options.mcpHeaders,
       // Threaded IN, not merely checked between steps: a cancelled run has to
       // stop the request in flight, because the traffic being stopped is aimed
       // at somebody else's server.
@@ -381,7 +385,7 @@ export async function runDirectoryReadiness(
     enteredUrl: options.target,
     fetchFn: options.fetchFn,
     timeoutMs: options.timeoutMs,
-    headers: options.headers,
+    mcpHeaders: options.mcpHeaders,
     // Threaded IN, not merely checked between steps — see the OpenAI branch.
     signal: options.signal,
     now: options.now,

@@ -31,6 +31,7 @@ import {
   discoverProtectedResourceMetadata,
   fetchDiscoveryJson,
   readBoundedText,
+  resolveMcpHeaders,
   traceRedirects,
   type DirectoryDiscoveryOptions,
   type DirectoryRedirectHop,
@@ -141,6 +142,10 @@ function readMetaWwwAuthenticate(
  * actually makes first, so the response is the one the host actually sees. It
  * creates no resources and consumes nothing beyond a session the server is free
  * to discard.
+ *
+ * It carries none of the caller's headers, `mcpHeaders` included. A run graded
+ * with a token would otherwise see an OAuth server serve the probe, and grade
+ * every auth check `not-applicable`.
  */
 async function probeUnauthenticated(
   options: OpenAIDiscoveryOptions,
@@ -195,6 +200,9 @@ function challengePointer(header: string | undefined): string | undefined {
  * Connect's, because an issuer that publishes only the OIDC document is
  * perfectly usable and a probe that tried one form would report it as
  * unreachable.
+ *
+ * The issuers are named by the server under test and may be any origin, so
+ * these requests carry no caller headers (`fetchDiscoveryJson` adds none).
  */
 async function fetchAuthorizationServers(
   options: OpenAIDiscoveryOptions,
@@ -437,6 +445,9 @@ async function callJsonRpc(
   const result = await fetchDiscoveryJson(options.enteredUrl, options, {
     method: "POST",
     headers: {
+      // An authenticated MCP request to the endpoint, so it carries the
+      // caller's credential. Discovery requests never do.
+      ...resolveMcpHeaders(options),
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
     },

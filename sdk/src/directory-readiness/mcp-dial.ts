@@ -33,6 +33,7 @@
 
 import {
   fetchDiscoveryJson,
+  resolveMcpHeaders,
   type DirectoryDiscoveryOptions,
 } from "./discovery.js";
 
@@ -192,6 +193,9 @@ async function callJsonRpc(
   const result = await fetchDiscoveryJson(options.enteredUrl, options, {
     method: "POST",
     headers: {
+      // The dial is the authenticated half of a run, and the only requests
+      // here that carry the caller's credential.
+      ...resolveMcpHeaders(options),
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       "mcp-protocol-version": DIRECTORY_DIAL_PROTOCOL_VERSION,
@@ -232,6 +236,7 @@ async function sendInitializedNotification(
     await fetchDiscoveryJson(options.enteredUrl, options, {
       method: "POST",
       headers: {
+        ...resolveMcpHeaders(options),
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "mcp-protocol-version": DIRECTORY_DIAL_PROTOCOL_VERSION,

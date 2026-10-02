@@ -118,7 +118,11 @@ function resolveAccessToken(
   return options.accessToken?.trim() || undefined;
 }
 
-function requestHeaders(
+/**
+ * Headers for MCP requests to the server. The SDK sends them only to the
+ * server's own origin, never on discovery.
+ */
+function mcpRequestHeaders(
   options: ReadinessCheckOptions,
   target: string,
 ): Record<string, string> | undefined {
@@ -219,7 +223,7 @@ async function runClaudeCheck(
     // the developer's own machine, where pinning would only stop them from
     // grading a server on their own network.
     fetchFn: fetch,
-    headers: requestHeaders(options, target),
+    mcpHeaders: mcpRequestHeaders(options, target),
     timeoutMs: options.timeout,
   });
 
@@ -271,7 +275,7 @@ async function runOpenAICheck(
     // Absent for a package-only run, and absent means "dialled nothing" rather
     // than "found nothing" — the wire lanes report their gaps.
     fetchFn: target ? fetch : undefined,
-    headers: target ? requestHeaders(options, target) : undefined,
+    mcpHeaders: target ? mcpRequestHeaders(options, target) : undefined,
     timeoutMs: options.timeout,
     packageSource: pkg?.source,
     archive: pkg?.archive,
@@ -311,14 +315,17 @@ export function registerReadinessCommands(program: Command): void {
     .command("claude")
     .description("Grade an MCP server against Anthropic's connector directory")
     .argument("<url>", "MCP server URL")
-    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--access-token <token>",
+      "Bearer access token, sent only to the MCP server, never to discovery",
+    )
     .option(
       "--credentials-file <path>",
       "Load the access token from a file written by oauth login",
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent only to the MCP server. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -347,14 +354,17 @@ export function registerReadinessCommands(program: Command): void {
       `Declared submission shape: ${OPENAI_SUBMISSION_MODES.join(" | ")}`,
     )
     .option("--package <path>", "Plugin package directory or .zip to grade")
-    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--access-token <token>",
+      "Bearer access token, sent only to the MCP server, never to discovery",
+    )
     .option(
       "--credentials-file <path>",
       "Load the access token from a file written by oauth login",
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent only to the MCP server. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
