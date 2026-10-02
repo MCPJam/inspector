@@ -126,10 +126,20 @@ function isTransportHttpError(node: object): boolean {
  * evidence of what the MCP server said.
  */
 export function upstreamTransportStatus(error: unknown): number | undefined {
+  return transportStatusLine(error)?.status;
+}
+
+/** The status line an MCP transport error in the chain carries, if any. */
+function transportStatusLine(error: unknown): StatusLine | undefined {
   for (const node of errorChain(error)) {
     if (!isTransportHttpError(node)) continue;
     const status = httpStatusOf(node);
-    if (status !== undefined) return status;
+    if (status === undefined) continue;
+    const statusText = read(node, "statusText");
+    return {
+      status,
+      statusText: typeof statusText === "string" ? statusText : undefined,
+    };
   }
   return undefined;
 }
@@ -250,8 +260,11 @@ function bothAttemptStatusLines(
 ): { streamable: StatusLine; fallback: StatusLine } | undefined {
   const attempts = combinedAttempts(error);
   if (!attempts) return undefined;
-  const streamable = statusLineFromChain(attempts.streamable);
-  const fallback = statusLineFromChain(attempts.fallback);
+  // Only a status an MCP transport error carries, as `upstreamTransportStatus`
+  // reads it: anything else in either attempt's chain is not the server's
+  // answer.
+  const streamable = transportStatusLine(attempts.streamable);
+  const fallback = transportStatusLine(attempts.fallback);
   if (
     !streamable ||
     !fallback ||

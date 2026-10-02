@@ -151,6 +151,19 @@ describe("describeHostedConnectFailure", () => {
       );
     });
 
+    it("ignores a status that no MCP transport error carries", () => {
+      const error = new Error("UNEXPECTED_MARKER_WRAPPER", {
+        cause: new SseError(405),
+      });
+      Object.defineProperty(error, "streamableCause", {
+        value: named("Error", { status: 500 }),
+        enumerable: false,
+      });
+      expect(describeHostedConnectFailure(error, answeredLogs).message).toBe(
+        "The MCP server responded with HTTP 405.",
+      );
+    });
+
     it("names one status when both attempts got the same one", () => {
       expect(
         describeHostedConnectFailure(combined(404, "Not Found", 404), answeredLogs)
