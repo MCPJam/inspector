@@ -152,7 +152,8 @@ async function mountSignedIn(token: string) {
   // The boot refresh takes a vendor-lock round trip; allow for a slow shard.
   await waitFor(
     () => {
-      expect(rendered.result.current.user).toMatchObject({ id: USER_ID });
+      // The guest mocks never mint, so only the WorkOS user can authenticate.
+      expect(rendered.result.current.isAuthenticated).toBe(true);
     },
     { timeout: 5_000 },
   );
@@ -209,7 +210,7 @@ describe("useUnifiedConvexAuth against the real authkit provider", () => {
 
     let token: string | null = "unset";
     await act(async () => {
-      token = await result.current.getAccessToken();
+      token = await result.current.fetchAccessToken();
     });
 
     expect(token).toBeNull();
@@ -227,7 +228,7 @@ describe("useUnifiedConvexAuth against the real authkit provider", () => {
     // authkit has wiped the session and latched: the next ask throws without
     // a request, and that still reads as the same sign-out, not a fault.
     await act(async () => {
-      token = await result.current.getAccessToken();
+      token = await result.current.fetchAccessToken();
     });
     expect(token).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -246,7 +247,7 @@ describe("useUnifiedConvexAuth against the real authkit provider", () => {
 
     let token: string | null = null;
     await act(async () => {
-      token = await result.current.getAccessToken();
+      token = await result.current.fetchAccessToken();
     });
 
     expect(token).toBe(renewed);
@@ -270,7 +271,7 @@ describe("useUnifiedConvexAuth against the real authkit provider", () => {
 
     let token: string | null = null;
     await act(async () => {
-      token = await result.current.getAccessToken();
+      token = await result.current.fetchAccessToken();
     });
 
     expect(token).toBe(current);
