@@ -220,6 +220,14 @@ function nonEmpty(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function originOrSelf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 function convexSlug(url) {
   try {
     const host = new URL(url).hostname;
@@ -434,6 +442,21 @@ export function finalizeProfile(
     errors.push(
       `VITE_CONVEX_URL is not set by the selected profile${backendFrom}.`,
     );
+  // The browser (VITE_CONVEX_URL) and the server's Convex clients (CONVEX_URL)
+  // must reach the same deployment: one is filled from the other only when it
+  // is unset, never kept when it disagrees.
+  const browserCloud = nonEmpty(values.VITE_CONVEX_URL);
+  const serverCloud = nonEmpty(values.CONVEX_URL);
+  if (
+    browserCloud &&
+    serverCloud &&
+    originOrSelf(browserCloud) !== originOrSelf(serverCloud)
+  ) {
+    errors.push(
+      `VITE_CONVEX_URL (${convexSlug(browserCloud) ?? originOrSelf(browserCloud)}) and ` +
+        `CONVEX_URL (${convexSlug(serverCloud) ?? originOrSelf(serverCloud)}) name different deployments.`,
+    );
+  }
   if (viteUrl && !nonEmpty(values.VITE_CONVEX_URL))
     values.VITE_CONVEX_URL = viteUrl;
   if (viteUrl && !nonEmpty(values.CONVEX_URL)) values.CONVEX_URL = viteUrl;

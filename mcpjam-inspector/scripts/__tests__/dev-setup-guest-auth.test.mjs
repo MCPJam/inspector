@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -20,19 +21,32 @@ import {
 } from "../dev-setup-guest-auth.mjs";
 import { parseEnvText } from "../../bin/runtime-profile.mjs";
 
-/** A fake deployment env store standing in for the isolated Convex CLI. */
-function fakeConvex(initial = {}) {
+/**
+ * A fake deployment env store standing in for the isolated Convex CLI.
+ * `target` is what Convex reports the selector resolves to.
+ */
+function fakeConvex(
+  initial = {},
+  target = { name: "happy-otter-123", type: "dev" },
+) {
   const store = { ...initial };
   const sets = [];
   const updates = [];
+  const reads = [];
   return {
     store,
     sets,
     updates,
+    reads,
+    async resolveDeployment() {
+      return target;
+    },
     async list() {
+      reads.push("list");
       return Object.keys(store);
     },
     async get(name) {
+      reads.push(name);
       return store[name] ?? null;
     },
     async setAll(entries) {
@@ -168,12 +182,54 @@ test("never overwrites existing deployment values; reuses them for the profile",
   }
 });
 
+test("refuses a dev: selector that Convex resolves to production, before reading or writing", async () => {
+  const { file, done } = scratch();
+  try {
+    const convex = fakeConvex({}, { name: "happy-otter-123", type: "prod" });
+    await assert.rejects(
+      setupGuestAuth({
+        selector: "dev:happy-otter-123",
+        envFile: file,
+        convex,
+      }),
+      /resolves to the prod deployment happy-otter-123/,
+    );
+    assert.deepEqual(convex.reads, []);
+    assert.deepEqual(convex.sets, []);
+    assert.throws(() => readFileSync(file, "utf8"));
+  } finally {
+    done();
+  }
+});
+
+test("refuses when the CLI acts on a different deployment than the one named", async () => {
+  const { file, done } = scratch();
+  try {
+    const convex = fakeConvex(
+      {},
+      { name: "prod-deployment-999", type: "prod" },
+    );
+    await assert.rejects(
+      setupGuestAuth({
+        selector: "dev:happy-otter-123",
+        envFile: file,
+        convex,
+      }),
+      /prod-deployment-999/,
+    );
+    assert.deepEqual(convex.reads, []);
+  } finally {
+    done();
+  }
+});
+
 test("refuses a deployment paired with a foreign JWKS, before writing anything", async () => {
   const { file, done } = scratch();
   try {
-    const convex = fakeConvex({
-      GUEST_JWKS_URL: "https://app.mcpjam.com/api/web/guest-jwks",
-    });
+    const convex = fakeConvex(
+      { GUEST_JWKS_URL: "https://app.mcpjam.com/api/web/guest-jwks" },
+      { name: "energized-ant-201", type: "dev" },
+    );
     await assert.rejects(
       setupGuestAuth({
         selector: "dev:energized-ant-201",
@@ -338,5 +394,107 @@ test("secrets go to the Convex CLI on stdin, never in argv or a failure message"
   } finally {
     convex.dispose();
     done();
+  }
+});
+
+/**
+ * The target guard against the REAL Convex CLI, pointed at a local stand-in
+ * for Convex's management API (CONVEX_PROVISION_HOST) that reports the
+ * deployment type it is told to — how `dev:<production-name>` resolves.
+ */
+async function standInManagementApi(type) {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const origin = `http://127.0.0.1:${server.address().port}`;
+      res.setHeader("content-type", "application/json");
+      if (req.url.includes("authorize_within_current_project")) {
+        const { selectedDeploymentName } = JSON.parse(body);
+        res.end(
+          JSON.stringify({
+            deploymentName: selectedDeploymentName,
+            adminKey: `${type}:${selectedDeploymentName}|test`,
+            url: origin,
+            deploymentType: type,
+          }),
+        );
+      } else {
+        res.end(JSON.stringify({ team: "t", project: "p" }));
+      }
+    });
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const { port } = server.address();
+  const home = mkdtempSync(join(tmpdir(), "mcpjam-setup-cli-home-"));
+  mkdirSync(join(home, `.convex-test-${port}`));
+  writeFileSync(
+    join(home, `.convex-test-${port}`, "config.json"),
+    JSON.stringify({ accessToken: "test-token" }),
+  );
+  return {
+    baseEnv: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      // Inherited from the shell: isolation must drop these.
+      CONVEX_DEPLOY_KEY: "prod:prod-deployment-999|inherited",
+      CONVEX_DEPLOYMENT: "prod:prod-deployment-999",
+    },
+    overrides: { CONVEX_PROVISION_HOST: `http://127.0.0.1:${port}` },
+    close() {
+      server.close();
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
+test("the real CLI's resolved type decides: a dev: selector reported as prod is refused", async () => {
+  const api = await standInManagementApi("prod");
+  const { file, done } = scratch();
+  const convex = createIsolatedConvex(
+    "dev:happy-otter-123",
+    api.baseEnv,
+    undefined,
+    api.overrides,
+  );
+  try {
+    assert.deepEqual(await convex.resolveDeployment(), {
+      name: "happy-otter-123",
+      type: "prod",
+    });
+    await assert.rejects(
+      setupGuestAuth({
+        selector: "dev:happy-otter-123",
+        envFile: file,
+        convex,
+      }),
+      /resolves to the prod deployment happy-otter-123/,
+    );
+    assert.throws(() => readFileSync(file, "utf8"));
+  } finally {
+    convex.dispose();
+    api.close();
+    done();
+  }
+});
+
+test("the real CLI targets the named development deployment despite inherited deploy settings", async () => {
+  const api = await standInManagementApi("dev");
+  const convex = createIsolatedConvex(
+    "dev:happy-otter-123",
+    api.baseEnv,
+    undefined,
+    api.overrides,
+  );
+  try {
+    assert.deepEqual(await convex.resolveDeployment(), {
+      name: "happy-otter-123",
+      type: "dev",
+    });
+  } finally {
+    convex.dispose();
+    api.close();
   }
 });

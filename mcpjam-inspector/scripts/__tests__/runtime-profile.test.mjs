@@ -233,6 +233,45 @@ test("mismatched Convex deployments and WorkOS ids are refused", () => {
   }
 });
 
+test("a CONVEX_URL naming another deployment than the browser URL is refused, not kept", () => {
+  const w = worktree({
+    "split.env": [
+      "VITE_CONVEX_URL=https://test-one-123.convex.cloud",
+      "CONVEX_HTTP_URL=https://test-one-123.convex.site",
+      "CONVEX_URL=https://test-two-456.convex.cloud",
+      "MCPJAM_GUEST_AUTHORITY=hosted",
+    ].join("\n"),
+    "agree.env": [
+      "VITE_CONVEX_URL=https://test-one-123.convex.cloud",
+      "CONVEX_HTTP_URL=https://test-one-123.convex.site",
+      "CONVEX_URL=https://test-one-123.convex.cloud/",
+      "MCPJAM_GUEST_AUTHORITY=hosted",
+    ].join("\n"),
+  });
+  try {
+    assert.throws(
+      () =>
+        resolveRuntimeProfile({
+          inspectorDir: w.dir,
+          envFile: join(w.dir, "split.env"),
+          env: {},
+        }),
+      /VITE_CONVEX_URL \(test-one-123\) and CONVEX_URL \(test-two-456\) name different deployments/,
+    );
+    const agreed = resolveRuntimeProfile({
+      inspectorDir: w.dir,
+      envFile: join(w.dir, "agree.env"),
+      env: {},
+    });
+    assert.equal(
+      agreed.values.CONVEX_URL,
+      "https://test-one-123.convex.cloud/",
+    );
+  } finally {
+    w.done();
+  }
+});
+
 test("ports default to the documented offsets, honour overrides, and must be distinct", () => {
   assert.deepEqual(computeInstancePorts(3), {
     client: 5176,

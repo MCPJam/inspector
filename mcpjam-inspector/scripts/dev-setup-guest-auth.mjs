@@ -13,7 +13,11 @@
  * this command is the one place that does, and it is careful about it:
  *
  *  - Only a fully qualified development selector (`dev:<deployment-name>`) is
- *    accepted. No `prod:`, no bare names, no `dev` shorthand, no URLs.
+ *    accepted. No `prod:`, no bare names, no `dev` shorthand, no URLs. The
+ *    prefix is only a claim — Convex resolves the deployment by name — so
+ *    before anything is read or written, the CLI is asked which deployment it
+ *    acts on, and setup stops unless Convex reports that exact name as a
+ *    development deployment.
  *  - The Convex CLI runs from an empty temporary directory with every
  *    inherited `CONVEX_*` setting (deploy keys included) removed, and is told
  *    the deployment explicitly. It cannot pick up a project's `.env.local` or
@@ -28,7 +32,7 @@
  *  - No secret value is ever printed.
  */
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   accessSync,
   chmodSync,
@@ -101,9 +105,11 @@ function generateGuestKeyPair(now) {
 }
 
 /**
- * Plan and apply. `convex` is `{ list(): Promise<string[]>, get(name):
- * Promise<string|null>, setAll(entries): Promise<void> }` bound to the one
- * selected deployment; `setAll` applies every `[name, value]` in one update.
+ * Plan and apply. `convex` is `{ resolveDeployment(): Promise<{name, type}>,
+ * list(): Promise<string[]>, get(name): Promise<string|null>,
+ * setAll(entries): Promise<void> }` bound to the one selected deployment;
+ * `resolveDeployment` reports what Convex itself resolved, and `setAll`
+ * applies every `[name, value]` in one update.
  */
 export async function setupGuestAuth({
   selector,
@@ -116,6 +122,15 @@ export async function setupGuestAuth({
 }) {
   const name = parseDevelopmentSelector(selector);
   const addresses = deploymentAddresses(name);
+
+  // ── the deployment Convex actually resolves, before any read or write ───
+  const target = await convex.resolveDeployment();
+  if (target.name !== name || target.type !== "dev") {
+    throw new SetupError(
+      `${selector} resolves to the ${target.type} deployment ${target.name}, not ` +
+        `the development deployment ${name}. Nothing was read or written.`,
+    );
+  }
 
   // ── read the deployment; decide everything before writing anything ──────
   const present = new Set(await convex.list());
@@ -275,10 +290,15 @@ function convexCliPath() {
   );
 }
 
+// Anchored to the line end so a chunk split mid-line never yields a partial type.
+const RESOLVED_TARGET =
+  /Deployment Name: ([^,\s]+), Deployment Type: ([a-z]+)\r?\n/g;
+
 export function createIsolatedConvex(
   selector,
   baseEnv = process.env,
   cli = convexCliPath(),
+  overrides = {},
 ) {
   const workdir = mkdtempSync(join(tmpdir(), "mcpjam-guest-auth-setup-"));
   // The CLI insists on a package.json that depends on convex; nothing else
@@ -291,7 +311,10 @@ export function createIsolatedConvex(
       dependencies: { convex: "*" },
     }),
   );
-  const env = isolatedConvexEnv(baseEnv, selector);
+  // `overrides` are explicit settings (tests point the CLI at a stand-in API);
+  // nothing inherited survives isolation.
+  const env = { ...isolatedConvexEnv(baseEnv, selector), ...overrides };
+  env.CONVEX_DEPLOYMENT = selector;
   const run = (args, { label = args.join(" "), input = "" } = {}) =>
     new Promise((resolvePromise, reject) => {
       const child = execFile(
@@ -327,6 +350,74 @@ export function createIsolatedConvex(
     });
   return {
     workdir,
+    /**
+     * A read-only `env get` under CONVEX_VERBOSE: while loading credentials
+     * the CLI logs the name and type from Convex's own authorization
+     * response, whatever the selector claimed. The call is stopped as soon as
+     * that line appears; no line means no confirmation, which is a refusal.
+     */
+    resolveDeployment() {
+      return new Promise((resolvePromise, reject) => {
+        const child = spawn(
+          process.execPath,
+          [cli, "env", "get", "GUEST_JWT_KID"],
+          {
+            cwd: workdir,
+            env: { ...env, CONVEX_VERBOSE: "1" },
+            stdio: ["ignore", "ignore", "pipe"],
+            windowsHide: true,
+          },
+        );
+        let stderr = "";
+        let settled = false;
+        const finish = (outcome) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (child.exitCode === null) child.kill();
+          outcome();
+        };
+        const timer = setTimeout(
+          () =>
+            finish(() =>
+              reject(
+                new SetupError(
+                  "Timed out confirming which deployment the Convex CLI acts on.",
+                ),
+              ),
+            ),
+          60_000,
+        );
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
+          const match = [...stderr.matchAll(RESOLVED_TARGET)].at(-1);
+          if (match) {
+            finish(() => resolvePromise({ name: match[1], type: match[2] }));
+          }
+        });
+        child.once("error", (error) =>
+          finish(() =>
+            reject(new SetupError(`convex env get failed: ${error.code}`)),
+          ),
+        );
+        child.once("close", () =>
+          finish(() => {
+            const detail = stderr
+              .split(/\r?\n/)
+              .filter((line) => line && !line.startsWith("[verbose]"))
+              .join("\n")
+              .trim();
+            reject(
+              new SetupError(
+                "Could not confirm which deployment the Convex CLI acts on; " +
+                  `nothing was read or written.${detail ? `\n${detail}` : ""}`,
+              ),
+            );
+          }),
+        );
+      });
+    },
     async list() {
       const { stdout } = await run(["env", "list", "--names-only"]);
       return stdout

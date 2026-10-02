@@ -120,7 +120,8 @@ from ONE guest authority per instance:
     --env-file mcpjam-inspector/.env.development.local
   ```
 
-  This accepts only a fully qualified `dev:` selector, runs the Convex CLI from an
+  This accepts only a fully qualified `dev:` selector, stops unless Convex itself
+  reports that name as a development deployment, runs the Convex CLI from an
   isolated directory with your shell's `CONVEX_*` settings removed, initializes only
   missing values (it never overwrites, never writes `GUEST_JWKS_URL`), and adds the
   deployment's addresses and guest credentials to the profile you name.
