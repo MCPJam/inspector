@@ -255,6 +255,12 @@ export function resolveChatSessionEngine(args: {
   model: {
     id: string;
     provider?: string;
+    /**
+     * `false` when the host's saved selection routes the turn OFF MCPJam
+     * credits (`withSelectionRouting`): the harness gate must see it, or a
+     * harness would run an own-key model on MCPJam's lease.
+     */
+    hosted?: boolean;
     supportedReasoningEfforts?: readonly string[];
   };
   /** The server set this turn will actually connect. */
