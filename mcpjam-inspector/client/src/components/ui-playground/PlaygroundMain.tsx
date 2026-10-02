@@ -1474,9 +1474,14 @@ export function PlaygroundMain({
             leadSelection.source !== "legacy"
               ? withReasoningEffort(leadSelection, leadEffort)
               : leadSelection;
+          // Rewrite the SAVED line-up, not the resolved cards: a card whose
+          // row has not loaded yet (an org connection that arrives after the
+          // host) is not in `cards`, and writing only those back would drop
+          // it from storage for good.
           setCompareSelections(
             replaceLeadCompareSelection(
-              cards.map((card) => card.selection),
+              compareSelectionsRef.current ??
+                cards.map((card) => card.selection),
               lead,
             ),
           );
@@ -1614,6 +1619,8 @@ export function PlaygroundMain({
 
   const compareCardsRef = useRef(compareCards);
   compareCardsRef.current = compareCards;
+  const compareSelectionsRef = useRef(compareSelections);
+  compareSelectionsRef.current = compareSelections;
   // What the grid renders in model mode: the v2 cards, else one card per v1
   // model (keyed by its id, no per-card effort — exactly the v1 behaviour).
   const modelCompareCards = useMemo<
@@ -4242,6 +4249,7 @@ export function PlaygroundMain({
             compareCards ?? [],
             nextSelectedModels,
             hostedOrgModelConfig,
+            compareSelections,
           ),
         );
       }
