@@ -60,8 +60,6 @@ export type ReleaseBlockerKind =
   | "conformance-missing"
   /** The manifest names the platform but no pack target has a digest. */
   | "pack-digest-missing"
-  /** A digest exists but names a different pack version than this build expects. */
-  | "pack-version-mismatch"
   /** `EXPECTED_PACK_VERSION` is empty: no pack build has ever been recorded. */
   | "no-pack-version";
 
@@ -92,8 +90,7 @@ export interface ReleaseBlocker {
  * The pack targets this build carries a usable digest for.
  *
  * "Usable" means present AND stamped with `EXPECTED_PACK_VERSION`: a record
- * left over from an older pack build names a version whose asset URL this
- * release does not publish, so it is not something to offer.
+ * left over from a different pack build is not the pinned pack.
  */
 export function packTargetsWithDigests(
   harnessId: SupportedLocalHarnessId,
@@ -200,7 +197,7 @@ export function localExecutionReleasedForThisMachine(args: {
  */
 export function localHarnessReleaseBlockers(args: {
   harnessId: SupportedLocalHarnessId;
-  /** The release version. Defaults to whatever the digest table was built at. */
+  /** Inspector release version, independent of the pinned pack version. */
   version?: string;
   manifests?: Readonly<Partial<Record<string, LocalHarnessCompatibility>>>;
   records?: typeof PACK_RECORDS;
@@ -258,20 +255,6 @@ export function localHarnessReleaseBlockers(args: {
         `EXPECTED_PACK_VERSION is empty, so no pack has been built and no ` +
         `install can ever verify. Run local-harness-pack.yml, then ` +
         `scripts/write-pack-digests.mjs, and commit the generated table.`,
-    });
-  } else if (args.version !== undefined && args.version !== expectedVersion) {
-    blockers.push({
-      kind: "pack-version-mismatch",
-      harnessId,
-      // Always blocking. A digest table stamped at another version points
-      // every install at an asset URL this release does not publish, whether
-      // or not the offer is live today — and the table is what the NEXT
-      // release inherits.
-      blocking: true,
-      message:
-        `EXPECTED_PACK_VERSION is ${expectedVersion} but this release is ` +
-        `${args.version}. The asset URL a client downloads is built from the ` +
-        `release tag, so the two must be the same version.`,
     });
   }
 

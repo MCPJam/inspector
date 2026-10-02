@@ -42,9 +42,11 @@ import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 
 const environments = new Hono();
@@ -376,7 +378,15 @@ async function readEnvironment(
       { projectId, environmentId } as any,
     )) as EnvironmentRow | null;
   } catch (error) {
-    throw translateConvexError(error);
+    // The scoping read. A plain membership refusal — masked to "Server Error"
+    // in production — answers the same neutral 404 instead of the write
+    // translator's terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexError(error)
+    );
   }
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found");
@@ -600,7 +610,10 @@ environments.get(
 // The backend's own default is already named-only, so this filter is belt and
 // braces against a backend that widens that default later.
 environments.get("/projects/:projectId/environments", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.environments",
+  );
   const includeArchived = c.req.query("includeArchived") === "true";
   const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: EnvironmentRow[] | null | undefined;
@@ -610,7 +623,13 @@ environments.get("/projects/:projectId/environments", async (c) => {
       { projectId, includeArchived } as any,
     )) as EnvironmentRow[] | null | undefined;
   } catch (error) {
-    throw translateConvexError(error);
+    // Project-scoped list: same masked-refusal reading as `readEnvironment`.
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexError(error)
+    );
   }
   return v1PageJson(
     c,
@@ -653,7 +672,17 @@ environments.get(
         { projectId, environmentId } as any,
       )) as ResolvedEnvironmentRow | null;
     } catch (error) {
-      throw translateResolveError(error);
+      // The route's only read, so it is the one that scopes both path ids.
+      // A malformed id, or a plain failure masked to "Server Error" in
+      // production, answers the same 404 as `readEnvironment` instead of the
+      // write translator's terminal 500; coded `ENV_*` refusals carry data
+      // and still reach `translateResolveError` (MJ-021).
+      throw (
+        redactedReadRefusalError(
+          error,
+          "Environment or project not found, or you do not have access to it.",
+        ) ?? translateResolveError(error)
+      );
     }
     if (!resolved || !resolved.environmentRef) {
       throw new WebRouteError(

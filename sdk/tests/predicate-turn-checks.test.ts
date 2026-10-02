@@ -142,6 +142,7 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
       // timings or the tool inventory would fail closed on every turn.
       toolLatencyUnder: "a turn slice carries no timings",
       toolResultContains: "a turn slice carries no results",
+      toolResultMatches: "a turn slice carries no results",
       toolResultMatchesSchema: "a turn slice carries no results",
       toolResultSizeUnder: "a turn slice carries no results",
       toolErrorNamesInput: "a turn slice carries no tool inventory",

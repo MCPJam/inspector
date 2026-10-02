@@ -343,11 +343,12 @@ export type HostConfigMcpProfileV1 = {
   //   refetches — after receiving the notification, the client re-issues
   //               `tools/list`.
   //
-  // The two are independent. `refetches` was originally documented as only
-  // measurable when `listens` is true; the 2026-08-26 Copilot capture
-  // disproved that — a server can publish the notification on an open
-  // `tools/call` response stream, reaching a client that never opened the
-  // standalone channel, so `listens: false, refetches: true` is real.
+  // The two are independent. A server can publish the notification on an
+  // open `tools/call` response stream, reaching a client whether or not it
+  // opened the standalone channel — the 2026-09-29 Cursor and VS Code runs
+  // received it that way and re-fetched — so `listens: false, refetches: true`
+  // is possible. (Copilot's 2026-08-26 re-fetch, once cited here, came 30 s
+  // late and is now recorded as unknown.)
   //
   // Absent -> spec-conforming (listens and refetches), like every knob above.
   toolListChanged?: {

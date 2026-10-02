@@ -7,6 +7,7 @@ import {
   listProjectsOperation,
   listStudiesOperation,
   runEvalSuiteOperation,
+  sendFeedbackOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
 import {
@@ -44,6 +45,7 @@ type CapturedRegistration = {
       readOnlyHint?: boolean;
       destructiveHint?: boolean;
       idempotentHint?: boolean;
+      openWorldHint?: boolean;
     };
   };
   callback: (input: unknown) => Promise<unknown>;
@@ -95,6 +97,7 @@ function fakeToolContext(
     platformApiUrl?: string;
     appOrigin?: string;
     callerUserAgent?: string;
+    isGuestSession?: boolean;
   } = {}
 ): PlatformToolContext {
   return {
@@ -108,6 +111,9 @@ function fakeToolContext(
     },
     ...(overrides.callerUserAgent
       ? { callerUserAgent: overrides.callerUserAgent }
+      : {}),
+    ...(overrides.isGuestSession !== undefined
+      ? { isGuestSession: overrides.isGuestSession }
       : {}),
   };
 }
@@ -309,6 +315,7 @@ const PLAIN_TOOLS = [
   "install_registry_directory_server",
   "install_registry_server",
   "uninstall_registry_server",
+  "send_feedback",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -584,6 +591,7 @@ describe("platform tool registration", () => {
       "install_registry_directory_server",
       "install_registry_server",
       "uninstall_registry_server",
+      "send_feedback",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -634,7 +642,13 @@ describe("platform tool registration", () => {
 
     // Writes whose handler is a no-op when the work is already done, so a
     // client may safely repeat one after a dropped response.
-    const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
+    const IDEMPOTENT_WRITES = new Set([
+      "cancel_project_server_connection",
+      // A repeat replays the stored receipt or dedupes onto the original.
+      "send_feedback",
+    ]);
+    // Writes whose effect leaves the caller's organization.
+    const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
 
     const NON_DESTRUCTIVE_WRITES = new Set([
       "observe_chat_session_browser",
@@ -783,8 +797,26 @@ describe("platform tool registration", () => {
       "set_client_servers",
     ]);
 
+    // `openWorldHint` is claimed by exactly the tools that talk to people
+    // outside the organization — never inherited from `risk: "exposure"`.
+    expect(
+      registrations
+        .filter(
+          (registration) =>
+            registration.config.annotations?.openWorldHint !== undefined
+        )
+        .map((registration) => registration.name)
+    ).toEqual([...EXTERNAL_COMMUNICATION]);
+
     for (const registration of registrations) {
-      if (IDEMPOTENT_WRITES.has(registration.name)) {
+      if (EXTERNAL_COMMUNICATION.has(registration.name)) {
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
+          openWorldHint: true,
+        });
+      } else if (IDEMPOTENT_WRITES.has(registration.name)) {
         // A write that can be repeated. Cancelling an already-cancelled request
         // is a no-op on the backend, so a client that retries a dropped
         // response lands on the state the first call produced — and NOT saying
@@ -1048,6 +1080,75 @@ describe("runPlatformOperation", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+    // No x-request-id on the response, so nothing to quote.
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Denied",
+    });
+  });
+
+  it("quotes the failing request's id in both channels", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "INTERNAL_ERROR", message: "Something broke" },
+          {
+            status: 500,
+            headers: { "x-request-id": "req_0123456789abcdef" },
+          }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    // Prefix only: an internal error also earns the send_feedback nudge,
+    // asserted in full in its own describe block below.
+    expect(result.content[0]?.text).toMatch(
+      /^INTERNAL_ERROR: Something broke \(request id: req_0123456789abcdef\)/
+    );
+    expect(result.structuredContent?.error).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Something broke",
+      requestId: "req_0123456789abcdef",
+    });
+  });
+
+  it("keeps the request id beside a refusal's retry guidance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "RATE_LIMITED", message: "Slow down." },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": "30",
+              "x-request-id": "req_0123456789abcdef",
+            },
+          }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.content[0]?.text).toBe(
+      "RATE_LIMITED: Slow down. (request id: req_0123456789abcdef) Retry after 30s, not sooner."
+    );
+    expect(
+      (result.structuredContent?.error as { requestId?: string }).requestId
+    ).toBe("req_0123456789abcdef");
   });
 
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {
@@ -1306,5 +1407,120 @@ describe("the worker's declared launcher", () => {
     ).shape;
     expect(shape).toBeDefined();
     expect(Object.keys(shape!)).not.toContain("launcher");
+  });
+});
+
+describe("the send_feedback nudge on tool errors", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function failWith(
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = {}
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        body === undefined
+          ? new Response("upstream exploded", { status, headers })
+          : Response.json(body, { status, headers })
+      )
+    );
+  }
+
+  async function listProjectsText(
+    context = fakeToolContext({ bearerToken: "user-jwt" })
+  ): Promise<string> {
+    const result = (await runPlatformOperation(
+      context,
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+    expect(result.isError).toBe(true);
+    return result.content[0]!.text;
+  }
+
+  const NUDGE = "If this looks like an MCPJam bug, report it with send_feedback";
+
+  it("suggests reporting an internal error, quoting its request id", async () => {
+    failWith(
+      500,
+      { code: "INTERNAL_ERROR", message: "Something broke" },
+      { "x-request-id": "req_0123456789abcdef" }
+    );
+    expect(await listProjectsText()).toBe(
+      "INTERNAL_ERROR: Something broke (request id: req_0123456789abcdef) " +
+        "If this looks like an MCPJam bug, report it with send_feedback (requestId req_0123456789abcdef)."
+    );
+  });
+
+  it("suggests reporting a missing capability", async () => {
+    failWith(422, {
+      code: "FEATURE_NOT_SUPPORTED",
+      message: "This server does not support tasks.",
+    });
+    expect(await listProjectsText()).toBe(
+      "FEATURE_NOT_SUPPORTED: This server does not support tasks. " +
+        "If this looks like an MCPJam bug, report it with send_feedback."
+    );
+  });
+
+  it.each([502, 503, 504])(
+    "stays quiet on a %i: the gateway or the user's own server failed",
+    async (status) => {
+      failWith(status, undefined);
+      const text = await listProjectsText();
+      expect(text).toContain("INTERNAL_ERROR");
+      expect(text).not.toContain(NUDGE);
+    }
+  );
+
+  it.each([
+    [404, { code: "NOT_FOUND", message: "No such project." }],
+    [400, { code: "VALIDATION_ERROR", message: "Bad input." }],
+    [403, { code: "FORBIDDEN", message: "Denied." }],
+    [429, { code: "RATE_LIMITED", message: "Slow down." }],
+  ])("stays quiet on a %i: the caller's to fix", async (status, body) => {
+    failWith(status, body);
+    expect(await listProjectsText()).not.toContain(NUDGE);
+  });
+
+  it("stays quiet in an anonymous session, where send_feedback refuses", async () => {
+    failWith(500, { code: "INTERNAL_ERROR", message: "Something broke" });
+    expect(
+      await listProjectsText(
+        fakeToolContext({ bearerToken: "guest-jwt", isGuestSession: true })
+      )
+    ).not.toContain(NUDGE);
+  });
+
+  it("never suggests reporting a failed report", async () => {
+    failWith(500, { code: "INTERNAL_ERROR", message: "Something broke" });
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      sendFeedbackOperation,
+      { kind: "bug", summary: "the run page crashes" }
+    )) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toBe("INTERNAL_ERROR: Something broke");
+  });
+
+  it("tells the agent where the text goes and to carry on", () => {
+    const { registrar, registrations } = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+    const tool = registrations.find(
+      (registration) => registration.name === "send_feedback"
+    );
+    expect(tool?.config.description).toContain(
+      "SENDS YOUR TEXT TO THE MCPJAM TEAM"
+    );
+    expect(tool?.config.description).toContain(
+      "then continue with the user's original task"
+    );
   });
 });

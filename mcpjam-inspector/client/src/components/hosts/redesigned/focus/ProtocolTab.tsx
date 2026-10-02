@@ -1249,11 +1249,11 @@ export function ProtocolTab({
                 onCheckedChange={(checked) =>
                   setToolListChangedPart("refetches", checked)
                 }
-                // NOT gated on `listens`. The 2026-08-26 Copilot capture
-                // re-fetched without ever opening the channel: the server
-                // published `list_changed` on an open tools/call response
-                // stream, which reaches a client that never opened the
-                // standalone one. off + on is a real combination.
+                // NOT gated on `listens`. A server can publish
+                // `list_changed` on an open tools/call response stream, which
+                // reaches a client that never opened the standalone one (the
+                // 2026-09-29 Cursor and VS Code runs re-fetched after exactly
+                // that delivery). off + on is a possible combination.
                 disabled={readOnly}
                 aria-label="Re-fetches tools after the notification"
               />
