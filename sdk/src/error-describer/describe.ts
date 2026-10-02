@@ -13,7 +13,10 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
-import { unwrapEraNegotiationCause } from "../mcp-client-manager/errors.js";
+import {
+  extractAuthChallenge,
+  unwrapEraNegotiationCause,
+} from "../mcp-client-manager/errors.js";
 import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
@@ -25,7 +28,10 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
-import type { BearerChallengeSummary } from "./challenge.js";
+import {
+  summarizeBearerChallenge,
+  type BearerChallengeSummary,
+} from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
   /**
@@ -690,10 +696,11 @@ export type DescribeContext = {
   surface?: "provider" | "mcpServer";
   /**
    * The parsed `WWW-Authenticate` challenge of the response that failed,
-   * when the caller captured one. Only a caller at the fetch boundary can
-   * know it — the transport error carries the status and the body text but
-   * never the header. This records what the response said without assuming
-   * that an absent header makes well-known discovery unavailable.
+   * when the caller captured one. When absent, the challenge is read from the
+   * error itself: the MCP client's HTTP error fetch attaches it to a failed
+   * protected operation (`extractAuthChallenge`). This records what the
+   * response said without assuming that an absent header makes well-known
+   * discovery unavailable.
    */
   challenge?: BearerChallengeSummary;
   /**
@@ -746,14 +753,13 @@ function contextSlug(
   error: unknown,
   context: DescribeContext | undefined
 ): string | undefined {
-  if (!context) return undefined;
-  if (context.refresh?.outcome === "authorization_server_unreachable") {
+  if (context?.refresh?.outcome === "authorization_server_unreachable") {
     return "auth/authorization_server_unreachable";
   }
-  if (context.refresh?.outcome === "token_rejected") {
+  if (context?.refresh?.outcome === "token_rejected") {
     return "auth/oauth_refresh_failed";
   }
-  const challenge = context.challenge;
+  const challenge = context?.challenge ?? challengeSummaryFromError(error);
   if (!challenge) return undefined;
   const status = httpStatusOf(error);
   if (status === 401 && challenge.scheme !== "bearer") {
@@ -776,6 +782,35 @@ function contextSlug(
     return "auth/http_403";
   }
   return undefined;
+}
+
+/**
+ * The challenge an MCP client error carries, as the storable summary.
+ *
+ * An `InsufficientScopeError` keeps its fields but not the header, so it is
+ * rebuilt from the fields; every other signal keeps its raw header.
+ */
+function challengeSummaryFromError(
+  error: unknown
+): BearerChallengeSummary | undefined {
+  let signal;
+  try {
+    signal = extractAuthChallenge(error);
+  } catch {
+    return undefined;
+  }
+  if (!signal) return undefined;
+  if (signal.raw) return summarizeBearerChallenge(signal.raw);
+  if (signal.facets.challengeHeader !== "bearer") {
+    return summarizeBearerChallenge(undefined);
+  }
+  return {
+    ...summarizeBearerChallenge("Bearer"),
+    ...(signal.error ? { error: signal.error } : {}),
+    ...(signal.requiredScope
+      ? { scopes: signal.requiredScope.split(/\s+/).filter(Boolean) }
+      : {}),
+  };
 }
 
 /**
@@ -891,7 +926,9 @@ export function describeError(
       annotateWithChallenge(
         maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
         slug,
-        context
+        context?.challenge
+          ? context
+          : { ...context, challenge: challengeSummaryFromError(error) }
       ),
       slug,
       context,

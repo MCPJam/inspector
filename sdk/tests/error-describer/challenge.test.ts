@@ -216,3 +216,65 @@ it("uses structured status through cause wrappers and remains bounded on cycles"
     "internal/unknown"
   );
 });
+
+describe("describeError reads the challenge an MCP client error carries", () => {
+  function clientHttpError(status: number, authChallenge: unknown) {
+    const err = new Error(`Error POSTing to endpoint (HTTP ${status})`) as Error & {
+      status: number;
+      data: unknown;
+    };
+    err.status = status;
+    err.data = { status, authChallenge };
+    return err;
+  }
+
+  it("reads a headerless 401 from the error, with no caller context", () => {
+    const out = describeError(
+      clientHttpError(401, {
+        source: "http_401",
+        facets: {
+          challengeHeader: "none",
+          hasResourceMetadata: false,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      })
+    );
+    expect(out.slug).toBe("oauth/no_bearer_challenge");
+  });
+
+  it("annotates a Bearer 401 with the error the server reported", () => {
+    const out = describeError(
+      clientHttpError(401, {
+        source: "http_401",
+        error: "invalid_token",
+        raw: 'Bearer error="invalid_token", scope="orders:read"',
+        facets: {
+          challengeHeader: "bearer",
+          hasResourceMetadata: false,
+          hasScope: true,
+          hasErrorParams: false,
+        },
+      })
+    );
+    expect(out.slug).toBe("auth/http_401");
+    expect(out.oneLine).toContain("invalid_token");
+    expect(out.nextSteps.join(" ")).toContain("mcpjam oauth login");
+  });
+
+  it("lets a caller's captured challenge win over the error's", () => {
+    const out = describeError(
+      clientHttpError(401, {
+        source: "http_401",
+        facets: {
+          challengeHeader: "none",
+          hasResourceMetadata: false,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      }),
+      { challenge: { scheme: "bearer" } }
+    );
+    expect(out.slug).toBe("auth/http_401");
+  });
+});

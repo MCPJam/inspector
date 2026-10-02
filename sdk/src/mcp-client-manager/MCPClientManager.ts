@@ -24,7 +24,14 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
+import {
+  wrapFetchForHttpErrors,
+  type AuthChallengeRecorder,
+} from "./http-error-fetch.js";
+import {
+  resolveToolSecuritySchemes,
+  type ToolSecuritySchemeResolution,
+} from "./auth-challenge.js";
 
 import type {
   MCPClientManagerConfig,
@@ -79,6 +86,8 @@ import {
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
   readUnsupportedVersionFailure,
+  attachAuthChallenge,
+  extractAuthChallenge,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -974,6 +983,29 @@ export class MCPClientManager {
   /** Raw declarations before SDK aggregation, name merging, or schema filtering. */
   getCapturedToolDeclarations(serverId: string) {
     return this.toolDeclarationCapture.read(serverId);
+  }
+
+  /**
+   * A tool's `securitySchemes`, resolved by OpenAI's inheritance rule.
+   *
+   * Read from the raw `tools/list` frames (the upstream schema strips the
+   * top-level field). Where a server advertises the default a tool without
+   * schemes inherits is not known, so such a tool resolves as `unresolved`.
+   */
+  getToolSecuritySchemes(
+    serverId: string,
+    toolName: string
+  ): ToolSecuritySchemeResolution {
+    const declaration = this.toolDeclarationCapture
+      .read(serverId)
+      ?.tools.find((tool) => tool.name === toolName);
+    const cachedMeta = this.toolsMetadataCache.get(serverId)?.get(toolName);
+    return resolveToolSecuritySchemes({
+      declaration: declaration ?? {
+        _meta:
+          cachedMeta && typeof cachedMeta === "object" ? cachedMeta : undefined,
+      },
+    });
   }
 
   hasCachedToolAnnotations(serverId: string): boolean {
@@ -2842,6 +2874,8 @@ export class MCPClientManager {
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
+    const authChallengeRecorder: AuthChallengeRecorder = {};
+    state.authChallengeRecorder = authChallengeRecorder;
 
     let streamableError: unknown;
 
@@ -2856,7 +2890,8 @@ export class MCPClientManager {
         // `httpLogger` is configured — see `buildTransportFetch`.
         fetch: wrapFetchForHttpErrors(
           this.buildTransportFetch(serverId, config),
-          effectiveAuthProvider !== undefined
+          effectiveAuthProvider !== undefined,
+          authChallengeRecorder
         ),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
@@ -3000,7 +3035,14 @@ export class MCPClientManager {
       // GET SSE is the connection, not the listen channel, so `listens:false`
       // is a documented no-op here rather than a connection failure (a real
       // client on HTTP+SSE cannot not-listen either).
-      fetch: this.buildTransportFetch(serverId, config, { listenGuard: false }),
+      // The same challenge-preserving wrapper as Streamable HTTP. It only acts
+      // on POSTs, so the GET event stream is untouched; a `_meta` challenge
+      // delivered over that stream is read from the result, not here.
+      fetch: wrapFetchForHttpErrors(
+        this.buildTransportFetch(serverId, config, { listenGuard: false }),
+        effectiveAuthProvider !== undefined,
+        authChallengeRecorder
+      ),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
@@ -4598,6 +4640,7 @@ export class MCPClientManager {
       serverId,
       options?.signal
     );
+    const startedAt = Date.now();
 
     const runWithTransientRetry = () =>
       retryWithPolicy({
@@ -4624,13 +4667,37 @@ export class MCPClientManager {
           signal
         );
         if (!refreshed) {
+          this.attachRecordedAuthChallenge(serverId, error, startedAt);
           throw error;
         }
-        return await runWithTransientRetry();
+        try {
+          return await runWithTransientRetry();
+        } catch (retryError) {
+          this.attachRecordedAuthChallenge(serverId, retryError, startedAt);
+          throw retryError;
+        }
       }
     } finally {
       cleanup();
     }
+  }
+
+  /**
+   * With an auth provider, the transport owns 401/403 and raises
+   * `UnauthorizedError` (or "401 after re-authentication") without the
+   * `WWW-Authenticate` header. Give the error back the challenge the fetch
+   * wrapper recorded during this operation.
+   */
+  private attachRecordedAuthChallenge(
+    serverId: string,
+    error: unknown,
+    startedAt: number
+  ): void {
+    const recorded =
+      this.liveClientStates.get(serverId)?.authChallengeRecorder?.last;
+    if (!recorded || recorded.at < startedAt) return;
+    if (!isUnauthorized401(error) || extractAuthChallenge(error)) return;
+    attachAuthChallenge(error, recorded.challenge);
   }
 
   private async refreshAccessTokenAfterUnauthorized(

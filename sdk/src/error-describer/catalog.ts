@@ -522,6 +522,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Re-authenticate using the Reconnect button on the server card.",
       "If using OAuth, run through the OAuth flow again from Servers.",
+      "From the CLI, sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`.",
     ],
     "unauthorized-401",
   ),
