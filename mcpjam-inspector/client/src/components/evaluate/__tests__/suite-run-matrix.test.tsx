@@ -1,27 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SuiteRunReview } from "../suite-run-review";
-import { planRunMatrix, seedRunMatrix } from "../suite-run-matrix";
+import {
+  plannedPreflight,
+  planRunMatrix,
+  seedRunMatrix,
+} from "../suite-run-matrix";
 import type { EvalSuite, EvalCase } from "../../evals/types";
-const { ensure, query, mutation, capabilities, projectEnvironments } =
-  vi.hoisted(() => ({
-    ensure: vi.fn(),
-    query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
-    mutation: vi.fn(),
-    capabilities: {
-      value: null as {
-        environmentDerivation?: boolean;
-        ephemeralEnvironmentLaunch?: boolean;
-      } | null,
-    },
-    projectEnvironments: { value: [] as unknown[] | undefined },
-  }));
+const {
+  ensure,
+  query,
+  mutation,
+  capabilities,
+  projectEnvironments,
+  useQueries,
+} = vi.hoisted(() => ({
+  useQueries: vi.fn((_queries: Record<string, unknown>) => ({})),
+  ensure: vi.fn(),
+  query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
+  mutation: vi.fn(),
+  capabilities: {
+    value: null as {
+      environmentDerivation?: boolean;
+      ephemeralEnvironmentLaunch?: boolean;
+    } | null,
+  },
+  projectEnvironments: { value: [] as unknown[] | undefined },
+}));
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
   // The run preflight's reactive reads; nothing here is under test.
   useQuery: () => undefined,
-  useQueries: () => ({}),
+  useQueries: (queries: Record<string, unknown>) => useQueries(queries),
+}));
+// A signed-in, ready user: the preflight only resolves environments then.
+vi.mock("@/contexts/db-user-ready-context", async (original) => ({
+  ...(await original<typeof import("@/contexts/db-user-ready-context")>()),
+  useDbUserReady: () => true,
 }));
 // The mount-time capabilities probe; `query` then only sees launch probes.
 vi.mock("@/hooks/use-environment-capabilities", () => ({
@@ -148,6 +164,46 @@ it("blocks a new cell whose template carries what a one-run change can't copy", 
   );
   expect(cell.blocked).toMatch(/grants project secrets/);
 });
+it("preflights the cells a run launches, and the setup a new cell copies", () => {
+  const plan = planRunMatrix(suite, environments, {
+    claude: { includeClientDefaults: true, explicitModelIds: ["sonnet"] },
+  });
+  expect(plannedPreflight(plan)).toEqual({
+    environmentIds: ["env"],
+    targets: [{ hostId: "claude" }, { hostId: "claude", modelId: "sonnet" }],
+  });
+  // A new cell alone still brings the setup it copies.
+  const newOnly = planRunMatrix(suite, environments, {
+    claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
+  });
+  expect(plannedPreflight(newOnly).environmentIds).toEqual(["env"]);
+});
+
+it("stops preflighting a saved pairing once it is deselected", () => {
+  const twoModels = { ...suite, environmentIds: ["env", "env-opus"] };
+  const both = [
+    environments[0],
+    { ...environments[0], environmentId: "env-opus", modelId: "opus" },
+  ];
+  useQueries.mockClear();
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={twoModels}
+      cases={cases}
+      environments={both}
+      hostNamesById={new Map()}
+      onStart={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const asked = () => Object.keys(useQueries.mock.lastCall?.[0] ?? {});
+  expect(asked()).toEqual(["env", "env-opus"]);
+  // The matrix stub keeps only "opus" on this client.
+  fireEvent.click(screen.getByRole("button", { name: "Change model" }));
+  expect(asked()).toEqual(["env-opus"]);
+});
+
 it("resolves changed combinations only at launch without modifying the suite", async () => {
   ensure.mockResolvedValue([{ environment: { environmentId: "new-env" } }]);
   const onStart = vi.fn();

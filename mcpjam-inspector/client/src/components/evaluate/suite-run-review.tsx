@@ -16,6 +16,7 @@ import { ConfiguredSuiteRunReview } from "./suite-run-matrix";
 import {
   hasBlockingPreflight,
   RunPreflightNotices,
+  scopePreflightToHosts,
   type RunPreflightState,
 } from "./suite-run-preflight";
 import type { EvalCase, EvalSuite } from "../evals/types";
@@ -168,12 +169,6 @@ export function SuiteRunReviewContent({
   );
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The notices say which server; this only has to stop the launch.
-  const disabledReason =
-    blockedReason ??
-    (hasBlockingPreflight(preflight)
-      ? "Fix the setup problem above before running."
-      : null);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -181,6 +176,24 @@ export function SuiteRunReviewContent({
     selected.includes(target.id),
   );
   const selectionCount = matrix?.count ?? activeTargets.length;
+  // A legacy suite's clients are picked here, so only theirs count.
+  const scopedPreflight =
+    preflight &&
+    !matrix &&
+    !suite.environmentIds?.length &&
+    suite.hostAttachments?.length
+      ? scopePreflightToHosts(
+          preflight,
+          suite,
+          activeTargets.map((target) => target.id),
+        )
+      : preflight;
+  // The notices say which server; this only has to stop the launch.
+  const disabledReason =
+    blockedReason ??
+    (hasBlockingPreflight(scopedPreflight)
+      ? "Fix the setup problem above before running."
+      : null);
   const variantsPerTarget =
     matrix || suite.environmentIds?.length
       ? cases.length
@@ -305,8 +318,19 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
-          {preflight && (
-            <RunPreflightNotices preflight={preflight} disabled={starting} />
+          {scopedPreflight && (
+            <RunPreflightNotices
+              preflight={scopedPreflight}
+              disabled={starting}
+              onEditSettings={
+                onEditSettings
+                  ? () => {
+                      onClose();
+                      onEditSettings();
+                    }
+                  : undefined
+              }
+            />
           )}
           {onEditSettings && (
             <Button

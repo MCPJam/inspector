@@ -45,6 +45,8 @@ type PlannedCombination = {
   blocked?: string;
   /** No server group and no plugin pin: the run would connect no servers. */
   missingGroup?: boolean;
+  /** The attached environment a new cell copies its setup from. */
+  templateEnvironmentId?: string;
 };
 
 type Environments = NonNullable<SuiteRunReviewProps["environments"]>;
@@ -148,6 +150,7 @@ export function planRunMatrix(
               overrides: { hostId, modelId: modelId ?? null },
             },
             missingGroup: lacksServerSource(choice.composition),
+            templateEnvironmentId: choice.source.environmentId,
           },
         ];
       const reason = unpreservableReason(choice.composition);
@@ -175,21 +178,38 @@ export function planRunMatrix(
               : {}),
           },
           missingGroup: lacksServerSource(choice.composition),
+          templateEnvironmentId: choice.source.environmentId,
         },
       ];
     });
   });
 }
 
+/**
+ * What a planned run launches, for the preflight: each cell's environment
+ * (or the one a new cell copies) and each cell's client and model.
+ */
+export function plannedPreflight(plan: readonly PlannedCombination[]) {
+  return {
+    environmentIds: [
+      ...new Set(
+        plan.flatMap((item) => {
+          const id = item.environmentId ?? item.templateEnvironmentId;
+          return id ? [id] : [];
+        }),
+      ),
+    ],
+    targets: plan.map(({ stack }) => ({
+      hostId: stack.hostId,
+      ...(stack.modelId ? { modelId: stack.modelId } : {}),
+    })),
+  };
+}
+
 export function ConfiguredSuiteRunReview(
   reviewProps: SuiteRunReviewProps & { projectId: string },
 ) {
-  // Every branch below renders through the content, which shows these.
-  const props = {
-    ...reviewProps,
-    preflight: useSuiteRunPreflight(reviewProps),
-  };
-  const { suite, projectId, environments = [] } = props;
+  const { suite, projectId, environments = [] } = reviewProps;
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels } = useAvailableModels({ projectId });
@@ -222,6 +242,17 @@ export function ConfiguredSuiteRunReview(
       stack.modelId === undefined &&
       !hosts.find((host) => host.hostId === stack.hostId)?.modelId?.trim(),
   );
+  // Every branch below renders through the content, which shows these. They
+  // cover what this run launches, not every pairing the suite saves.
+  const props = {
+    ...reviewProps,
+    preflight: useSuiteRunPreflight({
+      ...reviewProps,
+      ...(suite.environmentIds?.length
+        ? { planned: plannedPreflight(plan) }
+        : {}),
+    }),
+  };
   // Older deployments retain their launch path until they support model overrides.
   if (!capable && !pending) return <SuiteRunReviewContent {...props} />;
   // An SDK suite only RECORDS runs its CI executed; it has no client, model

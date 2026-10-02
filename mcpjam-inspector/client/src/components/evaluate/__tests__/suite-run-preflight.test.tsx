@@ -7,6 +7,7 @@ import {
   readEnvironmentResolutions,
   runPreflight,
   RunPreflightNotices,
+  scopePreflightToHosts,
 } from "../suite-run-preflight";
 import { SuiteRunReviewContent } from "../suite-run-review";
 import type { EvalCase, EvalSuite } from "../../evals/types";
@@ -147,6 +148,25 @@ describe("preflightTargets", () => {
     });
   });
 
+  it("checks the cells the run will launch when they are known", () => {
+    expect(
+      preflightTargets({
+        suite: { _id: "s", name: "S", environmentIds: ["env-pinned"] } as never,
+        cases,
+        environments: [],
+        hosts: [{ hostId: "claude", modelId: "anthropic/claude-sonnet-4-5" }],
+        environmentServerRefs: ["billing"],
+        targets: [
+          { hostId: "claude", modelId: "openai/gpt-5" },
+          { hostId: "claude" },
+        ],
+      }).models,
+    ).toEqual([
+      { model: "openai/gpt-5", provider: "openai" },
+      { model: "anthropic/claude-sonnet-4-5", provider: "anthropic" },
+    ]);
+  });
+
   it("checks nothing for an SDK suite, which runs in the environment picked for it", () => {
     expect(
       targets({
@@ -185,6 +205,23 @@ describe("readEnvironmentResolutions", () => {
     ]);
   });
 
+  // The run route picks a local or hosted venue server-side; the browser
+  // resolves as hosted, so a venue-only refusal may not apply to the launch.
+  it("leaves a refusal that depends on where the run executes to the run route", () => {
+    expect(
+      readEnvironmentResolutions({
+        "env-a": new ConvexError({
+          code: "ENV_LOCAL_SERVERS_REQUIRED",
+          message: "This environment requires a local runner.",
+        }),
+        "env-b": new ConvexError({
+          code: "ENV_PLUGIN_COMPONENT_UNSUPPORTED",
+          message: "Can't be used in a hosted run.",
+        }),
+      }).refusals,
+    ).toEqual([]);
+  });
+
   it("leaves a failure that is not a launch refusal to the run route", () => {
     expect(
       readEnvironmentResolutions({
@@ -195,6 +232,36 @@ describe("readEnvironmentResolutions", () => {
         }),
       }),
     ).toEqual({ serverRefs: [], refusals: [] });
+  });
+});
+
+describe("scopePreflightToHosts", () => {
+  const suite = {
+    _id: "s",
+    name: "S",
+    environment: { servers: [] },
+    hostAttachments: [
+      { namedHostId: "a", resolvedServerNames: ["ok"] },
+      { namedHostId: "b", resolvedServerNames: ["gone", "flaky"] },
+    ],
+  } as unknown as EvalSuite;
+  const preflight = {
+    disconnected: ["flaky"],
+    removed: ["gone"],
+    refused: [],
+    disabledProviders: [],
+    serverName: (ref: string) => ref,
+  };
+
+  it("drops server problems that only a deselected client has", () => {
+    expect(scopePreflightToHosts(preflight, suite, ["a"])).toMatchObject({
+      disconnected: [],
+      removed: [],
+    });
+    expect(scopePreflightToHosts(preflight, suite, ["a", "b"])).toMatchObject({
+      disconnected: ["flaky"],
+      removed: ["gone"],
+    });
   });
 });
 
@@ -249,6 +316,61 @@ describe("Setup Run with a preflight", () => {
     environment: { servers: ["gone"] },
   } as unknown as EvalSuite;
   const cases = [{ _id: "one", runs: 1, models: [] }] as unknown as EvalCase[];
+
+  it("sends a launch refusal to the suite's settings, not to Servers", async () => {
+    const editSettings = vi.fn();
+    render(
+      <RunPreflightNotices
+        preflight={{
+          disconnected: [],
+          removed: [],
+          refused: ['Environment "Claude" has a deleted server "crm".'],
+          disabledProviders: [],
+          serverName: (ref) => ref,
+        }}
+        onEditSettings={editSettings}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Open Servers" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open suite settings" }),
+    );
+    expect(editSettings).toHaveBeenCalled();
+  });
+
+  it("starts once the client whose server is gone is deselected", async () => {
+    const legacy = {
+      _id: "suite",
+      name: "Checkout",
+      environment: { servers: [] },
+      hostAttachments: [
+        { namedHostId: "a", hostName: "A", resolvedServerNames: ["ok"] },
+        { namedHostId: "b", hostName: "B", resolvedServerNames: ["gone"] },
+      ],
+    } as unknown as EvalSuite;
+    render(
+      <SuiteRunReviewContent
+        suite={legacy}
+        cases={cases}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+        preflight={{
+          disconnected: [],
+          removed: ["gone"],
+          refused: [],
+          disabledProviders: [],
+          serverName: (ref) => ref,
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: /^B/ }));
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeEnabled();
+    expect(screen.queryByText(/gone is no longer/)).not.toBeInTheDocument();
+  });
 
   it("blocks Start on an environment the backend refuses to launch", () => {
     render(

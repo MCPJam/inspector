@@ -96,6 +96,8 @@ type PreflightEnvironment = Pick<
   "environmentId" | "hostId" | "modelId"
 >;
 
+type PreflightTarget = { hostId: string; modelId?: string };
+
 /** The servers and models a launch of this suite would need. */
 export function preflightTargets({
   suite,
@@ -103,12 +105,15 @@ export function preflightTargets({
   environments,
   hosts,
   environmentServerRefs,
+  targets,
 }: {
   suite: EvalSuite;
   cases: readonly EvalCase[];
   environments: readonly PreflightEnvironment[];
   hosts: readonly { hostId: string; modelId?: string | null }[];
   environmentServerRefs: readonly string[];
+  /** The client/model cells the run will launch; else the attached ones. */
+  targets?: readonly PreflightTarget[];
 }): { serverRefs: string[]; models: { model: string; provider: string }[] } {
   const environmentIds = suite.environmentIds ?? [];
   // An SDK suite runs in the environment picked in the sheet; its own
@@ -120,17 +125,36 @@ export function preflightTargets({
       serverRefs: normalizeSuiteServerRefs(getEffectiveSuiteServers(suite)),
       models: cases.flatMap((item) => item.models ?? []),
     };
-  // An environment runs its own model, else its client's.
-  const models = environmentIds.flatMap((id) => {
-    const environment = environments.find((item) => item.environmentId === id);
+  // A cell runs its own model, else its client's.
+  const cells =
+    targets ??
+    environmentIds.flatMap((id) => {
+      const environment = environments.find(
+        (item) => item.environmentId === id,
+      );
+      return environment
+        ? [{ hostId: environment.hostId, modelId: environment.modelId }]
+        : [];
+    });
+  const models = cells.flatMap((cell) => {
     const model =
-      environment?.modelId ||
-      hosts.find((host) => host.hostId === environment?.hostId)?.modelId;
+      cell.modelId ||
+      hosts.find((host) => host.hostId === cell.hostId)?.modelId;
     const provider = model ? classifyModelIdProvider(model) : null;
     return model && provider ? [{ model, provider: provider.provider }] : [];
   });
   return { serverRefs: [...environmentServerRefs], models };
 }
+
+/**
+ * Refusals that depend on where the run executes. The run route picks a local
+ * or hosted venue server-side, and the browser resolves as hosted, so these
+ * may not apply to the real launch.
+ */
+const VENUE_DEPENDENT_REFUSALS = new Set([
+  "ENV_LOCAL_SERVERS_REQUIRED",
+  "ENV_PLUGIN_COMPONENT_UNSUPPORTED",
+]);
 
 /**
  * Each environment's launch resolution: the servers its run would connect,
@@ -145,7 +169,11 @@ export function readEnvironmentResolutions(
   for (const resolved of Object.values(results)) {
     if (resolved instanceof Error) {
       const code = (resolved as { data?: { code?: unknown } }).data?.code;
-      if (typeof code === "string" && code.startsWith("ENV_"))
+      if (
+        typeof code === "string" &&
+        code.startsWith("ENV_") &&
+        !VENUE_DEPENDENT_REFUSALS.has(code)
+      )
         refusals.add(convexErrMessage(resolved, resolved.message));
       continue;
     }
@@ -175,11 +203,15 @@ export function useEnvironmentResolutions(
           environmentId,
           {
             query: "projectEnvironments:resolveEnvironmentForLaunch" as any,
-            // The rule the run route resolves with.
+            // The rule the run route resolves with. `requireLiveServers`
+            // opts in to refusing a group server that was deleted, which the
+            // launch itself refuses; it is opt-in because GitHub checks
+            // resolve here too and replace every server.
             args: {
               projectId,
               environmentId,
               serverSource: "environment_only",
+              requireLiveServers: true,
             },
           },
         ]),
@@ -194,11 +226,17 @@ export function useSuiteRunPreflight({
   suite,
   cases,
   environments = [],
+  planned,
 }: {
   projectId: string;
   suite: EvalSuite;
   cases: readonly EvalCase[];
   environments?: readonly PreflightEnvironment[];
+  /** What the sheet will launch, when it plans cells of its own. */
+  planned?: {
+    environmentIds: readonly string[];
+    targets: readonly PreflightTarget[];
+  };
 }): RunPreflightState {
   const appState = useOptionalSharedAppState();
   const actions = useServerActionsOptional();
@@ -217,7 +255,7 @@ export function useSuiteRunPreflight({
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
     projectId,
-    suite.environmentIds ?? [],
+    planned?.environmentIds ?? suite.environmentIds ?? [],
     // The gate `useProjectServers` reads with: a signed-out browser or a
     // placeholder project id would only collect validator errors.
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
@@ -229,6 +267,7 @@ export function useSuiteRunPreflight({
       environments,
       hosts,
       environmentServerRefs: environment.serverRefs,
+      targets: planned?.targets,
     }),
     refused: environment.refusals,
     servers: appState?.servers ?? {},
@@ -258,6 +297,29 @@ export function useSuiteRunPreflight({
   };
 }
 
+/** A legacy suite's server problems, kept only for the clients selected. */
+export function scopePreflightToHosts<T extends RunPreflight>(
+  preflight: T,
+  suite: EvalSuite,
+  selectedHostIds: readonly string[],
+): T {
+  const refs = new Set(
+    normalizeSuiteServerRefs(
+      getEffectiveSuiteServers({
+        ...suite,
+        hostAttachments: suite.hostAttachments?.filter((host) =>
+          selectedHostIds.includes(host.namedHostId),
+        ),
+      }),
+    ),
+  );
+  return {
+    ...preflight,
+    disconnected: preflight.disconnected.filter((ref) => refs.has(ref)),
+    removed: preflight.removed.filter((ref) => refs.has(ref)),
+  };
+}
+
 export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
   return Boolean(preflight?.removed.length || preflight?.refused.length);
 }
@@ -265,9 +327,12 @@ export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
 export function RunPreflightNotices({
   preflight,
   disabled = false,
+  onEditSettings,
 }: {
   preflight: RunPreflightState;
   disabled?: boolean;
+  /** Where an environment's launch refusal is fixed. */
+  onEditSettings?: () => void;
 }) {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -309,7 +374,17 @@ export function RunPreflightNotices({
     >
       {refused.map((message) => (
         <p key={`refused:${message}`} className="text-destructive">
-          {message} {openServers}
+          {message}{" "}
+          {onEditSettings && (
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-xs"
+              onClick={onEditSettings}
+            >
+              Open suite settings
+            </Button>
+          )}
         </p>
       ))}
       {removed.map((ref) => (

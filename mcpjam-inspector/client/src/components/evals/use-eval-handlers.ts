@@ -598,7 +598,11 @@ export function useEvalHandlers({
       run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
       options?: { minimumPassRate?: number; throwOnFailure?: boolean },
     ) => {
-      if (rerunningSuiteId || replayingRunId) return;
+      if (rerunningSuiteId || replayingRunId) {
+        if (options?.throwOnFailure)
+          throw new Error("Another suite run is already starting.");
+        return;
+      }
       const fail = (message: string) => {
         if (options?.throwOnFailure) throw new Error(message);
         toast.error(message);
@@ -786,7 +790,7 @@ export function useEvalHandlers({
         toast.error(message);
       };
       if (rerunningSuiteId) {
-        if (options?.stayOnPage)
+        if (options?.stayOnPage || options?.throwOnFailure)
           throw new Error("Another suite run is already starting.");
         return;
       }
@@ -886,38 +890,6 @@ export function useEvalHandlers({
         }
       }
 
-      // The local run route executes on this inspector's connection pool and
-      // connects nothing itself, so connect the environments' servers first,
-      // as an environment quick run does. Hosted routes connect them.
-      if (
-        isEnvironmentSuite &&
-        projectId &&
-        !isHostedMode() &&
-        ensureServersReady != null
-      ) {
-        const blocked = await ensureLocalEnvironmentServers({
-          convex,
-          projectId,
-          environmentIds: suite.environmentIds ?? [],
-          ensureServersReady,
-        }).catch((error: unknown) =>
-          error instanceof Error ? error : new Error(String(error)),
-        );
-        if (blocked) {
-          const message =
-            blocked instanceof Error
-              ? blocked.message
-              : formatEnsureServersReadyError(
-                  blocked,
-                  "run this suite",
-                  projectServers,
-                );
-          if (options?.stayOnPage) throw new Error(message);
-          fail(message);
-          return;
-        }
-      }
-
       const executionContext = await getSuiteExecutionContext(
         suite,
         options?.stayOnPage ? undefined : fail,
@@ -967,6 +939,33 @@ export function useEvalHandlers({
 
       const suiteRunStartedAt = Date.now();
       try {
+        // The local run route executes on this inspector's connection pool and
+        // connects nothing itself, so connect the environments' servers first,
+        // as an environment quick run does. Hosted routes connect them. Inside
+        // the launch: its guard, its toast and its failure handling cover the
+        // wait.
+        if (
+          isEnvironmentSuite &&
+          projectId &&
+          !isHostedMode() &&
+          ensureServersReady != null
+        ) {
+          const blocked = await ensureLocalEnvironmentServers({
+            convex,
+            projectId,
+            environmentIds: suite.environmentIds ?? [],
+            ensureServersReady,
+          });
+          if (blocked)
+            throw new Error(
+              formatEnsureServersReadyError(
+                blocked,
+                "run this suite",
+                projectServers,
+              ),
+            );
+        }
+
         // Local guests authenticate via this body token (the guest bearer);
         // hosted guests authenticate via authFetch's Authorization header and
         // `mergeHostedServerBatch` strips convexAuthToken, so an empty string
