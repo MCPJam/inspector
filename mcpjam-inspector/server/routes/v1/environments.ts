@@ -41,7 +41,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import type { ModelSelection } from "@mcpjam/sdk";
+import type { RequestedModelSelection } from "@mcpjam/sdk";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -50,8 +50,10 @@ import { translateConvexWriteError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
-  modelSelectionSchema,
+  computedModelId,
+  requestedModelSelectionSchema,
   selectionModelMismatch,
+  selectionOriginField,
 } from "./model-selection-schema.js";
 
 const environments = new Hono();
@@ -106,8 +108,13 @@ type EnvironmentRow = {
   serverAttachmentId?: string;
   /** The stored model OVERRIDE. Absent ⇒ the environment inherits its host's. */
   modelId?: string;
-  /** The saved selection behind `modelId`. Absent ⇒ a legacy bare id. */
+  /**
+   * The saved selection behind `modelId`. Absent ⇒ an unlabelled bare id. May
+   * be a STORED legacy selection (`source: "legacy"`, "own key only").
+   */
   modelSelection?: Record<string, unknown>;
+  /** `"backfill"` when a conversion chose `modelSelection`. */
+  modelSelectionOrigin?: string;
   skillSelection?: SkillSelection;
   secretSelection?: SecretSelection;
   pluginVersionIds?: string[];
@@ -166,11 +173,23 @@ function toEnvironmentDto(row: EnvironmentRow) {
     // lives on the resolve DTO — conflating them here would leave a caller
     // unable to tell "pinned to X" from "inheriting X", which is exactly the
     // distinction an editor needs.
-    ...(row.modelId !== undefined ? { modelId: row.modelId } : {}),
+    //
+    // COMPUTED from the selection when there is one: a store-once row keeps
+    // the selection as its only copy of the model.
+    ...(computedModelId(row.modelSelection, row.modelId) !== undefined
+      ? { modelId: computedModelId(row.modelSelection, row.modelId) }
+      : {}),
     // The saved selection behind the override (source, connection, settings
-    // such as `reasoningEffort`). Absent for a legacy bare id.
+    // such as `reasoningEffort`). Absent for an unlabelled bare id; a STORED
+    // legacy selection (`source: "legacy"`) means "own key only".
     ...(row.modelSelection !== undefined
       ? { modelSelection: row.modelSelection }
+      : {}),
+    // Set when a conversion (a save of a bare id, or the backfill) chose the
+    // selection rather than a person.
+    ...(row.modelSelection !== undefined &&
+    selectionOriginField(row.modelSelectionOrigin)
+      ? { modelSelectionOrigin: selectionOriginField(row.modelSelectionOrigin) }
       : {}),
     ...(row.skillSelection !== undefined
       ? { skillSelection: row.skillSelection }
@@ -457,7 +476,7 @@ function refineSelectionMatchesModel(
 ): void {
   const mismatch = selectionModelMismatch(
     value.modelId ?? undefined,
-    value.modelSelection as ModelSelection | null | undefined,
+    value.modelSelection as RequestedModelSelection | null | undefined,
   );
   if (mismatch) {
     ctx.addIssue({ code: "custom", path: ["modelSelection"], message: mismatch });
@@ -490,7 +509,7 @@ const createEnvironmentSchema = z.strictObject({
    * `settings.reasoningEffort`). Must be FOR `modelId`; sent alone it pins its
    * own model. Needs the `modelSelections` capability.
    */
-  modelSelection: modelSelectionSchema.optional(),
+  modelSelection: requestedModelSelectionSchema.optional(),
   skillSelection: skillSelectionSchema.optional(),
   secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
@@ -519,7 +538,7 @@ const updateEnvironmentSchema = z
     serverAttachmentId: z.string().trim().min(1).nullable().optional(),
     modelId: z.string().trim().min(1).nullable().optional(),
     // `null` clears the saved selection (the bare `modelId` override stays).
-    modelSelection: modelSelectionSchema.nullable().optional(),
+    modelSelection: requestedModelSelectionSchema.nullable().optional(),
     skillSelection: skillSelectionSchema.nullable().optional(),
     secretSelection: secretSelectionSchema.nullable().optional(),
     pluginVersionIds: pluginVersionIdsSchema.nullable().optional(),
@@ -558,7 +577,7 @@ const ensureAdhocEnvironmentSchema = z.strictObject({
   serverAttachmentId: z.string().trim().min(1).optional(),
   modelId: z.string().trim().min(1).optional(),
   /** See the create schema: the saved selection behind `modelId`. */
-  modelSelection: modelSelectionSchema.optional(),
+  modelSelection: requestedModelSelectionSchema.optional(),
   skillSelection: skillSelectionSchema.optional(),
   secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),

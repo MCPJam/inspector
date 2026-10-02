@@ -143,6 +143,7 @@ import {
   assertHostPointerAgreement,
   engineLabel,
   harnessOfRuntimeConfig,
+  hostRoutingSelectionForModel,
   resolveChatSessionEngine,
 } from "../chat-session-host-target.js";
 import {
@@ -1294,5 +1295,33 @@ describe("browser turn integration", () => {
     expect(response.status).toBe(409);
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
     expect(mutationMock).toHaveBeenCalledWith("chatSessions:releaseTurnLease", { turnId: "turn_1", executionOwnerToken: "owner" });
+  });
+});
+
+describe("hostRoutingSelectionForModel — what decides a v1 session turn's rail", () => {
+  const none = { provider: "none", model: "none" } as const;
+
+  it("reads a full selection or a STORED legacy one, only for the turn's model", () => {
+    const hosted = { modelId: "openai/gpt-5", source: "hosted", fallback: none };
+    expect(
+      hostRoutingSelectionForModel({ modelSelection: hosted }, { id: "openai/gpt-5" }),
+    ).toEqual(hosted);
+    expect(
+      hostRoutingSelectionForModel(
+        { modelSelection: { source: "legacy", modelId: "openai/gpt-5" } },
+        { id: "openai/gpt-5" },
+      ),
+    ).toEqual({ source: "legacy", modelId: "openai/gpt-5" });
+    expect(
+      hostRoutingSelectionForModel(
+        { modelSelection: { source: "legacy", modelId: "openai/gpt-5" } },
+        { id: "anthropic/claude-haiku-4.5" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("an unlabelled host has none: today's path", () => {
+    expect(hostRoutingSelectionForModel({}, { id: "openai/gpt-5" })).toBeUndefined();
+    expect(hostRoutingSelectionForModel(undefined, { id: "openai/gpt-5" })).toBeUndefined();
   });
 });

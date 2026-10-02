@@ -339,6 +339,29 @@ describe("update_project_environment", () => {
     expect(writes).toHaveLength(0);
   });
 
+  it("refuses the shorthand on a STORED legacy selection (own key only, no settings)", async () => {
+    const legacyRow = {
+      ...ENV_ROW,
+      modelSelection: { source: "legacy", modelId: ENV_ROW.modelSelection.modelId },
+      modelSelectionOrigin: "backfill",
+    };
+    const { context, writes } = makeRouter({ environment: legacyRow });
+    const error = await refusal(
+      updateEnvironmentOperation.execute(
+        {
+          project: "Acme",
+          environment: "env-1",
+          expectedRevision: 3,
+          reasoningEffort: "low",
+        },
+        context
+      )
+    );
+    expect(error.message).toContain("legacy model selection");
+    expect(error.message).toContain("Send `modelSelection`");
+    expect(writes).toHaveLength(0);
+  });
+
   it("refuses an effort beside a different model up front, before any write", async () => {
     const { context, writes } = makeRouter({ environment: ENV_ROW });
     const error = await refusal(

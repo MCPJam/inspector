@@ -41,9 +41,14 @@ import {
   readXaaEnterprisePolicy,
   type ModelReasoningEffort,
   type ModelSelection,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk";
 import { selectionIfMatches } from "@mcpjam/sdk/browser";
-import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
+import {
+  readRoutingSelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
+import { routingSelectionForModel } from "../../utils/selection-rail.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   checkHarnessRuntimeAvailable,
@@ -170,6 +175,22 @@ export function hostSelectionForModel(
   return selectionIfMatches(
     readStoredModelSelection(runtimeConfig?.modelSelection),
     modelId,
+  );
+}
+
+/**
+ * The selection that DECIDES THE RAIL for this turn's model: the host's saved
+ * selection, or a STORED legacy one ("own key only"), only when it is for
+ * `model`. `undefined` for an unlabelled host (today's hosted-list routing) or
+ * a turn on a different model.
+ */
+export function hostRoutingSelectionForModel(
+  runtimeConfig: Record<string, unknown> | undefined,
+  model: { id: string | { toString(): string }; provider?: string },
+): RequestedModelSelection | undefined {
+  return routingSelectionForModel(
+    readRoutingSelection(runtimeConfig?.modelSelection),
+    model,
   );
 }
 
