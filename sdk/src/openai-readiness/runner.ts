@@ -33,6 +33,7 @@ import {
   decideLaneStatus,
   summarizeLaneCoverage,
 } from "../directory-readiness/types.js";
+import { resolveMcpHeaders } from "../directory-readiness/discovery.js";
 import { dialMcpServer } from "../directory-readiness/mcp-dial.js";
 import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
 import {
@@ -631,12 +632,20 @@ export interface GatherOpenAIReadinessEvidenceOptions {
    */
   timeoutMs?: number;
   /**
-   * Headers the target needs, e.g. a saved server's credential.
+   * Headers the MCP endpoint needs, e.g. a saved server's credential.
    *
-   * Without these a credentialed server answers `401` to every probe and the
-   * whole run reports an auth wall — a true observation about an
+   * Without these a credentialed server answers `401` to every listing and
+   * the run reports an auth wall — a true observation about an
    * unauthenticated dial, and the wrong one for a submitter grading their own
    * server with a token they supplied.
+   *
+   * Sent only on MCP requests to the endpoint's own origin, never on
+   * discovery. See `DirectoryDiscoveryOptions.mcpHeaders`.
+   */
+  mcpHeaders?: Record<string, string>;
+  /**
+   * @deprecated Use `mcpHeaders`. Read as `mcpHeaders` when that is absent,
+   * with the same narrow scope.
    */
   headers?: Record<string, string>;
   /**
@@ -731,7 +740,7 @@ export async function gatherOpenAIReadinessEvidence(
           enteredUrl: options.target,
           fetchFn: options.fetchFn,
           timeoutMs: options.timeoutMs,
-          headers: options.headers,
+          mcpHeaders: resolveMcpHeaders(options),
           signal: options.signal,
         }
       : undefined;
