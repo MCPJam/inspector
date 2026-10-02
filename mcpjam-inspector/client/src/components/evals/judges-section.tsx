@@ -271,7 +271,7 @@ export function JudgesSection({
               }
             />
             <SelectionEffortControl
-              variant="chip"
+              variant="suffix"
               row={judgeRow}
               selection={gc?.judgeSelection}
               purpose="judge"

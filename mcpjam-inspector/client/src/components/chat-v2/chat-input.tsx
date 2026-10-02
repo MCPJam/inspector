@@ -48,6 +48,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { EffortControl } from "@/components/effort/effort-control";
+import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   ClientSelector,
@@ -2030,6 +2031,7 @@ export function ChatInput({
                   variant="chip"
                   options={reasoningEffortLevels ?? []}
                   value={reasoningEffort}
+                  defaultLevel={reasoningEffortDefaultForRow(currentModel)}
                   onChange={onReasoningEffortChange}
                   disabled={isLoading}
                   disabledReason="Reasoning effort can't change while a reply is streaming"

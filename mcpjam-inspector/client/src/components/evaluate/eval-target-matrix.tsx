@@ -519,7 +519,7 @@ export function EvalModelChoices({
           />
           {!inherited && effortEditable ? (
             <SelectionEffortControl
-              variant="chip"
+              variant="suffix"
               row={
                 findModelForStoredChoice(
                   { modelId: key, selection: value.explicitModelSelections?.[key] },

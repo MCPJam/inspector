@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EvalModelChoices } from "../eval-target-matrix";
 import type { ModelDefinition } from "@/shared/types";
+import { pickEffort } from "@/test/effort";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/hooks/use-project-environment-capability", () => ({
@@ -43,7 +44,7 @@ describe("EvalModelChoices — reasoning effort", () => {
       />,
     );
     await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await userEvent.click(await screen.findByRole("radio", { name: "Low" }));
+    await pickEffort("Low");
     const next = onChange.mock.calls.at(-1)![0];
     expect(
       next.explicitModelSelections["openai/gpt-5"].settings.reasoningEffort,

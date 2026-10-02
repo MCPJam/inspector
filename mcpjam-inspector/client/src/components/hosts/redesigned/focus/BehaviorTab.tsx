@@ -50,6 +50,10 @@ import {
 } from "@/lib/reasoning-effort-selection";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import {
+  ModelSourceBadge,
+  type ModelSelectionOrigin,
+} from "@/components/effort/model-source-badge";
+import {
   reasoningEffortOptions,
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
@@ -191,6 +195,12 @@ interface BehaviorTabProps {
    * Client surface instead).
    */
   readOnly?: boolean;
+  /**
+   * `"backfill"` when the saved model selection was set automatically
+   * (the backend stores `modelSelectionOrigin` beside it); the model-source
+   * badge then asks the user to confirm or switch.
+   */
+  modelSelectionOrigin?: ModelSelectionOrigin;
 }
 
 export function BehaviorTab({
@@ -198,6 +208,7 @@ export function BehaviorTab({
   onDraftChange,
   attention,
   readOnly = false,
+  modelSelectionOrigin,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
 
@@ -293,6 +304,10 @@ export function BehaviorTab({
         draft.harness,
       ).length > 0);
   const [effortNotice, setEffortNotice] = useState<string | null>(null);
+  // "Review" on the source badge opens the picker; a pick in this tab is the
+  // confirmation, so the "set automatically" hint goes away.
+  const [pickerOpenNonce, setPickerOpenNonce] = useState(0);
+  const [modelReviewed, setModelReviewed] = useState(false);
   /*
    * Tool approval is the one control whose answer is NOT a property of the
    * harness name.
@@ -343,47 +358,63 @@ export function BehaviorTab({
               : `${fModel.description} ${modelState.note}`
           }
           control={
-            <div
-              className={
-                issues.has("modelId")
-                  ? "rounded-full ring-1 ring-amber-500"
-                  : undefined
-              }
-            >
-              <ModelSelector
-                currentModel={currentModel}
-                availableModels={availableModels}
-                onModelChange={(model) => {
-                  // Always written with the id: a selection left over from
-                  // the previous model would disagree with it. Only where the
-                  // deployment stores selections; else the legacy id alone,
-                  // which every deployment accepts. A saved effort follows
-                  // the pick only when the new model supports it.
-                  const carried = carryEffortToModel({
-                    row: model,
-                    previousEffort: selectionReasoningEffort(
-                      draft.modelSelection,
-                    ),
-                    purpose: HOST_MODEL_SELECTION_PURPOSE,
-                    selectionsSupported: modelSelectionsSupported,
-                    harness: draft.harness,
-                  });
-                  setEffortNotice(
-                    carried.dropped
-                      ? `${reasoningEffortLabel(carried.dropped)} effort was cleared: ${model.name} doesn't support it.`
-                      : carried.kept
-                        ? `Kept ${reasoningEffortLabel(carried.kept)} effort.`
-                        : null,
-                  );
-                  update({
-                    modelId: carried.modelId,
-                    modelSelection: carried.selection,
-                  });
-                }}
-                disabled={readOnly || !modelState.enforced}
-                align="end"
-                analyticsLocation="client_builder"
-                workload="host"
+            <div className="flex flex-col items-end gap-1">
+              <div
+                className={
+                  issues.has("modelId")
+                    ? "rounded-full ring-1 ring-amber-500"
+                    : undefined
+                }
+              >
+                <ModelSelector
+                  openNonce={pickerOpenNonce}
+                  currentModel={currentModel}
+                  availableModels={availableModels}
+                  onModelChange={(model) => {
+                    // Always written with the id: a selection left over from
+                    // the previous model would disagree with it. Only where the
+                    // deployment stores selections; else the legacy id alone,
+                    // which every deployment accepts. A saved effort follows
+                    // the pick only when the new model supports it.
+                    const carried = carryEffortToModel({
+                      row: model,
+                      previousEffort: selectionReasoningEffort(
+                        draft.modelSelection,
+                      ),
+                      purpose: HOST_MODEL_SELECTION_PURPOSE,
+                      selectionsSupported: modelSelectionsSupported,
+                      harness: draft.harness,
+                    });
+                    setEffortNotice(
+                      carried.dropped
+                        ? `${reasoningEffortLabel(carried.dropped)} effort was cleared: ${model.name} doesn't support it.`
+                        : carried.kept
+                          ? `Kept ${reasoningEffortLabel(carried.kept)} effort.`
+                          : null,
+                    );
+                    setModelReviewed(true);
+                    update({
+                      modelId: carried.modelId,
+                      modelSelection: carried.selection,
+                    });
+                  }}
+                  disabled={readOnly || !modelState.enforced}
+                  align="end"
+                  analyticsLocation="client_builder"
+                  workload="host"
+                />
+              </div>
+              <ModelSourceBadge
+                selection={draft.modelSelection}
+                models={availableModels}
+                selectionOrigin={
+                  modelReviewed ? undefined : modelSelectionOrigin
+                }
+                onReview={
+                  readOnly || !modelState.enforced
+                    ? undefined
+                    : () => setPickerOpenNonce((nonce) => nonce + 1)
+                }
               />
             </div>
           }
@@ -393,8 +424,7 @@ export function BehaviorTab({
           <FieldRow
             label="Reasoning effort"
             description={
-              effortNotice ??
-              "How hard the model thinks before answering."
+              effortNotice ?? "How hard the model thinks before answering."
             }
             control={
               <div className="w-[180px]">

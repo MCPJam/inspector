@@ -11,6 +11,7 @@
  * reads the provider tables like `direct`.
  */
 import {
+  defaultReasoningEffort,
   selectionKey,
   supportedReasoningEfforts,
   type ModelReasoningEffort,
@@ -54,6 +55,23 @@ export function reasoningEffortRouteForRow(
   if (isMCPJamProvidedModelMenuItem(row as ModelDefinition)) return "hosted";
   if (row.orgProvider) return "org";
   return "direct";
+}
+
+/**
+ * The level the provider applies to this row when no effort is sent, for the
+ * control's "Default" caption only (never to fill a request). `undefined` when
+ * unknown (an org row, an unlisted family): the caption then sits on the
+ * Default stop.
+ */
+export function reasoningEffortDefaultForRow(
+  row: Pick<ModelDefinition, "id" | "provider"> &
+    Partial<Pick<ModelDefinition, "hosted" | "orgProvider">>,
+): ModelReasoningEffort | undefined {
+  return defaultReasoningEffort(
+    String(row.id),
+    reasoningEffortRouteForRow(row),
+    String(row.provider),
+  );
 }
 
 /**
