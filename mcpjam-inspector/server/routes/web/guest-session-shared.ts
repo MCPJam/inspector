@@ -1,12 +1,17 @@
 import { type Context } from "hono";
 import {
-  fetchConvexGuestSession,
-  fetchRemoteGuestSession,
+  fetchGuestSession,
   type GuestSessionFetchContext,
   type RemoteGuestSession,
 } from "../../utils/guest-session-source.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
+import { usesScopedSessionCookies } from "../../utils/scoped-cookie-context.js";
+import {
+  applyUpstreamGuestCookies,
+  resolveLocalGuestCookie,
+  upstreamGuestCookieHeader,
+} from "./guest-cookie-scope.js";
 
 // IP-based rate limiting: 10 req/min per IP (sliding window).
 //
@@ -57,8 +62,6 @@ export function allowMint(ip: string): boolean {
 }
 
 export const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
-const LOCAL_GUEST_SESSION_COOKIE_NAME = "mcpjam_guest_session";
-const LOCAL_GUEST_SESSION_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 
 // Forward only the guest-session cookie to the upstream guest service.
 // Passing the entire Cookie header would leak unrelated auth/CSRF cookies
@@ -77,17 +80,14 @@ function extractCookieValue(
   return null;
 }
 
+/**
+ * The guest cookie a NON-loopback (hosted / own-hostname) request carries, in
+ * the form the authority expects. Loopback requests never use this: they keep
+ * the guest in their namespace's scoped cookie (`guest-cookie-scope.ts`).
+ */
 export function extractGuestSessionCookie(
   cookieHeader: string | null | undefined
 ): string | null {
-  const localCookie = extractCookieValue(
-    cookieHeader,
-    LOCAL_GUEST_SESSION_COOKIE_NAME
-  );
-  if (localCookie) {
-    return `${GUEST_SESSION_COOKIE_NAME}=${localCookie}`;
-  }
-
   const upstreamCookie = extractCookieValue(
     cookieHeader,
     GUEST_SESSION_COOKIE_NAME
@@ -97,59 +97,22 @@ export function extractGuestSessionCookie(
     : null;
 }
 
-function isLocalHttpRequest(requestUrl: string): boolean {
-  try {
-    const url = new URL(requestUrl);
-    return (
-      url.protocol === "http:" &&
-      LOCAL_GUEST_SESSION_HOSTNAMES.has(url.hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function rewriteGuestSessionCookieForLocalHttp(cookie: string): string {
-  const parts = cookie
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const [nameValue, ...attributes] = parts;
-  if (!nameValue?.startsWith(`${GUEST_SESSION_COOKIE_NAME}=`)) {
-    return cookie;
-  }
-
-  return [
-    nameValue.replace(
-      `${GUEST_SESSION_COOKIE_NAME}=`,
-      `${LOCAL_GUEST_SESSION_COOKIE_NAME}=`
-    ),
-    ...attributes.filter((attribute) => !/^secure$/i.test(attribute)),
-  ].join("; ");
-}
-
+/**
+ * Pass the authority's guest `Set-Cookie` through on a non-loopback request.
+ * A loopback request mirrors it into its scoped cookie instead and never
+ * emits the upstream cookie (`applyUpstreamGuestCookies`).
+ */
 export function appendGuestSessionSetCookie(c: Context, cookie: string): void {
+  if (usesScopedSessionCookies(c)) {
+    applyUpstreamGuestCookies(c, [cookie]);
+    return;
+  }
   c.header("Set-Cookie", cookie, { append: true });
-  if (isLocalHttpRequest(c.req.url)) {
-    const localCookie = rewriteGuestSessionCookieForLocalHttp(cookie);
-    if (localCookie !== cookie) {
-      c.header("Set-Cookie", localCookie, { append: true });
-    }
-  }
-}
-
-export function shouldFetchGuestSessionFromConvex(): boolean {
-  if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") {
-    return true;
-  }
-
-  return process.env.NODE_ENV !== "production";
 }
 
 // Hard deadline for the document-bootstrap mint. Bounds the ENTIRE mint path
-// (including `provisionGuestAuthConfigToConvex()` inside
-// `fetchConvexGuestSession`), not just the inner fetch — see the comment in
-// `mintGuestSessionForDocument`.
+// (a legacy-cookie lookup included), not just the inner fetch — see the
+// comment in `mintGuestSessionForDocument`.
 const DOCUMENT_MINT_DEADLINE_MS = 1500;
 
 export type DocumentGuestMintResult = {
@@ -161,16 +124,11 @@ export type DocumentGuestMintResult = {
  * Mint (or look up) a guest session during a document (SPA HTML) request.
  *
  * Builds the same `GuestSessionFetchContext` the client route builds
- * (request cookie, UA, hashed client IP, `mode: "lookup_or_create"`), selects
- * the Convex vs remote source, and races the ENTIRE mint against a hard
- * deadline.
- *
- * Why the whole-helper race (not just the fetch's AbortSignal):
- * `fetchConvexGuestSession()` awaits `provisionGuestAuthConfigToConvex()`
- * BEFORE the fetch's `AbortSignal.timeout` applies. A hung provisioning step
- * would otherwise leave TTFB unbounded even with a capped fetch. Racing the
- * whole `mint()` promise guarantees the document handler can never block past
- * the deadline; losing the race abandons the mint and serves blob-less.
+ * (guest cookie, UA, hashed client IP, `mode: "lookup_or_create"`), sends it to
+ * the selected guest authority, and races the ENTIRE mint against a hard
+ * deadline, so the document handler can never block past it; losing the race
+ * abandons the mint and serves blob-less. The helper performs no configuration
+ * writes of any kind.
  *
  * Never throws and never rate-limit-fails the caller — on any failure,
  * timeout, or rate-limit cap the caller simply serves the HTML without a blob
@@ -201,18 +159,46 @@ export async function mintGuestSessionForDocument(
     ipHash = null;
   }
 
-  const context: GuestSessionFetchContext = {
-    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+  const base = {
     userAgent: c.req.header("user-agent") ?? null,
-    body: { mode: "lookup_or_create" },
     ...(ipHash ? { ipHash } : {}),
   };
 
   const mint = async (): Promise<DocumentGuestMintResult> => {
-    const result = shouldFetchGuestSessionFromConvex()
-      ? await fetchConvexGuestSession(context, DOCUMENT_MINT_DEADLINE_MS)
-      : await fetchRemoteGuestSession(context, DOCUMENT_MINT_DEADLINE_MS);
+    if (usesScopedSessionCookies(c)) {
+      // Loopback: the guest lives in this namespace's scoped cookie, which
+      // this path writes itself; nothing upstream is passed through.
+      const local = await resolveLocalGuestCookie(
+        c,
+        base,
+        DOCUMENT_MINT_DEADLINE_MS
+      );
+      if (local.kind === "lookup_failed") return empty;
+      if (local.kind === "migrated") {
+        return { session: local.result.session, setCookies: [] };
+      }
+      const result = await fetchGuestSession(
+        {
+          ...base,
+          cookie: local.upstream
+            ? upstreamGuestCookieHeader(local.upstream)
+            : null,
+          body: { mode: "lookup_or_create" },
+        },
+        DOCUMENT_MINT_DEADLINE_MS
+      );
+      applyUpstreamGuestCookies(c, result.setCookies);
+      return result.kind === "session"
+        ? { session: result.session, setCookies: [] }
+        : empty;
+    }
 
+    const context: GuestSessionFetchContext = {
+      ...base,
+      cookie: extractGuestSessionCookie(c.req.header("cookie")),
+      body: { mode: "lookup_or_create" },
+    };
+    const result = await fetchGuestSession(context, DOCUMENT_MINT_DEADLINE_MS);
     if (result.kind === "session") {
       return { session: result.session, setCookies: result.setCookies };
     }

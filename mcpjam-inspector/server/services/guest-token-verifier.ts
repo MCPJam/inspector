@@ -4,7 +4,8 @@ import {
   createVerify,
   type KeyObject,
 } from "crypto";
-import { fetchRemoteGuestJwks } from "../utils/guest-session-source.js";
+import { fetchGuestJwks } from "../utils/guest-session-source.js";
+import { getGuestAuthority } from "../utils/guest-authority.js";
 import { logger } from "../utils/logger.js";
 import {
   GUEST_ISSUER,
@@ -12,7 +13,22 @@ import {
   getGuestPublicKeyObject,
 } from "./guest-token-keypair.js";
 
-const HOSTED_GUEST_JWKS_CACHE_MS = 5 * 60 * 1000;
+/** How long a fetched authority key set is trusted before a routine refresh. */
+const AUTHORITY_JWKS_CACHE_MS = 5 * 60 * 1000;
+/**
+ * Minimum gap between refreshes forced by an unknown `kid`. A rotation is
+ * picked up on the first token that names the new key, without letting a
+ * stream of garbage `kid`s turn every request into a JWKS fetch.
+ */
+const UNKNOWN_KID_REFRESH_INTERVAL_MS = 30 * 1000;
+/** After a failed refresh, wait this long before trying again. */
+const FAILED_REFRESH_BACKOFF_MS = 30 * 1000;
+/**
+ * The longest a key set is trusted while its authority's JWKS cannot be
+ * fetched. Bounded so a key retired by a rotation does not stay trusted for as
+ * long as the outage lasts.
+ */
+const AUTHORITY_JWKS_MAX_STALE_MS = 60 * 60 * 1000;
 
 type ParsedGuestToken = {
   header: Record<string, unknown>;
@@ -21,13 +37,16 @@ type ParsedGuestToken = {
   signature: string;
 };
 
-let hostedGuestPublicKeysCache:
-  | {
-      fetchedAt: number;
-      keysByKid: Map<string, KeyObject>;
-      fallbackKey: KeyObject | null;
-    }
-  | undefined;
+type AuthorityKeySet = {
+  /** The JWKS URL these keys came from; a different authority never reuses them. */
+  jwksUrl: string;
+  fetchedAt: number;
+  keysByKid: Map<string, KeyObject>;
+};
+
+let authorityKeysCache: AuthorityKeySet | undefined;
+let lastUnknownKidRefreshAt = 0;
+let lastFailedRefreshAt = 0;
 
 function base64urlDecode(str: string): Buffer {
   return Buffer.from(str, "base64url");
@@ -74,7 +93,9 @@ function parseGuestToken(
 
     const payload = JSON.parse(
       base64urlDecode(encodedPayload).toString("utf-8"),
-    ) as Partial<{ iss: string; sub: string; exp: number }> | undefined;
+    ) as
+      | Partial<{ iss: string; sub: string; exp: number; purpose: unknown }>
+      | undefined;
 
     if (!payload || payload.iss !== GUEST_ISSUER) {
       return { reason: "issuer_mismatch" };
@@ -82,6 +103,12 @@ function parseGuestToken(
 
     if (typeof payload.sub !== "string" || typeof payload.exp !== "number") {
       return { reason: "missing_claims" };
+    }
+
+    // A promotion proof carries `purpose`; it is not a session bearer and must
+    // never be accepted as one (the backend refuses it the same way).
+    if (payload.purpose !== undefined) {
+      return { reason: "not_a_session_bearer" };
     }
 
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -106,98 +133,100 @@ function parseGuestToken(
   }
 }
 
-function resolveKeyFromCache(kid: string | undefined): KeyObject | null {
-  if (!hostedGuestPublicKeysCache) return null;
-  if (kid && hostedGuestPublicKeysCache.keysByKid.has(kid)) {
-    return hostedGuestPublicKeysCache.keysByKid.get(kid) ?? null;
-  }
-  return hostedGuestPublicKeysCache.fallbackKey;
-}
-
-async function fetchAndCacheHostedGuestKeys(
-  kid: string | undefined,
-): Promise<KeyObject | null> {
-  const now = Date.now();
+async function refreshAuthorityKeys(
+  jwksUrl: string,
+): Promise<AuthorityKeySet | undefined> {
   try {
-    const response = await fetchRemoteGuestJwks();
-
+    const response = await fetchGuestJwks();
     if (!response) {
-      logger.warn(
-        "[guest-auth] Failed to fetch hosted guest JWKS: unavailable",
-      );
-      return resolveKeyFromCache(kid);
+      logger.warn("[guest-auth] Failed to fetch guest JWKS: unavailable");
+      return undefined;
     }
-
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] Failed to fetch hosted guest JWKS: ${response.status} ${response.statusText}`,
+        `[guest-auth] Failed to fetch guest JWKS: ${response.status} ${response.statusText}`,
       );
-      return resolveKeyFromCache(kid);
+      return undefined;
     }
 
-    const body = (await response.json()) as {
-      keys?: GuestJwk[];
-    };
+    const body = (await response.json()) as { keys?: GuestJwk[] };
     const keys = Array.isArray(body.keys) ? body.keys : [];
     const keysByKid = new Map<string, KeyObject>();
-    let fallbackKey: KeyObject | null = null;
-
     for (const jwk of keys) {
+      // A key without a `kid` cannot be selected unambiguously, so it is never
+      // used: falling back to "whichever key came first" is how a token signed
+      // by a retired key would end up checked against the wrong one.
+      if (typeof jwk.kid !== "string" || !jwk.kid) continue;
       try {
-        const nextKey = createPublicKey({
-          key: jwk as JsonWebKey,
-          format: "jwk",
-        });
-        if (!fallbackKey) {
-          fallbackKey = nextKey;
-        }
-        if (typeof jwk.kid === "string") {
-          keysByKid.set(jwk.kid, nextKey);
-        }
+        keysByKid.set(
+          jwk.kid,
+          createPublicKey({ key: jwk as JsonWebKey, format: "jwk" }),
+        );
       } catch {
         // Skip malformed keys.
       }
     }
 
-    hostedGuestPublicKeysCache = {
-      fetchedAt: now,
-      keysByKid,
-      fallbackKey,
-    };
-
-    if (kid && keysByKid.has(kid)) {
-      return keysByKid.get(kid) ?? null;
-    }
-    return fallbackKey;
+    authorityKeysCache = { jwksUrl, fetchedAt: Date.now(), keysByKid };
+    return authorityKeysCache;
   } catch (error) {
     logger.warn(
-      `[guest-auth] Failed to fetch hosted guest JWKS: ${
+      `[guest-auth] Failed to fetch guest JWKS: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return resolveKeyFromCache(kid);
+    return undefined;
   }
 }
 
-async function getHostedGuestVerificationKey(
+/**
+ * The selected authority's key for `kid`, or null.
+ *
+ * Strict by design: a token must name a `kid` the authority currently
+ * publishes. An unknown `kid` forces one bounded refresh — that is the
+ * verification-cache refresh a key rotation relies on — and if the refreshed
+ * set still lacks it, the token is refused. There is no "fallback key".
+ */
+async function getAuthorityVerificationKey(
   kid: string | undefined,
 ): Promise<KeyObject | null> {
-  const now = Date.now();
-  const cacheIsValid =
-    hostedGuestPublicKeysCache &&
-    now - hostedGuestPublicKeysCache.fetchedAt < HOSTED_GUEST_JWKS_CACHE_MS;
-
-  if (cacheIsValid) {
-    if (kid && hostedGuestPublicKeysCache.keysByKid.has(kid)) {
-      return hostedGuestPublicKeysCache.keysByKid.get(kid) ?? null;
-    }
-    if (kid) {
-      return fetchAndCacheHostedGuestKeys(kid);
-    }
-    return hostedGuestPublicKeysCache.fallbackKey;
+  if (!kid) return null;
+  let jwksUrl: string;
+  try {
+    jwksUrl = getGuestAuthority().jwksUrl;
+  } catch {
+    return null;
   }
 
-  return fetchAndCacheHostedGuestKeys(kid);
+  const now = Date.now();
+  let keySet =
+    authorityKeysCache?.jwksUrl === jwksUrl ? authorityKeysCache : undefined;
+  const refresh = async () => {
+    if (now - lastFailedRefreshAt < FAILED_REFRESH_BACKOFF_MS) return keySet;
+    const fresh = await refreshAuthorityKeys(jwksUrl);
+    if (!fresh) lastFailedRefreshAt = now;
+    return fresh ?? keySet;
+  };
+  if (!keySet || now - keySet.fetchedAt >= AUTHORITY_JWKS_CACHE_MS) {
+    keySet = await refresh();
+  } else if (
+    !keySet.keysByKid.has(kid) &&
+    now - lastUnknownKidRefreshAt >= UNKNOWN_KID_REFRESH_INTERVAL_MS
+  ) {
+    lastUnknownKidRefreshAt = now;
+    keySet = await refresh();
+  }
+  if (keySet && Date.now() - keySet.fetchedAt >= AUTHORITY_JWKS_MAX_STALE_MS) {
+    return null;
+  }
+  return keySet?.keysByKid.get(kid) ?? null;
+}
+
+/** Test seam: drop cached authority keys and the unknown-kid throttle. */
+export function resetGuestJwksCacheForTests(): void {
+  authorityKeysCache = undefined;
+  lastUnknownKidRefreshAt = 0;
+  lastFailedRefreshAt = 0;
 }
 
 export function getGuestTokenFingerprint(
@@ -248,6 +277,18 @@ export function validateGuestTokenDetailed(token: string): {
   return { valid: true, guestId: parsed.parsed.payload.sub };
 }
 
+/**
+ * Is `token` a guest bearer issued by the SELECTED guest authority?
+ *
+ * Verified against the authority's published keys (`getGuestAuthority()`),
+ * matched by `kid`. The in-process key pair is consulted only when something
+ * explicitly initialized it (`initGuestTokenSecret()`, tests and the legacy
+ * signer); the running server never does, because the local key is not an
+ * authority any backend trusts.
+ *
+ * `valid: false` means "not a guest of this authority" — NOT "a member". A
+ * caller deciding membership must verify that separately and positively.
+ */
 export async function validateGuestTokenDetailedAsync(token: string): Promise<{
   valid: boolean;
   guestId?: string;
@@ -270,22 +311,22 @@ export async function validateGuestTokenDetailedAsync(token: string): Promise<{
     }
   }
 
-  const hostedKey = await getHostedGuestVerificationKey(
+  const authorityKey = await getAuthorityVerificationKey(
     typeof parsed.parsed.header.kid === "string"
       ? parsed.parsed.header.kid
       : undefined,
   );
-  if (!hostedKey) {
-    return { valid: false, reason: "hosted_key_unavailable" };
+  if (!authorityKey) {
+    return { valid: false, reason: "authority_key_unavailable" };
   }
 
-  const hostedSignatureResult = verifyGuestTokenSignature(
+  const signatureResult = verifyGuestTokenSignature(
     parsed.parsed.signingInput,
     parsed.parsed.signature,
-    hostedKey,
+    authorityKey,
   );
-  if (!hostedSignatureResult.valid) {
-    return { valid: false, reason: hostedSignatureResult.reason };
+  if (!signatureResult.valid) {
+    return { valid: false, reason: signatureResult.reason };
   }
 
   return { valid: true, guestId: parsed.parsed.payload.sub };

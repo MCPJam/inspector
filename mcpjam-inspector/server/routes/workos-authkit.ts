@@ -11,6 +11,19 @@ import { resolveWorkosApiBaseUrl } from "../services/workos-api-base.js";
 import { resolveWorkosClientId } from "../services/authkit-jwt.js";
 import { revokeAuthKitSession } from "../services/auth-session-revocation.js";
 import { logger } from "../utils/logger.js";
+import {
+  applyScopedCookieWrites,
+  currentNamespace,
+  readOwnScopedCookie,
+  usesScopedSessionCookies,
+} from "../utils/scoped-cookie-context.js";
+import {
+  WORKOS_SCOPED_COOKIE_MAX_AGE_S,
+  buildDeletionCookie,
+  parseCookieHeader,
+  sealScopedCookie,
+  unsealScopedCookie,
+} from "../utils/scoped-cookies.js";
 
 // Resolved per call, not captured at module load: a test stubs
 // `WORKOS_API_BASE_URL` long after this module is imported. Unset, both are
@@ -19,12 +32,20 @@ const workosBaseUrl = () => resolveWorkosApiBaseUrl(process.env).baseUrl;
 const workosAuthenticateUrl = () =>
   `${workosBaseUrl()}/user_management/authenticate`;
 const WORKOS_SESSION_COOKIE = "__Host-mcpjam_workos_session";
-const LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_sessions";
-const LEGACY_LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_session";
 const WORKOS_HAS_SESSION_COOKIE = "workos-has-session";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 400;
-const MAX_LOCAL_SESSIONS = 8;
-const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+
+/**
+ * Local session cookies from before per-namespace isolation. They are
+ * DELETED, never migrated: a local WorkOS session restored from a shared jar
+ * could be one another instance signed out of, so the upgrade costs exactly
+ * one sign-in per instance instead.
+ */
+const LEGACY_LOCAL_WORKOS_COOKIES = [
+  "mcpjam_workos_sessions",
+  "mcpjam_workos_session",
+  WORKOS_SESSION_COOKIE,
+];
 
 type AuthenticateBody = {
   client_id?: unknown;
@@ -45,21 +66,7 @@ type StoredWorkosSession = {
   updatedAt: number;
 };
 
-type StoredWorkosSessionJar = {
-  version: 1;
-  sessions: Record<string, StoredWorkosSession>;
-};
-
 const workosAuthkitRoutes = new Hono();
-
-function isLocalHttpUrl(rawUrl: string): boolean {
-  try {
-    const url = new URL(rawUrl);
-    return url.protocol === "http:" && LOCAL_HOSTNAMES.has(url.hostname);
-  } catch {
-    return false;
-  }
-}
 
 function getCookieSecret(): string {
   return getOrCreateLocalSecret({
@@ -76,6 +83,7 @@ function getEncryptionKey(): Buffer {
   return createHash("sha256").update(getCookieSecret()).digest();
 }
 
+/** Hosted (`__Host-`) cookie sealing; unchanged. */
 function sealValue(value: unknown): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
@@ -121,105 +129,76 @@ function parseStoredSession(value: unknown): StoredWorkosSession | null {
   };
 }
 
-function parseStoredSessionJar(value: unknown): StoredWorkosSessionJar {
-  if (!value || typeof value !== "object") {
-    return { version: 1, sessions: {} };
-  }
-  const maybeJar = value as Partial<StoredWorkosSessionJar>;
-  if (maybeJar.version !== 1 || !maybeJar.sessions) {
-    return { version: 1, sessions: {} };
-  }
-
-  const sessions: Record<string, StoredWorkosSession> = {};
-  for (const [key, session] of Object.entries(maybeJar.sessions)) {
-    const parsed = parseStoredSession(session);
-    if (parsed) {
-      sessions[key] = parsed;
-    }
-  }
-  return { version: 1, sessions };
-}
-
-function getLocalOrigin(rawUrl: string | undefined): string | null {
-  if (!rawUrl) return null;
-  try {
-    const url = new URL(rawUrl);
-    if (!LOCAL_HOSTNAMES.has(url.hostname)) return null;
-    return url.origin;
-  } catch {
-    return null;
+/** Delete whichever legacy local WorkOS cookies this browser still sends. */
+function deleteLegacyLocalCookies(c: Context): void {
+  const present = parseCookieHeader(c.req.header("cookie"));
+  for (const name of LEGACY_LOCAL_WORKOS_COOKIES) {
+    if (!present.has(name)) continue;
+    c.header(
+      "Set-Cookie",
+      buildDeletionCookie(name, name.startsWith("__Host-")),
+      { append: true },
+    );
   }
 }
 
-function getClientOrigin(c: Context): string {
-  return (
-    getLocalOrigin(c.req.header("Origin")) ??
-    getLocalOrigin(c.req.header("Referer")) ??
-    new URL(c.req.url).origin
-  );
-}
-
-function getClientOriginKey(c: Context): string {
-  return createHash("sha256")
-    .update(getClientOrigin(c))
-    .digest("hex")
-    .slice(0, 16);
-}
-
-function getLocalSessionJar(c: Context): StoredWorkosSessionJar {
-  return parseStoredSessionJar(
-    unsealValue(getCookie(c, LOCAL_WORKOS_SESSION_COOKIE)),
-  );
-}
-
-function pruneLocalSessions(
-  sessions: Record<string, StoredWorkosSession>,
-): Record<string, StoredWorkosSession> {
-  return Object.fromEntries(
-    Object.entries(sessions)
-      .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_LOCAL_SESSIONS),
-  );
+/**
+ * The `workos-has-session` hint, local flavour: an EXPIRING hint, renewed on
+ * every successful sign-in or refresh and never cleared by an instance.
+ *
+ * It is host-wide — every Inspector on `localhost` reads the same one — while
+ * sessions are per namespace. Clearing it on one instance's logout, missing
+ * session, or rejected refresh would make every OTHER signed-in instance skip
+ * its on-load refresh and come up signed out. Leaving it set costs a signed-out
+ * instance one refresh call that answers "no session".
+ *
+ * authkit-js (>= 0.20) only trusts "1" or a value naming the client id; any
+ * other value makes it skip the on-load refresh, so every reload lands signed
+ * out.
+ */
+function renewLocalSessionHint(c: Context): void {
+  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "1", {
+    sameSite: "Lax",
+    path: "/",
+    maxAge: WORKOS_SCOPED_COOKIE_MAX_AGE_S,
+  });
 }
 
 function setSessionCookies(c: Context, session: StoredWorkosSession) {
-  if (isLocalHttpUrl(c.req.url)) {
-    const key = getClientOriginKey(c);
-    const jar = getLocalSessionJar(c);
-    const sessions = pruneLocalSessions({
-      ...jar.sessions,
-      [key]: session,
-    });
-    setCookie(
-      c,
-      LOCAL_WORKOS_SESSION_COOKIE,
-      sealValue({ version: 1, sessions }),
+  if (usesScopedSessionCookies(c)) {
+    const ns = currentNamespace();
+    const now = Date.now();
+    applyScopedCookieWrites(c, [
       {
-        httpOnly: true,
-        sameSite: "Lax",
-        path: "/",
-        maxAge: COOKIE_MAX_AGE,
+        kind: "workos",
+        value: sealScopedCookie({
+          kind: "workos",
+          nsId: ns.id,
+          payload: { refreshToken: session.refreshToken },
+          issuedAtMs: now,
+          expiresAtMs: now + WORKOS_SCOPED_COOKIE_MAX_AGE_S * 1000,
+        }),
+        maxAgeSeconds: WORKOS_SCOPED_COOKIE_MAX_AGE_S,
       },
-    );
-    setCookie(c, LEGACY_LOCAL_WORKOS_SESSION_COOKIE, "", {
-      path: "/",
-      maxAge: 0,
-    });
-  } else {
-    setCookie(c, WORKOS_SESSION_COOKIE, sealValue(session), {
-      httpOnly: true,
-      secure: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: COOKIE_MAX_AGE,
-    });
+    ]);
+    deleteLegacyLocalCookies(c);
+    renewLocalSessionHint(c);
+    return;
   }
+
+  setCookie(c, WORKOS_SESSION_COOKIE, sealValue(session), {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: COOKIE_MAX_AGE,
+  });
 
   // authkit-js (>= 0.20) only trusts "1" or a value naming the client id;
   // any other value makes it skip the on-load refresh, so every reload
   // lands signed out.
   setCookie(c, WORKOS_HAS_SESSION_COOKIE, "1", {
-    secure: !isLocalHttpUrl(c.req.url),
+    secure: true,
     sameSite: "Lax",
     path: "/",
     maxAge: COOKIE_MAX_AGE,
@@ -235,57 +214,67 @@ function clearSecureSessionCookie(c: Context) {
   });
 }
 
+/**
+ * End THIS instance's session. Locally that is this namespace's cookie (and
+ * any legacy cookie still around) — never another namespace's, and never the
+ * host-wide hint (see `renewLocalSessionHint`).
+ */
 function clearSessionCookies(c: Context) {
-  if (isLocalHttpUrl(c.req.url)) {
-    const key = getClientOriginKey(c);
-    const jar = getLocalSessionJar(c);
-    delete jar.sessions[key];
-    const remainingSessions = pruneLocalSessions(jar.sessions);
-
-    if (Object.keys(remainingSessions).length > 0) {
-      setCookie(
-        c,
-        LOCAL_WORKOS_SESSION_COOKIE,
-        sealValue({ version: 1, sessions: remainingSessions }),
-        {
-          httpOnly: true,
-          sameSite: "Lax",
-          path: "/",
-          maxAge: COOKIE_MAX_AGE,
-        },
-      );
-    } else {
-      setCookie(c, LOCAL_WORKOS_SESSION_COOKIE, "", {
-        path: "/",
-        maxAge: 0,
-      });
-      setCookie(c, WORKOS_HAS_SESSION_COOKIE, "", {
-        path: "/",
-        maxAge: 0,
-      });
-    }
-
-    setCookie(c, LEGACY_LOCAL_WORKOS_SESSION_COOKIE, "", {
-      path: "/",
-      maxAge: 0,
-    });
-    clearSecureSessionCookie(c);
+  if (usesScopedSessionCookies(c)) {
+    applyScopedCookieWrites(c, [{ kind: "workos", value: null }]);
+    deleteLegacyLocalCookies(c);
     return;
   }
 
   clearSecureSessionCookie(c);
   setCookie(c, WORKOS_HAS_SESSION_COOKIE, "", {
-    secure: !isLocalHttpUrl(c.req.url),
+    secure: true,
     path: "/",
     maxAge: 0,
   });
 }
 
-function getStoredSession(c: Context) {
-  if (isLocalHttpUrl(c.req.url)) {
-    return getLocalSessionJar(c).sessions[getClientOriginKey(c)] ?? null;
+function getStoredSession(c: Context): StoredWorkosSession | null {
+  if (usesScopedSessionCookies(c)) {
+    const opened = unsealScopedCookie({
+      kind: "workos",
+      nsId: currentNamespace().id,
+      value: readOwnScopedCookie(c, "workos"),
+    });
+    return parseStoredSession(opened);
   }
   return parseStoredSession(unsealValue(getCookie(c, WORKOS_SESSION_COOKIE)));
+}
+
+/**
+ * Login, refresh and logout all run under ONE WorkOS configuration: the client
+ * id this server resolved. A request naming another client is refused rather
+ * than forwarded — forwarding it would mint (and then store in this instance's
+ * cookie) a session for a client this instance does not verify, which is how a
+ * session from one environment ends up replayed against another.
+ */
+function clientIdRefusal(c: Context, requested: unknown): Response | null {
+  const configured = resolveWorkosClientId();
+  if (!configured) {
+    logger.warn("WorkOS sign-in requested on a server with no client id", {
+      event: "auth.workos_client_unconfigured",
+    });
+    return c.json(
+      { error_description: "Sign-in is not configured on this server" },
+      503,
+    );
+  }
+  if (requested !== configured) {
+    logger.info("Refused a WorkOS request for a different client id", {
+      event: "auth.workos_client_id_mismatch",
+      path: c.req.path,
+    });
+    return c.json(
+      { error_description: "client_id does not match this server" },
+      400,
+    );
+  }
+  return null;
 }
 
 async function postToWorkos(
@@ -356,8 +345,8 @@ async function revokeStoredSessionBeforeLogout(c: Context): Promise<void> {
 /**
  * Whether a non-OK WorkOS refresh response leaves the stored token dead.
  *
- * Clearing is destructive in a way nothing above can undo: this jar holds the
- * ONLY copy of the refresh token, so wiping it on a 502 converts one bad
+ * Clearing is destructive in a way nothing above can undo: this cookie holds
+ * the ONLY copy of the refresh token, so wiping it on a 502 converts one bad
  * second at WorkOS into a forced sign-in. That is the failure class the
  * client's retry ladder (`fetchTokenWithRetry` in `unified-convex-auth.ts`)
  * exists to absorb — but no retry can help once the credential itself is gone:
@@ -366,8 +355,9 @@ async function revokeStoredSessionBeforeLogout(c: Context): Promise<void> {
  *
  * A rejected grant is the opposite case and must still clear. WorkOS answers
  * 400 for a refresh token that is expired, revoked, or already rotated, and
- * keeping one would leave `workos-has-session` set so every subsequent load
- * re-enters the same refusal.
+ * keeping one would make every subsequent load re-enter the same refusal. On a
+ * local instance that clears THIS namespace's cookie only; the host-wide
+ * `workos-has-session` hint stays, because another instance may be signed in.
  *
  * A `fetch` rejection (offline, DNS, connection reset) never reaches here: it
  * throws before any cookie is touched, which lands on the same side of this
@@ -384,9 +374,11 @@ function redirectToWorkos(c: Context, path: string) {
   return c.redirect(target.toString(), 302);
 }
 
-workosAuthkitRoutes.get("/authorize", (c) =>
-  redirectToWorkos(c, "/user_management/authorize"),
-);
+workosAuthkitRoutes.get("/authorize", (c) => {
+  const refusal = clientIdRefusal(c, c.req.query("client_id"));
+  if (refusal) return refusal;
+  return redirectToWorkos(c, "/user_management/authorize");
+});
 
 workosAuthkitRoutes.get("/sessions/logout", async (c) => {
   await revokeStoredSessionBeforeLogout(c);
@@ -411,6 +403,8 @@ workosAuthkitRoutes.post("/authenticate", async (c) => {
   if (typeof body.client_id !== "string") {
     return c.json({ error_description: "Missing client_id" }, 400);
   }
+  const refusal = clientIdRefusal(c, body.client_id);
+  if (refusal) return refusal;
 
   const upstreamBody: Record<string, unknown> = { ...body };
   if (
