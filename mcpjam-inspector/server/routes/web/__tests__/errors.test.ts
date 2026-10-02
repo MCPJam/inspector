@@ -590,6 +590,22 @@ describe("mapTargetServerError", () => {
       },
     );
 
+    it("keeps a Streamable timeout a TIMEOUT when only the SSE fallback answered", () => {
+      // The Streamable connect gives up after 3 s; a modern-only server then
+      // answers the SSE fallback GET with 405. The slow POST is the failure.
+      const error = new Error(
+        'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (405).',
+        { cause: new SseError(405, "Non-200 status code (405)", {} as ErrorEvent) },
+      );
+      Object.defineProperty(error, "streamableCause", {
+        value: new Error("Request timed out"),
+        enumerable: false,
+      });
+      const mapped = mapTargetServerError(error);
+      expect(mapped.status).toBe(424);
+      expect(mapped.code).toBe(ErrorCode.TIMEOUT);
+    });
+
     it("keeps an unclassified throw a 500, server named or not", () => {
       const mapped = mapTargetServerError(
         new Error('MCP server "srv-1" broke us: kaboom'),

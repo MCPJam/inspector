@@ -16,7 +16,10 @@ import {
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
 import { internalErrorResponseView } from "./hosted-internal-error.js";
-import { upstreamTransportStatus } from "../../utils/hosted-connect-failure.js";
+import {
+  onlyFallbackAnswered,
+  upstreamTransportStatus,
+} from "../../utils/hosted-connect-failure.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -624,6 +627,10 @@ function isUpstreamHttpErrorAnswer(
       routeError.code === ErrorCode.SERVER_UNREACHABLE) ||
     (routeError.status === 504 && routeError.code === ErrorCode.TIMEOUT);
   if (!classified) return false;
+  // A Streamable HTTP attempt that timed out, then an SSE fallback that got
+  // an answer (a modern-only server's 405), is still a timeout: the slow POST
+  // is the failure, not the fallback's status.
+  if (routeError.status === 504 && onlyFallbackAnswered(error)) return false;
   const status = upstreamTransportStatus(error);
   return status !== undefined && status >= 400 && status <= 599;
 }

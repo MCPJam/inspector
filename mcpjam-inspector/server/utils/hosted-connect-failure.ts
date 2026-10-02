@@ -134,6 +134,21 @@ export function upstreamTransportStatus(error: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * Whether a combined connect failure's only HTTP answer came from the SSE
+ * fallback: the Streamable HTTP attempt it carries (`streamableCause`) got no
+ * HTTP status at all — it timed out or never connected. A modern-only server
+ * answers the fallback GET with 405, so that status is not why it failed.
+ */
+export function onlyFallbackAnswered(error: unknown): boolean {
+  for (const node of errorChain(error)) {
+    const streamable = read(node, "streamableCause");
+    if (streamable === undefined) continue;
+    return upstreamTransportStatus(streamable) === undefined;
+  }
+  return false;
+}
+
 function statusLineFromChain(error: unknown): StatusLine | undefined {
   for (const node of errorChain(error)) {
     const name = read(node, "name");
