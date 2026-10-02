@@ -1348,10 +1348,13 @@ export function NewSwarmRunningStep({
                       MCPJam&apos;s sponsored capacity was unavailable, so{" "}
                       {sponsoredStop.rejected > 0
                         ? `${sponsoredStop.capacity} of them`
-                        : "they"}{" "}
+                        : sponsoredStop.capacity === 1
+                          ? "it"
+                          : "they"}{" "}
                       ended before finishing. Completed results are saved and
-                      nothing was moved to your organization&apos;s credits. Run
-                      them again later.
+                      nothing was moved to your organization&apos;s credits. Run{" "}
+                      {sponsoredStop.capacity === 1 ? "it" : "them"} again
+                      later.
                     </p>
                   ) : null}
                   {sponsoredStop.rejected > 0

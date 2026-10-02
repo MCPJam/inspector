@@ -3372,10 +3372,12 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     expect(
       screen.getByTestId("new-swarm-funding-explanation"),
     ).toHaveTextContent(/allowance covers 1 more conversation/i);
-    // The preview asked about exactly the run the launch will create.
+    // The preview asked about exactly the run the launch will create, as the
+    // swarm the launch makes it (a one-conversation goal would otherwise preview
+    // as user testing, never sponsored, and launch sponsored).
     expect(fundingPreviewMock.mock.calls[0]![0]).toBe("proj-1");
     expect(fundingPreviewMock.mock.calls[0]![1]).toEqual([
-      expect.objectContaining({ journeyRefId: "j-1" }),
+      expect.objectContaining({ journeyRefId: "j-1", kind: "swarm" }),
     ]);
     expect(screen.getByTestId("new-swarm-funding")).not.toHaveTextContent(
       /free|guarantee/i,
@@ -3754,5 +3756,166 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     for (const args of launchArgs()) {
       expect(args).not.toHaveProperty("sessionsPerTarget");
     }
+  });
+
+  // After the first launch attempt the goals exist, and a retry or the launch
+  // that follows a review stop runs THOSE goals. A persona removed here still
+  // launched (spending allowance, or credits once it ran out) while the list and
+  // the estimate said it was gone, and one added here was counted but never
+  // created. Who is in the swarm is settled once its goals are.
+  it("locks who is in the swarm once its goals exist, so the list, the estimate and the launch agree", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    // Before any goal exists the set is editable.
+    expect(
+      screen.getAllByRole("button", { name: /^remove persona/i }),
+    ).toHaveLength(2);
+    expect(screen.getByTestId("new-swarm-add-persona")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-confirm-locked"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+
+    expect(
+      screen.queryByRole("button", { name: /^remove persona/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-add-persona"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-confirm-add-existing"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-confirm-locked")).toHaveTextContent(
+      /goals are already set/i,
+    );
+    // The counters stay live: they reach the preview and the launch.
+    expect(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    ).toBeEnabled();
+
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    // What launched is what was shown: both goals, none created twice.
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a created persona's goals readable but not editable", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /^view persona refund chaser/i }),
+    );
+
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+    expect(within(detail).getByLabelText("Persona name")).toHaveAttribute(
+      "readonly",
+    );
+    expect(
+      within(detail).queryByTestId("new-swarm-add-goal"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(detail).queryByRole("button", { name: /^remove goal/i }),
+    ).not.toBeInTheDocument();
+    // The goal reads as text, not as a field.
+    expect(within(detail).queryByLabelText("Goal")).not.toBeInTheDocument();
+  });
+
+  // The failure was said on the stop, then cleared by the next click: the launch
+  // that followed ran only what was created and ended in a plain success toast,
+  // so a goal that never existed vanished without a word.
+  it("still says a goal could not be created when the launch goes ahead after the review stop", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/Launched 1 run\.[\s\S]*Goal service unavailable/i),
+    );
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Goal service unavailable/);
+  });
+
+  // The toast for any other partial launch names no cause, and the Running
+  // screen then shows only the runs that did launch.
+  it("keeps the reason a launch stopped partway on the Running screen, not only in a toast", async () => {
+    await openReusedConfirm(2);
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(new Error("Network down"));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Launched 1 of 2 runs\.[\s\S]*Network down/);
+  });
+
+  it("keeps a credit-limit stop on the Running screen as well", async () => {
+    await openReusedConfirm(2);
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(
+        new LaunchJourneyRunError(
+          402,
+          "Your organization's credit limit was reached.",
+        ),
+      );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Launched 1 of 2 runs[\s\S]*credit limit was reached/);
+  });
+
+  it("locks a reused-only swarm the same way once its first launch attempt stopped", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openReusedConfirm(1);
+    await screen.findByTestId("new-swarm-funding-split");
+    expect(
+      screen.getByRole("button", { name: /remove ana from this swarm/i }),
+    ).toBeInTheDocument();
+    launchJourneyRunMock.mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/changed before this launch started/i);
+    expect(
+      screen.queryByRole("button", { name: /remove ana from this swarm/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-confirm-add-existing"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-confirm-locked")).toBeInTheDocument();
   });
 });

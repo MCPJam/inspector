@@ -661,6 +661,69 @@ describe("NewSwarmRunningStep — sponsored conversations the platform could not
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
+  // The sentence names what stopped, so it has to agree with the count: "1
+  // sponsored conversation stopped ... they ended ... run them again" was a
+  // plural pronoun for one conversation.
+  describe("agrees with how many conversations the capacity stopped", () => {
+    const twoCapacityStops = () => {
+      attempts = [
+        attempt,
+        { ...attempt, sessionIdx: 1, chatSessionId: "other" },
+      ];
+      runFixture.summary = {
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+        rateLimited: 0,
+      };
+    };
+
+    it("says it and it for one", () => {
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent(/so it ended before finishing/i);
+      expect(callout).toHaveTextContent(/Run it again later/i);
+      expect(callout).not.toHaveTextContent(/they ended|run them/i);
+    });
+
+    it("says they and them for several", () => {
+      twoCapacityStops();
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent("2 sponsored conversations stopped.");
+      expect(callout).toHaveTextContent(/so they ended before finishing/i);
+      expect(callout).toHaveTextContent(/Run them again later/i);
+    });
+
+    it("counts only the capacity stops when a rejection shares the callout", () => {
+      attempts = [
+        attempt,
+        {
+          ...attempt,
+          sessionIdx: 1,
+          chatSessionId: "other",
+          errorCode: "swarm_sponsorship_rejected",
+          errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+        },
+      ];
+      runFixture.summary = {
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+        rateLimited: 0,
+      };
+
+      renderStep();
+
+      const callout = screen.getByTestId("new-swarm-running-sponsored-stop");
+      expect(callout).toHaveTextContent(/so 1 of them ended before finishing/i);
+      expect(callout).toHaveTextContent(/Run it again later/i);
+    });
+  });
+
   it("is not counted as an organization usage limit", () => {
     renderStep();
 

@@ -67,13 +67,22 @@ export function withChosenIterations(
   });
 }
 
-/** The preview request for a launch's targets, in launch order. */
+/**
+ * The preview request for a launch's targets, in launch order.
+ *
+ * Every run is asked about as the swarm the launch makes it: the launch sends
+ * `kind: "swarm"` for each run it creates. Left out, the backend resolves the
+ * kind from the session count, so a goal with one conversation and no swarm of
+ * its own previews as user testing (never sponsored), then launches as a swarm
+ * (sponsored) and is refused for the split it was shown, on every attempt.
+ */
 export function fundingPreviewRuns(
   targets: readonly LaunchTarget[],
   environmentIds: string[] | null,
 ): SwarmFundingPreviewRunInput[] {
   return targets.map((target) => ({
     journeyRefId: target.journeyId,
+    kind: "swarm",
     ...launchRunOverrides(target, environmentIds),
   }));
 }
@@ -137,8 +146,13 @@ function ineligibilityClause(
       return one
         ? "its model isn't included in them"
         : "their models aren't included in them";
+    // Stamped on every target when the PERSONA driver is on an organization or
+    // local connection, as well as on a target whose own model is. So it names
+    // the model, not whose it is.
     case "byok_model":
-      return one ? "it uses your own model key" : "they use your own model key";
+      return one
+        ? "a model it uses is set to your own connection"
+        : "a model they use is set to your own connection";
     case "harness_target":
       return one
         ? "it runs a coding-agent harness"
@@ -156,8 +170,9 @@ function ineligibilityClause(
       return "the persona model isn't included in them";
     case "grounding_model_not_included":
       return "the grounding model isn't included in them";
+    // The backend names the saved selection, not where the judge would run.
     case "judge_selection_not_hosted":
-      return "the judge runs on your own model";
+      return "the judge is set to a model MCPJam doesn't host";
     case "judge_model_not_included":
       return "the judge model isn't included in them";
     default:
@@ -254,6 +269,31 @@ export function fundingUnverifiedNotice(shown: number): string {
 export function alsoFailedNotice(failure: string): string {
   const sentence = failure.trim();
   return `Also, part of this launch failed: ${
+    /[.!?]$/.test(sentence) ? sentence : `${sentence}.`
+  }`;
+}
+
+/**
+ * What a launch that did not fully go through says beside the runs that did
+ * launch, so the explanation outlives the toast that announces it. "Launched 1
+ * of 3 runs. Part of this launch failed: Network down." A launch that started
+ * everything it created but was missing a goal says it the same way.
+ */
+export function launchOutcomeNotice({
+  launched,
+  total,
+  failure,
+}: {
+  launched: number;
+  total: number;
+  failure: string;
+}): string {
+  const sentence = failure.trim();
+  const count =
+    launched === total
+      ? `Launched ${launched} ${launched === 1 ? "run" : "runs"}.`
+      : `Launched ${launched} of ${total} ${total === 1 ? "run" : "runs"}.`;
+  return `${count} Part of this launch failed: ${
     /[.!?]$/.test(sentence) ? sentence : `${sentence}.`
   }`;
 }
