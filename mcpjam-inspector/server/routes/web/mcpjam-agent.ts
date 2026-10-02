@@ -131,8 +131,14 @@ const DEFAULT_SPEC_URL = "https://modelcontextprotocol.io/mcp";
  *     project instead, with nothing at the call site to reveal it.
  *
  * Deleting it by name resolves both: neither server's copy survives.
+ *
+ * `send_feedback` is the platform worker's own feedback tool, reachable here
+ * when `MCPJAM_AGENT_PLATFORM_TOOLS=1` restores that worker. Declined for the
+ * first reason above: it posts model-authored text to the MCPJam team from
+ * inside the user's chat, unattended. A person in the app reports through the
+ * Send feedback form, which shows them where the text goes.
  */
-const DECLINED_MCP_TOOL_NAMES = ["submit_feedback"] as const;
+const DECLINED_MCP_TOOL_NAMES = ["submit_feedback", "send_feedback"] as const;
 const PLATFORM_SERVER_ID = MCPJAM_PLATFORM_SERVER_ID;
 
 /**

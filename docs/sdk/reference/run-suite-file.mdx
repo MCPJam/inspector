@@ -1,0 +1,90 @@
+---
+title: "runSuiteFile"
+description: "API reference for running an MCPJam suite file locally from code"
+icon: "book"
+---
+
+`runSuiteFile(sourceText, options)` runs an MCPJam suite file locally and decides it with the v2 verdict policy. It is the engine behind [`mcpjam test`](/cli/local-evals), exposed for code that wants the same run without the CLI.
+
+It takes **explicit** configuration: server bindings, provider keys, and — only if a case needs MCPJam-hosted inference — a callback that returns a platform connection. It does not discover files, read environment variables or a login store, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry — that belongs to the caller.
+
+```typescript
+import { readFile } from "node:fs/promises";
+import { runSuiteFile, SuiteFileRunError } from "@mcpjam/sdk";
+
+const source = await readFile(".mcpjam/evals/example.yaml", "utf8");
+
+try {
+  const result = await runSuiteFile(source, {
+    servers: {
+      notes: { config: { command: "node", args: ["./notes-server.js"] }, source: "code" },
+    },
+    inference: {
+      mode: "byok",
+      providerKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
+    },
+    caseIds: ["c_reads_a_note"],
+  });
+  console.log(result.verdict); // "passed" | "failed" | "inconclusive" | "notEstablished"
+} catch (error) {
+  if (error instanceof SuiteFileRunError) {
+    console.error(error.code, error.phase, error.category, error.message);
+  }
+  throw error;
+}
+```
+
+## Options
+
+| Option | Default | Description |
+|---|---|---|
+| `servers` | required | Target server bindings by **name**: `{ config: MCPServerConfig, source?: string }`. `source` is a non-secret label shown in reports. The runner creates and owns its own `MCPClientManager`. |
+| `caseIds` | every enabled case | Exact authored case ids. Unknown, duplicate and disabled ids are refused. |
+| `inference.mode` | `"auto"` | `"auto"`, `"byok"` or `"mcpjam"` — see [Inference](/cli/local-evals#inference). |
+| `inference.providerKeys` | `{}` | BYOK keys by provider id (`anthropic`, `openai`, `google`, `deepseek`, `mistral`, `openrouter`, `xai`). |
+| `inference.baseUrls` | — | Non-secret provider base URLs (`anthropic`, `openai`, `ollama`, …). |
+| `inference.resolveMcpjam` | — | `() => Promise<{ baseUrl, projectId, getAuth, headers? }>`, called at most once and only when a case needs MCPJam-hosted inference. `baseUrl` is the app origin (not `/api/v1`), `projectId` a concrete id, `getAuth` returns the current bearer and is re-read for every mint, retry and revoke. `headers` go to MCPJam's API only. |
+| `hostTemplateId` | — | One host template to emulate (`claude-code`, `chatgpt`, …). |
+| `importApprovals` | — | `{ caseId, reason }[]` approving `approximated` imported cases for this run. |
+| `concurrency` | `1` | Iterations of one case in flight at once. Cases run sequentially. |
+| `iterationTimeoutMs` | `120000` | Bounds each iteration's executor run (not grading, not setup). |
+| `maxSteps` | `10` | Model steps per prompt. |
+| `setupTimeoutMs` | `30000` | Bounds each setup operation — a connection, the tool catalog, a lease mint. |
+| `signal` | — | Cooperative cancellation. After execution begins, an abort returns partial evidence instead of throwing. |
+| `onProgress` | — | Observer for setup, case and iteration progress. A throwing observer is recorded as a warning. |
+
+## Result
+
+| Field | Description |
+|---|---|
+| `verdict` | `"passed"` or `"failed"` only for a completed run; `"inconclusive"` when the validity policy withheld a verdict; `"notEstablished"` for an interrupted or undecidable run. |
+| `passed` | `verdict === "passed"`. |
+| `termination` | `"completed"`, `"aborted"` (the signal) or `"stopped"` (a credential or billing refusal stopped scheduling). |
+| `complete` | Whether every planned iteration reached a terminal state. |
+| `decision` | The validated v2 `EvalVerdictDecision` over the planned population. For an interrupted run it is partial evidence, never a completed gate — read `verdict`. |
+| `cases` | Per case: effective model and rail, configured iterations and threshold, the evaluator-config hash, judge state, import evidence, per-iteration evidence (lifecycle status, task verdict, evaluator error, attributed refusal, tool calls, policy blocks, scores, stage chain) and the case's row of the decision. |
+| `toolPolicy` | The declared policy, the launch snapshot and every block. |
+| `warnings`, `issues` | Warnings, and run-affecting problems (credentials, billing, integrity, cleanup) by phase and category. |
+| `report` | The validated `eval-local-run` structured report — pass it to `renderStructuredRunJson`, `renderStructuredRunJUnitXml`, `renderStructuredRunHtml`, or `formatLocalEvalRunSummary`. |
+
+Nothing in the result carries a provider key, a platform token, a lease, server headers or environment objects. Every credential the run was handed — provider keys, platform tokens, server credentials, and any header, environment or URL value whose name or shape marks it as one (`Authorization`, `GITHUB_TOKEN`, `?sig=`, a `ghp_…` token) — is replaced with `[REDACTED]` wherever observed text repeats it: execution errors, tool-call arguments, evaluator and predicate reasons, issues and warnings. Ordinary configuration such as `NODE_ENV=production` is not treated as a secret. Identifiers (case ids, server and tool names) and fixed vocabularies such as statuses are never rewritten.
+
+## Errors
+
+Input that cannot run and environments that cannot be set up throw `SuiteFileRunError` with a stable `code`, a `phase` (`validation`, `setup`, `execution`, `reporting`) and a `category`. Validation and setup refusals are thrown **before any model or tool call**. A refusal that found concrete problems also lists every one found at that stage in `details.problems`; other errors carry only their message, so treat `problems` as optional.
+
+One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `integrity`) means the cases ran — model calls were made and may have been billed — but the run's own report failed validation, so no result is returned. Retrying repeats that inference.
+
+| `category` | Examples |
+|---|---|
+| `usage` | Invalid file, selection or options; conflicting inference intent; an environment-only target |
+| `unsupported` | Direct `toolCall` steps, widget/render/discovery assertions, gating tool-result and latency assertions, gating judges |
+| `import` | An ineligible imported case or an approval that applies to nothing |
+| `policy` | A tool-policy `deny` name that matches no tool |
+| `credentials` | A missing or rejected provider key or platform credential |
+| `billing` | MCPJam or the provider refused inference for a billing reason (credits, quota, a spend budget) |
+| `setup` | A missing binding, a failed connection or tool catalog, duplicate tool names across servers |
+| `cancelled` | The signal fired before execution began |
+| `integrity` | The run's own report failed validation, after the cases ran |
+
+An iteration that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion.
