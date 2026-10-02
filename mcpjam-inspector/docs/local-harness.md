@@ -68,20 +68,45 @@ run and pinned harness/model, and are rechecked for new generations.
 
 ## Runtime distribution
 
-The runtime is versioned independently of Inspector. Each supported OS/architecture
-gets its own archive, manifest, signature and digest under the immutable release
-tag `local-harness-pack-v<version>`. Inspector downloads and verifies the expected
-pack; it never builds or installs the vendor runtime from a mutable dependency
-range on the user's machine. Electron reads the bootstrap from the verified pack
-and does not require an unpackaged `node_modules` tree.
+The runtime is versioned independently of Inspector, and each harness's pack is
+versioned independently of every other harness's. Each supported OS/architecture
+gets its own archive, manifest, signature and digest under an immutable release
+tag: `local-harness-pack-v<version>` for Claude Code (the names its first pack
+shipped under) and `local-harness-pack-<harness>-v<version>` for every other
+harness, whose asset names also carry the harness id. Inspector downloads and
+verifies the expected pack for each harness (`EXPECTED_PACK_VERSIONS` in
+`pack-digests.generated.ts`); it never builds or installs a vendor runtime from
+a mutable dependency range on the user's machine. Electron reads the bootstrap
+from the verified pack and does not require an unpackaged `node_modules` tree.
+
+Each harness's pack installs under its own root (Claude Code keeps
+`<runtime>/<target>/<version>`; other harnesses use
+`<runtime>/<harness>/<target>/<version>`), so packs with the same version number
+never replace each other.
 
 Toolchain versions are pinned in `scripts/local-harness-toolchain.json`.
-`scripts/check-local-harness-inputs.mjs` fingerprints the pack dependency closure (not unrelated lockfile entries), patched
-bootstrap recipe, launcher and build inputs. After intentionally changing those
+`scripts/check-local-harness-inputs.mjs` fingerprints each harness's pack
+separately. A harness's fingerprint covers its recipe module
+(`scripts/local-harness-pack-recipes/<harness>.mjs`), the sources the recipe
+declares, the locked dependency closure of its declared roots (not unrelated
+lockfile entries) and the recipe bytes it emits — plus the shared build
+machinery every pack uses (the build script, the recipe loader, the workflow,
+toolchain pins, the loopback launcher, the tree-digest module and the Job Object
+launcher). A change only one harness reads moves only that harness's
+fingerprint; a change to shared machinery moves every harness's, and each
+affected pack must then be re-published. After intentionally changing those
 inputs, regenerate and review the snapshot:
 
 ```sh
 node scripts/check-local-harness-inputs.mjs --write
+```
+
+To publish, dispatch `local-harness-pack.yml` with `harness` and a new
+`pack_version`, then record the digests for that harness only:
+
+```sh
+node scripts/write-pack-digests.mjs --harness <harness> --version <version> \
+  --digests '<flat digest map printed by the workflow>'
 ```
 
 Publish a new pack rather than replacing an existing tag. The pack workflow

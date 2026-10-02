@@ -21,7 +21,7 @@ import {
 } from "../../../../../scripts/build-local-harness-pack.mjs";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import {
-  EXPECTED_PACK_VERSION,
+  EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
   PACK_TREE_DIGESTS,
 } from "../pack-digests.generated.js";
@@ -183,16 +183,29 @@ describe("the generated digest table", () => {
     }
   });
 
-  it("names a pack version whenever it names any digest at all", () => {
-    const anyBuilt = Object.values(PACK_RECORDS).some(
-      (byPlatform) => Object.keys(byPlatform).length > 0,
-    );
-    if (!anyBuilt) {
-      // The repo state before the pack build has ever run: empty everywhere,
-      // and therefore no platform can resolve a runtime.
-      expect(EXPECTED_PACK_VERSION).toBe("");
-      return;
+  it("names a pack version for a harness whenever it names any of its digests", () => {
+    // Per harness: each harness's pack is released on its own, so one having
+    // been built says nothing about another.
+    for (const harnessId of Object.keys(PACK_RECORDS) as Array<
+      keyof typeof PACK_RECORDS
+    >) {
+      const built = Object.keys(PACK_RECORDS[harnessId]).length > 0;
+      if (!built) {
+        // Before this harness's pack build has ever run: empty, and therefore
+        // no platform can resolve its runtime.
+        expect(EXPECTED_PACK_VERSIONS[harnessId], harnessId).toBe("");
+        continue;
+      }
+      expect(EXPECTED_PACK_VERSIONS[harnessId].length).toBeGreaterThan(0);
+      for (const record of Object.values(PACK_RECORDS[harnessId])) {
+        expect(record?.packVersion).toBe(EXPECTED_PACK_VERSIONS[harnessId]);
+      }
     }
-    expect(EXPECTED_PACK_VERSION.length).toBeGreaterThan(0);
+  });
+
+  it("covers every supported harness in all three tables", () => {
+    for (const table of [PACK_RECORDS, PACK_TREE_DIGESTS, EXPECTED_PACK_VERSIONS]) {
+      expect(Object.keys(table).sort()).toEqual(["claude-code", "codex"]);
+    }
   });
 });

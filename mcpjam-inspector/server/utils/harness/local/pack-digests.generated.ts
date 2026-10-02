@@ -31,7 +31,7 @@ export const PACK_TREE_DIGESTS: Readonly<
   Record<SupportedLocalHarnessId, Readonly<Partial<Record<LocalPackTarget, string>>>>
 > = {
   "claude-code": {},
-  codex: {},
+  "codex": {},
 };
 
 /**
@@ -45,14 +45,24 @@ export const PACK_RECORDS: Readonly<
   >
 > = {
   "claude-code": {},
-  codex: {},
+  "codex": {},
 };
 
 /**
- * The pack version this Inspector build expects.
+ * The pack version this Inspector build expects, PER HARNESS.
  *
- * One version across targets: a pack build produces every target from the same
- * adapter pin and the same Node version, so a split would mean two different
- * recipes shipped under one release.
+ * Per harness because each harness's pack is its own release with its own
+ * semver (`local-harness-pack-v<ver>` for Claude Code,
+ * `local-harness-pack-<harness>-v<ver>` for the others): publishing a Codex
+ * pack must not move the version an Inspector expects for Claude Code.
+ *
+ * One version across TARGETS within a harness: a pack build produces every
+ * target from the same recipe and the same Node version, so a split would mean
+ * two different recipes shipped under one release.
  */
-export const EXPECTED_PACK_VERSION = "";
+export const EXPECTED_PACK_VERSIONS: Readonly<
+  Record<SupportedLocalHarnessId, string>
+> = {
+  "claude-code": "",
+  "codex": "",
+};

@@ -34,9 +34,10 @@ import {
   type LocalHarnessCompatibility,
 } from "./compatibility.js";
 import {
-  EXPECTED_PACK_VERSION,
+  EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
 } from "./pack-digests.generated.js";
+import { packAssetStem } from "./pack-naming.js";
 import {
   localPackTarget,
   type LocalPackTarget,
@@ -60,7 +61,8 @@ export type ReleaseBlockerKind =
   | "conformance-missing"
   /** The manifest names the platform but no pack target has a digest. */
   | "pack-digest-missing"
-  /** `EXPECTED_PACK_VERSION` is empty: no pack build has ever been recorded. */
+  /** The harness's `EXPECTED_PACK_VERSIONS` entry is empty: no pack build has
+   *  ever been recorded for it. */
   | "no-pack-version";
 
 export interface ReleaseBlocker {
@@ -89,13 +91,15 @@ export interface ReleaseBlocker {
 /**
  * The pack targets this build carries a usable digest for.
  *
- * "Usable" means present AND stamped with `EXPECTED_PACK_VERSION`: a record
- * left over from a different pack build is not the pinned pack.
+ * "Usable" means present AND stamped with the harness's expected pack version
+ * (`EXPECTED_PACK_VERSIONS[harnessId]`): a record left over from a different
+ * pack build is not the pinned pack. Each harness's pack is versioned on its
+ * own, so one harness's pin never admits another's records.
  */
 export function packTargetsWithDigests(
   harnessId: SupportedLocalHarnessId,
   records: typeof PACK_RECORDS = PACK_RECORDS,
-  expectedVersion: string = EXPECTED_PACK_VERSION,
+  expectedVersion: string = EXPECTED_PACK_VERSIONS[harnessId] ?? "",
 ): LocalPackTarget[] {
   if (expectedVersion.length === 0) return [];
   const forHarness = records[harnessId] ?? {};
@@ -122,7 +126,7 @@ export function advertisedLocalPlatforms(
     Partial<Record<string, LocalHarnessCompatibility>>
   > = LOCAL_HARNESS_MANIFEST,
   records: typeof PACK_RECORDS = PACK_RECORDS,
-  expectedVersion: string = EXPECTED_PACK_VERSION,
+  expectedVersion: string = EXPECTED_PACK_VERSIONS[harnessId] ?? "",
 ): LocalPlatform[] {
   const manifest = Object.prototype.hasOwnProperty.call(manifests, harnessId)
     ? manifests[harnessId]
@@ -205,7 +209,8 @@ export function localHarnessReleaseBlockers(args: {
 }): ReleaseBlocker[] {
   const manifests = args.manifests ?? LOCAL_HARNESS_MANIFEST;
   const records = args.records ?? PACK_RECORDS;
-  const expectedVersion = args.expectedVersion ?? EXPECTED_PACK_VERSION;
+  const expectedVersion =
+    args.expectedVersion ?? EXPECTED_PACK_VERSIONS[args.harnessId] ?? "";
   const harnessId = args.harnessId;
   const blockers: ReleaseBlocker[] = [];
 
@@ -252,9 +257,11 @@ export function localHarnessReleaseBlockers(args: {
       // release this check exists to stop.
       blocking: wouldOffer,
       message:
-        `EXPECTED_PACK_VERSION is empty, so no pack has been built and no ` +
-        `install can ever verify. Run local-harness-pack.yml, then ` +
-        `scripts/write-pack-digests.mjs, and commit the generated table.`,
+        `EXPECTED_PACK_VERSIONS["${harnessId}"] is empty, so no ${harnessId} ` +
+        `pack has been built and no install can ever verify. Run ` +
+        `local-harness-pack.yml with harness=${harnessId}, then ` +
+        `scripts/write-pack-digests.mjs --harness ${harnessId}, and commit ` +
+        `the generated table.`,
     });
   }
 
@@ -288,14 +295,15 @@ export function localHarnessReleaseBlockers(args: {
  * exactly what a client would fetch.
  *
  * Derived from the same stem `build-local-harness-pack.mjs` writes and
- * `packSourceFor` downloads, because a check that guesses the name proves
- * nothing about the name a user's installer will ask for.
+ * `packSourceFor` downloads (`packAssetStem`), because a check that guesses
+ * the name proves nothing about the name a user's installer will ask for.
  */
 export function packAssetNames(
+  harnessId: SupportedLocalHarnessId,
   target: LocalPackTarget,
   packVersion: string,
 ): { archive: string; manifest: string; signature: string; sha256: string } {
-  const stem = `local-harness-pack-${target}-${packVersion}`;
+  const stem = packAssetStem(harnessId, target, packVersion);
   return {
     archive: `${stem}.tar.gz`,
     manifest: `${stem}.manifest.json`,

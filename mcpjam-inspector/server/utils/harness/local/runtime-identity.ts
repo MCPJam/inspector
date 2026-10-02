@@ -32,6 +32,7 @@ import {
   type SupportedLocalHarnessId,
 } from "./targets.js";
 import { setWindowsJobLauncherVerified } from "./process-identity.js";
+import { rehashPolicyFor } from "./runtime-rehash-policy.js";
 
 /** Cap on the bundle tree the digest will walk. A managed bundle is a bridge
  *  plus a vendor CLI; anything past this is not the artifact we shipped. */
@@ -106,7 +107,9 @@ export type RuntimeResolution =
  * outside it.
  */
 export async function computeTreeDigest(root: string): Promise<string> {
-  return (await digestTreeWithSnapshot(root)).digest;
+  // The harness only decides which files get a content baseline for later
+  // re-checks; the digest itself is the same for every harness.
+  return (await digestTreeWithSnapshot(root, "")).digest;
 }
 
 /**
@@ -145,6 +148,9 @@ export interface RuntimeTreeEntrySnapshot {
 
 export interface RuntimeTreeSnapshot {
   root: string;
+  /** Whose rehash policy picked `executableDigests` (see
+   *  `runtime-rehash-policy.ts`), so a re-check reads the same set. */
+  harnessId: string;
   digest: string;
   entries: readonly RuntimeTreeEntrySnapshot[];
   /**
@@ -170,7 +176,9 @@ export interface RuntimeTreeSnapshot {
  */
 async function digestTreeWithSnapshot(
   root: string,
+  harnessId: string,
 ): Promise<RuntimeTreeSnapshot> {
+  const policy = rehashPolicyFor(harnessId);
   const hash = createHash("sha256");
   const entriesSnapshot: RuntimeTreeEntrySnapshot[] = [];
   const executableDigests: Record<string, string> = {};
@@ -222,7 +230,7 @@ async function digestTreeWithSnapshot(
         ino: Number(info.ino),
         mode: info.mode,
       });
-      if (isBaselineHashed(rel)) {
+      if (isBaselineHashed(policy, rel)) {
         executableDigests[rel] = contentDigest.toString("hex");
       }
     }
@@ -231,6 +239,7 @@ async function digestTreeWithSnapshot(
   await walk(root);
   return {
     root,
+    harnessId,
     digest: `sha256:${hash.digest("hex")}`,
     entries: entriesSnapshot,
     executableDigests,
@@ -265,17 +274,11 @@ async function digestTreeWithSnapshot(
  * binaries join them under `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY=true`.
  *
  * The vendor CLI is matched by pattern because its name is platform-suffixed
- * inside the vendor's own platform package.
+ * inside the vendor's own platform package. Which files those are is PER
+ * HARNESS and lives in `runtime-rehash-policy.ts`, outside this module: this
+ * file is a shared pack input (it defines the tree digest), and a Codex path
+ * pattern edited here would otherwise change Claude Code's pack fingerprint.
  */
-const ALWAYS_REHASHED_RELATIVE_PATHS: readonly string[] = [
-  "launcher.mjs",
-  "bridge.mjs",
-];
-const STRICT_REHASHED_PATH_PATTERNS: readonly RegExp[] = [
-  /^bin\/node(\.exe)?$/,
-  /(^|\/)claude-agent-sdk-[a-z0-9-]+\/(claude|claude\.exe)$/,
-  /(^|\/)claude-code-[a-z0-9-]+\/(claude|claude\.exe)$/,
-];
 
 /**
  * Read on every call rather than once at module load, so a test — and an
@@ -294,19 +297,25 @@ function strictReverifyEnabled(): boolean {
  * to compare against, and the first strict re-verify would have to either
  * refuse a healthy tree or silently skip the file it was turned on for.
  */
-function isBaselineHashed(relativePath: string): boolean {
+function isBaselineHashed(
+  policy: ReturnType<typeof rehashPolicyFor>,
+  relativePath: string,
+): boolean {
   return (
-    ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath) ||
-    STRICT_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+    policy.always.includes(relativePath) ||
+    policy.strict.some((pattern) => pattern.test(relativePath))
   );
 }
 
 /** Whether a pre-spawn re-verify should re-read this path's bytes. */
-function isRehashedOnRevalidate(relativePath: string): boolean {
-  if (ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath)) return true;
+function isRehashedOnRevalidate(
+  policy: ReturnType<typeof rehashPolicyFor>,
+  relativePath: string,
+): boolean {
+  if (policy.always.includes(relativePath)) return true;
   return (
     strictReverifyEnabled() &&
-    STRICT_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+    policy.strict.some((pattern) => pattern.test(relativePath))
   );
 }
 
@@ -336,8 +345,12 @@ const verifiedRuntimeCache = new Map<string, RuntimeTreeSnapshot>();
  */
 const inFlightVerifications = new Map<string, Promise<RuntimeVerification>>();
 
-function verificationCacheKey(root: string, expectedDigest: string): string {
-  return `${root}\u0000${expectedDigest}`;
+function verificationCacheKey(
+  root: string,
+  expectedDigest: string,
+  harnessId: string,
+): string {
+  return `${root}\u0000${expectedDigest}\u0000${harnessId}`;
 }
 
 /**
@@ -383,15 +396,23 @@ export type RuntimeVerification =
 export async function verifyRuntime(
   root: string,
   expectedDigest: string,
+  /** Picks which files get a re-check baseline (`runtime-rehash-policy.ts`). */
+  harnessId: SupportedLocalHarnessId,
 ): Promise<RuntimeVerification> {
-  const key = verificationCacheKey(root, expectedDigest);
+  const key = verificationCacheKey(root, expectedDigest, harnessId);
   const cached = verifiedRuntimeCache.get(key);
   if (cached !== undefined) {
     return { ok: true, digest: cached.digest, snapshot: cached, cached: true };
   }
   const running = inFlightVerifications.get(key);
   if (running !== undefined) return running;
-  const started = digestOnce(root, expectedDigest, key, cacheGeneration);
+  const started = digestOnce(
+    root,
+    expectedDigest,
+    harnessId,
+    key,
+    cacheGeneration,
+  );
   inFlightVerifications.set(key, started);
   try {
     return await started;
@@ -408,12 +429,13 @@ export async function verifyRuntime(
 async function digestOnce(
   root: string,
   expectedDigest: string,
+  harnessId: string,
   key: string,
   generation: number,
 ): Promise<RuntimeVerification> {
   let snapshot: RuntimeTreeSnapshot;
   try {
-    snapshot = await digestTreeWithSnapshot(root);
+    snapshot = await digestTreeWithSnapshot(root, harnessId);
   } catch (error) {
     return {
       ok: false,
@@ -513,7 +535,11 @@ export async function resolveManagedBundle(args: {
     };
   }
 
-  const verification = await verifyRuntime(canonicalRoot, expectedDigest);
+  const verification = await verifyRuntime(
+    canonicalRoot,
+    expectedDigest,
+    manifest.harnessId,
+  );
   if (!verification.ok && verification.reason === "unreadable") {
     return {
       ok: false,
@@ -1114,6 +1140,7 @@ export async function resolveSystemInstall(
 async function detectSnapshotDrift(
   snapshot: RuntimeTreeSnapshot,
 ): Promise<string | null> {
+  const policy = rehashPolicyFor(snapshot.harnessId);
   const recorded = new Map(snapshot.entries.map((e) => [e.path, e]));
   let seen = 0;
 
@@ -1142,7 +1169,7 @@ async function detectSnapshotDrift(
       ) {
         return `${rel} was modified`;
       }
-      if (isRehashedOnRevalidate(rel)) {
+      if (isRehashedOnRevalidate(policy, rel)) {
         const content = await readFile(full);
         const fileDigest = createHash("sha256").update(content).digest("hex");
         if (fileDigest !== snapshot.executableDigests[rel]) {
@@ -1189,12 +1216,13 @@ export async function revalidateRuntime(
   try {
     if (runtime.source === "managed-bundle") {
       const snapshot = verifiedRuntimeCache.get(
-        verificationCacheKey(runtime.rootPath, runtime.digest),
+        verificationCacheKey(runtime.rootPath, runtime.digest, runtime.harnessId),
       );
       if (snapshot === undefined) {
         const verification = await verifyRuntime(
           runtime.rootPath,
           runtime.digest,
+          runtime.harnessId,
         );
         if (!verification.ok) {
           return {
@@ -1220,9 +1248,13 @@ export async function revalidateRuntime(
       // digest decides, exactly as it does on first admission, and the cheap
       // check only ever buys skipping it.
       verifiedRuntimeCache.delete(
-        verificationCacheKey(runtime.rootPath, runtime.digest),
+        verificationCacheKey(runtime.rootPath, runtime.digest, runtime.harnessId),
       );
-      const reverified = await verifyRuntime(runtime.rootPath, runtime.digest);
+      const reverified = await verifyRuntime(
+        runtime.rootPath,
+        runtime.digest,
+        runtime.harnessId,
+      );
       if (reverified.ok) return { ok: true };
       return {
         ok: false,

@@ -326,9 +326,9 @@ describe("verification cost", () => {
     const root = await writeBundle("cached", { "bridge.mjs": "x" });
     const digest = await computeTreeDigest(root);
 
-    const first = await verifyRuntime(root, digest);
+    const first = await verifyRuntime(root, digest, "claude-code");
     expect(first).toMatchObject({ ok: true, cached: false });
-    const second = await verifyRuntime(root, digest);
+    const second = await verifyRuntime(root, digest, "claude-code");
     expect(second).toMatchObject({ ok: true, cached: true });
   });
 
@@ -342,8 +342,8 @@ describe("verification cost", () => {
     clearRuntimeVerificationCache();
 
     const [first, second] = await Promise.all([
-      verifyRuntime(root, digest),
-      verifyRuntime(root, digest),
+      verifyRuntime(root, digest, "claude-code"),
+      verifyRuntime(root, digest, "claude-code"),
     ]);
     // The SAME result object: one verification, awaited twice.
     expect(first).toBe(second);
@@ -367,8 +367,8 @@ describe("verification cost", () => {
     // Same key, but the tree does not match it yet.
     await writeFile(join(root, "bridge.mjs"), "not-x-yet");
     const failures = await Promise.all([
-      verifyRuntime(root, wanted),
-      verifyRuntime(root, wanted),
+      verifyRuntime(root, wanted, "claude-code"),
+      verifyRuntime(root, wanted, "claude-code"),
     ]);
     for (const failure of failures) {
       expect(failure).toMatchObject({ ok: false, reason: "digest-mismatch" });
@@ -376,7 +376,7 @@ describe("verification cost", () => {
 
     // The tree becomes what that key names. A cached refusal would still say no.
     await writeFile(join(root, "bridge.mjs"), "x");
-    await expect(verifyRuntime(root, wanted)).resolves.toMatchObject({
+    await expect(verifyRuntime(root, wanted, "claude-code")).resolves.toMatchObject({
       ok: true,
       cached: false,
     });
@@ -392,7 +392,7 @@ describe("verification cost", () => {
     const digest = await computeTreeDigest(root);
     clearRuntimeVerificationCache();
 
-    const inFlight = verifyRuntime(root, digest);
+    const inFlight = verifyRuntime(root, digest, "claude-code");
     // Exactly what `installRuntimePack` does at activation, while the read
     // above is still walking the tree.
     clearRuntimeVerificationCache();
@@ -402,7 +402,7 @@ describe("verification cost", () => {
     });
 
     // Nothing stale was published: the next caller does the work itself.
-    await expect(verifyRuntime(root, digest)).resolves.toMatchObject({
+    await expect(verifyRuntime(root, digest, "claude-code")).resolves.toMatchObject({
       ok: true,
       cached: false,
     });
@@ -413,9 +413,9 @@ describe("verification cost", () => {
     // different runtime. A cache keyed on the path alone would answer for it.
     clearRuntimeVerificationCache();
     const root = await writeBundle("rekey", { "bridge.mjs": "v1" });
-    await verifyRuntime(root, await computeTreeDigest(root));
+    await verifyRuntime(root, await computeTreeDigest(root), "claude-code");
     await writeFile(join(root, "bridge.mjs"), "v2");
-    const upgraded = await verifyRuntime(root, await computeTreeDigest(root));
+    const upgraded = await verifyRuntime(root, await computeTreeDigest(root), "claude-code");
     expect(upgraded).toMatchObject({ ok: true, cached: false });
   });
 
@@ -423,11 +423,11 @@ describe("verification cost", () => {
     clearRuntimeVerificationCache();
     const root = await writeBundle("nocache", { "bridge.mjs": "x" });
     const wrong = `sha256:${"1".repeat(64)}`;
-    expect(await verifyRuntime(root, wrong)).toMatchObject({
+    expect(await verifyRuntime(root, wrong, "claude-code")).toMatchObject({
       ok: false,
       reason: "digest-mismatch",
     });
-    expect(await verifyRuntime(root, wrong)).toMatchObject({
+    expect(await verifyRuntime(root, wrong, "claude-code")).toMatchObject({
       ok: false,
       reason: "digest-mismatch",
     });
@@ -557,7 +557,7 @@ describe("verification cost", () => {
     });
     if (!resolved.ok) throw new Error("fixture did not resolve");
 
-    const verification = await verifyRuntime(root, resolved.runtime.digest);
+    const verification = await verifyRuntime(root, resolved.runtime.digest, "claude-code");
     if (!verification.ok) throw new Error("fixture did not verify");
     const nodePath = join(root, "bin", "node");
     const original = await readFile(nodePath);
@@ -600,6 +600,7 @@ describe("verification cost", () => {
     const verification = await verifyRuntime(
       root,
       await computeTreeDigest(root),
+      "claude-code",
     );
     expect(verification.ok).toBe(true);
     if (!verification.ok) return;

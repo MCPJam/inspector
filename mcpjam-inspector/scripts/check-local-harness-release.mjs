@@ -1,16 +1,22 @@
-import { computePackInputs } from "./check-local-harness-inputs.mjs";
+import { computeHarnessPackInputs, computePackInputs } from "./check-local-harness-inputs.mjs";
+import { packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
+import { parseManifestFacts, parsePackTables } from "./local-harness-pack-tables.mjs";
 /**
- * The release gate for local Claude Code execution.
+ * The release gate for local harness execution, run for EVERY harness with a
+ * compatibility manifest entry.
  *
  * Run before a release publishes, and again after its assets exist. It refuses
- * a release that ADVERTISES a local target it cannot serve:
+ * a release that ADVERTISES a local target it cannot serve, harness by harness:
  *
- *   1. every platform in `nativePlatforms` has a pack digest for each of its
- *      targets, at the independently pinned pack version;
+ *   1. every platform in the harness's `nativePlatforms` has a pack digest for
+ *      each of its targets, at that harness's independently pinned pack
+ *      version;
  *   2. the harness records lifecycle conformance evidence;
- *   3. (with `--assets`) each advertised target's published assets exist, its
- *      manifest is signed by the key this Inspector build carries, and the
- *      manifest's tree digest is byte-identical to the committed one.
+ *   3. (with `--assets`) each pinned target's published assets exist under
+ *      that harness's release tag, its manifest is signed by the key this
+ *      Inspector build carries, names this harness, was built from this
+ *      harness's reviewed inputs, and its tree digest is byte-identical to the
+ *      committed one.
  *
  * (3) is what makes this a RELEASE check rather than a lint. The pack workflow
  * already proves a freshly built pack installs — from a local file, through
@@ -24,6 +30,12 @@ import { computePackInputs } from "./check-local-harness-inputs.mjs";
  *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets
  *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets \
  *     --base-url file:///tmp/pack-out            # a local artifact directory
+ *   node scripts/check-local-harness-release.mjs --harness codex --require-ready
+ *
+ * `--version` is the Inspector release and is informational: each harness's
+ * pack version is read from the committed `EXPECTED_PACK_VERSIONS`.
+ * `--harness` limits every check to one harness; `--base-url` then serves
+ * that harness's assets.
  *
  * Exits non-zero with every blocker listed, not just the first: fixing
  * conformance and then discovering the digest table is also empty is two
@@ -39,9 +51,13 @@ const inspectorRoot = join(scriptDir, "..");
 
 /**
  * The modules are TypeScript, and this script is plain node. Rather than pull
- * in a loader, the two facts it needs are parsed out of the sources — which
- * has the useful side effect that the check reads exactly what is COMMITTED,
- * not what a build step could have rewritten on the way past.
+ * in a loader, the facts it needs are parsed out of the sources — which has
+ * the useful side effect that the check reads exactly what is COMMITTED, not
+ * what a build step could have rewritten on the way past.
+ *
+ * Returns one entry per harness that has a manifest entry or a pack table
+ * entry: `{ [harnessId]: { expectedVersion, records, conformance,
+ * nativePlatforms } }`.
  */
 async function readCommittedFacts() {
   const digestsSource = await readFile(
@@ -55,43 +71,18 @@ async function readCommittedFacts() {
     join(inspectorRoot, "server/utils/harness/local/compatibility.ts"),
     "utf8",
   );
-
-  const versionMatch = digestsSource.match(
-    /export const EXPECTED_PACK_VERSION = "([^"]*)";/,
-  );
-  const expectedVersion = versionMatch?.[1] ?? "";
-
-  const recordsBlock = digestsSource.match(
-    /export const PACK_RECORDS[\s\S]*?= \{\n([\s\S]*?)^\};$/m,
-  );
-  const records = {};
-  if (recordsBlock) {
-    const claudeBlock = recordsBlock[1].match(
-      /"claude-code": \{\n([\s\S]*?)^  \},$/m,
-    );
-    const body = claudeBlock?.[1] ?? "";
-    const entry =
-      /"([a-z0-9-]+)": \{\s*packVersion: "([^"]*)",\s*treeDigest: "([^"]*)",\s*\},/g;
-    for (const match of body.matchAll(entry)) {
-      records[match[1]] = { packVersion: match[2], treeDigest: match[3] };
-    }
+  const tables = parsePackTables(digestsSource);
+  const manifests = parseManifestFacts(compatSource);
+  const facts = {};
+  for (const harnessId of [...new Set([...Object.keys(manifests), ...Object.keys(tables)])].sort()) {
+    facts[harnessId] = {
+      expectedVersion: tables[harnessId]?.version ?? "",
+      records: tables[harnessId]?.records ?? {},
+      conformance: manifests[harnessId]?.conformance ?? "",
+      nativePlatforms: manifests[harnessId]?.nativePlatforms ?? [],
+    };
   }
-
-  // The `claude-code` manifest's own two release-relevant fields.
-  const claudeManifest = compatSource.match(
-    /"claude-code": \{[\s\S]*?\n  \},\n  codex: \{/,
-  );
-  const manifestBody = claudeManifest?.[0] ?? "";
-  const conformance =
-    manifestBody.match(/lifecycleConformanceVersion: "([^"]*)"/)?.[1] ?? "";
-  const nativePlatforms = (
-    manifestBody.match(/nativePlatforms: \[([^\]]*)\]/)?.[1] ?? ""
-  )
-    .split(",")
-    .map((token) => token.trim().replace(/^"|"$/g, ""))
-    .filter((token) => token.length > 0);
-
-  return { expectedVersion, records, conformance, nativePlatforms };
+  return facts;
 }
 
 const TARGETS_BY_PLATFORM = {
@@ -148,53 +139,38 @@ async function fetchAsset(baseUrl, name) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function main() {
-  const computedInputs = await computePackInputs();
-  const recordedInputs = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
-  if (JSON.stringify(computedInputs) !== JSON.stringify(recordedInputs)) throw new Error("Pack inputs differ from the reviewed fingerprint. Recompute and review before releasing.");
-  const args = parseArgs(process.argv.slice(2));
-  const facts = await readCommittedFacts();
+async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notShipped }) {
   const version = facts.expectedVersion;
-  // Two lists, and the difference between them is the point.
-  //
-  // `blockers` fail the release: the build would OFFER a local target it
-  // cannot serve. `notShipped` only explains why the feature is still dark —
-  // a build with no conformance evidence offers local execution nowhere, so
-  // it is unshipped rather than broken, and failing every release until an
-  // unrelated feature lands is noise nobody keeps. `--require-ready` is how a
-  // release that INTENDS to ship the feature turns the second list into the
-  // first.
-  const blockers = [];
-  const notShipped = [];
-
+  const advertisedTargets = [];
   // Mirrors `localHarnessReleaseBlockers` in
   // `server/utils/harness/local/release-gate.ts`; `release-gate.test.ts` pins
   // the two to the same committed facts so they cannot drift apart.
   const wouldOffer = facts.conformance !== "";
   if (!wouldOffer) {
     notShipped.push(
-      "claude-code records no lifecycleConformanceVersion, so local execution " +
+      `${harnessId} records no lifecycleConformanceVersion, so local execution ` +
         "is offered on no platform. Run the lifecycle conformance suite on " +
         "every advertised platform and record its version in compatibility.ts " +
         "— a green run on one platform is not evidence for the others.",
     );
   }
 
-  if (facts.expectedVersion === "") {
+  if (version === "") {
     (wouldOffer ? blockers : notShipped).push(
-      "EXPECTED_PACK_VERSION is empty, so no pack has been built and no " +
-        "install can ever verify. Run local-harness-pack.yml, then " +
-        "scripts/write-pack-digests.mjs, and commit the generated table.",
+      `EXPECTED_PACK_VERSIONS["${harnessId}"] is empty, so no ${harnessId} ` +
+        "pack has been built and no install can ever verify. Run " +
+        `local-harness-pack.yml with harness=${harnessId}, then ` +
+        `scripts/write-pack-digests.mjs --harness ${harnessId}, and commit the ` +
+        "generated table.",
     );
   }
 
-  const advertisedTargets = [];
   for (const platform of facts.nativePlatforms) {
     const targets = TARGETS_BY_PLATFORM[platform];
     if (targets === undefined) {
       blockers.push(
-        `compatibility.ts advertises an unknown platform ${platform}; this ` +
-          `check does not know which pack targets it needs.`,
+        `compatibility.ts advertises an unknown platform ${platform} for ` +
+          `${harnessId}; this check does not know which pack targets it needs.`,
       );
       continue;
     }
@@ -202,7 +178,7 @@ async function main() {
       const record = facts.records[target];
       if (record === undefined) {
         (wouldOffer ? blockers : notShipped).push(
-          `claude-code advertises ${platform} but carries no ${target} pack ` +
+          `${harnessId} advertises ${platform} but carries no ${target} pack ` +
             `digest. Either build and publish that target's pack, or drop the ` +
             `platform from nativePlatforms — an advertised target with no pack ` +
             `refuses every install it is offered for.`,
@@ -211,12 +187,12 @@ async function main() {
       }
       if (record.packVersion !== version) {
         blockers.push(
-          `the ${target} digest is stamped ${record.packVersion}, not ` +
-            `${version}; its asset URL would not exist in this release.`,
+          `the ${harnessId} ${target} digest is stamped ${record.packVersion}, ` +
+            `not ${version}; its asset URL would not exist in this release.`,
         );
         continue;
       }
-      advertisedTargets.push({ target, ...record });
+      advertisedTargets.push({ harnessId, target, ...record });
     }
   }
 
@@ -224,27 +200,20 @@ async function main() {
     const baseUrl =
       typeof args["base-url"] === "string"
         ? args["base-url"]
-        : `https://github.com/MCPJam/inspector/releases/download/local-harness-pack-v${version}/`;
-    const publicKeys = await readPackSigningPublicKeys();
-    const { fingerprint } = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
-    if (publicKeys.length === 0) {
-      blockers.push(
-        "pack-signing-key.ts carries no public key, so a published manifest " +
-          "cannot be shown to have come from MCPJam.",
-      );
-    }
+        : packReleaseBaseUrl(harnessId, version);
+    const { fingerprint } = await computeHarnessPackInputs(harnessId).catch(() => ({ fingerprint: null }));
     // A published pack is one complete five-target release, even before rollout.
     for (const target of Object.values(TARGETS_BY_PLATFORM).flat()) {
       const entry = facts.records[target];
       if (!entry || entry.packVersion !== version || !/^sha256:[0-9a-f]{64}$/.test(entry.treeDigest)) {
-        blockers.push(`Missing or inconsistent pinned pack record for ${target}`);
+        blockers.push(`Missing or inconsistent pinned ${harnessId} pack record for ${target}`);
         continue;
       }
-      entry.target = target;
+      const stem = packAssetStem(harnessId, target, version);
       const names = {
-        archive: `local-harness-pack-${entry.target}-${version}.tar.gz`,
-        manifest: `local-harness-pack-${entry.target}-${version}.manifest.json`,
-        signature: `local-harness-pack-${entry.target}-${version}.manifest.json.sig`,
+        archive: `${stem}.tar.gz`,
+        manifest: `${stem}.manifest.json`,
+        signature: `${stem}.manifest.json.sig`,
       };
       let manifestBytes;
       let signature;
@@ -257,7 +226,7 @@ async function main() {
         archive = await fetchAsset(baseUrl, names.archive);
       } catch (error) {
         blockers.push(
-          `the ${entry.target} pack assets are not published: ${
+          `the ${harnessId} ${target} pack assets are not published: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -278,22 +247,23 @@ async function main() {
       });
       if (!signed) {
         blockers.push(
-          `the published ${entry.target} manifest is not signed by a key this ` +
-            `Inspector build carries, so every install of it would be refused.`,
+          `the published ${harnessId} ${target} manifest is not signed by a ` +
+            `key this Inspector build carries, so every install of it would ` +
+            `be refused.`,
         );
         continue;
       }
 
       const manifest = JSON.parse(manifestBytes.toString("utf8"));
-      if (manifest.inputsFingerprint !== fingerprint) {
-        blockers.push(`the published ${entry.target} pack was built from different inputs; publish and pin a new pack version`);
+      if (fingerprint === null || manifest.inputsFingerprint !== fingerprint) {
+        blockers.push(`the published ${harnessId} ${target} pack was built from different inputs; publish and pin a new ${harnessId} pack version`);
       }
-      if (manifest.schema !== "mcpjam.local-harness-pack/1" || manifest.harnessId !== "claude-code" || manifest.platform !== entry.target) {
-        blockers.push(`the published ${entry.target} manifest has the wrong identity`);
+      if (manifest.schema !== "mcpjam.local-harness-pack/1" || manifest.harnessId !== harnessId || manifest.platform !== target) {
+        blockers.push(`the published ${harnessId} ${target} manifest has the wrong identity`);
       }
       if (manifest.treeDigest !== entry.treeDigest) {
         blockers.push(
-          `the published ${entry.target} manifest names tree digest ` +
+          `the published ${harnessId} ${target} manifest names tree digest ` +
             `${manifest.treeDigest}, but the committed table says ` +
             `${entry.treeDigest}. One of them is not the pack this release ` +
             `reviewed.`,
@@ -302,18 +272,53 @@ async function main() {
       const archiveSha = createHash("sha256").update(archive).digest("hex");
       if (manifest.archive?.sha256 !== archiveSha) {
         blockers.push(
-          `the published ${entry.target} archive does not match its own signed ` +
-            `manifest (manifest ${manifest.archive?.sha256}, asset ` +
+          `the published ${harnessId} ${target} archive does not match its ` +
+            `own signed manifest (manifest ${manifest.archive?.sha256}, asset ` +
             `${archiveSha}).`,
         );
       }
       if (manifest.packVersion !== version) {
         blockers.push(
-          `the published ${entry.target} manifest is for pack version ` +
+          `the published ${harnessId} ${target} manifest is for pack version ` +
             `${manifest.packVersion}, not ${version}.`,
         );
       }
     }
+  }
+  return advertisedTargets;
+}
+
+async function main() {
+  const computed = await computePackInputs();
+  const recordedInputs = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
+  if (JSON.stringify(computed) !== JSON.stringify(recordedInputs)) throw new Error("Pack inputs differ from the reviewed fingerprints. Recompute and review before releasing.");
+  const args = parseArgs(process.argv.slice(2));
+  const facts = await readCommittedFacts();
+  const harnessFilter = typeof args.harness === "string" ? args.harness : null;
+  // Two lists, and the difference between them is the point.
+  //
+  // `blockers` fail the release: the build would OFFER a local target it
+  // cannot serve. `notShipped` only explains why a harness is still dark —
+  // a build with no conformance evidence offers local execution nowhere, so
+  // it is unshipped rather than broken, and failing every release until an
+  // unrelated feature lands is noise nobody keeps. `--require-ready` is how a
+  // release that INTENDS to ship the feature turns the second list into the
+  // first (for the harnesses `--harness` names, or all of them).
+  const blockers = [];
+  const notShipped = [];
+  const advertisedTargets = [];
+  const publicKeys = await readPackSigningPublicKeys();
+  if (publicKeys.length === 0 && (args.assets === true || typeof args["base-url"] === "string")) {
+    blockers.push(
+      "pack-signing-key.ts carries no public key, so a published manifest " +
+        "cannot be shown to have come from MCPJam.",
+    );
+  }
+  for (const [harnessId, harnessFacts] of Object.entries(facts)) {
+    if (harnessFilter !== null && harnessFilter !== harnessId) continue;
+    advertisedTargets.push(
+      ...(await checkHarness({ harnessId, facts: harnessFacts, args, publicKeys, blockers, notShipped })),
+    );
   }
 
   if (args["require-ready"] === true) {
@@ -331,7 +336,7 @@ async function main() {
   if (blockers.length > 0) {
     console.error(
       `check-local-harness-release: ${blockers.length} blocker(s) — this ` +
-        `release advertises local Claude Code execution it cannot serve.\n`,
+        `release advertises local harness execution it cannot serve.\n`,
     );
     for (const blocker of blockers) console.error(`  • ${blocker}\n`);
     process.exit(1);
@@ -348,8 +353,8 @@ async function main() {
     return;
   }
   console.log(
-    `check-local-harness-release: ${advertisedTargets.length} target(s) ready ` +
-      `at ${version} — ${advertisedTargets.map((e) => e.target).join(", ")}`,
+    `check-local-harness-release: ${advertisedTargets.length} target(s) ready — ` +
+      advertisedTargets.map((e) => `${e.harnessId} ${e.target}@${e.packVersion}`).join(", "),
   );
 }
 
