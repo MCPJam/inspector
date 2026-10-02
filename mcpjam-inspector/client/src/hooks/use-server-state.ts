@@ -1172,6 +1172,17 @@ export function useServerState({
             ? { kind: "owned", credentialId: connectionId }
             : { kind: "shared", credentialId: connectionId };
         },
+        hasExistingGrant: async (server) => {
+          // Local grants are the browser's own tokens, read directly.
+          if (!HOSTED_MODE) return false;
+          const projectId = effectiveActiveProjectIdRef.current;
+          const serverId = activeProjectServersFlatRef.current?.find(
+            (remote) => remote.name === server.name
+          )?._id;
+          if (!projectId || !serverId) return false;
+          const rows = await listOAuthConnections(projectId, serverId);
+          return rows.shared || rows.connections.length > 0;
+        },
         prepareRedirect: (server, connectionIntent) => {
           if (!HOSTED_MODE) return;
           const serverUrl = (server.config as { url?: unknown })?.url;

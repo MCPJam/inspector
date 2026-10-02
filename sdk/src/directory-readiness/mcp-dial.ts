@@ -555,9 +555,29 @@ export interface DirectoryToolCallEvidence {
   result?: { isError: boolean; _meta?: Record<string, unknown> };
   /** A JSON-RPC error the server answered with instead of a result. */
   rpcError?: { code?: number; message?: string };
+  /**
+   * The server rejected the call's ARGUMENTS: a JSON-RPC `-32602`, or an
+   * `isError` result whose text reports an input-validation failure. Such a
+   * refusal comes before any decision about authorization, so it says
+   * nothing about sign-in. Only the flag is kept, never the server's text.
+   */
+  invalidArguments?: true;
   /** Nothing readable answered: a transport failure or a bodyless non-error. */
   unreachable?: boolean;
   error?: string;
+}
+
+/** An input-validation failure as MCP servers commonly word it. */
+const INPUT_VALIDATION_TEXT =
+  /\binput validation\b|\binvalid (?:arguments|params|parameters|input)\b|-32602/i;
+
+function reportsInputValidation(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some((item) => {
+    const block = asRecord(item);
+    const text = block?.type === "text" ? asString(block.text) : undefined;
+    return text !== undefined && INPUT_VALIDATION_TEXT.test(text.slice(0, 1024));
+  });
 }
 
 /**
@@ -621,6 +641,7 @@ export async function dialToolCall(
         code: typeof rpcError.code === "number" ? rpcError.code : undefined,
         message: asString(rpcError.message)?.slice(0, 512),
       },
+      ...(rpcError.code === -32602 ? { invalidArguments: true as const } : {}),
       error: asString(rpcError.message)?.slice(0, 512) ?? "tools/call returned an error",
     };
   }
@@ -629,12 +650,16 @@ export async function dialToolCall(
   if (!result) {
     return { ...base, error: "tools/call returned no result" };
   }
+  const isError = result.isError === true;
   return {
     ...base,
     result: {
-      isError: result.isError === true,
+      isError,
       ...(asRecord(result._meta) ? { _meta: asRecord(result._meta) } : {}),
     },
+    ...(isError && reportsInputValidation(result.content)
+      ? { invalidArguments: true as const }
+      : {}),
   };
 }
 

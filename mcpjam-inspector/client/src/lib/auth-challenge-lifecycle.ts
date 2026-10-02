@@ -444,9 +444,15 @@ export async function connectAuthChallenge(
 
   const connectionIntent = connectionIntentForBinding(binding);
   try {
+    // A hosted grant has no tokens in the browser. The failed call's own
+    // credential proves one exists; otherwise the shell is asked.
+    const existingGrant =
+      binding.kind !== "none" ||
+      (await bridge?.hasExistingGrant?.(server).catch(() => false)) === true;
     const outcome = await applyToolCallAuthChallenge(server, card.signal, {
       operation: card.operation,
       confirmed: true,
+      existingGrant,
       beforeRedirect: () => bridge?.prepareRedirect?.(server, connectionIntent),
       onAuthorizationFlow: ({ digest }) => {
         setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest);

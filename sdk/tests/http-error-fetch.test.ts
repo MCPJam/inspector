@@ -7,9 +7,12 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
+  authChallengeOperationKey,
   wrapFetchForHttpErrors,
   type AuthChallengeRecorder,
 } from "../src/mcp-client-manager/http-error-fetch.js";
+import { MCPClientManager } from "../src/mcp-client-manager/MCPClientManager.js";
+import { extractAuthChallenge } from "../src/mcp-client-manager/errors.js";
 
 const url = new URL("https://example.test/mcp");
 const challenge =
@@ -225,6 +228,81 @@ describe("Streamable HTTP error diagnostics", () => {
       })
     ).toBe(response);
     expect(recorder.last).toBeUndefined();
+  });
+
+  it("keeps each operation's 401 apart, so concurrent calls never swap challenges", async () => {
+    const recorder: AuthChallengeRecorder = {};
+    const challengeFor = (tool: string) =>
+      `Bearer resource_metadata="https://example.test/${tool}", scope="${tool}:read"`;
+    // B's refusal lands after A's, as when both calls are in flight.
+    const wrapped = wrapFetchForHttpErrors(
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        const tool = JSON.parse(String(init?.body)).params.name;
+        return new Response(null, {
+          status: 401,
+          headers: { "WWW-Authenticate": challengeFor(tool) },
+        });
+      }) as typeof fetch,
+      true,
+      recorder
+    );
+    const callFor = (tool: string) => ({
+      method: "POST",
+      body: JSON.stringify({ ...request, params: { name: tool, arguments: {} } }),
+    });
+    await wrapped(url, callFor("a"));
+    await wrapped(url, callFor("b"));
+
+    expect(
+      recorder.byOperation?.get(authChallengeOperationKey("tools/call", "a"))
+        ?.challenge.requiredScope
+    ).toBe("a:read");
+    expect(
+      recorder.byOperation?.get(authChallengeOperationKey("tools/call", "b"))
+        ?.challenge.requiredScope
+    ).toBe("b:read");
+  });
+
+  it("attaches only the failing operation's own challenge", () => {
+    const manager = new MCPClientManager();
+    const startedAt = Date.now();
+    const recorded = (scope: string) => ({
+      status: 401 as const,
+      at: startedAt,
+      challenge: {
+        source: "http_401" as const,
+        requiredScope: scope,
+        facets: {
+          challengeHeader: "bearer" as const,
+          hasResourceMetadata: false,
+          hasScope: true,
+          hasErrorParams: false,
+        },
+      },
+    });
+    const keyA = authChallengeOperationKey("tools/call", "a");
+    const keyB = authChallengeOperationKey("tools/call", "b");
+    (manager as any).liveClientStates.set("srv", {
+      authChallengeRecorder: {
+        // B was refused last; A must still get A's challenge.
+        byOperation: new Map([
+          [keyA, recorded("a:read")],
+          [keyB, recorded("b:read")],
+        ]),
+        last: recorded("b:read"),
+      },
+    });
+    const unauthorized = () =>
+      Object.assign(new Error("Unauthorized"), { name: "UnauthorizedError" });
+
+    const errorA = unauthorized();
+    (manager as any).attachRecordedAuthChallenge("srv", errorA, startedAt, keyA);
+    expect(extractAuthChallenge(errorA)?.requiredScope).toBe("a:read");
+
+    // An operation with no key of its own is never handed another's.
+    const unkeyed = unauthorized();
+    (manager as any).attachRecordedAuthChallenge("srv", unkeyed, startedAt, undefined);
+    expect(extractAuthChallenge(unkeyed)).toBeUndefined();
   });
 
   it("preserves a non-empty response body even without a reason phrase", async () => {

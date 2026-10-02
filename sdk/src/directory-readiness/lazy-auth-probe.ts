@@ -76,7 +76,10 @@ export interface ProbeLazyAuthenticationOptions {
 /** Classify one call and parse its refusal, once. */
 function readToolCall(
   call: DirectoryToolCallEvidence,
-): Pick<DirectoryLazyAuthToolCall, "outcome" | "status" | "challenge" | "error"> {
+): Pick<
+  DirectoryLazyAuthToolCall,
+  "outcome" | "status" | "challenge" | "invalidArguments" | "error"
+> {
   const status = call.status;
   let outcome: DirectoryLazyAuthCallOutcome;
   let challenge: AuthChallengeSignal | undefined;
@@ -116,6 +119,10 @@ function readToolCall(
     outcome,
     ...(status !== undefined ? { status } : {}),
     ...(challenge ? { challenge } : {}),
+    // A challenge outranks the flag: the server did answer about sign-in.
+    ...(call.invalidArguments && !challenge
+      ? { invalidArguments: true as const }
+      : {}),
     ...(call.error ? { error: call.error } : {}),
   };
 }

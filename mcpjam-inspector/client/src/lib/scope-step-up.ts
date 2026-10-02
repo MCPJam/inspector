@@ -76,6 +76,12 @@ export interface ScopeStepUpHostBridge {
     server: ServerWithName,
     connectionId: string | undefined,
   ) => Promise<StepUpCredentialBinding>;
+  /**
+   * Hosted: whether this server already has a credential. The browser holds
+   * no hosted tokens, so `server.oauthTokens` cannot say, and a sign-in that
+   * replaces a grant must keep the scopes that grant requested.
+   */
+  hasExistingGrant?: (server: ServerWithName) => Promise<boolean>;
   /** Write the hosted OAuth pending marker for this redirect. */
   prepareRedirect?: (
     server: ServerWithName,

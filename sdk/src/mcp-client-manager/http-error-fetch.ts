@@ -18,28 +18,65 @@ import {
  */
 const PROTECTED_METHODS = new Set(["tools/call", "resources/read", "prompts/get"]);
 
-function protectedMethodOf(body: RequestInit["body"]): string | undefined {
+/**
+ * Which operation a protected request performs: the method plus the tool or
+ * prompt name, or the resource URI. The manager computes the same key for the
+ * operation it is running, so it reads back only that operation's 401.
+ */
+export function authChallengeOperationKey(
+  method: string,
+  target: string | undefined
+): string {
+  return `${method}\u0000${target ?? ""}`;
+}
+
+function protectedOperationOf(
+  body: RequestInit["body"]
+): { method: string; key: string } | undefined {
   if (typeof body !== "string") return undefined;
   try {
-    const method = JSON.parse(body)?.method;
-    return typeof method === "string" && PROTECTED_METHODS.has(method)
-      ? method
-      : undefined;
+    const message = JSON.parse(body);
+    const method = message?.method;
+    if (typeof method !== "string" || !PROTECTED_METHODS.has(method)) {
+      return undefined;
+    }
+    const target =
+      method === "resources/read" ? message.params?.uri : message.params?.name;
+    return {
+      method,
+      key: authChallengeOperationKey(
+        method,
+        typeof target === "string" ? target : undefined
+      ),
+    };
   } catch {
     return undefined;
   }
 }
 
+export interface RecordedAuthChallenge {
+  status: 401;
+  challenge: AuthChallengeSignal;
+  at: number;
+}
+
+/** Operations remembered per transport; the oldest is dropped beyond this. */
+const MAX_RECORDED_OPERATIONS = 64;
+
 /**
- * The last `401` challenge seen on this transport.
+ * The `401` challenges seen on this transport, per operation.
  *
  * Only used when an auth provider owns 401/403 handling: the transport then
  * raises `UnauthorizedError` (or "401 after re-authentication") WITHOUT the
  * header, so the manager reads the challenge back from here and attaches it to
- * the error it rethrows.
+ * the error it rethrows. Keyed by operation, not kept as one connection-wide
+ * value: calls run concurrently, and one call's refusal must never be
+ * reported as another's.
  */
 export interface AuthChallengeRecorder {
-  last?: { status: 401; challenge: AuthChallengeSignal; at: number };
+  byOperation?: Map<string, RecordedAuthChallenge>;
+  /** The most recent one, of any operation. Diagnostics only. */
+  last?: RecordedAuthChallenge;
 }
 
 /** Preserve HTTP diagnostics before the transport discards response headers. */
@@ -54,15 +91,15 @@ export function wrapFetchForHttpErrors(
       init?.method ?? (input instanceof Request ? input.method : "GET");
     if (method.toUpperCase() !== "POST") return response;
 
-    const protectedMethod = protectedMethodOf(init?.body);
+    const operation = protectedOperationOf(init?.body);
 
     // A 403 needs no recording: `insufficient_scope` reaches the caller as an
     // `InsufficientScopeError` with its fields, and any other 403 is not a
     // sign-in challenge. Only a protected call is recorded: a 401 on
     // `initialize` is a connect-time sign-in, which keeps its own OAuth path
     // and must never be reported as a mid-session challenge.
-    if (recorder && response.status === 401 && protectedMethod !== undefined) {
-      recorder.last = {
+    if (recorder && response.status === 401 && operation !== undefined) {
+      const recorded: RecordedAuthChallenge = {
         status: 401,
         challenge: parseChallengeHeader(
           response.headers.get("www-authenticate"),
@@ -70,10 +107,20 @@ export function wrapFetchForHttpErrors(
         ),
         at: Date.now(),
       };
+      recorder.last = recorded;
+      const byOperation = (recorder.byOperation ??= new Map());
+      // Re-inserted so the map's order is recency, and the cap drops the
+      // operation refused longest ago.
+      byOperation.delete(operation.key);
+      byOperation.set(operation.key, recorded);
+      if (byOperation.size > MAX_RECORDED_OPERATIONS) {
+        const oldest = byOperation.keys().next().value;
+        if (oldest !== undefined) byOperation.delete(oldest);
+      }
     }
 
     if (
-      protectedMethod === undefined ||
+      operation === undefined ||
       response.ok ||
       // HTTP 400 can carry a JSON-RPC error the transport needs to dispatch.
       response.status === 400 ||

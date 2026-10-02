@@ -212,6 +212,11 @@ export interface DirectoryLazyAuthToolCall {
    * `isError` result. Absent when the server sent neither.
    */
   challenge?: AuthChallengeSignal;
+  /**
+   * The server rejected the probe's arguments (it sends `{}`) before deciding
+   * about authorization, so this call shows nothing about sign-in either way.
+   */
+  invalidArguments?: true;
   error?: string;
 }
 
@@ -288,6 +293,7 @@ export function refusedLazyAuthProbe(
 export interface LazyAuthCandidateTool {
   name: string;
   annotations?: Record<string, unknown>;
+  inputSchema?: unknown;
   securitySchemes?: unknown;
   _meta?: Record<string, unknown>;
 }
@@ -322,6 +328,18 @@ function hasScheme(
 
 function isReadOnly(tool: LazyAuthCandidateTool): boolean {
   return tool.annotations?.readOnlyHint === true;
+}
+
+/**
+ * Whether the probe's `{}` arguments can pass the tool's input schema: no
+ * schema, or one with no `required` property. A call that fails input
+ * validation never reaches the server's authorization decision.
+ */
+export function acceptsEmptyArguments(tool: LazyAuthCandidateTool): boolean {
+  const schema = tool.inputSchema;
+  if (schema === null || typeof schema !== "object") return true;
+  const required = (schema as { required?: unknown }).required;
+  return !Array.isArray(required) || required.length === 0;
 }
 
 /**
@@ -369,11 +387,16 @@ export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
       selection.publicSkipped = picked.skipped;
     }
   } else {
-    const candidates = tools
+    const declared = tools
       .filter(isReadOnly)
       .filter((tool) => tool.name !== mode.toolName)
       .map((tool) => ({ tool, schemes: schemesOf(tool) }))
       .filter(({ schemes }) => hasScheme(schemes, "noauth"));
+    // The public call must be SERVED to count, and the probe sends `{}`: a
+    // tool with required inputs would fail validation and look refused.
+    const candidates = declared.filter(({ tool }) =>
+      acceptsEmptyArguments(tool),
+    );
     // A tool that is ONLY public is the cleaner witness; one that offers both
     // still runs anonymously, so it is the fallback rather than excluded.
     const picked =
@@ -383,7 +406,9 @@ export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
       selection.publicTool = { ...picked, selectedBy: "security-schemes" };
     } else {
       selection.publicSkipped =
-        'no read-only tool declares securitySchemes with a "noauth" entry; name a public read-only tool to call';
+        declared.length > 0
+          ? 'every read-only tool that declares a "noauth" securitySchemes entry has required inputs, and the probe sends no arguments; name a public read-only tool that takes none'
+          : 'no read-only tool declares securitySchemes with a "noauth" entry; name a public read-only tool to call';
     }
   }
 
@@ -400,14 +425,21 @@ export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
       selection.protectedSkipped = picked.skipped;
     }
   } else {
-    const picked = tools
+    const protectedCandidates = tools
       .filter(isReadOnly)
       .filter((tool) => tool.name !== selection.publicTool?.tool.name)
       .map((tool) => ({ tool, schemes: schemesOf(tool) }))
-      .find(
+      .filter(
         ({ schemes }) =>
           hasOAuth2Scheme(schemes) && !hasScheme(schemes, "noauth"),
       );
+    // An HTTP 401 usually comes before input validation, but a `_meta`
+    // refusal is the tool's own answer, so a tool `{}` can satisfy is the
+    // surer witness. The other is still a fallback: a validation failure is
+    // reported as inconclusive, never as a missing challenge.
+    const picked =
+      protectedCandidates.find(({ tool }) => acceptsEmptyArguments(tool)) ??
+      protectedCandidates[0];
     if (picked) {
       selection.protectedTool = { ...picked, selectedBy: "security-schemes" };
     } else {

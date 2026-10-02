@@ -188,6 +188,20 @@ describe("applyToolCallAuthChallenge", () => {
     expect(outcome).toMatchObject({ scopes: ["profile", "orders:read"] });
   });
 
+  it("keeps a hosted grant's scopes though the browser holds no tokens", async () => {
+    persistRequestedScopes("orders", ISSUER, ["profile"]);
+    const outcome = await applyToolCallAuthChallenge(
+      // Hosted: the grant lives on the server, so there are no browser tokens.
+      createServer({ useOAuth: true }),
+      signal({ effectiveAuth: "oauth" }),
+      { operation: OPERATION, confirmed: true, existingGrant: true },
+    );
+    expect(outcome).toMatchObject({ scopes: ["profile", "orders:read"] });
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ["profile", "orders:read"] }),
+    );
+  });
+
   it("lets discovery choose the scopes for a scope-less challenge", async () => {
     const outcome = await applyToolCallAuthChallenge(
       createServer(),
