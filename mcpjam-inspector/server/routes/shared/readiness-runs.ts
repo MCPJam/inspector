@@ -199,7 +199,7 @@ export async function startHostedReadinessRun(
       publisher: input.publisher,
       target,
       submissionMode: input.submissionMode,
-      // The saved credential goes only to the MCP endpoint's own origin. The
+      // The saved credential goes only on MCP requests to the endpoint. The
       // SDK keeps it off discovery, including authorization-server metadata
       // on an origin the server chooses.
       mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
