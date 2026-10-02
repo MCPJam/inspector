@@ -25,6 +25,7 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { isModuleLoadError, MODULE_LOAD_ERROR_COPY } from "@/lib/module-load-error";
 import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
 import { PreparedEvalServerPage } from "./evaluate/prepared-eval-server-page";
 import { savePreparedEvalSuites } from "./evaluate/launch-prepared-evals";
@@ -144,21 +145,35 @@ export function EvaluateTab({
 }
 
 function EvalTabErrorFallback({
+  error,
   onRetry,
 }: {
   error: Error | null;
   onRetry: () => void;
 }) {
+  const moduleLoadFailed = isModuleLoadError(error);
   return (
     <div className="p-6">
       <EmptyState
         icon={FlaskConical}
-        title="Could not load Testing"
-        description="Something went wrong while loading suites. Try again in a moment."
+        title={
+          moduleLoadFailed
+            ? MODULE_LOAD_ERROR_COPY.title
+            : "Could not load Testing"
+        }
+        description={
+          moduleLoadFailed
+            ? MODULE_LOAD_ERROR_COPY.description
+            : "Something went wrong while loading suites. Try again in a moment."
+        }
         className="h-[calc(100vh-200px)]"
       >
-        <Button type="button" variant="outline" onClick={onRetry}>
-          Try again
+        <Button
+          type="button"
+          variant="outline"
+          onClick={moduleLoadFailed ? () => window.location.reload() : onRetry}
+        >
+          {moduleLoadFailed ? MODULE_LOAD_ERROR_COPY.actionLabel : "Try again"}
         </Button>
       </EmptyState>
     </div>
