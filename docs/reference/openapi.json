@@ -18149,6 +18149,43 @@
             "type": "integer",
             "minimum": 0,
             "description": "Wall-clock milliseconds spent in `executeTool` on this request. Additive MCPJam field; not part of the MCP `CallToolResult` spec. A server that already returns its own top-level `durationMs` keeps it — MCPJam never overwrites the field — so this value is MCPJam's measurement only when the server did not report one."
+          },
+          "authChallenge": {
+            "type": "object",
+            "description": "Additive MCPJam field, present only when the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]` (the ChatGPT convention). The parsed challenge; the result itself is returned unchanged. An HTTP 401 from the MCP server never reaches this field: it is answered with `403 AUTH_REQUIRED` instead.",
+            "required": [
+              "source",
+              "facets"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "tool_result_meta"
+                ]
+              },
+              "error": {
+                "type": "string",
+                "description": "RFC 6750 `error`, e.g. `invalid_token`."
+              },
+              "errorDescription": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "type": "string",
+                "description": "The challenge's `scope`, space-separated as sent."
+              },
+              "resourceMetadataUrl": {
+                "type": "string",
+                "description": "RFC 9728 `resource_metadata` pointer."
+              },
+              "facets": {
+                "type": "object",
+                "description": "What the server actually sent.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
           }
         },
         "additionalProperties": true

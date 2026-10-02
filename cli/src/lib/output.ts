@@ -45,11 +45,6 @@ export function operationalError(message: string, details?: unknown): CliError {
 }
 
 /**
- * The command that obtains a token for a server that asked for sign-in.
- * `--scopes` only when the challenge named them; otherwise the server's
- * metadata decides.
- */
-/**
  * A challenge's `scope` is the server's text, and it lands inside a command a
  * person may paste into a shell. Quoted as-is it could expand there, so only
  * plain scope tokens are shown; anything else becomes a placeholder.
@@ -61,6 +56,11 @@ export function displayableScope(scope: string | undefined): string | undefined 
     : "<scopes>";
 }
 
+/**
+ * The command that obtains a token for a server that asked for sign-in.
+ * `--scopes` only when the challenge named them; otherwise the server's
+ * metadata decides.
+ */
 export function authChallengeHint(
   challenge: Pick<AuthChallengeSignal, "requiredScope">,
   serverUrl?: string,

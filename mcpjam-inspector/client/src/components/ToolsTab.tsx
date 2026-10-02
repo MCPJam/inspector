@@ -684,6 +684,7 @@ export function ToolsTab({
     toolName: string,
     scopeAtCall: string | undefined,
     replayDescriptor?: DirectScopeStepUpReplayDescriptor,
+    options?: { replayedAfterSignIn?: boolean },
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -795,8 +796,11 @@ export function ToolsTab({
       const challenge = parseInsufficientScopeChallenge(
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
+      // A call that was itself a replay is not saved again: one step-up
+      // never chains into another replay.
       if (
         replayDescriptor?.kind === "tool" &&
+        !options?.replayedAfterSignIn &&
         isActionableStepUpChallenge(challenge)
       ) {
         savePendingDirectScopeStepUpReplay({
@@ -838,10 +842,14 @@ export function ToolsTab({
       descriptor.allowTaskResult,
     )
       .then((response) => {
+        // The descriptor travels on so a sign-in card for the replayed call
+        // can run it again; a repeat step-up still does not save it.
         handleExecutionResponse(
           response,
           descriptor.toolName,
           getTrackedTaskScope(),
+          descriptor,
+          { replayedAfterSignIn: true },
         );
       })
       .catch((error) => {

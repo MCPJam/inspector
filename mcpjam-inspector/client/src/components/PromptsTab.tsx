@@ -352,6 +352,8 @@ export function PromptsTab({
                   arguments: resolvedParams,
                 },
               }).then((presentation) => {
+                // A later render owns the notice area by now.
+                if (getVersion !== promptGetVersionRef.current) return;
                 if (presentation.kind === "notice") {
                   setAuthNotice(presentation.message);
                 }

@@ -19,6 +19,10 @@ import {
   resolveScopeStepUpServer,
   runWithScopeStepUp,
 } from "../scope-step-up";
+import {
+  peekPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+} from "../scope-step-up-replay";
 import { McpRequestError } from "@/lib/apis/insufficient-scope";
 import type { AppState, ServerWithName } from "@/state/app-types";
 
@@ -146,6 +150,71 @@ describe("scope step-up lifecycle", () => {
     // The in-flight guard must clear so a later attempt is still possible.
     driveScopeStepUpFromError(server, insufficientScopeError());
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
+  });
+
+  describe("the call saved for replay", () => {
+    function saveReplay() {
+      sessionStorage.clear();
+      savePendingDirectScopeStepUpReplay({
+        operation: {
+          resourceUrl: "https://srv-1.example/mcp",
+          method: "tools/call",
+          operation: "write_file",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "srv-1",
+          toolName: "write_file",
+          parameters: {},
+        },
+      });
+    }
+
+    it("is kept while the step-up redirects", async () => {
+      saveReplay();
+      applyToolCallStepUp.mockResolvedValue({
+        action: "reauthorize",
+        reauthorization: { kind: "redirect" },
+      });
+      driveScopeStepUpFromError(server, insufficientScopeError());
+      await vi.waitFor(() =>
+        expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
+    });
+
+    it.each([
+      ["the budget is spent", { action: "throw", scopes: [], attempt: 2 }],
+      [
+        "the re-authorization fails",
+        {
+          action: "reauthorize",
+          reauthorization: { kind: "error", error: "nope" },
+        },
+      ],
+    ])(
+      "is dropped when %s, since no callback will settle it",
+      async (_, outcome) => {
+        saveReplay();
+        applyToolCallStepUp.mockResolvedValue(outcome);
+        driveScopeStepUpFromError(server, insufficientScopeError());
+        await vi.waitFor(() =>
+          expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined(),
+        );
+      },
+    );
+
+    it("is dropped when the step-up throws", async () => {
+      saveReplay();
+      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
+      driveScopeStepUpFromError(server, insufficientScopeError());
+      await vi.waitFor(() =>
+        expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined(),
+      );
+    });
   });
 
   const runtimeServer = {

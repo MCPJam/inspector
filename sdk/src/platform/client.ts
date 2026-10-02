@@ -3744,8 +3744,10 @@ export class PlatformApiClient {
    *
    * Sign-in challenges (a server that allows the connection and asks for
    * sign-in on one call):
-   * - an HTTP 401 on the call throws `AUTH_REQUIRED` with the parsed
-   *   challenge in `details.authChallenge`;
+   * - an HTTP 401 from the MCP server on the call throws `AUTH_REQUIRED`,
+   *   which the platform API returns as HTTP 403 (not 401, which would mean
+   *   the caller's own API key failed), with the parsed challenge in
+   *   `details.authChallenge`;
    * - a completed `isError` result carrying `_meta["mcp/www_authenticate"]`
    *   (the ChatGPT convention) is returned unchanged, with the parsed
    *   challenge added beside it as `authChallenge`.

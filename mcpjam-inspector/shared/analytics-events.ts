@@ -350,14 +350,6 @@ export const ANALYTICS_EVENTS = {
    */
   share_server_to_org_registry_clicked: { source: "client" },
   /**
-   * A callback arrived with a pending server name but no stored flow session,
-   * so it could not be completed and the user was asked to reauthorize.
-   *
-   * Expected to be rare and to spike briefly around a deploy that changes the
-   * stored session shape. A sustained rate means something is clearing flow
-   * state that should not be.
-   */
-  /**
    * Mid-session sign-in: a server refused one call and asked the user to sign
    * in. `shown` fires when the Connect card is presented, `connect_clicked` on
    * the trusted click that alone may start the redirect, `completed` /
@@ -370,6 +362,14 @@ export const ANALYTICS_EVENTS = {
   auth_challenge_completed: { source: "client" },
   auth_challenge_failed: { source: "client" },
   auth_challenge_dismissed: { source: "client" },
+  /**
+   * A callback arrived with a pending server name but no stored flow session,
+   * so it could not be completed and the user was asked to reauthorize.
+   *
+   * Expected to be rare and to spike briefly around a deploy that changes the
+   * stored session shape. A sustained rate means something is clearing flow
+   * state that should not be.
+   */
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },

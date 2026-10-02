@@ -54,10 +54,14 @@ export function wrapFetchForHttpErrors(
       init?.method ?? (input instanceof Request ? input.method : "GET");
     if (method.toUpperCase() !== "POST") return response;
 
+    const protectedMethod = protectedMethodOf(init?.body);
+
     // A 403 needs no recording: `insufficient_scope` reaches the caller as an
     // `InsufficientScopeError` with its fields, and any other 403 is not a
-    // sign-in challenge.
-    if (recorder && response.status === 401) {
+    // sign-in challenge. Only a protected call is recorded: a 401 on
+    // `initialize` is a connect-time sign-in, which keeps its own OAuth path
+    // and must never be reported as a mid-session challenge.
+    if (recorder && response.status === 401 && protectedMethod !== undefined) {
       recorder.last = {
         status: 401,
         challenge: parseChallengeHeader(
@@ -69,7 +73,7 @@ export function wrapFetchForHttpErrors(
     }
 
     if (
-      protectedMethodOf(init?.body) === undefined ||
+      protectedMethod === undefined ||
       response.ok ||
       // HTTP 400 can carry a JSON-RPC error the transport needs to dispatch.
       response.status === 400 ||

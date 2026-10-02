@@ -71,7 +71,9 @@ const server = {
   enabled: true,
 } as unknown as ServerWithName;
 
-function http401(overrides: Partial<AuthChallengeSignal> = {}): AuthChallengeSignal {
+function http401(
+  overrides: Partial<AuthChallengeSignal> = {},
+): AuthChallengeSignal {
   return {
     source: "http_401",
     requiredScope: "orders:read",
@@ -159,7 +161,9 @@ describe("auth challenge lifecycle", () => {
         readOnly: true,
       });
       await presentCard();
-      expect(Object.keys(useAuthChallengeCardStore.getState().cards)).toHaveLength(1);
+      expect(
+        Object.keys(useAuthChallengeCardStore.getState().cards),
+      ).toHaveLength(1);
       expect(initiateOAuthMock).not.toHaveBeenCalled();
       expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
       expect(
@@ -194,7 +198,10 @@ describe("auth challenge lifecycle", () => {
           operation: OPERATION,
           readOnly: true,
         });
-        expect(presentation).toMatchObject({ kind: "notice", reason: "blocked" });
+        expect(presentation).toMatchObject({
+          kind: "notice",
+          reason: "blocked",
+        });
         expect(useAuthChallengeCardStore.getState().cards).toEqual({});
       },
     );
@@ -265,7 +272,10 @@ describe("auth challenge lifecycle", () => {
         operation: OPERATION,
         readOnly: true,
       });
-      expect(presentation).toMatchObject({ kind: "notice", reason: "passthrough" });
+      expect(presentation).toMatchObject({
+        kind: "notice",
+        reason: "passthrough",
+      });
     });
 
     it("remembers Not now for the session", async () => {
@@ -371,6 +381,33 @@ describe("auth challenge lifecycle", () => {
       } finally {
         unregister();
       }
+    });
+
+    it("drops the saved call when sign-in fails before redirecting", async () => {
+      initiateOAuthMock.mockResolvedValueOnce({
+        success: false,
+        error: "metadata unreachable",
+      });
+      const card = await presentCard();
+      const result = await connectAuthChallenge(card, server, {
+        isTrusted: true,
+      });
+      expect(result).toEqual({
+        kind: "failed",
+        message: "metadata unreachable",
+      });
+      // No callback will come for it, so a later sign-in must not replay it.
+      expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
+    });
+
+    it("drops the saved call when sign-in throws", async () => {
+      initiateOAuthMock.mockRejectedValueOnce(new Error("boom"));
+      const card = await presentCard();
+      const result = await connectAuthChallenge(card, server, {
+        isTrusted: true,
+      });
+      expect(result).toMatchObject({ kind: "failed" });
+      expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
     });
 
     it("an expired card still signs in, without a replay", async () => {

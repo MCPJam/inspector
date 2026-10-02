@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  act,
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
 import { useAuthChallengeCardStore } from "@/lib/auth-challenge-lifecycle";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
@@ -37,15 +31,12 @@ vi.mock("@/lib/apis/mcp-tasks-api", () => ({
 
 // The real orchestrator and lifecycle run; only the OAuth state machine and
 // the reset spies are stubbed, so the test sees exactly what a click starts.
-const {
-  initiateOAuthMock,
-  mockResetToolCallStepUp,
-  mockResetAuthChallenge,
-} = vi.hoisted(() => ({
-  initiateOAuthMock: vi.fn(),
-  mockResetToolCallStepUp: vi.fn(),
-  mockResetAuthChallenge: vi.fn(),
-}));
+const { initiateOAuthMock, mockResetToolCallStepUp, mockResetAuthChallenge } =
+  vi.hoisted(() => ({
+    initiateOAuthMock: vi.fn(),
+    mockResetToolCallStepUp: vi.fn(),
+    mockResetAuthChallenge: vi.fn(),
+  }));
 const readStoredDiscoveryScopesMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   clearOAuthData: vi.fn(),
@@ -203,7 +194,11 @@ async function runTool(name: string, readOnlyHint = true) {
     ],
   });
   render(
-    <ToolsTab serverConfig={serverConfig} serverName="orders" server={server} />,
+    <ToolsTab
+      serverConfig={serverConfig}
+      serverName="orders"
+      server={server}
+    />,
   );
   await waitFor(() => expect(screen.getByText(name)).toBeInTheDocument());
   fireEvent.click(screen.getByText(name));
@@ -347,10 +342,16 @@ describe("ToolsTab mid-session sign-in", () => {
       result: { content: [{ type: "text", text: "cancelled" }] },
     });
     render(
-      <ToolsTab serverConfig={serverConfig} serverName="orders" server={server} />,
+      <ToolsTab
+        serverConfig={serverConfig}
+        serverName="orders"
+        server={server}
+      />,
     );
     await waitFor(() =>
-      expect(screen.getByText("Signed in. Run cancel_order again?")).toBeInTheDocument(),
+      expect(
+        screen.getByText("Signed in. Run cancel_order again?"),
+      ).toBeInTheDocument(),
     );
     expect(mockExecuteToolApi).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Run again" }));
