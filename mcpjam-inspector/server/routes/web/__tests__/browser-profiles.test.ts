@@ -91,6 +91,8 @@ function allHeaderValues(response: Response): string {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", BACKEND);
+  // The deployment's own file storage, where `ARCHIVE_URL` lives.
+  vi.stubEnv("CONVEX_URL", "https://happy-otter-123.convex.cloud");
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", SERVICE_TOKEN);
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(logger, "event").mockImplementation(() => undefined);

@@ -2,6 +2,7 @@
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError, handleRoute, readJsonBody } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { getConfiguredInspectorServiceToken } from "../../middleware/internal-service-auth.js";
 import { downloadBrowserProfile } from "./browser-profile-download.js";
 import { handleBrowserProfileUpload } from "./browser-profile-upload.js";
 
@@ -97,6 +98,14 @@ for (const operation of ["commit", "list", "default", "delete"] as const) {
     handleRoute(c, async () => proxyPost(c, operation, await readJsonBody(c))),
   );
 }
+
+// Whether this server can save and load profile archives at all. Both need
+// the inspector service credential, which local and desktop installs do not
+// hold; the client hides Save and says why when this is false. Listing,
+// choosing and deleting profiles work either way.
+browserProfiles.get("/availability", (c) =>
+  c.json({ archives: getConfiguredInspectorServiceToken() !== null }),
+);
 
 // Archive bytes in, storage id out (MJ-006).
 browserProfiles.post("/upload", handleBrowserProfileUpload);

@@ -23,6 +23,8 @@ import {
   renderMcpAppToolResult,
   isRenderableMcpAppTool,
 } from "./mcp-app-render-observation";
+import { hasUpstreamFailureEvidence } from "./hosted-connect-failure";
+import { markLocalRouteFailure } from "./hosted-route-failure";
 
 /** Actionable hint surfaced when the harness reports `browser_unavailable`. */
 export const CHROMIUM_INSTALL_HINT = "npx playwright install chromium";
@@ -194,7 +196,12 @@ export async function renderWidgetForRequest(
       };
     }
     await harness.dispose().catch(() => {});
-    throw error;
+    // The render still talks to the server (the UI resource, the widget's own
+    // tool calls), so only a failure that shows nothing of that is the
+    // renderer's own. Anything else stays the server's to report.
+    throw hasUpstreamFailureEvidence(error)
+      ? error
+      : markLocalRouteFailure(error);
   }
 }
 

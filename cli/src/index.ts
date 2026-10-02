@@ -19,6 +19,10 @@ import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
+import {
+  registerTestCommand,
+  type LocalTestDependencies,
+} from "./commands/test.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
 import { registerBrowserCommands } from "./commands/browser.js";
 import { registerRegistryCommands } from "./commands/registry.js";
@@ -45,6 +49,11 @@ export interface CliMainResult {
 
 export interface CliMainDependencies {
   telemetry?: TelemetryOptions;
+  /**
+   * @internal The `mcpjam test` seam the CLI's own tests inject a model
+   * double through. No flag or environment variable reaches it.
+   */
+  localTest?: LocalTestDependencies;
 }
 
 export interface CliEntrypointDependencies extends CliMainDependencies {
@@ -83,6 +92,7 @@ export async function main(
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
 
   program.commandsGroup("Local MCP testing:");
+  registerTestCommand(program, dependencies.localTest);
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);

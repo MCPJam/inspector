@@ -20,12 +20,20 @@ import type { LanguageModel } from "ai";
 import type { LLMProvider, CustomProvider } from "./types.js";
 import {
   getMcpjamLeaseClient,
+  type McpjamAuthContext,
   type McpjamModelLeaseScope,
   resolveMcpjamBaseUrl,
   resolveMcpjamProject,
   MCPJAM_PLACEHOLDER_API_KEY,
   MCPJAM_PROXY_PLACEHOLDER_ORIGIN,
 } from "./mcpjam-model-lease.js";
+import { anthropicNativeModelId } from "./model-native-ids.js";
+
+export {
+  ANTHROPIC_NATIVE_MODEL_IDS,
+  anthropicNativeModelId,
+  type NativeModelIdMapping,
+} from "./model-native-ids.js";
 
 /**
  * Custom base URLs for built-in providers that support them.
@@ -68,6 +76,16 @@ export interface CreateModelOptions {
    * resolution eval reporting uses, so inference and results land together.
    */
   mcpjamProject?: string;
+  /**
+   * MCPJam-hosted inference as a caller whose credential REFRESHES — a CLI
+   * login's session — instead of a fixed `sk_` key. The bearer is read for
+   * every mint, retry and revoke, and the headers go to MCPJam's API only,
+   * never to the model proxy or a provider. For `mcpjam/…` models this and a
+   * non-empty `apiKey` are mutually exclusive; with neither, `MCPJAM_API_KEY`
+   * is read as before. A lease scope bound to an auth context supplies one
+   * implicitly.
+   */
+  mcpjamAuth?: McpjamAuthContext;
 }
 
 /** Built-in providers list */
@@ -334,7 +352,10 @@ export function createModelFromString(
         apiKey,
         ...(baseUrls?.anthropic && { baseURL: baseUrls.anthropic }),
       });
-      return anthropic(model) as ProviderLanguageModel;
+      // The canonical spelling a suite or the model picker hands out
+      // (`claude-sonnet-4.5`) is not an id api.anthropic.com serves; the
+      // reviewed native one is. Native ids and unknown ids pass through.
+      return anthropic(anthropicNativeModelId(model)) as ProviderLanguageModel;
     }
 
     case "openai": {
@@ -414,24 +435,48 @@ export function createModelFromString(
     case "mcpjam": {
       const slash = model.indexOf("/");
       const vendor = slash === -1 ? model : model.slice(0, slash);
-      // `apiKey` first so an explicit key always wins; the env fallback is what
-      // makes `MCPJAM_API_KEY` alone enough in CI.
-      const mcpjamApiKey = apiKey || readEnvVar("MCPJAM_API_KEY") || "";
-      if (!mcpjamApiKey) {
-        throw new Error(
-          `An MCPJam API key is required for "mcpjam/${model}". ` +
-            "Set MCPJAM_API_KEY, or pass it as the runner's apiKey."
+      const auth = options.mcpjamAuth ?? options.mcpjamLeaseScope?.auth;
+      let client;
+      if (auth) {
+        // Two credential sources would make WHO a lease is minted and billed
+        // as depend on an unwritten precedence. The env fallback is not a
+        // source here: it applies only when the caller named none.
+        if (apiKey) {
+          throw new Error(
+            `"mcpjam/${model}" was given both an MCPJam API key and an auth ` +
+              "callback; supply exactly one."
+          );
+        }
+        client = getMcpjamLeaseClient(
+          {
+            baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
+            getAuth: auth.getAuth,
+            ...(auth.headers ? { headers: auth.headers } : {}),
+            project: resolveMcpjamProject(mcpjamProject),
+            model,
+          },
+          options.mcpjamLeaseScope
+        );
+      } else {
+        // `apiKey` first so an explicit key always wins; the env fallback is
+        // what makes `MCPJAM_API_KEY` alone enough in CI.
+        const mcpjamApiKey = apiKey || readEnvVar("MCPJAM_API_KEY") || "";
+        if (!mcpjamApiKey) {
+          throw new Error(
+            `An MCPJam API key is required for "mcpjam/${model}". ` +
+              "Set MCPJAM_API_KEY, or pass it as the runner's apiKey."
+          );
+        }
+        client = getMcpjamLeaseClient(
+          {
+            baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
+            apiKey: mcpjamApiKey,
+            project: resolveMcpjamProject(mcpjamProject),
+            model,
+          },
+          options.mcpjamLeaseScope
         );
       }
-      const client = getMcpjamLeaseClient(
-        {
-          baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
-          apiKey: mcpjamApiKey,
-          project: resolveMcpjamProject(mcpjamProject),
-          model,
-        },
-        options.mcpjamLeaseScope
-      );
 
       // The FULL vendor id is what reaches the wire, so the proxy's model
       // allowlist matches the lease exactly rather than through its
