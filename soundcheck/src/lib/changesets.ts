@@ -44,8 +44,6 @@ export interface ReleasePlan {
   packages: PackageBumpPlan[];
   /** Inspector's new version (for release_tag) if inspector is in `packages`. */
   releaseTag: string | null;
-  /** Which scope inputs are valid given the pending changesets. */
-  validScopes: Array<"packages-only" | "inspector-only" | "full">;
   /** True iff inspector is in the bump set — release.yml builds artifacts. */
   buildDesktopArtifacts: boolean;
 }
@@ -239,23 +237,10 @@ export function buildReleasePlan(input: BuildPlanInput): ReleasePlan {
   const buildDesktopArtifacts = Boolean(inspector);
   const releaseTag = inspector ? `v${inspector.newVersion}` : null;
 
-  // Valid scopes mirror release.yml:100-145:
-  //   - packages-only: requires inspector NOT to be in the set
-  //   - inspector-only: requires sdk + cli NOT to be in the set
-  //   - full: always valid as long as there's at least one bump
-  const hasInspector = Boolean(inspector);
-  const hasSdk = packages.some((p) => p.name === "@mcpjam/sdk");
-  const hasCli = packages.some((p) => p.name === "@mcpjam/cli");
-  const validScopes: ReleasePlan["validScopes"] = [];
-  if (packages.length > 0) validScopes.push("full");
-  if (packages.length > 0 && !hasInspector) validScopes.push("packages-only");
-  if (hasInspector && !hasSdk && !hasCli) validScopes.push("inspector-only");
-
   return {
     changesets,
     packages,
     releaseTag,
-    validScopes,
     buildDesktopArtifacts
   };
 }

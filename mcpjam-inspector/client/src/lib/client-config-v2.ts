@@ -64,7 +64,7 @@ import type {
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
-import { selectionKey, type ModelSelection } from "@mcpjam/sdk/browser";
+import { selectionConfigKey, type ModelSelection } from "@mcpjam/sdk/browser";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -1179,9 +1179,12 @@ export function hostConfigInputsEqual(
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
+  // `selectionConfigKey`, not `selectionKey`: the row key ignores settings, so
+  // an effort-only (or temperature-only) edit would read as "unchanged" and
+  // leave Save disabled.
   if (
-    (a.modelSelection ? selectionKey(a.modelSelection) : "") !==
-    (b.modelSelection ? selectionKey(b.modelSelection) : "")
+    (a.modelSelection ? selectionConfigKey(a.modelSelection) : "") !==
+    (b.modelSelection ? selectionConfigKey(b.modelSelection) : "")
   )
     return false;
   if (a.systemPrompt !== b.systemPrompt) return false;

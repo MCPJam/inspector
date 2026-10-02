@@ -4,8 +4,21 @@ import {
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
   createGuardedFetch,
+  isBlockedEgressHost,
   type EgressHostResolver,
 } from "../hosted-egress-guard.js";
+
+describe("isBlockedEgressHost", () => {
+  it("blocks an empty hostname", () => {
+    expect(isBlockedEgressHost("", true)).toBe(true);
+    expect(isBlockedEgressHost(" ", true)).toBe(true);
+    expect(isBlockedEgressHost("\t\n", true)).toBe(true);
+  });
+
+  it("blocks an empty hostname in local mode too", () => {
+    expect(isBlockedEgressHost("", false)).toBe(true);
+  });
+});
 
 /** Never consulted — reaching it means the literal check failed to short-circuit. */
 const exploding: EgressHostResolver = async () => {

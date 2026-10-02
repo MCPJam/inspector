@@ -85,7 +85,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/auto-fix-status-sentence.ts", 1],
   ["components/evals/browser-artifacts-view.tsx", 2],
   ["components/evals/browser-step-replay.tsx", 5],
-  ["components/evals/case-pass-criteria-section.tsx", 2],
   ["components/evals/case-upsert-toast.ts", 1],
   ["components/evals/checks-section.tsx", 11],
   ["components/evals/cross-host/host-cell.tsx", 1],

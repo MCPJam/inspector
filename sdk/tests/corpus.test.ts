@@ -19,6 +19,9 @@ import {
   sdkMatchOptionsFromPublic,
   verifyCorpusLock,
 } from "../src/corpus.js";
+import { HostRunner } from "../src/HostRunner.js";
+import type { PromptOptions } from "../src/HostExecutor.js";
+import { PromptResult } from "../src/PromptResult.js";
 import type { PlatformEvalCase } from "../src/platform/types.js";
 
 const FETCHED_AT = "2026-08-15T00:00:00.000Z";
@@ -184,6 +187,167 @@ describe("evalTestFromPlatformCase", () => {
         evalCase({ steps: [{ id: "s1", kind: "prompt", prompt: "   " }] })
       )
     ).toThrow(/empty prompt/);
+  });
+});
+
+/** A real `PromptResult`, so the body reads `hasError()` as it would live. */
+function turn(prompt: string, error?: string): PromptResult {
+  return PromptResult.from({
+    prompt,
+    messages: [
+      { role: "user", content: prompt },
+      { role: "assistant", content: `answer to ${prompt}` },
+    ],
+    text: `answer to ${prompt}`,
+    toolCalls: [],
+    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    latency: { e2eMs: 1, llmMs: 1, mcpMs: 0 },
+    ...(error !== undefined ? { error } : {}),
+  });
+}
+
+describe("evalTestFromPlatformCase — one conversation per iteration", () => {
+  const threePrompts = evalCase({
+    steps: [
+      { id: "s1", kind: "prompt", prompt: "first" },
+      { id: "s2", kind: "assert", assertion: { type: "noToolErrors" } },
+      { id: "s3", kind: "prompt", prompt: "second" },
+      { id: "s4", kind: "prompt", prompt: "third" },
+    ],
+  });
+
+  function recordingExecutor(errorAt?: string) {
+    const calls: Array<{ prompt: string; options?: PromptOptions }> = [];
+    const results: PromptResult[] = [];
+    const executor = {
+      run: vi.fn(async (prompt: string, options?: PromptOptions) => {
+        calls.push({ prompt, ...(options ? { options } : {}) });
+        const result = turn(prompt, prompt === errorAt ? "boom" : undefined);
+        results.push(result);
+        return result;
+      }),
+    };
+    return { executor, calls, results };
+  }
+
+  it("sends every later prompt with the earlier turns as context, in order", async () => {
+    const { executor, calls, results } = recordingExecutor();
+    await evalTestFromPlatformCase(threePrompts).getConfig().test!(
+      executor as never,
+      {} as never
+    );
+
+    expect(calls.map((call) => call.prompt)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+    // The first turn starts the conversation: no context at all, not an
+    // empty one.
+    expect(calls[0]!.options).toBeUndefined();
+    // Each later turn carries exactly the earlier results — the same
+    // instances, oldest first, each once.
+    expect(calls[1]!.options?.context).toEqual([results[0]]);
+    expect(calls[2]!.options?.context).toEqual([results[0], results[1]]);
+    expect((calls[2]!.options?.context as PromptResult[])[0]).toBe(results[0]);
+  });
+
+  it("hands each turn its own copy of the history", async () => {
+    const { executor, calls } = recordingExecutor();
+    await evalTestFromPlatformCase(threePrompts).getConfig().test!(
+      executor as never,
+      {} as never
+    );
+    // Appending turn 2 must not grow the array turn 1's call already holds.
+    expect(calls[1]!.options?.context).toHaveLength(1);
+    expect(calls[1]!.options?.context).not.toBe(calls[2]!.options?.context);
+  });
+
+  it("starts every invocation — every iteration — with a fresh conversation", async () => {
+    const test = evalTestFromPlatformCase(threePrompts);
+    const first = recordingExecutor();
+    const second = recordingExecutor();
+    await test.getConfig().test!(first.executor as never, {} as never);
+    await test.getConfig().test!(second.executor as never, {} as never);
+
+    expect(second.calls[0]!.options).toBeUndefined();
+    expect(second.calls[1]!.options?.context).toEqual([second.results[0]]);
+    for (const call of second.calls) {
+      for (const earlier of (call.options?.context ?? []) as PromptResult[]) {
+        expect(first.results).not.toContain(earlier);
+      }
+    }
+  });
+
+  it("stops after an errored turn and fails with that turn's error", async () => {
+    const { executor, calls } = recordingExecutor("second");
+    await expect(
+      evalTestFromPlatformCase(threePrompts).getConfig().test!(
+        executor as never,
+        {} as never
+      )
+    ).rejects.toThrow(
+      "prompt 2 of 3 errored: boom; the remaining prompts were not sent"
+    );
+    // The third prompt would have continued a conversation that never
+    // completed.
+    expect(calls.map((call) => call.prompt)).toEqual(["first", "second"]);
+  });
+
+  it("reports an errored LAST turn without claiming prompts were skipped", async () => {
+    const { executor } = recordingExecutor("third");
+    await expect(
+      evalTestFromPlatformCase(threePrompts).getConfig().test!(
+        executor as never,
+        {} as never
+      )
+    ).rejects.toThrow(/^prompt 3 of 3 errored: boom$/);
+  });
+
+  it("files an errored turn as an EXECUTION failure, not a graded one", async () => {
+    // Through the real EvalTest: the thrown body becomes `status: "failed"`
+    // with the turn's error, instead of a completed iteration whose partial
+    // transcript fails the tool matcher as though the server were at fault.
+    const test = evalTestFromPlatformCase(
+      evalCase({
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "first" },
+          { id: "s2", kind: "prompt", prompt: "second" },
+          {
+            id: "s3",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "issue_refund",
+              args: { args: {} },
+            },
+          },
+        ],
+      })
+    );
+    const sent: string[] = [];
+    const executor = HostRunner.mock(async (prompt) => {
+      sent.push(prompt);
+      return turn(
+        prompt,
+        prompt === "first" ? "provider unavailable" : undefined
+      );
+    });
+
+    const result = await test.run(executor, {
+      iterations: 2,
+      concurrency: 1,
+      mcpjam: { enabled: false },
+    });
+
+    expect(sent).toEqual(["first", "first"]);
+    for (const iteration of result.iterationDetails) {
+      expect(iteration.status).toBe("failed");
+      expect(iteration.passed).toBe(false);
+      expect(iteration.error).toBe(
+        "prompt 1 of 2 errored: provider unavailable; the remaining prompts were not sent"
+      );
+    }
   });
 });
 
@@ -719,6 +883,61 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
     ).toThrow(/negative case.*toolCalledWith check/s);
   });
 
+  // An advisory toolCalledWith can only warn, so it never contradicts a
+  // negative case, whichever of the three routes it arrives by.
+  const ADVISORY_TOOL_CALLED_WITH = {
+    ...TOOL_CALLED_WITH,
+    role: "advisory",
+    severity: "warn",
+  };
+
+  it("loads an advisory toolCalledWith as a step assertion", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: ADVISORY_TOOL_CALLED_WITH },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY_TOOL_CALLED_WITH]);
+  });
+
+  it("loads an advisory toolCalledWith arriving as a case-level check", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        checks: { mode: "replace", list: [ADVISORY_TOOL_CALLED_WITH] },
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY_TOOL_CALLED_WITH]);
+  });
+
+  it("loads an advisory toolCalledWith inherited from the suite", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+      }),
+      { suiteChecks: [ADVISORY_TOOL_CALLED_WITH] }
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY_TOOL_CALLED_WITH]);
+  });
+
+  it('still refuses role: "required", the other spelling of gating', () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...TOOL_CALLED_WITH, role: "required" }] }
+      )
+    ).toThrow(/negative case.*toolCalledWith check/s);
+  });
+
   it("still allows a positive case to carry the same check", () => {
     // The guard keys on `isNegative`, not on the check — a suite-level
     // toolCalledWith is perfectly valid for every non-negative case, and
@@ -731,5 +950,124 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
       { suiteChecks: [TOOL_CALLED_WITH] }
     ).getConfig();
     expect(config.predicates).toEqual([TOOL_CALLED_WITH]);
+  });
+});
+
+describe.each([
+  { type: "toolInputMatches", unit: "call" },
+  { type: "toolResultMatches", unit: "result" },
+] as const)("a negative case and $type", ({ type, unit }) => {
+  const MATCH = {
+    type,
+    toolName: "t",
+    patterns: ["Idea"],
+  };
+
+  it("refuses the default min (1) as a step assertion", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [
+            { id: "s1", kind: "prompt", prompt: "go" },
+            { id: "s2", kind: "assert", assertion: MATCH },
+          ],
+        })
+      )
+    ).toThrow(new RegExp(`negative case.*${type} with min ≥ 1 at step 1`, "s"));
+  });
+
+  it("refuses an explicit min ≥ 1 inherited from the suite", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...MATCH, min: 2 }] }
+      )
+    ).toThrow(
+      new RegExp(
+        `negative case.*${type} check with min ≥ 1.*"no ${unit} matches"`,
+        "s"
+      )
+    );
+  });
+
+  // An advisory check can only warn, so it never contradicts a negative case,
+  // whichever of the three routes it arrives by.
+  const ADVISORY = { ...MATCH, role: "advisory", severity: "warn" };
+
+  it("loads an advisory check as a step assertion", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: ADVISORY },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it("loads an advisory check arriving as a case-level check", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        checks: { mode: "replace", list: [ADVISORY] },
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it("loads an advisory check inherited from the suite", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+      }),
+      { suiteChecks: [ADVISORY] }
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY]);
+  });
+
+  it('still refuses role: "required", the other spelling of gating', () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...MATCH, role: "required" }] }
+      )
+    ).toThrow(new RegExp(`negative case.*${type} check with min ≥ 1`, "s"));
+  });
+
+  it('allows min: 0, max: 0 — "none matches" is compatible', () => {
+    const none = { ...MATCH, min: 0, max: 0 };
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: none },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([none]);
+  });
+
+  it("allows a positive case to carry the default", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: MATCH },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([MATCH]);
   });
 });

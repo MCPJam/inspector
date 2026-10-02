@@ -115,8 +115,8 @@ export function CasePassCriteriaPopover({
           className="px-2 py-1 text-[11px]"
         >
           {isOverridden
-            ? "Pass criteria — overrides active"
-            : "Pass criteria — validators and assertions"}
+            ? "Edit pass criteria (overridden for this case)"
+            : "Edit pass criteria"}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
