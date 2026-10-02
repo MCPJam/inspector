@@ -686,9 +686,12 @@ describe("FirstRunOnboardingOverlay", () => {
         fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
           target: { value: "custom-client" },
         });
-        fireEvent.change(screen.getByPlaceholderText("Your OAuth Client Secret"), {
-          target: { value: "  opaque-secret  " },
-        });
+        fireEvent.change(
+          screen.getByPlaceholderText("Your OAuth Client Secret"),
+          {
+            target: { value: "  opaque-secret  " },
+          },
+        );
       }
       fireEvent.click(
         screen.getByRole("button", {
@@ -755,6 +758,44 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
+  it("drops hidden OAuth credentials when authorization switches to bearer", async () => {
+    const { onAuthorizeConnection } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Secure",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Secure",
+        transport: "http",
+        urlOrCommand: "https://secure.example/mcp",
+        authentication: "oauth",
+        registrationMode: "preregistered",
+        clientId: "old-client",
+        clientSecret: "old-secret",
+      },
+    );
+
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
+      target: { value: "new-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+
+    expect(onAuthorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authentication: "bearer",
+        clientId: "",
+        clientSecret: undefined,
+        clearClientSecret: true,
+      }),
+    );
+  });
+
   it("requires a valid client ID before connecting with preregistered OAuth", async () => {
     const { onConnectOwnServer } = renderOverlay(
       {
@@ -768,24 +809,34 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
     });
-    await userEvent.click(screen.getByRole("combobox", { name: "Authentication" }));
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    );
     await userEvent.click(screen.getByRole("option", { name: "OAuth" }));
-    await userEvent.click(screen.getByRole("button", { name: "Advanced Settings" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Advanced Settings" }),
+    );
     const registrationSelect = screen
       .getByText("Registration Strategy")
       .parentElement?.querySelector('[role="combobox"]');
     await userEvent.click(registrationSelect!);
-    await userEvent.click(screen.getByRole("option", { name: /Preregistration/ }));
+    await userEvent.click(
+      screen.getByRole("option", { name: /Preregistration/ }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    expect(screen.getByText("Client ID is required when using custom credentials")).toBeVisible();
+    expect(
+      screen.getByText("Client ID is required when using custom credentials"),
+    ).toBeVisible();
     expect(onConnectOwnServer).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
       target: { value: "ab" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    expect(screen.getByText("Client ID must be at least 3 characters")).toBeVisible();
+    expect(
+      screen.getByText("Client ID must be at least 3 characters"),
+    ).toBeVisible();
     expect(onConnectOwnServer).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
