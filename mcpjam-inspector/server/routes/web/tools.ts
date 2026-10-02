@@ -20,6 +20,11 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
+import { toolResultAuthChallengeFields } from "../../utils/connection-effective-auth.js";
+import {
+  projectAuthChallenge,
+  projectToolSecuritySchemes,
+} from "../../utils/hosted-upstream-projection.js";
 
 const tools = new Hono();
 
@@ -180,9 +185,27 @@ tools.post("/execute", async (c) =>
           return created;
         }
 
+        // A ChatGPT-style sign-in challenge on a completed result, stamped
+        // with the connection's effective auth method (the browser cannot
+        // know it and gates sign-in on this stamp alone), with the tool's
+        // resolved `securitySchemes` that the `_meta` trigger reads.
+        // Reduced like every other answer this route relays (MJ-001); the
+        // result itself still carries the server's own `_meta`.
+        const challenged = await toolResultAuthChallengeFields(
+          manager,
+          body.serverId,
+          body.toolName,
+          result,
+        );
+        const authChallenge = projectAuthChallenge(challenged.authChallenge);
+        const toolSecuritySchemes = authChallenge
+          ? projectToolSecuritySchemes(challenged.toolSecuritySchemes)
+          : undefined;
         return {
           status: "completed" as const,
           result,
+          ...(authChallenge ? { authChallenge } : {}),
+          ...(toolSecuritySchemes ? { toolSecuritySchemes } : {}),
         };
       } catch (error) {
         // A suspend is control flow, not a failed execution — let it propagate

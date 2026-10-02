@@ -29,6 +29,7 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 import type { Context } from "hono";
+import { parseChallengeHeader } from "@mcpjam/sdk";
 import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
 import { WebRouteError } from "../errors.js";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
@@ -1010,6 +1011,40 @@ describe("web auth manager batching", () => {
         serverUrl: "https://server-1.example.com/mcp",
       },
     });
+
+    // A 401 on a protected operation MID-SESSION carries its parsed
+    // challenge: that is a per-call sign-in request, answered as a 403
+    // UPSTREAM_AUTH_FAILED (never 401, which authFetch would answer with a
+    // guest-session retry) carrying the challenge stamped "discover", and
+    // WITHOUT `oauthRequired`, which several surfaces escalate on by
+    // themselves.
+    const challenged = await config
+      .onUnauthorized({
+        serverId: "server-1",
+        error: Object.assign(new Error("HTTP 401"), {
+          status: 401,
+          data: {
+            authChallenge: parseChallengeHeader('Bearer scope="orders:read"'),
+          },
+        }),
+      })
+      .catch((error: unknown) => error);
+    expect(challenged).toMatchObject({
+      status: 403,
+      code: "UPSTREAM_AUTH_FAILED",
+      details: {
+        upstreamAuthRequired: true,
+        authChallenge: {
+          source: "http_401",
+          requiredScope: "orders:read",
+          effectiveAuth: "discover",
+        },
+        serverId: "server-1",
+      },
+    });
+    expect((challenged as WebRouteError).details).not.toHaveProperty(
+      "oauthRequired",
+    );
   });
 
   it("keeps the oauth path for an auto (discover) server whose batch returned a token", async () => {

@@ -24,7 +24,13 @@ export type InspectorCommandErrorCode =
   | "timeout"
   | "unsupported_in_mode"
   | "invalid_request"
-  | "execution_failed";
+  | "execution_failed"
+  /**
+   * The server asked the user to sign in before this call could run. A
+   * command never signs in or shows a Connect card; the user does that from
+   * the app.
+   */
+  | "authorization_required";
 
 export type InspectorCommandType =
   | "navigate"

@@ -234,6 +234,24 @@ export function mapErrorToV1(
   // 403, or a message-pattern match) and carries no grant for the caller to
   // drive. 403 also matches the status the hosted `/api/web/*` twin returns
   // for the same throw.
+  // A sign-in challenge for one call (lazy authentication): the server
+  // allowed the connection and asked for sign-in on this operation. Its own
+  // public code, so a caller can tell it from a bad MCPJam key (UNAUTHORIZED)
+  // and from a server that refused the credentials it was given (FORBIDDEN),
+  // with the parsed challenge in `details.authChallenge`.
+  if (
+    routeError.code === ErrorCode.UPSTREAM_AUTH_FAILED &&
+    routeError.details?.authChallenge
+  ) {
+    return {
+      code: "AUTH_REQUIRED",
+      message: routeError.message,
+      details: routeError.details,
+      headers: routeError.headers,
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
+    };
+  }
   if (routeError.code === ErrorCode.UPSTREAM_AUTH_FAILED) {
     return {
       code: "FORBIDDEN",

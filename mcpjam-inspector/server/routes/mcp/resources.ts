@@ -7,6 +7,10 @@ import {
 import { listResources, readResource } from "../../utils/route-handlers.js";
 import { jsonError } from "../../utils/mcp-error-serialize.js";
 import {
+  connectionEffectiveAuth,
+  stampErrorAuthChallenge,
+} from "../../utils/connection-effective-auth.js";
+import {
   toServedFromCache,
   withCacheEventCapture,
 } from "../../utils/cache-events.js";
@@ -96,7 +100,13 @@ resources.post("/read", async (c) => {
     });
     // SEP-2350: surface a 403 `insufficient_scope` challenge (on
     // `mcpError.insufficientScope`) so the client can drive the union-scope
-    // step-up re-authorization; ordinary errors keep the 500 fallback.
+    // step-up re-authorization; ordinary errors keep the 500 fallback. A
+    // sign-in challenge rides on `mcpError.authChallenge`, stamped with the
+    // connection's effective auth method.
+    stampErrorAuthChallenge(
+      error,
+      connectionEffectiveAuth(c.mcpClientManager, serverId),
+    );
     return jsonError(c, error, 500);
   }
 });
