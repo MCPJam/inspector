@@ -211,6 +211,34 @@ describe("environmentsForModelCell", () => {
     ).toEqual([bare]);
   });
 
+  it("an unlabelled environment matches the catalog's org pick, but not an effort", () => {
+    // The only catalog row for the id is an org connection, so the composer
+    // fills the target with an org selection the environment never chose.
+    const bare = env("h1");
+    const cell = (picked: ModelSelection) =>
+      environmentsForModelCell([bare], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked,
+        efforts: true,
+      });
+    expect(cell(org())).toEqual([bare]);
+    expect(cell(org({ reasoningEffort: "high" }))).toEqual([]);
+  });
+
+  it("prefers an environment that runs the exact pick over an unlabelled one", () => {
+    const bare = env("h1");
+    const byok = env("h1", org());
+    expect(
+      environmentsForModelCell([bare, byok], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: org(),
+        efforts: true,
+      }),
+    ).toEqual([byok]);
+  });
+
   it("matches on id alone where the deployment stores no selections", () => {
     const high = env("h1", hostedSel({ reasoningEffort: "high" }));
     const low = env("h1", hostedSel({ reasoningEffort: "low" }));
