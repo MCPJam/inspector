@@ -74,6 +74,21 @@ describe("authorization refusals", () => {
     expect(posthogCaptureException).not.toHaveBeenCalled();
   });
 
+  it("drops an unauthenticated refusal before it reaches either sink", () => {
+    // What a live subscription gets when Convex re-runs it between an auth
+    // clear and the re-auth that follows (PLB-159).
+    reportCaught(
+      new ConvexError({
+        kind: "unauthenticated",
+        message: "Authentication required",
+      }),
+      { source: "convex_query_subscription" },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+  });
+
   it("still reports a ConvexError that is not a refusal", () => {
     reportCaught(new ConvexError({ kind: "rate_limited" }), {
       source: "unit",
