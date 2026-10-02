@@ -74,6 +74,11 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { logger } from "../../utils/logger.js";
 import {
+  internalErrorResponseView,
+  responseRequestId,
+} from "../web/hosted-internal-error.js";
+import { redactForLog } from "../v1/redact-log-message.js";
+import {
   WEBMCP_INPUT_BATCH_LIMIT,
   type WebMcpInvocationOutcome,
 } from "@/shared/webmcp-inspector-protocol";
@@ -324,19 +329,23 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   // A control-plane refusal that reached here rather than the start route's
   // own handling — a re-hydration whose computer is gone, say.
   const hostedRefusal = classifyHostedReserveError(error);
-  if (hostedRefusal) {
-    logHostedRefusal(hostedRefusal);
-    return c.json(
-      { error: hostedRefusal.error, code: hostedRefusal.code },
-      httpStatus(hostedRefusal),
-    );
-  }
+  if (hostedRefusal) return hostedRefusalResponse(c, hostedRefusal);
   reportRouteFailure("[webmcp] unhandled route error", error, {
     source: "mcp.webmcp-inspector",
     hop: "mcpjam_internal",
   });
+  // A hosted deployment answers with a generic sentence and the request id;
+  // the failure itself is in the report above, joined by that id. A local
+  // inspector keeps the message: the person reading it runs the server.
+  const view = internalErrorResponseView(c, 500, "INTERNAL_ERROR", {
+    message: error instanceof Error ? error.message : fallback,
+  });
+  const requestId = view.details?.requestId;
   return c.json(
-    { error: error instanceof Error ? error.message : fallback },
+    {
+      error: view.message,
+      ...(typeof requestId === "string" ? { requestId } : {}),
+    },
     500,
   );
 }
@@ -477,6 +486,40 @@ function logHostedRefusal(refusal: HostedRefusal): void {
     status: refusal.status,
     ...(refusal.upstreamCode ? { upstreamCode: refusal.upstreamCode } : {}),
   });
+}
+
+/**
+ * A control-plane refusal as a response.
+ *
+ * A refusal that carries `detail` (a machine that failed to start) is answered
+ * with its own generic sentence plus the request id, and the detail goes to
+ * the log under that id — so a person can quote the reference and an operator
+ * can find what the control plane actually said.
+ */
+function hostedRefusalResponse(c: Context, refusal: HostedRefusal) {
+  logHostedRefusal(refusal);
+  if (refusal.detail === undefined) {
+    return c.json(
+      { error: refusal.error, code: refusal.code },
+      httpStatus(refusal),
+    );
+  }
+  const { requestId } = responseRequestId(c);
+  logger.warn("[webmcp] hosted browser failed to start", {
+    requestId,
+    code: refusal.code,
+    status: refusal.status,
+    ...(refusal.upstreamCode ? { upstreamCode: refusal.upstreamCode } : {}),
+    detail: redactForLog(refusal.detail),
+  });
+  return c.json(
+    {
+      error: `${refusal.error} If it keeps happening, contact support with reference ${requestId}.`,
+      code: refusal.code,
+      requestId,
+    },
+    httpStatus(refusal),
+  );
 }
 
 function hostedKeepAwake(info: {
@@ -663,13 +706,7 @@ webmcpInspector.post("/sessions", async (c) => {
       });
     } catch (error) {
       const refusal = classifyHostedReserveError(error);
-      if (refusal) {
-        logHostedRefusal(refusal);
-        return c.json(
-          { error: refusal.error, code: refusal.code },
-          httpStatus(refusal),
-        );
-      }
+      if (refusal) return hostedRefusalResponse(c, refusal);
       return webMcpErrorResponse(c, error, "Could not start your computer.");
     }
     // The SAME hooks the re-hydration path gives a provider, because the

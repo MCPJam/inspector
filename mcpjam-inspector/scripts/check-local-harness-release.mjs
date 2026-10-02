@@ -1,3 +1,4 @@
+import { computePackInputs } from "./check-local-harness-inputs.mjs";
 /**
  * The release gate for local Claude Code execution.
  *
@@ -5,7 +6,7 @@
  * a release that ADVERTISES a local target it cannot serve:
  *
  *   1. every platform in `nativePlatforms` has a pack digest for each of its
- *      targets, at the version this release is stamped with;
+ *      targets, at the independently pinned pack version;
  *   2. the harness records lifecycle conformance evidence;
  *   3. (with `--assets`) each advertised target's published assets exist, its
  *      manifest is signed by the key this Inspector build carries, and the
@@ -148,14 +149,12 @@ async function fetchAsset(baseUrl, name) {
 }
 
 async function main() {
+  const computedInputs = await computePackInputs();
+  const recordedInputs = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
+  if (JSON.stringify(computedInputs) !== JSON.stringify(recordedInputs)) throw new Error("Pack inputs differ from the reviewed fingerprint. Recompute and review before releasing.");
   const args = parseArgs(process.argv.slice(2));
-  const version = typeof args.version === "string" ? args.version.trim() : "";
-  if (version.length === 0) {
-    console.error("check-local-harness-release: --version is required");
-    process.exit(2);
-  }
-
   const facts = await readCommittedFacts();
+  const version = facts.expectedVersion;
   // Two lists, and the difference between them is the point.
   //
   // `blockers` fail the release: the build would OFFER a local target it
@@ -186,14 +185,6 @@ async function main() {
       "EXPECTED_PACK_VERSION is empty, so no pack has been built and no " +
         "install can ever verify. Run local-harness-pack.yml, then " +
         "scripts/write-pack-digests.mjs, and commit the generated table.",
-    );
-  } else if (facts.expectedVersion !== version) {
-    // Always blocking: the table is what the next release inherits, and it
-    // points every install at an asset URL this release does not publish.
-    blockers.push(
-      `EXPECTED_PACK_VERSION is ${facts.expectedVersion} but this release is ` +
-        `${version}. A client builds the asset URL from the release tag, so ` +
-        `the two must be the same version.`,
     );
   }
 
@@ -229,19 +220,27 @@ async function main() {
     }
   }
 
-  if (args.assets === true || typeof args["base-url"] === "string") {
+  if (version && (args.assets === true || typeof args["base-url"] === "string")) {
     const baseUrl =
       typeof args["base-url"] === "string"
         ? args["base-url"]
-        : `https://github.com/MCPJam/inspector/releases/download/v${version}/`;
+        : `https://github.com/MCPJam/inspector/releases/download/local-harness-pack-v${version}/`;
     const publicKeys = await readPackSigningPublicKeys();
+    const { fingerprint } = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
     if (publicKeys.length === 0) {
       blockers.push(
         "pack-signing-key.ts carries no public key, so a published manifest " +
           "cannot be shown to have come from MCPJam.",
       );
     }
-    for (const entry of advertisedTargets) {
+    // A published pack is one complete five-target release, even before rollout.
+    for (const target of Object.values(TARGETS_BY_PLATFORM).flat()) {
+      const entry = facts.records[target];
+      if (!entry || entry.packVersion !== version || !/^sha256:[0-9a-f]{64}$/.test(entry.treeDigest)) {
+        blockers.push(`Missing or inconsistent pinned pack record for ${target}`);
+        continue;
+      }
+      entry.target = target;
       const names = {
         archive: `local-harness-pack-${entry.target}-${version}.tar.gz`,
         manifest: `local-harness-pack-${entry.target}-${version}.manifest.json`,
@@ -286,6 +285,12 @@ async function main() {
       }
 
       const manifest = JSON.parse(manifestBytes.toString("utf8"));
+      if (manifest.inputsFingerprint !== fingerprint) {
+        blockers.push(`the published ${entry.target} pack was built from different inputs; publish and pin a new pack version`);
+      }
+      if (manifest.schema !== "mcpjam.local-harness-pack/1" || manifest.harnessId !== "claude-code" || manifest.platform !== entry.target) {
+        blockers.push(`the published ${entry.target} manifest has the wrong identity`);
+      }
       if (manifest.treeDigest !== entry.treeDigest) {
         blockers.push(
           `the published ${entry.target} manifest names tree digest ` +

@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import type { ContextVariableMap } from "hono";
+import type { Context, ContextVariableMap } from "hono";
 
 vi.mock("../../config.js", () => ({ HOSTED_MODE: true }));
 
@@ -17,6 +17,7 @@ const { SERVER_REQUEST_BUDGET_REASON } =
 
 const {
   MCP_OPERATION_BURST: BURST,
+  MCP_OPERATION_CALL_BURST: CALL_BURST,
   MCP_OPERATION_MAX_ENTRIES: MAX_ENTRIES,
   MCP_OPERATION_REFILL_INTERVAL_MS: REFILL_MS,
   mcpOperationRateLimit,
@@ -25,6 +26,8 @@ const {
 } = await import("../mcp-operation-rate-limit.js");
 
 const FAMILIES = ["tools", "resources", "prompts", "tasks"] as const;
+/** The families `/api/v1` has routes for. */
+const V1_FAMILIES = ["tools", "resources", "prompts"] as const;
 
 /** The identity `bearerAuthMiddleware` would have resolved upstream. */
 type Identity = {
@@ -47,15 +50,16 @@ const USER_B: Identity = {
 };
 
 /**
- * The limiter mounted per family the way `routes/web/index.ts` mounts it,
- * behind a stub that sets the identity. The route answers malformed JSON with
- * a 400 the way `readJsonBody` does, and otherwise echoes the body it read.
+ * The limiter mounted per family the way `routes/web/index.ts` and
+ * `routes/v1/index.ts` mount it, behind a stub that sets the identity. The web
+ * route answers malformed JSON with a 400 the way `readJsonBody` does, and
+ * otherwise echoes the body it read.
  */
 function createApp(
   limiter: typeof mcpOperationRateLimit = mcpOperationRateLimit,
 ) {
   const app = new Hono();
-  app.use("/api/web/*", async (c, next) => {
+  app.use("/api/*", async (c, next) => {
     const identity = JSON.parse(
       c.req.header("x-test-identity") ?? "{}",
     ) as Identity;
@@ -70,6 +74,12 @@ function createApp(
   for (const family of FAMILIES) {
     app.use(`/api/web/${family}/*`, limiter(family));
   }
+  for (const family of V1_FAMILIES) {
+    app.use(
+      `/api/v1/projects/:projectId/servers/:serverId/${family}/*`,
+      limiter(family),
+    );
+  }
   app.post("/api/web/:family/:operation", async (c) => {
     try {
       return c.json({ received: await c.req.json() });
@@ -77,6 +87,13 @@ function createApp(
       return c.json({ code: "VALIDATION_ERROR" }, 400);
     }
   });
+  const v1Route = (c: Context) =>
+    c.json({ serverId: c.req.param("serverId") });
+  app.post("/api/v1/projects/:projectId/servers/:serverId/:family", v1Route);
+  app.post(
+    "/api/v1/projects/:projectId/servers/:serverId/:family/:operation",
+    v1Route,
+  );
   return app;
 }
 
@@ -106,6 +123,32 @@ const toolsList =
       app,
       "/api/web/tools/list",
       { projectId: "project-1", serverId },
+      identity,
+    );
+
+const toolsExecute =
+  (serverId: string, identity: Identity = USER_A) =>
+  (app: Hono) =>
+    post(
+      app,
+      "/api/web/tools/execute",
+      { projectId: "project-1", serverId, toolName: "echo" },
+      identity,
+    );
+
+/** A `/api/v1` server operation: `op` is the path after the server id. */
+const v1 =
+  (
+    serverId: string,
+    op = "tools",
+    body: unknown = {},
+    identity: Identity = USER_A,
+  ) =>
+  (app: Hono) =>
+    post(
+      app,
+      `/api/v1/projects/project-1/servers/${encodeURIComponent(serverId)}/${op}`,
+      body,
       identity,
     );
 
@@ -273,14 +316,6 @@ describe("what gets its own bucket", () => {
     const app = createApp();
     await statuses(app, BURST, toolsList("srv-1"));
 
-    // Same family, same bucket.
-    const execute = await post(app, "/api/web/tools/execute", {
-      projectId: "project-1",
-      serverId: "srv-1",
-      toolName: "echo",
-    });
-    expect(execute.status).toBe(429);
-
     for (const path of [
       "/api/web/resources/list",
       "/api/web/prompts/get",
@@ -296,6 +331,169 @@ describe("what gets its own bucket", () => {
       expect(admitted(codes)).toHaveLength(BURST);
     }
   });
+});
+
+describe("tool calls", () => {
+  it("have a bucket of their own, one deeper than the listing bucket", async () => {
+    expect(CALL_BURST).toBeGreaterThan(BURST);
+    const app = createApp();
+    await statuses(app, BURST, toolsList("srv-1"));
+    expect((await toolsList("srv-1")(app)).status).toBe(429);
+
+    // A spent listing budget leaves calls whole, and the other way round.
+    expect(await statuses(app, CALL_BURST + 1, toolsExecute("srv-1"))).toEqual(
+      [...Array(CALL_BURST).fill(200), 429],
+    );
+    advance(REFILL_MS);
+    expect((await toolsList("srv-1")(app)).status).toBe(200);
+    expect((await toolsExecute("srv-1")(app)).status).toBe(200);
+    expect((await toolsExecute("srv-1")(app)).status).toBe(429);
+  });
+
+  it("refill at the same rate and refuse with the same envelope", async () => {
+    const app = createApp();
+    await statuses(app, CALL_BURST, toolsExecute("srv-1"));
+
+    const refused = await toolsExecute("srv-1")(app);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("Retry-After")).toBe(String(REFILL_MS / 1000));
+    expect(await refused.json()).toMatchObject({
+      code: "RATE_LIMITED",
+      details: { reason: SERVER_REQUEST_BUDGET_REASON },
+    });
+
+    // A long idle refills to the call burst and stops there.
+    advance(100 * REFILL_MS);
+    expect(
+      admitted(await statuses(app, 3 * CALL_BURST, toolsExecute("srv-1"))),
+    ).toHaveLength(CALL_BURST);
+  });
+
+  it("are keyed per server and principal like every other bucket", async () => {
+    const app = createApp();
+    await statuses(app, CALL_BURST, toolsExecute("srv-1"));
+    expect((await toolsExecute("srv-1")(app)).status).toBe(429);
+    expect((await toolsExecute("srv-2")(app)).status).toBe(200);
+    expect((await toolsExecute("srv-1", USER_B)(app)).status).toBe(200);
+  });
+});
+
+describe("/api/v1 server operations", () => {
+  it("key on the :serverId path parameter, not the body", async () => {
+    const app = createApp();
+    const codes = await statuses(app, 40, (a) =>
+      // The body names a different server on every call; the path does not.
+      v1("srv-1", "tools", {
+        serverId: `body-${Math.random()}`,
+      })(a),
+    );
+    expect(codes).toEqual([
+      ...Array(BURST).fill(200),
+      ...Array(40 - BURST).fill(429),
+    ]);
+
+    // Another server in the path has its own budget.
+    expect((await v1("srv-2")(app)).status).toBe(200);
+  });
+
+  it("answer the same 429 as /api/web", async () => {
+    const app = createApp();
+    await statuses(app, BURST, v1("srv-1"));
+
+    const refused = await v1("srv-1")(app);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("Retry-After")).toBe(String(REFILL_MS / 1000));
+    expect(await refused.json()).toEqual({
+      code: "RATE_LIMITED",
+      message: expect.any(String),
+      details: { reason: SERVER_REQUEST_BUDGET_REASON },
+    });
+  });
+
+  it("share each bucket with the /api/web twin", async () => {
+    const app = createApp();
+    await statuses(app, BURST / 2, toolsList("srv-1"));
+    await statuses(app, BURST / 2, v1("srv-1"));
+    expect((await toolsList("srv-1")(app)).status).toBe(429);
+    expect((await v1("srv-1")(app)).status).toBe(429);
+
+    await statuses(app, CALL_BURST, v1("srv-1", "tools/call"));
+    expect((await toolsExecute("srv-1")(app)).status).toBe(429);
+  });
+
+  it("give listing and calling separate buckets, and each family its own", async () => {
+    const app = createApp();
+    await statuses(app, BURST, v1("srv-1"));
+    expect((await v1("srv-1")(app)).status).toBe(429);
+
+    expect(
+      admitted(await statuses(app, CALL_BURST + 2, v1("srv-1", "tools/call"))),
+    ).toHaveLength(CALL_BURST);
+    for (const op of [
+      "resources",
+      "resources/read",
+      "prompts",
+      "prompts/get",
+    ]) {
+      expect((await v1("srv-1", op)(app)).status).toBe(200);
+    }
+    // `resources` and `resources/read` are one family, one bucket.
+    expect(
+      admitted(await statuses(app, BURST, v1("srv-1", "resources/read"))),
+    ).toHaveLength(BURST - 2);
+  });
+
+  it("charge an over-long server id to the shared bucket", async () => {
+    const app = createApp();
+    const long = "x".repeat(300);
+    await statuses(app, BURST, v1(long));
+    expect((await v1(`${long}-other`)(app)).status).toBe(429);
+    expect((await v1("srv-1")(app)).status).toBe(200);
+  });
+});
+
+describe("several replicas with no affinity", () => {
+  /**
+   * Each replica is its own process with its own table: a fresh import of the
+   * module is exactly that. 40 rapid requests to one server, spread round-robin
+   * over up to four replicas, must still meet a 429.
+   */
+  async function replicas(count: number): Promise<Hono[]> {
+    const apps: Hono[] = [];
+    for (let i = 0; i < count; i++) {
+      vi.resetModules();
+      const copy = await import("../mcp-operation-rate-limit.js");
+      apps.push(createApp(copy.mcpOperationRateLimit));
+    }
+    return apps;
+  }
+
+  async function spread(
+    apps: Hono[],
+    send: (app: Hono) => Promise<Response>,
+  ): Promise<number[]> {
+    const codes: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      codes.push((await send(apps[i % apps.length])).status);
+    }
+    return codes;
+  }
+
+  it.each([1, 2, 3, 4])(
+    "refuses some of 40 rapid listings and calls across %i replica(s)",
+    async (count) => {
+      const apps = await replicas(count);
+      for (const send of [
+        toolsList("srv-1"),
+        v1("srv-1"),
+        toolsExecute("srv-2"),
+        v1("srv-3", "tools/call"),
+      ]) {
+        expect((await spread(apps, send)).filter((c) => c === 429).length)
+          .toBeGreaterThan(0);
+      }
+    },
+  );
 });
 
 describe("requests that do not name exactly one server", () => {
