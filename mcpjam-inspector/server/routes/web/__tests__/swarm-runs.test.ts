@@ -1,3 +1,5 @@
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: vi.fn(async () => true) }));
+vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: vi.fn(async () => ({ target: {} })) }));
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -394,6 +396,7 @@ describe("web routes — swarm single-host launch", () => {
       unknown
     >;
     expect(createArgs).toEqual({
+      runtimeVenue: "hosted",
       projectId: "proj-1",
       journeyRefId: "journey-env",
       kind: "user_testing",

@@ -15,7 +15,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("ProjectManagementDialog", () => {
-  it("lists names and descriptions containing markup as literal text (MJ-013)", () => {
+  it("lists names and descriptions containing markup as literal text (MJ-025)", () => {
     const description = '<img src="x" data-marker="desc"><b>bold</b> -> next';
     const name = '<i data-marker="name">Demo</i>';
     render(

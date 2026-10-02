@@ -138,12 +138,12 @@ describe("v1 registry", () => {
         "https://convex-http.example.com/v1/registry/directory-sources",
       ],
       [
-        "/api/v1/projects/p1/registry/servers?scope=all",
-        "https://convex-http.example.com/v1/registry/servers?projectId=p1&scope=all",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/servers?scope=all",
+        "https://convex-http.example.com/v1/registry/servers?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&scope=all",
       ],
       [
-        "/api/v1/projects/p1/registry/connections",
-        "https://convex-http.example.com/v1/registry/connections?projectId=p1",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/connections",
+        "https://convex-http.example.com/v1/registry/connections?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       ],
     ])("maps %s onto Convex", async (inspectorPath, convexUrl) => {
       fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
@@ -331,30 +331,30 @@ describe("v1 registry", () => {
         isGuestAllowedV1Request("GET", "/api/v1/registry/directory-sources")
       ).toBe(true);
       expect(
-        isGuestAllowedV1Request("GET", "/api/v1/projects/p1/registry/servers")
+        isGuestAllowedV1Request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/servers")
       ).toBe(false);
       expect(
         isGuestAllowedV1Request(
           "GET",
-          "/api/v1/projects/p1/registry/connections"
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/connections"
         )
       ).toBe(false);
       expect(
         isGuestAllowedV1Request(
           "POST",
-          "/api/v1/projects/p1/registry/directory-installs"
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs"
         )
       ).toBe(false);
       expect(
         isGuestAllowedV1Request(
           "POST",
-          "/api/v1/projects/p1/registry/installs"
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs"
         )
       ).toBe(false);
       expect(
         isGuestAllowedV1Request(
           "DELETE",
-          "/api/v1/projects/p1/registry/installs/rs1"
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs/rs1"
         )
       ).toBe(false);
       expect(
@@ -381,22 +381,22 @@ describe("v1 registry", () => {
         guestId: "guest_1",
       });
       const denied = [
-        await request("GET", "/api/v1/projects/p1/registry/servers", {
+        await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/servers", {
           token: "guest-token",
         }),
-        await request("GET", "/api/v1/projects/p1/registry/connections", {
+        await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/connections", {
           token: "guest-token",
         }),
-        await request("POST", "/api/v1/projects/p1/registry/installs", {
+        await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", {
           token: "guest-token",
           body: { registryServerId: "rs1" },
         }),
         await request(
           "POST",
-          "/api/v1/projects/p1/registry/directory-installs",
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
           { token: "guest-token", body: { catalogServerId: "cs1" } }
         ),
-        await request("DELETE", "/api/v1/projects/p1/registry/installs/rs1", {
+        await request("DELETE", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs/rs1", {
           token: "guest-token",
         }),
       ];
@@ -419,7 +419,7 @@ describe("v1 registry", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         {
           body: {
             catalogServerId: "cs1",
@@ -437,7 +437,7 @@ describe("v1 registry", () => {
       expect(convexMutationMock).toHaveBeenCalledWith(
         "serverCatalogConnect:connectCatalogServer",
         {
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           catalogServerId: "cs1",
           endpointUrl: "https://mcp.linear.app/mcp",
           expectedContentHash: "hash_1",
@@ -451,7 +451,7 @@ describe("v1 registry", () => {
         serverName: "linear",
         outcome: "reconnected",
       });
-      const res = await request("POST", "/api/v1/projects/p1/registry/installs", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", {
         body: { registryServerId: "rs1", expectedUpdatedAt: 1700000000000 },
       });
       expect(res.status).toBe(201);
@@ -463,7 +463,7 @@ describe("v1 registry", () => {
       expect(convexMutationMock).toHaveBeenCalledWith(
         "registryServers:installRegistryServer",
         {
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           registryServerId: "rs1",
           expectedUpdatedAt: 1700000000000,
         }
@@ -480,7 +480,7 @@ describe("v1 registry", () => {
       );
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { body: { catalogServerId: "cs1", expectedContentHash: "hash_old" } }
       );
       expect(res.status).toBe(409);
@@ -499,7 +499,7 @@ describe("v1 registry", () => {
           { updatedAt: 2 }
         )
       );
-      const res = await request("POST", "/api/v1/projects/p1/registry/installs", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", {
         body: { registryServerId: "rs1", expectedUpdatedAt: 1 },
       });
       expect(res.status).toBe(409);
@@ -519,7 +519,7 @@ describe("v1 registry", () => {
       );
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { body: { catalogServerId: "cs1", endpointUrl: "https://eu.example/mcp" } }
       );
       expect(res.status).toBe(409);
@@ -534,7 +534,7 @@ describe("v1 registry", () => {
       );
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { body: { catalogServerId: "cs1", endpointUrl: "https://evil.example" } }
       );
       expect(res.status).toBe(400);
@@ -550,7 +550,7 @@ describe("v1 registry", () => {
       );
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { body: { catalogServerId: "missing" } }
       );
       expect(res.status).toBe(404);
@@ -584,7 +584,7 @@ describe("v1 registry", () => {
           return jsonResponse({ items: [] });
         }
       ) as typeof fetch;
-      const res = await request("POST", "/api/v1/projects/p_org_b/registry/installs", {
+      const res = await request("POST", "/api/v1/projects/porgbxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", {
         token: "sk_live_secret",
         body: { registryServerId: "rs_org_a" },
       });
@@ -599,7 +599,7 @@ describe("v1 registry", () => {
       convexMutationMock.mockRejectedValue(
         convexError("registry_server_not_found", "Registry server not found")
       );
-      const res = await request("POST", "/api/v1/projects/p1/registry/installs", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", {
         body: { registryServerId: "directory_id_used_as_card" },
       });
       expect(res.status).toBe(404);
@@ -613,20 +613,20 @@ describe("v1 registry", () => {
       [
         "POST card install",
         () =>
-          request("POST", "/api/v1/projects/p1/registry/installs", {
+          request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", {
             body: { registryServerId: "not-an-id" },
           }),
       ],
       [
         "POST directory install",
         () =>
-          request("POST", "/api/v1/projects/p1/registry/directory-installs", {
+          request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs", {
             body: { catalogServerId: "k57directoryidonthecardshelf0012" },
           }),
       ],
       [
         "DELETE uninstall",
-        () => request("DELETE", "/api/v1/projects/p1/registry/installs/garbage"),
+        () => request("DELETE", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs/garbage"),
       ],
     ])(
       "maps a Convex argument-validation rejection to 400, not 500 (%s)",
@@ -664,7 +664,7 @@ describe("v1 registry", () => {
       );
       const res = await request(
         "DELETE",
-        "/api/v1/projects/p1/registry/installs/rs1"
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs/rs1"
       );
       expect(res.status).toBe(404);
       expect(await res.json()).toMatchObject({
@@ -676,7 +676,7 @@ describe("v1 registry", () => {
     it("rejects unknown body fields on directory install", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { body: { catalogServerId: "cs1", extra: true } }
       );
       expect(res.status).toBe(400);
@@ -686,7 +686,7 @@ describe("v1 registry", () => {
     it("rejects unknown body fields on card install", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs",
         { body: { registryServerId: "rs1", extra: true } }
       );
       expect(res.status).toBe(400);
@@ -696,7 +696,7 @@ describe("v1 registry", () => {
     it("rejects a non-number expectedUpdatedAt on card install", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/registry/installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs",
         { body: { registryServerId: "rs1", expectedUpdatedAt: "not-a-number" } }
       );
       expect(res.status).toBe(400);
@@ -704,20 +704,20 @@ describe("v1 registry", () => {
     });
 
     it.each([
-      ["/api/v1/projects/p1/registry/directory-installs", { catalogServerId: "" }],
-      ["/api/v1/projects/p1/registry/directory-installs", { catalogServerId: "   " }],
+      ["/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs", { catalogServerId: "" }],
+      ["/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs", { catalogServerId: "   " }],
       [
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { catalogServerId: "cs1", endpointUrl: "" },
       ],
       [
-        "/api/v1/projects/p1/registry/directory-installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/directory-installs",
         { catalogServerId: "cs1", expectedContentHash: "" },
       ],
-      ["/api/v1/projects/p1/registry/installs", { registryServerId: "" }],
-      ["/api/v1/projects/p1/registry/installs", { registryServerId: "   " }],
+      ["/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", { registryServerId: "" }],
+      ["/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs", { registryServerId: "   " }],
       [
-        "/api/v1/projects/p1/registry/installs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs",
         { registryServerId: "rs1", expectedUpdatedAt: null },
       ],
     ])("rejects empty or null install fields %j", async (path, body) => {
@@ -730,12 +730,12 @@ describe("v1 registry", () => {
       convexMutationMock.mockResolvedValue({ deleted: true });
       const res = await request(
         "DELETE",
-        "/api/v1/projects/p1/registry/installs/rs1"
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/registry/installs/rs1"
       );
       expect(res.status).toBe(200);
       expect(convexMutationMock).toHaveBeenCalledWith(
         "registryServers:disconnectRegistryServer",
-        { projectId: "p1", registryServerId: "rs1" }
+        { projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", registryServerId: "rs1" }
       );
     });
   });

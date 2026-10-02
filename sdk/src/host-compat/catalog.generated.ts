@@ -421,7 +421,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788307200000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -756,7 +756,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788393600000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -820,7 +820,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: {
           touch: false,
@@ -1034,6 +1034,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: true,
             availableDisplayModes: ["inline"],
             toolCancelled: true,
             hostContextChanged: true,
@@ -1089,7 +1090,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788393600000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1151,13 +1152,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         paginationTraversal: "full",
         toolListChanged: {
           listens: true,
+          refetches: true,
         },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.246",
+            version: "2.1.259",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1366,7 +1368,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1788307200000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1427,7 +1429,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostContext: {
         theme: "dark",
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: {
           height: 400,
           maxWidth: 768,
@@ -1523,7 +1525,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
-        platform: "desktop",
+        platform: "web",
         deviceCapabilities: {
           touch: false,
           hover: true,
@@ -1540,7 +1542,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
         toolListChanged: {
-          listens: false,
+          listens: true,
         },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
@@ -1553,7 +1555,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "chatgpt",
-              version: "0.0.1",
+              version: "unknown",
             },
           },
           compatRuntime: {
@@ -1582,7 +1584,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               mode: "custom",
               allow: {
                 microphone: true,
-                clipboardWrite: true,
               },
             },
             browserStorage: {
@@ -1597,7 +1598,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             ],
           },
           mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: true,
             hostContextChanged: true,
@@ -2514,7 +2516,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2604,7 +2606,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "Cursor",
-              version: "3.14.27",
+              version: "3.21.16",
             },
           },
           sandbox: {
@@ -2777,7 +2779,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1788307200000,
+      verifiedAt: 1790640000000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -2903,8 +2905,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--color-ring-warning": "rgb(255, 133, 73)",
           "--font-sans": '-apple-system, "system-ui", "Segoe UI", sans-serif',
           "--font-mono":
-            'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-          "--font-weight-normal": "400",
+            'ui-monospace, SFMono-Regular, "SF Mono", menlo, consolas, "Liberation Mono", monospace',
+          "--font-weight-normal": "430",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
           "--font-weight-bold": "700",
@@ -3064,8 +3066,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--color-ring-warning": "rgb(255, 133, 73)",
             "--font-sans": '-apple-system, "system-ui", "Segoe UI", sans-serif',
             "--font-mono":
-              'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-            "--font-weight-normal": "400",
+              'ui-monospace, SFMono-Regular, "SF Mono", menlo, consolas, "Liberation Mono", monospace',
+            "--font-weight-normal": "430",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
             "--font-weight-bold": "700",
@@ -3117,7 +3119,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.150.0-alpha.12.2",
+            version: "0.158.0-alpha.2.1",
           },
         },
         apps: {
@@ -3138,6 +3140,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "base-uri": ["'none'"],
               },
             },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
             browserStorage: {
               localStorage: true,
               sessionStorage: true,
@@ -3145,7 +3151,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
-            safeAreaInsets: false,
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -3215,7 +3221,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-06-18",
         "2025-11-25",
       ],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1790640000000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
         sourceUrl:
@@ -3562,7 +3568,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         paginationTraversal: "full",
         toolListChanged: {
           listens: false,
-          refetches: true,
         },
         initialize: {
           supportedProtocolVersions: [
@@ -3801,7 +3806,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1790640000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -3998,14 +4003,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "Visual Studio Code",
-            version: "1.134.0",
+            version: "1.136.1",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
               name: "Visual Studio Code",
-              version: "1.134.0",
+              version: "1.136.1",
             },
           },
           compatRuntime: {
