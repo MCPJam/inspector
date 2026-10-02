@@ -433,6 +433,49 @@ describe("Host — toJSON() round-trips", () => {
     expect(json2.skillSelection).toEqual({ mode: "explicit", skillIds: [] });
     expect(new Host(json2).toJSON()).toEqual(json2);
   });
+
+  it("round-trips the four mid-session sign-in knobs", () => {
+    const host = new Host({ style: "claude-code", model: "test-model" });
+    host.mcp.unauthorizedChallenge = "notify";
+    host.mcp.unauthorizedChallengeTrigger = "bearer-header";
+    host.mcp.toolResultAuthChallenge = "prompt";
+    host.mcp.toolResultAuthChallengeTrigger = "oauth2-scheme";
+
+    const json = host.toJSON();
+    expect(json.mcp).toEqual({
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "oauth2-scheme",
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "bearer-header",
+    });
+    expect(new Host(json).toJSON()).toEqual(json);
+  });
+
+  it("keeps mcp present when a sign-in knob is the only field set", () => {
+    // isEmptyHostMcp reads CONFORMANCE_PROFILE_KEYS; a profile carrying only
+    // the `_meta` action must not collapse to "untouched".
+    const host = new Host({ style: "chatgpt", model: "test-model" });
+    host.mcp.toolResultAuthChallenge = "prompt";
+    expect(host.toJSON().mcp).toEqual({ toolResultAuthChallenge: "prompt" });
+  });
+
+  it("keeps an explicit absent-value sign-in literal distinct from absence", () => {
+    const explicit = new Host({ style: "mcpjam", model: "test-model" });
+    explicit.mcp.toolResultAuthChallenge = "passthrough";
+    const absent = new Host({ style: "mcpjam", model: "test-model" });
+    expect(explicit.toJSON().mcp).toEqual({
+      toolResultAuthChallenge: "passthrough",
+    });
+    expect(absent.toJSON().mcp).toBeUndefined();
+  });
+
+  it("rejects an unknown sign-in literal at toJSON()", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    (host.mcp as Record<string, unknown>).unauthorizedChallenge = "retry";
+    expect(() => host.toJSON()).toThrow(
+      /mcpProfile\.unauthorizedChallenge must be one of prompt, notify, passthrough/
+    );
+  });
 });
 
 describe("Host — deterministic under post-construction input mutation", () => {

@@ -626,6 +626,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -961,6 +962,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1154,6 +1156,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           listens: true,
           refetches: true,
         },
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1544,6 +1548,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         toolListChanged: {
           listens: true,
         },
+        toolResultAuthChallenge: "prompt",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
