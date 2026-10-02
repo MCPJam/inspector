@@ -53,6 +53,7 @@ function mockBackend(opts: {
   hasHeaders?: boolean;
   oauthAccessToken?: string | null;
   revealHeaders?: Record<string, string>;
+  credentialHeaderNames?: string[];
   /** Extra `serverConfig` fields — the XAA rows need `authMethod`/`registrationMode`. */
   serverConfigExtra?: Record<string, unknown>;
   /** Answers for any other URL (the MCP server itself, in transport tests). */
@@ -66,7 +67,10 @@ function mockBackend(opts: {
       revealBodies.push(body);
       const targetOrigin =
         typeof body.targetUrl === "string" ? originOf(body.targetUrl) : null;
-      if (!opts.boundOrigin || targetOrigin !== opts.boundOrigin) {
+      if (
+        opts.credentialHeaderNames?.length !== 0 &&
+        (!opts.boundOrigin || targetOrigin !== opts.boundOrigin)
+      ) {
         return Response.json(
           {
             success: false,
@@ -74,7 +78,9 @@ function mockBackend(opts: {
             secretOriginMismatch: true,
             boundOrigin: opts.boundOrigin ?? null,
             targetOrigin,
-            error: `Stored credentials were saved for ${opts.boundOrigin ?? "no origin"}, not ${targetOrigin}. Re-enter them for the new address.`,
+            error: `Stored credentials were saved for ${
+              opts.boundOrigin ?? "no origin"
+            }, not ${targetOrigin}. Re-enter them for the new address.`,
           },
           { status: 403 },
         );
@@ -83,7 +89,8 @@ function mockBackend(opts: {
         success: true,
         env: null,
         headers: opts.revealHeaders ?? { Authorization: SECRET_HEADER_VALUE },
-        boundOrigins: [opts.boundOrigin],
+        boundOrigins: opts.boundOrigin ? [opts.boundOrigin] : [],
+        credentialHeaderNames: opts.credentialHeaderNames,
       });
     }
     if (!target.includes("example.convex.site") && opts.upstream) {
@@ -235,7 +242,8 @@ describe("stored headers at connect time", () => {
             code: "export_denied",
             exportDenied: true,
             policy: "credentialExportPolicy",
-            error: "Your organization's credential export policy is set to deny.",
+            error:
+              "Your organization's credential export policy is set to deny.",
           },
           { status: 403 },
         );
@@ -300,12 +308,14 @@ describe("stored headers on the wire", () => {
   async function dialThroughServer1(
     redirectTo: string,
     headers: Record<string, string>,
+    credentialHeaderNames?: string[],
   ) {
     const hops: Array<{ url: string; headers: Headers }> = [];
     mockBackend({
       url: "https://owner.example.com/mcp",
       boundOrigin: "https://owner.example.com",
       revealHeaders: headers,
+      credentialHeaderNames,
       upstream: async (url, init) => {
         hops.push({ url, headers: new Headers(init?.headers) });
         if (url === "https://owner.example.com/mcp") {
@@ -328,6 +338,40 @@ describe("stored headers on the wire", () => {
     return hops;
   }
 
+  it("sends public plugin headers without an encrypted credential", async () => {
+    const sent: Array<string | null> = [];
+    mockBackend({
+      url: "https://owner.example.com/mcp",
+      credentialHeaderNames: [],
+      revealHeaders: { "X-Api-Version": "2" },
+      upstream: async (_url, init) => {
+        sent.push(new Headers(init?.headers).get("x-api-version"));
+        return new Response("ok");
+      },
+    });
+    await connect();
+    const config = configForServer1();
+    await config.baseFetch("https://owner.example.com/mcp", {
+      headers: config.requestInit.headers,
+    });
+    expect(sent).toEqual(["2"]);
+  });
+
+  it("keeps public literals while stripping stored credentials on cross-origin redirects", async () => {
+    const hops = await dialThroughServer1(
+      "https://collector.example/redirect",
+      {
+        "X-Api-Version": "2",
+        "X-Api-Key": "secret-canary",
+      },
+      ["X-Api-Key"],
+    );
+    expect(hops[0]!.headers.get("x-api-version")).toBe("2");
+    expect(hops[0]!.headers.get("x-api-key")).toBe("secret-canary");
+    expect(hops[1]!.headers.get("x-api-version")).toBe("2");
+    expect(hops[1]!.headers.get("x-api-key")).toBeNull();
+  });
+
   it("does not carry a stored header across a redirect to another origin", async () => {
     // Fetch drops `Authorization` on a cross-origin redirect, but a stored
     // credential is just as often `x-api-key` — which nothing generic strips.
@@ -346,10 +390,9 @@ describe("stored headers on the wire", () => {
   });
 
   it("keeps the stored header on a same-origin redirect", async () => {
-    const hops = await dialThroughServer1(
-      "https://owner.example.com/mcp/v2",
-      { "x-api-key": "stored-api-key" },
-    );
+    const hops = await dialThroughServer1("https://owner.example.com/mcp/v2", {
+      "x-api-key": "stored-api-key",
+    });
 
     expect(hops[1]!.url).toBe("https://owner.example.com/mcp/v2");
     expect(hops[1]!.headers.get("x-api-key")).toBe("stored-api-key");
@@ -460,8 +503,12 @@ describe("credential binding scope — what it must NOT refuse", () => {
     for (const registrationMode of ["preregistered", "dcr"]) {
       const { revealBodies } = mockBackend({
         url: "https://mcp.example.com/mcp",
-          hasHeaders: false,
-        serverConfigExtra: { authMethod: "xaa", useXaa: true, registrationMode },
+        hasHeaders: false,
+        serverConfigExtra: {
+          authMethod: "xaa",
+          useXaa: true,
+          registrationMode,
+        },
       });
 
       // Same probe as the CIMD case: the issuer check sits right after the gate.

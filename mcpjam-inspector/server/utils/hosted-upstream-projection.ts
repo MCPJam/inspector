@@ -184,10 +184,19 @@ const JsonRpcCodeSchema = z
   .max(2_147_483_647);
 
 /**
+ * A JSON-RPC error code: any 32-bit integer, since servers define their own
+ * codes outside the reserved range. `undefined` for anything else.
+ */
+export function parseJsonRpcCode(value: unknown): number | undefined {
+  const parsed = JsonRpcCodeSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
  * Fixed wording per JSON-RPC error code. The server's own `message` and
  * `data` are never reported.
  */
-function jsonRpcErrorMessage(code: number): string {
+export function jsonRpcErrorMessage(code: number): string {
   switch (code) {
     case -32700:
       return "Parse error";
@@ -212,9 +221,9 @@ function projectJsonRpcError(
   value: unknown,
 ): JsonRpcErrorProjection | undefined {
   if (!isPlainRecord(value)) return undefined;
-  const code = JsonRpcCodeSchema.safeParse(value.code);
-  if (!code.success || typeof value.message !== "string") return undefined;
-  return { code: code.data, message: jsonRpcErrorMessage(code.data) };
+  const code = parseJsonRpcCode(value.code);
+  if (code === undefined || typeof value.message !== "string") return undefined;
+  return { code, message: jsonRpcErrorMessage(code) };
 }
 
 const JsonRpcIdSchema = z.union([
@@ -624,9 +633,14 @@ const PROTOCOL_REQUEST_HEADERS: ReadonlySet<string> = new Set([
  * cookies, and any header a server was configured with — is replaced with
  * {@link REDACTED_HEADER_VALUE}, whatever the name, independently of any
  * redaction applied upstream of this function.
+ *
+ * `echoes` names headers, lowercased, that mirror a value the response
+ * already reports; such a header keeps its value only when it is exactly that
+ * value.
  */
 export function projectRequestHeaders(
   headers: unknown,
+  echoes?: Readonly<Record<string, string | undefined>>,
 ): Record<string, string> {
   const projected: Record<string, string> = {};
   if (!isPlainRecord(headers)) return projected;
@@ -636,11 +650,13 @@ export function projectRequestHeaders(
   )) {
     const boundedName = boundText(name, MAX_HEADER_NAME_LENGTH);
     if (boundedName === undefined || typeof value !== "string") continue;
-    projected[boundedName] = PROTOCOL_REQUEST_HEADERS.has(
-      boundedName.toLowerCase(),
-    )
+    const key = boundedName.toLowerCase();
+    const echoed = echoes?.[key];
+    projected[boundedName] = PROTOCOL_REQUEST_HEADERS.has(key)
       ? (boundText(value, MAX_HEADER_VALUE_LENGTH) ?? "")
-      : REDACTED_HEADER_VALUE;
+      : echoed !== undefined && value === echoed
+        ? echoed
+        : REDACTED_HEADER_VALUE;
   }
   return projected;
 }
@@ -857,7 +873,11 @@ function projectHttpLogEvent(
       request: {
         method: boundText(request.method, MAX_REQUEST_METHOD_LENGTH) ?? "",
         url: boundText(request.url, MAX_URL_LENGTH) ?? "",
-        headers: projectRequestHeaders(request.headers),
+        // `Mcp-Method` mirrors the request's JSON-RPC method, which
+        // `bodyValues` reports; its value is kept when it is that method.
+        headers: projectRequestHeaders(request.headers, {
+          "mcp-method": bodyValues?.method,
+        }),
       },
       ...(response
         ? {

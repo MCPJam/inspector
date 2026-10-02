@@ -258,9 +258,8 @@ describe("release blockers", () => {
     ]);
   });
 
-  it("FAILS a digest table stamped at another version, dark or not", () => {
-    // The table is what the NEXT release inherits, and it points every install
-    // at an asset URL this release does not publish.
+  it("allows Inspector and pack versions to differ", () => {
+    // Packs live on their own release tags.
     const blockers = blockersFor({
       harnessId: "claude-code",
       version: "3.5.0",
@@ -268,9 +267,7 @@ describe("release blockers", () => {
       records: records({}),
       expectedVersion: "3.4.0",
     });
-    expect(blockers).toContainEqual(
-      expect.objectContaining({ kind: "pack-version-mismatch", blocking: true }),
-    );
+    expect(blockers.filter((blocker) => blocker.blocking)).toEqual([]);
   });
 
   it("passes a release whose offer is fully backed", () => {

@@ -273,6 +273,19 @@ describe("startSuiteRunWithRecorder", () => {
     );
   });
 
+  it.each(["local", "hosted"] as const)("uses the backend's frozen %s venue for fresh and deduped runs", async (venue) => {
+    for (const deduped of [false, true]) {
+      const result = await startSuiteRunWithRecorder({
+        convexClient: { mutation: vi.fn().mockResolvedValue({
+          runId: "run-1", testCases: [], deduped, status: "running",
+          configSnapshot: { environment: { servers: [] }, executionVenue: venue },
+        }), action: vi.fn() } as any,
+        suiteId: "suite-1", serverIds: [], runtimeVenue: venue === "local" ? "hosted" : "local",
+      });
+      expect(result.harnessRuntimeVenue).toBe(venue);
+    }
+  });
+
   it("runs against the environment Convex snapshotted for the suite run", async () => {
     const snapshotEnvironment = {
       servers: ["friendly-server-name"],
