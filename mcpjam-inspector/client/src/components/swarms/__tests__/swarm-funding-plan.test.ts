@@ -319,7 +319,7 @@ describe("creditFundingExplanation", () => {
 
     it.each([
       ["harness_target", /it runs a coding-agent harness/],
-      ["computer_target", /it uses a computer or shell/],
+      ["computer_target", /it uses a computer, shell or browser/],
       ["unresolved", /its setup could not be read/],
     ])("%s", (reason, clause) => {
       expect(explain([{ targetId: "a", reason }])).toMatch(clause);
