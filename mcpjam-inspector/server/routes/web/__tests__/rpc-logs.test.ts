@@ -363,7 +363,7 @@ describe("web hosted rpc logs", () => {
     });
   });
 
-  it("names the server whose authorization refused the tools batch", async () => {
+  it("answers a server whose authorization was refused inside the tools batch", async () => {
     const app = createRpcLogsTestApp();
 
     const response = await postJson(
@@ -378,16 +378,49 @@ describe("web hosted rpc logs", () => {
     );
 
     const { status, data } = await expectJson<{
-      details?: Record<string, unknown>;
+      results: Record<string, { tools: Array<{ name: string }> }>;
+      errors: Record<string, { status: number; code: string; message: string }>;
+      _rpcLogs: Array<{ serverId: string }>;
     }>(response);
 
-    // The batch is authorized as a whole, so one refusal answers the request.
-    // It names its server, which is what lets the client keep the refusal
-    // for that server and ask again for the rest.
-    expect(status).toBe(403);
-    expect(data.details).toEqual({
-      serverId: "srv-denied",
-      serverName: "Denied",
+    // The connection records the refusal per server instead of failing the
+    // batch on it, and the route answers it the way its own request would
+    // have been answered, next to the servers it did list.
+    expect(status).toBe(200);
+    expect(Object.keys(data.results)).toEqual(["srv-1"]);
+    expect(data.errors).toEqual({
+      "srv-denied": {
+        status: 403,
+        code: "FORBIDDEN",
+        message: "Access denied",
+      },
+    });
+    expect(data._rpcLogs.every((log) => log.serverId === "srv-1")).toBe(true);
+  });
+
+  it("answers a tools batch whose every server was refused", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-denied"],
+        serverNames: ["Denied"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, unknown>;
+      errors: Record<string, { status: number }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(data.results).toEqual({});
+    expect(data.errors).toEqual({
+      "srv-denied": expect.objectContaining({ status: 403 }),
     });
   });
 
