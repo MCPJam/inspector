@@ -919,6 +919,17 @@ export function useLocalHarnessController(
         treeDigest: approval.expectations.treeDigest,
       },
     });
+    // The harness changed while the install was being started: its attempt
+    // and status belong to a setup that is no longer on screen, and adopting
+    // them would make the new harness's own polls look superseded.
+    if (workspaceHarnessRef.current !== harnessId) {
+      return {
+        ok: false as const,
+        kind: "conflict" as const,
+        status: null,
+        message: "The client changed while the install was starting.",
+      };
+    }
     if (!result.ok) return result;
     // The acknowledgement names the attempt to observe. Selecting it here,
     // after awaiting, is what keeps a late poll from a previous attempt from

@@ -1182,6 +1182,35 @@ describe("a Codex controller is its own harness", () => {
     await waitFor(() => expect(rendered.result.current.runtimeStatus?.percent).toBe(40), { timeout: 4_000 });
   });
 
+  it("drops an install acknowledgement that arrives after the harness changed", async () => {
+    let release!: (value: unknown) => void;
+    startInstallMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    let pending!: Promise<{ ok: boolean }>;
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+      rendered.result.current.captureApproval({ expectations: EXPECTATIONS, scopeKey: "host-1:claude-code" });
+      pending = rendered.result.current.startInstall();
+    });
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.harnessId).toBe("codex"));
+    let outcome!: { ok: boolean };
+    await act(async () => {
+      release({
+        ok: true,
+        kind: "accepted",
+        attemptId: "att_cc",
+        status: { state: "downloading", packVersion: "3.4.0", percent: 0, attemptId: "att_cc" },
+        statusUrl: "/s",
+        retryAfterSeconds: 1,
+      });
+      outcome = await pending;
+    });
+    expect(outcome.ok).toBe(false);
+    expect(rendered.result.current.runtimeStatus?.attemptId).not.toBe("att_cc");
+  });
+
   it("does not carry a folder chosen for Claude Code into Codex", async () => {
     const rendered = render();
     await waitFor(() => expect(rendered.result.current.loading).toBe(false));
