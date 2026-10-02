@@ -6,7 +6,59 @@ export type LiveChatTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Reasoning (thinking) tokens, already counted in `outputTokens`. Absent when the provider reported none. */
+  reasoningTokens?: number;
+  /** Input tokens read from the provider's prompt cache, already counted in `inputTokens`. */
+  cachedInputTokens?: number;
 };
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * Converts an AI SDK `usage` / `totalUsage` object to the trace shape. Reads
+ * the v6 detail objects (`outputTokenDetails.reasoningTokens`,
+ * `inputTokenDetails.cacheReadTokens`) first and the older flat fields
+ * (`reasoningTokens`, `cachedInputTokens`) second, the same order the
+ * backend's `extractTokenUsageSnapshot` uses. A reported zero is kept; an
+ * unreported field is left out.
+ */
+export function liveChatTraceUsageFromAiSdk(
+  usage: unknown,
+): LiveChatTraceUsage | undefined {
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return undefined;
+  }
+  const record = usage as Record<string, unknown>;
+  const outputDetails =
+    record.outputTokenDetails && typeof record.outputTokenDetails === "object"
+      ? (record.outputTokenDetails as Record<string, unknown>)
+      : undefined;
+  const inputDetails =
+    record.inputTokenDetails && typeof record.inputTokenDetails === "object"
+      ? (record.inputTokenDetails as Record<string, unknown>)
+      : undefined;
+  const next: LiveChatTraceUsage = {};
+  const inputTokens = finiteNumber(record.inputTokens);
+  if (inputTokens !== undefined) next.inputTokens = inputTokens;
+  const outputTokens = finiteNumber(record.outputTokens);
+  if (outputTokens !== undefined) next.outputTokens = outputTokens;
+  const totalTokens = finiteNumber(record.totalTokens);
+  if (totalTokens !== undefined) next.totalTokens = totalTokens;
+  const reasoningTokens =
+    finiteNumber(outputDetails?.reasoningTokens) ??
+    finiteNumber(record.reasoningTokens);
+  if (reasoningTokens !== undefined) next.reasoningTokens = reasoningTokens;
+  const cachedInputTokens =
+    finiteNumber(inputDetails?.cacheReadTokens) ??
+    finiteNumber(record.cachedInputTokens);
+  if (cachedInputTokens !== undefined)
+    next.cachedInputTokens = cachedInputTokens;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
 
 export type LiveChatTraceToolCall = {
   toolCallId?: string;
@@ -155,6 +207,10 @@ export function mergeLiveChatTraceUsage(
   const inputTokens = (base?.inputTokens ?? 0) + (delta?.inputTokens ?? 0);
   const outputTokens = (base?.outputTokens ?? 0) + (delta?.outputTokens ?? 0);
   const totalTokens = (base?.totalTokens ?? 0) + (delta?.totalTokens ?? 0);
+  const reasoningTokens =
+    (base?.reasoningTokens ?? 0) + (delta?.reasoningTokens ?? 0);
+  const cachedInputTokens =
+    (base?.cachedInputTokens ?? 0) + (delta?.cachedInputTokens ?? 0);
 
   if (inputTokens > 0) {
     next.inputTokens = inputTokens;
@@ -164,6 +220,12 @@ export function mergeLiveChatTraceUsage(
   }
   if (totalTokens > 0) {
     next.totalTokens = totalTokens;
+  }
+  if (reasoningTokens > 0) {
+    next.reasoningTokens = reasoningTokens;
+  }
+  if (cachedInputTokens > 0) {
+    next.cachedInputTokens = cachedInputTokens;
   }
 
   return Object.keys(next).length > 0 ? next : undefined;
