@@ -430,6 +430,30 @@ describe("model-factory", () => {
           baseURL: "https://custom.anthropic.com",
         });
       });
+
+      it("sends the reviewed native id for a canonical spelling", () => {
+        // `claude-sonnet-4.5` is the catalog's dotted spelling; api.anthropic.com
+        // serves the dashed `claude-sonnet-4-5`.
+        expect(
+          createModelFromString("anthropic/claude-sonnet-4.5", defaultOptions)
+        ).toMatchObject({ modelId: "claude-sonnet-4-5" });
+        expect(
+          createModelFromString("anthropic/claude-haiku-4.5", defaultOptions)
+        ).toMatchObject({ modelId: "claude-haiku-4-5" });
+      });
+
+      it("passes native, snapshot and unknown ids through unchanged", () => {
+        for (const id of [
+          "claude-sonnet-4-5",
+          "claude-sonnet-4-5-20250929",
+          "claude-3-opus",
+          "claude-opus-9",
+        ]) {
+          expect(
+            createModelFromString(`anthropic/${id}`, defaultOptions)
+          ).toMatchObject({ modelId: id });
+        }
+      });
     });
 
     describe("openai provider", () => {
@@ -737,6 +761,14 @@ describe("model-factory", () => {
       expect(passed.apiKey).not.toBe("sk_test_key");
       // The full vendor id reaches the model, not the bare model name.
       expect(model).toMatchObject({ modelId: "anthropic/claude-sonnet-4.5" });
+    });
+
+    it("keeps the canonical id on the hosted route — no native mapping", () => {
+      // The proxy's allowlist is keyed by the canonical id; the BYOK native
+      // mapping must never leak onto this path.
+      expect(
+        createModelFromString("mcpjam/anthropic/claude-haiku-4.5", options)
+      ).toMatchObject({ modelId: "anthropic/claude-haiku-4.5" });
     });
 
     it("builds an OpenAI provider for a gpt model", () => {

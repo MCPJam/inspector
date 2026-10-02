@@ -214,9 +214,11 @@ Each host style ships with a distinct `hostCapabilities` preset. Switching from 
 | ------- | ---------------------- | --------------------------------- |
 | Claude  | Included               | `["inline", "fullscreen", "pip"]` |
 | Copilot | Omitted (`undefined`)  | `["inline", "fullscreen"]`        |
-| ChatGPT | Included               | `["inline", "fullscreen", "pip"]` |
+| ChatGPT | Included               | `["inline", "fullscreen"]`        |
 
 **Copilot** follows Microsoft 365 Copilot's published bridge: `toolInfo` is not delivered and `pip` is not advertised, so a widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`.
+
+**ChatGPT** (web) advertises `inline` and `fullscreen` only — `pip` is not offered by the ChatGPT web host (probe: 2026-09-29).
 
 ### Host Capabilities
 

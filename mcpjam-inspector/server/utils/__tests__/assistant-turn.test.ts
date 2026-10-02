@@ -490,6 +490,73 @@ describe("runAssistantTurn", () => {
         harness: harness as any,
       });
 
+    describe("reasoning effort (refuse, never drop)", () => {
+      const HOSTED = {
+        id: "anthropic/claude-haiku-4.5",
+        provider: "anthropic",
+        name: "Haiku",
+      } as ModelDefinition;
+      const withEffort = (
+        extra: Partial<Parameters<typeof runAssistantTurn>[0]>
+      ) =>
+        runAssistantTurn({
+          messages: [{ role: "user", content: "Hi." }] as any,
+          modelDefinition: HOSTED,
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          authContext: { kind: "user_bearer", token: "Bearer test-token" },
+          sourceType: "eval",
+          origin: "scenario",
+          approvalMode: "auto-deny",
+          streamSink: "none",
+          persistMode: "caller",
+          harness: "claude-code" as any,
+          ...extra,
+        });
+
+      it("refuses a typed effort the adapter has not verified, before any engine runs", async () => {
+        global.fetch = vi.fn();
+        runHarnessTurnMock.mockClear();
+        await expect(withEffort({ reasoningEffort: "high" })).rejects.toThrow(
+          /which isn't available: the Claude Code harness can't apply a reasoning effort yet \("high"\)/
+        );
+        expect(runHarnessTurnMock).not.toHaveBeenCalled();
+        expect(global.fetch).not.toHaveBeenCalled();
+      });
+
+      it("refuses the effort on the selection forwarded in extraBodyFields too", async () => {
+        global.fetch = vi.fn();
+        runHarnessTurnMock.mockClear();
+        await expect(
+          withEffort({
+            extraBodyFields: {
+              modelSelection: {
+                modelId: HOSTED.id,
+                source: "hosted",
+                settings: { reasoningEffort: "low" },
+                fallback: { provider: "none", model: "none" },
+              },
+            },
+          })
+        ).rejects.toThrow(/reasoning effort/);
+        expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      });
+
+      it("control: the same turn with no effort reaches the harness", async () => {
+        global.fetch = vi.fn();
+        runHarnessTurnMock.mockClear();
+        runHarnessTurnMock.mockResolvedValue({
+          messageHistory: [],
+          aborted: false,
+        });
+        await withEffort({}).catch(() => undefined);
+        expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("throws the pre-flight's reason for a model the runtime can't run", async () => {
       global.fetch = vi.fn();
       await expect(
