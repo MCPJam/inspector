@@ -74,6 +74,7 @@ import {
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
   sponsoredPlatformFailure,
+  unstartedSponsoredStopMessage,
   type SponsoredPlatformFailure,
   type SwarmAttemptFunding,
   type SwarmSessionFunding,
@@ -2086,12 +2087,13 @@ async function runJourneyFanOut(
               }
             : // Sponsored conversations the platform could not start: closed
               // as failed with the platform reason (the backend refunds the
-              // never-started ones).
+              // never-started ones). Every worker has finished, so these never
+              // ran, and the sentence says nothing was charged for them.
               sponsoredStop
               ? {
                   terminalStatus: "failed" as const,
                   errorCode: sponsoredStop.code,
-                  errorMessage: sponsoredStop.message,
+                  errorMessage: unstartedSponsoredStopMessage(sponsoredStop),
                 }
               : undefined;
     // The platform stop is the run's terminal only when nothing else is: a
