@@ -33,7 +33,7 @@ type TargetMatrixHost = Pick<
    * when known. When the caller does not supply it the matrix reads it from
    * the host's config, so the model pickers can disable what it cannot run.
    */
-  harness?: HarnessModelTarget | null;
+  harness?: HarnessModelTarget | HostListItem["harness"] | null;
 };
 
 type TargetMatrixModel = {
@@ -147,7 +147,7 @@ export function EvalTargetMatrix({
   const harnessFor = (hostId: string): HarnessModelTarget | null | undefined => {
     const host = hosts.find((candidate) => candidate.hostId === hostId);
     return host?.harness !== undefined
-      ? host.harness
+      ? (typeof host.harness === "string" ? { harnessId: host.harness } : host.harness)
       : readHarnessByHost[hostId];
   };
   const rows = buildEvalTargetMatrixRows({

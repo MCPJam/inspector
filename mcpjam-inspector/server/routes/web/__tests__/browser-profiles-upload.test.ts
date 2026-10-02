@@ -92,8 +92,15 @@ describe("POST /api/web/browser-profiles/upload", () => {
     streamedBytes = null;
     fetchMock = vi.fn(async (url: string, init: RequestInit) => {
       if (url.endsWith("/browser-profiles/upload-url")) {
-        return json(200, { uploadUrl: STORAGE_DESTINATION });
+        return json(200, {
+          uploadUrl: STORAGE_DESTINATION,
+          ...(url.includes("/internal/")
+            ? { uploadGrantId: "grant-profile" }
+            : {}),
+        });
       }
+      if (url.endsWith("/internal/v1/uploads/complete"))
+        return json(200, { ok: true });
       if (url === STORAGE_DESTINATION) {
         streamedBytes = await readAll(init.body);
         return json(200, { storageId: "kg2_profile_archive" });
@@ -123,7 +130,7 @@ describe("POST /api/web/browser-profiles/upload", () => {
     expect(text).not.toContain("storage.example.com");
     expect(text).not.toContain("UNEXPECTED_MARKER");
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const [mintUrl, mintInit] = fetchMock.mock.calls[0] as FetchCall;
     expect(mintUrl).toBe(
       `${CONVEX_HTTP_URL}/internal/v1/browser-profiles/upload-url`,
@@ -147,6 +154,29 @@ describe("POST /api/web/browser-profiles/upload", () => {
       "Content-Length": String(archive.byteLength),
     });
     expect(streamedBytes).toEqual(archive);
+    const [receiptUrl, receiptInit] = fetchMock.mock.calls[2] as FetchCall;
+    expect(receiptUrl).toBe(`${CONVEX_HTTP_URL}/internal/v1/uploads/complete`);
+    expect(receiptInit.headers).toMatchObject({
+      Authorization: "Bearer user-bearer",
+      "x-inspector-service-token": "service-token-1",
+    });
+    expect(JSON.parse(String(receiptInit.body))).toEqual({
+      uploadGrantId: "grant-profile",
+      storageId: "kg2_profile_archive",
+    });
+    expect(text).not.toContain("grant-profile");
+  });
+
+  it("does not expose the storage id if confirmation fails", async () => {
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init: RequestInit) =>
+      url.endsWith("/internal/v1/uploads/complete")
+        ? Promise.resolve(json(400, { error: "receipt refused" }))
+        : original(url, init),
+    );
+    const res = await upload(makeApp(), new Uint8Array(8));
+    expect(res.status).toBe(502);
+    expect(await res.text()).not.toContain("kg2_profile_archive");
   });
 
   it("accepts an archive above the 1MB /api/web body cap", async () => {
@@ -279,22 +309,54 @@ describe("POST /api/web/browser-profiles/upload", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("asks the per-user route on a local install without the service credential", async () => {
+  it("says saving is unavailable on a local install without the service credential, and asks the backend nothing", async () => {
     hostedMode.value = false;
     delete process.env.INSPECTOR_SERVICE_TOKEN;
 
     const res = await upload(makeApp(), new Uint8Array([1, 2, 3]));
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ storageId: "kg2_profile_archive" });
-    const [mintUrl, mintInit] = fetchMock.mock.calls[0] as FetchCall;
-    expect(mintUrl).toBe(`${CONVEX_HTTP_URL}/browser-profiles/upload-url`);
-    expect(mintInit.headers).toMatchObject({
-      Authorization: "Bearer user-bearer",
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      message: "Saving browser profiles isn't available on this server.",
     });
-    expect(mintInit.headers).not.toHaveProperty("x-inspector-service-token");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamedBytes).toBeNull();
+  });
+
+  it("uses the service route on a local install that holds the credential", async () => {
+    hostedMode.value = false;
+
+    const res = await upload(makeApp(), new Uint8Array([1, 2, 3]));
+
+    expect(res.status).toBe(200);
+    const [mintUrl] = fetchMock.mock.calls[0] as FetchCall;
+    expect(mintUrl).toBe(
+      `${CONVEX_HTTP_URL}/internal/v1/browser-profiles/upload-url`,
+    );
     expect(streamedBytes).toEqual(new Uint8Array([1, 2, 3]));
   });
+
+  it.each([
+    ["with", "service-token-1", true],
+    ["without", undefined, false],
+  ])(
+    "reports whether archives can be saved and loaded %s the service credential",
+    async (_label, token, archives) => {
+      hostedMode.value = false;
+      if (token === undefined) delete process.env.INSPECTOR_SERVICE_TOKEN;
+      else process.env.INSPECTOR_SERVICE_TOKEN = token;
+
+      const res = await makeApp().request(
+        "/api/web/browser-profiles/availability",
+        { headers: { Authorization: "Bearer user-bearer" } },
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ archives });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("no longer serves the upload-url operation to the browser", async () => {
     const res = await makeApp().request(

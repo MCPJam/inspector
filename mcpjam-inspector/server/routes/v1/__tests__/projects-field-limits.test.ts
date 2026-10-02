@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 /**
- * Length limits on the public project write routes (MJ-013). The backend
+ * Length limits on the public project write routes (MJ-025). The backend
  * enforces the same limits on every project write; these pin the gateway's
  * field-level 400 and that nothing oversized reaches Convex.
  */

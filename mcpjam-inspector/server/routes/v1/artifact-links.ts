@@ -7,24 +7,16 @@
  * verifying it. An artifact field holding anything else is reported the way
  * the backend reports a missing artifact, as `null`, rather than forwarded.
  *
- * The backend origin is the one this server is configured with
- * (`CONVEX_HTTP_URL`) or a Convex-hosted `https://*.convex.site` origin. Links
- * are minted on the backend's own HTTP host, which on a deployment reached
- * through a custom domain is Convex's host rather than the configured one, so
- * a Convex-hosted origin is accepted alongside the configured one.
+ * The backend origin is one this server is configured with: the HTTP-actions
+ * origin (`CONVEX_HTTP_URL`, a custom domain such as `rt-http.mcpjam.com`
+ * included) or, on Convex's default hosts, the `.convex.site` half of the
+ * configured deployment. See `getConfiguredConvexOrigins`. The backend mints
+ * these links on its `CONVEX_SITE_URL`, which a deployment points at the same
+ * origin.
  */
+import { getConfiguredConvexOrigins } from "../../env.js";
 
 const ARTIFACT_PATH = "/web/artifact";
-
-function configuredSiteOrigin(): string | null {
-  const raw = process.env.CONVEX_HTTP_URL?.trim();
-  if (!raw) return null;
-  try {
-    return new URL(raw).origin;
-  } catch {
-    return null;
-  }
-}
 
 /** `value` when it is a signed artifact link on the backend origin, else `null`. */
 export function publicArtifactLink(value: unknown): string | null {
@@ -39,11 +31,7 @@ export function publicArtifactLink(value: unknown): string | null {
   if (url.pathname !== ARTIFACT_PATH || !url.searchParams.get("t")) {
     return null;
   }
-  const siteOrigin = configuredSiteOrigin();
-  const onConfiguredSite = siteOrigin !== null && url.origin === siteOrigin;
-  const onConvexSite =
-    url.protocol === "https:" && url.hostname.endsWith(".convex.site");
-  return onConfiguredSite || onConvexSite ? value : null;
+  return getConfiguredConvexOrigins().http.includes(url.origin) ? value : null;
 }
 
 /**

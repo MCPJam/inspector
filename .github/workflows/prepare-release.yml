@@ -1,0 +1,147 @@
+name: Prepare release
+
+# Opens the version PR, which is how every release starts.
+#
+# `main` takes changes only through a reviewed pull request, with no bypass
+# for people or for CI, so Release cannot push its own version commit. This
+# workflow does that half up front instead: it runs `changeset version` on
+# current `main` and opens (or refreshes) a PR with the result. Merging that
+# PR is the release. release-trigger.yml starts Release as soon as `main` is
+# green with the new versions on it, and Release publishes the versions that
+# commit already carries and tags it, without writing to `main`.
+#
+# Soundcheck's "Start release" dispatches this. Dispatching again while the PR
+# is open regenerates it from the latest `main`, which also versions any
+# changesets merged since, and resets its checkboxes to these inputs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_backend_prod:
+        description: "Tick 'Deploy the backend to production' in the version PR"
+        required: false
+        default: false
+        type: boolean
+      deploy_webapp:
+        description: "Tick 'Deploy the webapp to production' in the version PR"
+        required: false
+        default: false
+        type: boolean
+      skip_verify:
+        description: "Tick skip_verify in the version PR: release on merge without waiting for green checks"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  # `@changesets/changelog-github` looks up each changeset's PR and author.
+  pull-requests: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  version-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "prepare-release.yml must run from main" >&2
+            exit 1
+          fi
+
+      # The release token, not GITHUB_TOKEN: GitHub starts no workflows for a
+      # push or pull request made with GITHUB_TOKEN, so the PR's required checks
+      # would never report and it could never merge.
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # Versioning on top of a merged but unreleased version PR would skip
+      # those versions on npm and leave CHANGELOG entries for releases that
+      # never happened.
+      - name: Refuse while main carries unpublished versions
+        run: |
+          unpublished="$(node .github/scripts/unpublished-versions.mjs)"
+          echo "$unpublished"
+          if [ "$(jq '.releases | length' <<<"$unpublished")" != "0" ]; then
+            echo "::error::main already carries versions npm does not have, from a version PR that merged but has not released yet. Release starts by itself once main is green; if it failed, re-run it or start it from Soundcheck. Prepare the next release after that."
+            exit 1
+          fi
+
+      - name: Compute changeset release plan
+        run: |
+          npx changeset status --output="$RUNNER_TEMP/status.json"
+          if [ "$(jq '[.releases[] | select(.type != "none")] | length' "$RUNNER_TEMP/status.json")" = "0" ]; then
+            echo "::error::No pending changesets on main, so there is nothing to release."
+            exit 1
+          fi
+
+      - name: Version packages with Changesets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx changeset version
+
+      - name: Refresh root lockfile
+        run: npm install --package-lock-only --legacy-peer-deps
+
+      # release.yml runs this same gate in its preflight. Running it here too
+      # means an inconsistency stops the release before its versions are on
+      # `main`, rather than after, when fixing it takes another PR.
+      - name: Local harness release consistency
+        working-directory: mcpjam-inspector
+        run: |
+          if jq -e '.releases[] | select(.name == "@mcpjam/inspector" and .type != "none")' "$RUNNER_TEMP/status.json" >/dev/null; then
+            node scripts/check-local-harness-release.mjs --assets --version "$(jq -r .version package.json)"
+          fi
+
+      - name: Open or refresh the version PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
+          DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
+          SKIP_VERIFY: ${{ inputs.skip_verify }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          pr="$(node .github/scripts/release-pr.mjs "$RUNNER_TEMP/status.json")"
+          branch="$(jq -r .branch <<<"$pr")"
+          title="$(jq -r .title <<<"$pr")"
+          body="$(jq -r .body <<<"$pr")"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          # Tracked files only, as the release patch always was (it came from
+          # `git diff`). `changeset version` also writes a CHANGELOG.md for
+          # every bumped package that lacks one, and only sdk's is kept.
+          git add -u
+          git status --short
+          git commit -m "$title"
+          git push --force origin "HEAD:refs/heads/$branch"
+
+          existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+            url="$(gh pr view "$existing" --json url --jq .url)"
+          else
+            url="$(gh pr create --base main --head "$branch" --title "$title" --body "$body")"
+          fi
+          echo "Version PR: $url" >> "$GITHUB_STEP_SUMMARY"

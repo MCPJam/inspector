@@ -718,7 +718,9 @@ export function ServersTab({
   const isUserReady = useDbUserReady();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
-    sharedProjectIdForHostScope && isAuthenticated && isUserReady
+    shouldQueryProjectId(sharedProjectIdForHostScope) &&
+      isAuthenticated &&
+      isUserReady
       ? ({ projectId: sharedProjectIdForHostScope } as any)
       : "skip"
   ) as ProjectServerConfigDto | null | undefined;
