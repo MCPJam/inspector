@@ -87,6 +87,10 @@ import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
+import {
   validateUiToolEntries,
   UiToolValidationError,
 } from "../../utils/chat-v2-orchestration.js";
@@ -329,6 +333,17 @@ mcpjamAgent.post("/", async (c) => {
       return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
     }
     if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+
+    // Before the MCP manager exists: a continuation this turn's step budget
+    // cannot serve is refused without connecting the docs servers, calling the
+    // model or persisting a turn. `AGENT_MAX_STEPS` is the ceiling the engine
+    // enforces below, so the two cannot disagree about when the budget is gone.
+    const loopVerdict = checkAgentLoopGuard({
+      messages: body.messages,
+      maxSteps: AGENT_MAX_STEPS,
+    });
+    if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "mcpjam_agent");
+
     const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(

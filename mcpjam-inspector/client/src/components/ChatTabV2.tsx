@@ -467,6 +467,7 @@ export function ChatTabV2({
     elicitationResponding,
     urlElicitationRequired,
     dismissUrlElicitationRequired,
+    autoResumeNotice,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
@@ -2404,6 +2405,10 @@ export function ChatTabV2({
                             onResetChat={handleResetAllChats}
                           />
                         </div>
+                      ) : autoResumeNotice ? (
+                        <p className="max-w-4xl mx-auto px-4 pt-4 text-xs text-muted-foreground">
+                          {autoResumeNotice}
+                        </p>
                       ) : null
                     }
                     chatInputSlot={
@@ -2674,6 +2679,11 @@ export function ChatTabV2({
                               onResetChat={baseResetChat}
                             />
                           </div>
+                        )}
+                        {!errorMessage && autoResumeNotice && (
+                          <p className="max-w-4xl mx-auto px-4 pt-4 text-xs text-muted-foreground">
+                            {autoResumeNotice}
+                          </p>
                         )}
                         <div className="max-w-4xl mx-auto p-4">
                           <ChatInput

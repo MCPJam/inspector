@@ -44,7 +44,13 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
-import { lastStepHasPendingApproval } from "@/lib/chat-auto-resume";
+import {
+  autoResumeStopReason,
+  describeAutoResumeStop,
+  lastStepHasPendingApproval,
+  type AutoResumeStopReason,
+} from "@/lib/chat-auto-resume";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   useAppToolsRegistry,
   recordAppToolInvocation,
@@ -592,6 +598,11 @@ export interface UseChatSessionReturn {
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
+  /**
+   * One line when a browser-fulfilled tool step was NOT resumed on its own —
+   * the reply was cut off, or the turn spent its step budget — else `null`.
+   */
+  autoResumeNotice: string | null;
   chatSessionId: string;
 
   // Model state
@@ -1945,6 +1956,26 @@ export function useChatSession(
    * false), so a finished turn always overwrites a stopped predecessor.
    */
   const turnAbortedRef = useRef(false);
+  /**
+   * How the last response ended, from the same `onFinish`, and in which
+   * session. A finish reason reaches the browser nowhere else — it is not
+   * stored on the message — and the SDK runs `onFinish` before it asks
+   * `sendAutomaticallyWhen`, so the auto-resume bound below always weighs the
+   * response it is deciding about.
+   */
+  const lastFinishRef = useRef<{
+    chatSessionId: string;
+    finishReason: string | undefined;
+  } | null>(null);
+  /**
+   * What the latest auto-resume decision held back, and for which session.
+   * Recorded by `sendAutomaticallyWhen` itself — the SDK makes that decision
+   * before the settled response renders — and read at render for the notice.
+   */
+  const autoResumeHeldBackRef = useRef<{
+    chatSessionId: string;
+    reason: AutoResumeStopReason;
+  } | null>(null);
   const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
@@ -3459,8 +3490,12 @@ export function useChatSession(
     // React renders that status — so a post-stream effect reading it on the
     // ready transition always sees THIS turn's answer. Same ordering guarantee
     // the persist receipt already relies on.
-    onFinish: ({ isAbort, message }) => {
+    onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
+      lastFinishRef.current = {
+        chatSessionId: chatSessionIdRef.current,
+        finishReason,
+      };
       baseSetMessages((current) =>
         timestampMessageById(current, message.id, Date.now()),
       );
@@ -3655,8 +3690,11 @@ export function useChatSession(
     // already have their result in this response; posting them again would
     // create a redundant turn and can reuse a one-shot scope continuation.
     // Preserve main's BUG-4 guard: a pending approval must never be answered
-    // by an automatic follow-up.
+    // by an automatic follow-up. Bounded like the agent surface: never past a
+    // cut-off reply or a spent step budget, or a turn the server can no
+    // longer serve is re-posted indefinitely (`autoResumeStopReason`).
     sendAutomaticallyWhen: (options) => {
+      autoResumeHeldBackRef.current = null;
       if (lastStepHasPendingApproval(options)) return false;
       if (
         shouldAutoSendCompletedClientToolCalls(
@@ -3664,7 +3702,22 @@ export function useChatSession(
           scopeStepUpResumeInFlightRef.current,
         )
       ) {
-        return true;
+        const lastFinish = lastFinishRef.current;
+        const reason = autoResumeStopReason({
+          ...options,
+          finishReason:
+            lastFinish?.chatSessionId === chatSessionIdRef.current
+              ? lastFinish.finishReason
+              : undefined,
+          maxSteps: DEFAULT_TURN_MAX_STEPS,
+        });
+        if (reason && chatSessionIdRef.current) {
+          autoResumeHeldBackRef.current = {
+            chatSessionId: chatSessionIdRef.current,
+            reason,
+          };
+        }
+        return reason === null;
       }
       return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
@@ -5389,6 +5442,14 @@ export function useChatSession(
     hostedContextNotReady;
   const inputDisabled = submitBlocked;
 
+  // Only once the response has settled, and only for the session it was
+  // recorded on — the ref outlives a switch to another conversation.
+  const heldBack = autoResumeHeldBackRef.current;
+  const autoResumeNotice =
+    status === "ready" && heldBack && heldBack.chatSessionId === chatSessionId
+      ? describeAutoResumeStop(heldBack.reason)
+      : null;
+
   return {
     // Chat state
     messages,
@@ -5398,6 +5459,7 @@ export function useChatSession(
     stop: stopChat,
     status,
     error,
+    autoResumeNotice,
     chatSessionId,
 
     // Model state

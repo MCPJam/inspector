@@ -81,6 +81,10 @@ import {
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
+  DEFAULT_TURN_MAX_STEPS,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
+import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
@@ -346,7 +350,7 @@ import {
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 
-const DEFAULT_MAX_STEPS = 30;
+const DEFAULT_MAX_STEPS = DEFAULT_TURN_MAX_STEPS;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
@@ -4937,6 +4941,38 @@ export async function runChatEngineLoop(
 
       if (aborted) {
         // Already aborted before we even started — bail silently.
+        return;
+      }
+
+      // A resumed request whose user message has already spent its step
+      // budget can run no model call — the loop below would not enter. It
+      // used to end in a SUCCESSFUL finish (`length`, from `hitStepCap`) that
+      // changed nothing in the browser's last step, which therefore still
+      // looked resumable, so the browser posted it again every few seconds
+      // for as long as the tab stayed open, each time persisting an empty
+      // turn. An error ends that: the browser never auto-resends after one.
+      //
+      // Only for browser-sent history, where the browser drives the loop. An
+      // explicit MRTR / scope step-up continuation is exempt: it answers a
+      // suspended call the user acted on, not an automatic resume. The hosted
+      // routes refuse this case before connecting anything
+      // (`agent-loop-guard.ts`); this is the engine's backstop for any caller
+      // that reaches it anyway.
+      if (
+        options.clientSuppliedHistory === true &&
+        !(scopeStepUpResume ?? mrtrResume) &&
+        hitStepCap()
+      ) {
+        logger.warn(
+          "[mcpjam-stream-handler] continuation refused: step budget already spent",
+          {
+            effectiveSteps: effectiveSteps(),
+            maxSteps: resolvedMaxSteps,
+            modelId,
+            turnId: traceTurn.turnId,
+          },
+        );
+        emitError(safeWriter, STEP_LIMIT_REFUSAL_MESSAGE);
         return;
       }
 
