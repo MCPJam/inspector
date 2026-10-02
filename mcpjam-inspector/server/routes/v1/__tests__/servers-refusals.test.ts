@@ -186,3 +186,119 @@ describe("POST /v1/projects/:projectId/servers refusals", () => {
     expect(body.details).toEqual({ requestId: REQUEST_ID });
   });
 });
+
+describe("PATCH and DELETE /v1/projects/:projectId/servers/:serverId refusals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    config.hosted = true;
+    vi.stubEnv("CONVEX_URL", "https://convex.test");
+    vi.spyOn(logger, "event").mockImplementation(() => {});
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  /** What a production deployment returns for a plain backend throw. */
+  const masked = (fn: string) =>
+    new Error(`[CONVEX ${fn}] [Request ID: 7d1b] Server Error`);
+
+  const patchServer = (projectId: string, serverId: string) =>
+    createApp().request(`/api/v1/projects/${projectId}/servers/${serverId}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": REQUEST_ID,
+      },
+      body: JSON.stringify({ name: "renamed" }),
+    });
+
+  const deleteServer = (projectId: string, serverId: string) =>
+    createApp().request(`/api/v1/projects/${projectId}/servers/${serverId}`, {
+      method: "DELETE",
+      headers: { "x-request-id": REQUEST_ID },
+    });
+
+  it("answers a PATCH to a server the caller cannot see with 404", async () => {
+    convex.action.mockRejectedValue(
+      masked("A(servers:updateServerWithClientSecret)"),
+    );
+    // The project's server list, as this caller sees it.
+    convex.query.mockResolvedValue([]);
+
+    const response = await patchServer("proj-other-tenant", "srv-1");
+
+    expect(response.status).toBe(404);
+    await expectNoConvexFraming(response);
+    expect(await response.json()).toEqual({
+      code: "NOT_FOUND",
+      message: "Server not found",
+    });
+    expect(convex.query).toHaveBeenCalledWith("servers:getProjectServers", {
+      projectId: "proj-other-tenant",
+    });
+  });
+
+  it("answers a DELETE of a server the caller cannot see with 404", async () => {
+    convex.mutation.mockRejectedValue(masked("M(servers:deleteServer)"));
+    convex.query.mockResolvedValue([{ _id: "srv-someone-else" }]);
+
+    const response = await deleteServer("proj-other-tenant", "srv-1");
+
+    expect(response.status).toBe(404);
+    await expectNoConvexFraming(response);
+    expect(await response.json()).toEqual({
+      code: "NOT_FOUND",
+      message: "Server not found",
+    });
+  });
+
+  it("keeps the opaque 500 when the caller can see the server", async () => {
+    convex.mutation.mockRejectedValue(masked("M(servers:deleteServer)"));
+    convex.query.mockResolvedValue([{ _id: "srv-1" }]);
+
+    const response = await deleteServer("proj-mine", "srv-1");
+
+    expect(response.status).toBe(500);
+    await expectNoConvexFraming(response);
+    const body = await response.json();
+    expect(body.code).toBe("INTERNAL_ERROR");
+    expect(body.details).toEqual({ requestId: REQUEST_ID });
+  });
+
+  it("keeps the opaque 500 when the visibility lookup fails too", async () => {
+    convex.action.mockRejectedValue(
+      masked("A(servers:updateServerWithClientSecret)"),
+    );
+    convex.query.mockRejectedValue(masked("Q(servers:getProjectServers)"));
+
+    const response = await patchServer("proj-mine", "srv-1");
+
+    expect(response.status).toBe(500);
+    await expectNoConvexFraming(response);
+    expect((await response.json()).details).toEqual({ requestId: REQUEST_ID });
+  });
+
+  it("does not look the server up for a refusal the backend already classified", async () => {
+    convex.mutation.mockRejectedValue(
+      convexError({ code: "NOT_FOUND", message: "Server not found" }),
+    );
+
+    const response = await deleteServer("proj-mine", "srv-1");
+
+    expect(response.status).toBe(404);
+    expect(convex.query).not.toHaveBeenCalled();
+  });
+
+  it("answers the authorization refusal on PATCH with 403", async () => {
+    convex.action.mockRejectedValue(convexError({ kind: "forbidden" }));
+
+    const response = await patchServer("proj-other-tenant", "srv-1");
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("FORBIDDEN");
+    expect(convex.query).not.toHaveBeenCalled();
+  });
+});

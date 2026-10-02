@@ -346,6 +346,18 @@ describe("accountLimitCode", () => {
 });
 
 describe("spending reservation contention", () => {
+  it("does not describe a queued admission timeout as a database conflict", () => {
+    const info = humanizeSwarmAttemptError(
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once.",
+      "spending_reservation_busy",
+    );
+    expect(info).toEqual({
+      code: "spending_reservation_busy",
+      message:
+        "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+    });
+  });
+
   it("explains a truncated historical database conflict", () => {
     const info = humanizeSwarmAttemptError(
       'Backend stream error: 500 {"code":"Server Error: Documents read from or written to the \\"streamSpendingReservations\\" table changed while this mutation was being run and on every subsequent retry.',
