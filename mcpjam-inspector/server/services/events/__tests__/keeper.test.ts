@@ -18,6 +18,7 @@ import {
   type SubscriptionCommitRequest,
 } from "../backend-client.js";
 import { HttpInboxClient } from "../inbox-client.js";
+import { ErrorCode, WebRouteError } from "../../../routes/web/errors.js";
 import {
   commitRequestFromOutcome,
   runKeeperTick,
@@ -29,6 +30,14 @@ import {
   startInboxAdminStub,
   type InboxAdminStub,
 } from "./support/inbox-admin-stub.js";
+
+// Only the tests that leave `connect` to its default (connecting as the
+// owner through `createAuthorizedManager`) reach these.
+const authorizeMock = vi.hoisted(() => ({ createAuthorizedManager: vi.fn() }));
+vi.mock("../../../routes/web/auth.js", () => authorizeMock);
+vi.mock("../../../utils/v1-convex-token.js", () => ({
+  getConvexBearerForDelegation: async () => "delegated-jwt",
+}));
 
 const SERVER_ID = "srv_events";
 
@@ -219,6 +228,32 @@ describe("events keeper", () => {
       throw Object.assign(new Error("Unauthorized"), { name: "UnauthorizedError" });
     };
     await runKeeperTick(deps, "inspector-test");
+    expect(commits[0]!.patch).toMatchObject({
+      observedState: "paused_auth",
+      lastError: expect.objectContaining({ kind: "authorization_lost", retryable: false }),
+    });
+  });
+
+  it("connects with the subscription's pinned OAuth connection, and parks when it is refused", async () => {
+    const { deps, commits } = await setup(
+      row({ mode: "poll", oauthConnectionId: "conn_A" }),
+    );
+    delete deps.connect;
+    // The pinned connection is gone: authorize has no token for it and
+    // refuses, instead of resolving the owner's new default.
+    authorizeMock.createAuthorizedManager.mockRejectedValueOnce(
+      new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        'Server "events" requires OAuth authentication. Please complete the OAuth flow first.',
+        { oauthRequired: true },
+      ),
+    );
+    await runKeeperTick(deps, "inspector-test");
+    expect(authorizeMock.createAuthorizedManager).toHaveBeenCalledTimes(1);
+    expect(authorizeMock.createAuthorizedManager.mock.calls[0]![7]).toEqual({
+      connectionIds: { [SERVER_ID]: "conn_A" },
+    });
     expect(commits[0]!.patch).toMatchObject({
       observedState: "paused_auth",
       lastError: expect.objectContaining({ kind: "authorization_lost", retryable: false }),

@@ -93,6 +93,7 @@ Convex table `eventSubscriptions`, one row per logical subscription:
   ownerUserId,                       // whose credentials the binding uses
   logicalId: string,                 // "esub_…", stable across refreshes and mode changes
   binding: { serverId, credentialOwnerUserId, credentialFingerprint: string | null },
+  oauthConnectionId?,          // the hosted OAuth connection pinned at creation (see below)
   bindingKey: string,                // C2
   locality: "hosted" | "local",
   profile: EventsProfileId, protocolVersion?: string,
@@ -112,6 +113,8 @@ Convex table `eventSubscriptions`, one row per logical subscription:
   createdAt, updatedAt,
 }
 ```
+
+The binding names one hosted OAuth connection. At creation the backend resolves the requested `oauthConnectionId` (it must be the owner's, or the project's for a project-shared server) or else the owner's current default, stores its id on the row, and folds it into `credentialFingerprint` (`oauth_connection:<id>`) unless the caller supplied one. The same subscription under another account is therefore another binding. The keeper's claim and the frozen run input carry the id, and both connect with `connectionIds: { [serverId]: oauthConnectionId }`. A gone or quarantined connection yields no token, and authorize refuses rather than falling back to the default: the keeper parks the row `paused_auth`, and the executor ends the run `authorization_lost`, which parks it too. `reauthorize` restores only the pinned account. A refresh of the same account keeps its row and so keeps the binding.
 
 - Every keeper write is `commit({id, leaseToken, generation, patch})`, which refuses unless the row still has that lease token and generation. A stale keeper's write fails with `stale_generation` or `lease_lost`.
 - User edits (pause, resume, remove) bump `generation`. Removal writes the tombstone first: `desiredState: "removed"`, `observedState: "removing"`.
@@ -188,14 +191,14 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 |---|---|
 | Register receiver (allocate slot) | inspector: project `member` for the subscription's project; admin token to the inbox |
 | Issue viewer token | inspector: project `member` now; token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
-| Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing |
+| Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing; the keeper connects with the subscription's pinned OAuth connection (`connectionIds`), and a refusal parks it `paused_auth` |
 | Author a trigger (create, edit, enable) | Convex: the caller is the subscription's **owner**. A run acts with the owner's credentials, so no one else (a project admin included) decides what it does |
 | Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing, and a run already in flight stops at its next checkpoint or tool call |
 | Simulate an event | inspector: project `member`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
 | Dispatch a run | enqueue mutation: subscription not removed, trigger enabled, owner still a member |
 | Start a run | claim mutation: trigger enabled, subscription neither removed nor paused, owner still authorized (a refusal parks the subscription `paused_auth`), then the rate limit and spend cap |
 | Keep a run acting | `runs/checkpoint` and `runs/begin-call`: the claim's authority checks again, before the step or tool call. A refusal ends the run `failed` with the reason and takes back its lease, so the executor gets `409 lease_lost` and stops |
-| Execute tools | executor: delegated bearer for the owner, `createAuthorizedManager` re-authorizes each server |
+| Execute tools | executor: delegated bearer for the owner, `createAuthorizedManager` re-authorizes each server, the subscription's own with its pinned OAuth connection from the frozen input; a refusal ends the run `authorization_lost`, which parks the subscription |
 
 The feed connection closes at token expiry; the client reconnects with a fresh token, which re-runs the membership check.
 

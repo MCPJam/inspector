@@ -19,6 +19,7 @@ import {
   type EventRunInput,
 } from "../backend-client.js";
 import { persistEventRunTranscript, type TranscriptPort } from "../run-transcript.js";
+import { ErrorCode, WebRouteError } from "../../../routes/web/errors.js";
 import {
   EventRunHaltError,
   buildEventRunMessages,
@@ -30,11 +31,14 @@ import {
   type EventExecutorDeps,
 } from "../executor.js";
 
-// Only the test that leaves `resolveRuntime` to its default reaches this.
+// Only the tests that leave `resolveRuntime` / `connect` to their defaults
+// reach these.
 const resolveTurnRuntimeMock = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/resolve-turn-runtime.js", () => ({
   resolveTurnRuntime: resolveTurnRuntimeMock,
 }));
+const authorizeMock = vi.hoisted(() => ({ createAuthorizedManager: vi.fn() }));
+vi.mock("../../../routes/web/auth.js", () => authorizeMock);
 
 const SERVER_ID = "srv_events";
 
@@ -367,6 +371,45 @@ describe("executeClaimedEventRun", () => {
     expect(backend.finishRun).toHaveBeenCalledWith(
       expect.not.objectContaining({ costMicros: expect.anything() }),
     );
+  });
+
+  it("connects with the subscription's pinned OAuth connection", async () => {
+    const { connect, deps } = await liveDeps();
+    const pinned = claim();
+    pinned.input!.subscription.oauthConnectionId = "conn_A";
+    const outcome = await executeClaimedEventRun(pinned, deps);
+    expect(outcome.status).toBe("completed");
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionIds: { [SERVER_ID]: "conn_A" } }),
+    );
+  });
+
+  it("stops as authorization_lost when the pinned connection is refused, never trying the default", async () => {
+    const { backend, deps } = await liveDeps();
+    const pinned = claim();
+    pinned.input!.subscription.oauthConnectionId = "conn_A";
+    authorizeMock.createAuthorizedManager.mockRejectedValueOnce(
+      new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        'Server "events" requires OAuth authentication. Please complete the OAuth flow first.',
+        { oauthRequired: true },
+      ),
+    );
+    const outcome = await executeClaimedEventRun(pinned, { ...deps, connect: undefined });
+
+    expect(outcome).toEqual({ status: "failed", error: "authorization_lost" });
+    expect(authorizeMock.createAuthorizedManager).toHaveBeenCalledTimes(1);
+    expect(authorizeMock.createAuthorizedManager.mock.calls[0]![7]).toMatchObject({
+      connectionIds: { [SERVER_ID]: "conn_A" },
+    });
+    // The backend parks the subscription on this error (C7).
+    expect(backend.finishRun).toHaveBeenCalledWith({
+      runId: "run_1",
+      token: "run_lease_1",
+      status: "failed",
+      error: "authorization_lost",
+    });
   });
 
   it("parks with tool_outcome_unknown instead of re-executing", async () => {

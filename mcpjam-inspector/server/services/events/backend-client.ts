@@ -72,6 +72,8 @@ export interface EventSubscriptionRow {
     credentialFingerprint: string | null;
   };
   bindingKey: string;
+  /** The hosted OAuth connection the binding acts with, pinned at creation. */
+  oauthConnectionId?: string;
   locality: "hosted" | "local";
   profile: "draft@28ec35e" | "chatgpt@2026-09-30";
   protocolVersion?: string;
@@ -206,6 +208,8 @@ export interface EventRunInput {
     environmentId?: string | null;
     eventName?: string;
     profile?: string;
+    /** Connect to `serverId` with this OAuth connection, never the default. */
+    oauthConnectionId?: string | null;
   };
 }
 

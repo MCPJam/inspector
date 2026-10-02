@@ -6,7 +6,10 @@
  *
  *   1. The owner's delegated bearer (`getConvexBearerForDelegation`); C7
  *      "Execute tools": `createAuthorizedManager` re-authorizes every server
- *      for that user.
+ *      for that user — the subscription's own server with the OAuth
+ *      connection it was created under (`input.subscription
+ *      .oauthConnectionId`), never the owner's current default. A refusal
+ *      ends the run `authorization_lost`, which parks the subscription.
  *   2. The servers of the environment named in the FROZEN snapshot
  *      (`input.trigger.environmentId`, else the subscription's), resolved
  *      with `resolveEnvironmentForLaunch`; with no environment, just the
@@ -61,6 +64,7 @@ import {
 } from "./backend-client.js";
 import { defaultEventsHolder, isEventsExecutorEnabled } from "./config.js";
 import { registerEventsExecutorBell } from "./executor-bell.js";
+import { isOwnerAuthorizationRefusal, pinnedConnectionIds } from "./owner-connection.js";
 import {
   eventTriggerChatSessionId,
   persistEventRunTranscript,
@@ -513,6 +517,8 @@ export interface EventExecutorDeps {
     bearer: string;
     serverIds: string[];
     serverNames?: string[];
+    /** The subscription's pinned OAuth connection, by server id. */
+    connectionIds?: Record<string, string>;
   }) => Promise<EventRunConnection>;
   resolveModel?: (args: {
     modelId: string;
@@ -587,8 +593,15 @@ async function defaultConnect(args: {
   bearer: string;
   serverIds: string[];
   serverNames?: string[];
+  connectionIds?: Record<string, string>;
 }): Promise<EventRunConnection> {
   const { createAuthorizedManager } = await import("../../routes/web/auth.js");
+  const options = {
+    ...(args.serverNames && args.serverNames.length > 0
+      ? { serverNames: args.serverNames }
+      : {}),
+    ...(args.connectionIds ? { connectionIds: args.connectionIds } : {}),
+  };
   const { manager } = await createAuthorizedManager(
     {},
     args.bearer,
@@ -597,9 +610,7 @@ async function defaultConnect(args: {
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    args.serverNames && args.serverNames.length > 0
-      ? { serverNames: args.serverNames }
-      : undefined,
+    Object.keys(options).length > 0 ? options : undefined,
   );
   return {
     manager,
@@ -729,12 +740,30 @@ export async function executeClaimedEventRun(
       input,
       bearer,
     });
-    connection = await (deps.connect ?? defaultConnect)({
-      projectId,
-      bearer,
-      serverIds: servers.serverIds,
-      ...(servers.serverNames ? { serverNames: servers.serverNames } : {}),
-    });
+    // The subscription's server with the connection it was created under
+    // (C2), never the owner's current default. If that connection cannot be
+    // used the run stops as `authorization_lost`, which parks the
+    // subscription for reauthorization.
+    const pinned = pinnedConnectionIds(
+      input.subscription.serverId,
+      input.subscription.oauthConnectionId,
+    );
+    try {
+      connection = await (deps.connect ?? defaultConnect)({
+        projectId,
+        bearer,
+        serverIds: servers.serverIds,
+        ...(servers.serverNames ? { serverNames: servers.serverNames } : {}),
+        ...(pinned ?? {}),
+      });
+    } catch (error) {
+      if (!isOwnerAuthorizationRefusal(error)) throw error;
+      logger.warn("[events-executor] owner authorization refused", {
+        ...logContext,
+        error: shortError(error),
+      });
+      return finish({ status: "failed", error: "authorization_lost" });
+    }
     const manager = connection.manager;
 
     const modelId =

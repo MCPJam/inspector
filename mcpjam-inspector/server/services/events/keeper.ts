@@ -50,6 +50,7 @@ import {
 } from "./backend-client.js";
 import { defaultEventsHolder, isEventsKeeperEnabled } from "./config.js";
 import { HttpInboxClient } from "./inbox-client.js";
+import { asAuthorizationLost, pinnedConnectionIds } from "./owner-connection.js";
 
 const POLL_INTERVAL_MS = 5_000;
 const POLL_JITTER_MS = 1_000;
@@ -226,13 +227,20 @@ async function connectAsOwner(
     item.ownerExternalId,
     item.organizationId,
   );
+  // The subscription's own connection (C2), never the owner's current
+  // default; a pinned connection that is gone parks the row for reauth.
   const { manager } = await createAuthorizedManager(
     {},
     bearer,
     record.projectId,
     [record.serverId],
     WEB_CALL_TIMEOUT_MS,
-  );
+    undefined,
+    undefined,
+    pinnedConnectionIds(record.serverId, item.subscription.oauthConnectionId),
+  ).catch((error: unknown) => {
+    throw asAuthorizationLost(error);
+  });
   const serverId = record.serverId;
   return {
     rpc: {
