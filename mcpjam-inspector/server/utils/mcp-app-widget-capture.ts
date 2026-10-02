@@ -14,6 +14,10 @@ import {
   snapshotScenarioScope,
   type SnapshotUploadTarget,
 } from "./snapshot-upload-target.js";
+import {
+  confirmUploadedObject,
+  type UploadDestination,
+} from "./upload-receipt.js";
 import { isUsableStorageDestination } from "./storage-destination.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
 
@@ -359,7 +363,7 @@ async function requestReplayVideoDestination(
   target: SnapshotUploadTarget,
   serviceToken: string,
   signal: AbortSignal,
-): Promise<string> {
+): Promise<UploadDestination> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
@@ -379,6 +383,7 @@ async function requestReplayVideoDestination(
   });
   const body = (await response.json().catch(() => null)) as {
     uploadUrl?: unknown;
+    uploadGrantId?: unknown;
     error?: unknown;
   } | null;
   if (!response.ok) {
@@ -388,10 +393,17 @@ async function requestReplayVideoDestination(
       }`,
     );
   }
-  if (!isUsableStorageDestination(body?.uploadUrl)) {
+  if (
+    !isUsableStorageDestination(body?.uploadUrl) ||
+    (body?.uploadGrantId !== undefined &&
+      (typeof body.uploadGrantId !== "string" || !body.uploadGrantId))
+  ) {
     throw new Error("Replay video upload got no usable destination");
   }
-  return body.uploadUrl;
+  return {
+    uploadUrl: body.uploadUrl,
+    uploadGrantId: body.uploadGrantId as string | undefined,
+  };
 }
 
 /**
@@ -420,7 +432,7 @@ async function storeReplayVideo(
     serviceToken,
     signal,
   );
-  const response = await fetch(destination, {
+  const response = await fetch(destination.uploadUrl, {
     method: "POST",
     headers: { "Content-Type": contentType },
     body,
@@ -438,9 +450,17 @@ async function storeReplayVideo(
     // one; a malformed answer is genuinely "no storage id".
     if (signal.aborted) throw err;
   }
-  return typeof stored?.storageId === "string" && stored.storageId
-    ? stored.storageId
-    : undefined;
+  if (typeof stored?.storageId !== "string" || !stored.storageId)
+    return undefined;
+  await confirmUploadedObject({
+    convexHttpUrl: process.env.CONVEX_HTTP_URL!,
+    bearer: target.convexAuthToken,
+    serviceToken,
+    uploadGrantId: destination.uploadGrantId,
+    storageId: stored.storageId,
+    signal,
+  });
+  return stored.storageId;
 }
 
 /**
@@ -538,10 +558,9 @@ export async function captureMcpAppWidgetSnapshots(params: {
   const snapshots = await Promise.all(
     sources.map(async (source) => {
       try {
-        const toolMetadata =
-          params.mcpClientManager.getAllToolsMetadata(source.serverId)?.[
-            source.toolName
-          ];
+        const toolMetadata = params.mcpClientManager.getAllToolsMetadata(
+          source.serverId,
+        )?.[source.toolName];
         if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) {
           return null;
         }
@@ -615,13 +634,16 @@ export async function captureMcpAppWidgetSnapshots(params: {
           // without re-reading the bytes.
           snapshot.injectedOpenAiCompat = shouldInjectOpenAiCompat;
         } catch (error) {
-          logger.warn(`${LOG_PREFIX} Failed to capture MCP App widget snapshot`, {
-            toolCallId: source.toolCallId,
-            toolName: source.toolName,
-            serverId: source.serverId,
-            resourceUri,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            `${LOG_PREFIX} Failed to capture MCP App widget snapshot`,
+            {
+              toolCallId: source.toolCallId,
+              toolName: source.toolName,
+              serverId: source.serverId,
+              resourceUri,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
         }
 
         return snapshot;

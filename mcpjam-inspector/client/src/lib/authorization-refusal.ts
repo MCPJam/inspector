@@ -35,3 +35,27 @@ export function isAuthorizationRefusal(error: unknown): boolean {
     (data as { kind?: unknown }).kind === "forbidden"
   );
 }
+
+/**
+ * Did the backend refuse because this tab's session was signed out?
+ *
+ * Signing out in one tab (or on another device) revokes the session on the
+ * server, and every live query in any OTHER tab still holding a token for it
+ * fails at once. The backend tags exactly that refusal
+ * `ConvexError({ kind: 'session_revoked' })` (`SESSION_REVOKED_KIND` in its
+ * `lib/actors.ts`) so it survives the production `Server Error` mask.
+ *
+ * Not a fault, so it is kept out of the error sinks like a `forbidden`
+ * refusal — but it is NOT an authorization refusal: the right answer is to
+ * sign this tab out (`notifySessionRevoked`), not to render "no access".
+ * INSPECTOR-CLIENT-2H9 was 13 of these from one sign-out.
+ */
+export function isSessionRevokedError(error: unknown): boolean {
+  if (!(error instanceof ConvexError)) return false;
+  const data: unknown = error.data;
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === "session_revoked"
+  );
+}
