@@ -30,6 +30,7 @@
 import { EvalTest, type EvalTestConfig } from "./EvalTest.js";
 import { EvalSuite } from "./EvalSuite.js";
 import type { HostExecutor } from "./HostExecutor.js";
+import type { PromptResult } from "./PromptResult.js";
 import { canonicalDigest } from "./contract/canonical.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { checkRole } from "./predicates/policy.js";
@@ -168,6 +169,26 @@ function isWidgetAssertion(assertion: unknown): boolean {
   );
 }
 
+/**
+ * A `toolInputMatches` or `toolResultMatches` that needs at least one matching
+ * call or result (`min` defaults to 1). Contradicts a negative case, which
+ * passes only when no tool is called — so there is neither a call nor a
+ * result to match; `min: 0` ("none matches", with its required `max`) does
+ * not.
+ *
+ * An advisory check never contradicts: it can only warn, never fail the
+ * iteration, so a negative case that passes with no calls stays a pass with a
+ * warning beside it. Refusing to load it would turn a warning into an error.
+ */
+function demandsMatchingUnit(predicate: Predicate): boolean {
+  return (
+    (predicate.type === "toolInputMatches" ||
+      predicate.type === "toolResultMatches") &&
+    (predicate.min ?? 1) >= 1 &&
+    checkRole(predicate) !== "advisory"
+  );
+}
+
 function hostedOnlyStep(
   step: PlatformEvalStep,
   index: number,
@@ -268,6 +289,19 @@ export type EvalTestFromCaseOptions = {
  * projections — tool-match, predicates, and any scorers — and `test()`'s own
  * legacy score is one input among them. A generated body cannot assert
  * anything the hosted case did not already declare.
+ *
+ * The prompts are ONE conversation, as they are hosted: every prompt after the
+ * first is sent with the iteration's earlier turns as its `context`, so the
+ * agent answers "now cancel it" knowing what "it" is. The turns live in the
+ * body's own closure, so each iteration starts a fresh conversation.
+ *
+ * A turn that errored ends the iteration, again as hosted (`executeSteps`
+ * stops on the first fatal engine error). It THROWS rather than returning:
+ * the later prompts would continue a conversation that never completed, and a
+ * returned body would have its partial transcript graded as though the server
+ * had been asked everything — a provider outage filed as a task failure.
+ * Thrown, the iteration is an execution failure (`failed`, or `timed_out` /
+ * `cancelled` when that is what stopped the turn) carrying the turn's error.
  */
 export function evalTestFromPlatformCase(
   evalCase: PlatformEvalCase,
@@ -333,6 +367,18 @@ export function evalTestFromPlatformCase(
           );
         }
         const predicate = parsed.data as Predicate;
+        // A negative case passes only when NO tool is called, and a
+        // `toolInputMatches` / `toolResultMatches` with `min ≥ 1` (the
+        // default) demands a matching call or result. `min: 0, max: 0` —
+        // "none matches" — is the one spelling that can hold beside it.
+        if (evalCase.isNegative && demandsMatchingUnit(predicate)) {
+          throw new Error(
+            `Eval case "${evalCase.title}" (${evalCase.id}) is a negative ` +
+              `case (passes only when NO tool is called) but asserts ` +
+              `${predicate.type} with min ≥ 1 at step ${index}. Those cannot ` +
+              `both hold. Fix the case in the dashboard, or run it hosted.`
+          );
+        }
         // A gating `toolCalledWith` becomes an expectation rather than a
         // predicate, so it grades through the tool matcher exactly as the
         // hosted `deriveExpectedToolCalls` does. An advisory one stays a
@@ -426,9 +472,17 @@ export function evalTestFromPlatformCase(
   // suite — used to sail past. Scanning the merged arrays here is what makes
   // the guard total; the per-step throw stays because it can name the step.
   if (evalCase.isNegative) {
-    // Any `toolCalledWith` still standing in `predicates` came from checks:
-    // the step-predicate route threw above.
-    if (predicates.some((predicate) => predicate.type === "toolCalledWith")) {
+    // A gating `toolCalledWith` still standing in `predicates` came from
+    // checks: the step-predicate route threw above. An advisory one — from a
+    // step or from checks — only warns, never fails the iteration, so it
+    // cannot contradict a case that passes with no calls.
+    if (
+      predicates.some(
+        (predicate) =>
+          predicate.type === "toolCalledWith" &&
+          checkRole(predicate) !== "advisory"
+      )
+    ) {
       throw new Error(
         `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
           `(passes only when NO tool is called) but a toolCalledWith check ` +
@@ -443,6 +497,19 @@ export function evalTestFromPlatformCase(
           `calls. Fix the case in the dashboard, or run it hosted.`
       );
     }
+    // Same reasoning for a `toolInputMatches` / `toolResultMatches` that
+    // needs a matching call or result, reached through case or suite checks.
+    const demanding = predicates.find(demandsMatchingUnit);
+    if (demanding) {
+      const unit = demanding.type === "toolResultMatches" ? "result" : "call";
+      throw new Error(
+        `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
+          `(passes only when NO tool is called) but a ${demanding.type} ` +
+          `check with min ≥ 1 applies to it — from the case, or inherited ` +
+          `from the suite. Those cannot both hold. Use min: 0, max: 0 for ` +
+          `"no ${unit} matches", or fix the check in the dashboard.`
+      );
+    }
   }
 
   const config: EvalTestConfig = {
@@ -452,8 +519,31 @@ export function evalTestFromPlatformCase(
     id: evalCase.id,
     name: options.name ?? evalCase.title,
     test: async (executor: HostExecutor) => {
-      for (const prompt of prompts) {
-        await executor.run(prompt);
+      // Per invocation, never per case: an iteration must not inherit the
+      // previous iteration's conversation.
+      const turns: PromptResult[] = [];
+      for (const [index, prompt] of prompts.entries()) {
+        // A copy, so an executor that keeps the array it was handed never sees
+        // this turn appended to it afterwards. Each earlier turn appears ONCE:
+        // a `PromptResult`'s messages are its own user message and response,
+        // never the context it was sent with, so nothing is repeated.
+        const result =
+          turns.length === 0
+            ? await executor.run(prompt)
+            : await executor.run(prompt, { context: [...turns] });
+        turns.push(result);
+        // Optional-chained because `HostExecutor` is structural: a custom
+        // executor returning something that is not a `PromptResult` keeps
+        // working as it did, and simply never stops early.
+        if (result?.hasError?.()) {
+          throw new Error(
+            `prompt ${index + 1} of ${prompts.length} errored: ` +
+              `${result.getError?.() ?? "unknown error"}` +
+              (index + 1 < prompts.length
+                ? "; the remaining prompts were not sent"
+                : "")
+          );
+        }
       }
       return true;
     },

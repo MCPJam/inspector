@@ -21,8 +21,16 @@
  * screen has already loaded by another route.
  */
 
-import { useQuery } from "convex/react";
+import { useMemo } from "react";
+import { useQueries } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import type { ImportEligibility } from "./types";
+
+const runQuery = makeFunctionReference<
+  "query",
+  { runId: string },
+  { importEligibility?: ImportEligibility } | null
+>("testSuites:getTestSuiteRun");
 
 export type RunImportEligibilityState = {
   /**
@@ -42,13 +50,20 @@ export function useRunImportEligibility(
   options: { enabled?: boolean } = {},
 ): RunImportEligibilityState {
   const enabled = options.enabled !== false && Boolean(runId);
-  const run = useQuery(
-    "testSuites:getTestSuiteRun" as any,
-    enabled ? ({ runId } as any) : "skip",
-  ) as { importEligibility?: ImportEligibility } | null | undefined;
+  // `useQueries`, not `useQuery`: deleting the open run re-runs this read
+  // against a missing row, and `useQuery` would re-throw "Suite run not found"
+  // into the render (Sentry CONVEX-19P). A failed read settles as absent.
+  // Convex keys its subscriptions by this object's identity.
+  const queries = useMemo<Parameters<typeof useQueries>[0]>(
+    (): Parameters<typeof useQueries>[0] =>
+      enabled && runId ? { run: { query: runQuery, args: { runId } } } : {},
+    [enabled, runId],
+  );
+  const run = useQueries(queries).run as
+    { importEligibility?: ImportEligibility } | null | Error | undefined;
 
   return {
-    eligibility: run?.importEligibility,
+    eligibility: run instanceof Error ? undefined : run?.importEligibility,
     isLoading: enabled && run === undefined,
   };
 }

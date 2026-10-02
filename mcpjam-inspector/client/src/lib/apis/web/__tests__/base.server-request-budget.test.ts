@@ -15,10 +15,10 @@ import { webPost, WebApiError } from "../base";
 import { SERVER_REQUEST_BUDGET_REASON } from "@/shared/server-request-budget";
 
 /**
- * MJ-012: a refusal from the per-server request budget on the hosted MCP
- * operation routes is retried after the wait it names — a bounded number of
- * times, abortable, and only when it carries that budget's marker. Every other
- * 429 throws exactly as before.
+ * MJ-012: a rate-limit refusal — the per-server request budget on the hosted
+ * MCP operation routes, or a per-caller limit in front of every route — is
+ * retried after the wait it names: a bounded number of times, abortable, and
+ * only when that wait is short. Every other 429 throws exactly as before.
  *
  * Only `setTimeout` is faked, so a wait passes only when a test moves the clock.
  */
@@ -29,10 +29,11 @@ function budgetRefusal(
   details: Record<string, unknown> | null = {
     reason: SERVER_REQUEST_BUDGET_REASON,
   },
+  code: string = "RATE_LIMITED",
 ): Response {
   return new Response(
     JSON.stringify({
-      code: "RATE_LIMITED",
+      code,
       message: "Too many requests to this server. Slow down and retry.",
       ...(details === null ? {} : { details }),
     }),
@@ -90,14 +91,59 @@ describe("webPost — per-server request budget refusals", () => {
   });
 
   it.each([
+    // The per-caller limits (session token, guest, API key) answer this way.
     ["no details", null],
     ["another reason", { reason: "something-else" }],
-  ])("throws a 429 with %s immediately", async (_label, details) => {
-    authFetchMock.mockResolvedValueOnce(budgetRefusal("1", details));
+  ])(
+    "retries a RATE_LIMITED 429 with %s the same way",
+    async (_label, details) => {
+      authFetchMock
+        .mockResolvedValueOnce(budgetRefusal("2", details))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
-    await expect(
-      webPost("/api/web/tools/list", { serverId: "srv-1" }),
-    ).rejects.toMatchObject({ status: 429, code: "RATE_LIMITED" });
+      const call = webPost("/api/web/tools/execute", {
+        serverId: "srv-1",
+        toolName: "echo",
+      });
+
+      await settle();
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(authFetchMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(call).resolves.toEqual({ ok: true });
+      expect(authFetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([
+    ["another code", "BILLING_LIMIT_REACHED"],
+    ["no code", ""],
+  ])(
+    "throws an unmarked 429 with %s immediately",
+    async (_label, code) => {
+      authFetchMock.mockResolvedValueOnce(budgetRefusal("1", null, code));
+
+      await expect(
+        webPost("/api/web/tools/list", { serverId: "srv-1" }),
+      ).rejects.toMatchObject({ status: 429 });
+      expect(authFetchMock).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("throws a RATE_LIMITED 429 whose wait is a minute, with the wait attached", async () => {
+    authFetchMock.mockResolvedValueOnce(budgetRefusal("60", null));
+
+    const error = await webPost("/api/web/tools/list", {
+      serverId: "srv-1",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WebApiError);
+    expect(error).toMatchObject({
+      status: 429,
+      code: "RATE_LIMITED",
+      retryAfterMs: 60_000,
+    });
     expect(authFetchMock).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
