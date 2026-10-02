@@ -73,7 +73,7 @@ const masked = () =>
  */
 const invalidArgument = () =>
   new Error(
-    '[CONVEX Q(fn)] [Request ID: 7d1b] Server Error\nArgumentValidationError: Value does not match validator.\nPath: .projectId\nValue: "proj-other"\nValidator: v.id("projects")',
+    '[CONVEX Q(fn)] [Request ID: 7d1b] Server Error\nArgumentValidationError: Value does not match validator.\nPath: .projectId\nValue: "projotherxxxxxxxxxxxxxxxxxxxxxxx"\nValidator: v.id("projects")',
   );
 
 /** What `ConvexHttpClient` rejects with for a `ConvexError`. */
@@ -123,13 +123,13 @@ const READ_FAMILIES: ReadFamily[] = [
   {
     family: "servers",
     module: "../servers.js",
-    path: "/api/v1/projects/proj-other/servers/srv-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/servers/srv-1",
     message: "Server not found",
   },
   {
     family: "agent jobs",
     module: "../agent.js",
-    path: "/api/v1/projects/proj-other/agent/jobs/job-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/agent/jobs/job-1",
     message: "Agent job not found.",
   },
   {
@@ -141,49 +141,49 @@ const READ_FAMILIES: ReadFamily[] = [
   {
     family: "goals",
     module: "../goals.js",
-    path: "/api/v1/projects/proj-other/goals",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/goals",
     message: "Not found",
   },
   {
     family: "personas",
     module: "../personas.js",
-    path: "/api/v1/projects/proj-other/personas",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/personas",
     message: "Not found",
   },
   {
     family: "secrets",
     module: "../secrets.js",
-    path: "/api/v1/projects/proj-other/secrets",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/secrets",
     message: "Not found",
   },
   {
     family: "swarms",
     module: "../swarms.js",
-    path: "/api/v1/projects/proj-other/swarms",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/swarms",
     message: "Not found",
   },
   {
     family: "swarm insights",
     module: "../swarm-insights.js",
-    path: "/api/v1/projects/proj-other/goals-overview",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/goals-overview",
     message: "Not found",
   },
   {
     family: "plugins",
     module: "../plugins.js",
-    path: "/api/v1/projects/proj-other/plugins",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/plugins",
     message: "Plugin or project not found, or you do not have access.",
   },
   {
     family: "skills",
     module: "../skills.js",
-    path: "/api/v1/projects/proj-other/skills",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/skills",
     message: "Skill or project not found, or you do not have access.",
   },
   {
     family: "capabilities",
     module: "../capabilities.js",
-    path: "/api/v1/projects/proj-other/capabilities",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/capabilities",
     message: "Project not found",
   },
   {
@@ -201,46 +201,46 @@ const READ_FAMILIES: ReadFamily[] = [
   {
     family: "conformance runs",
     module: "../conformance-runs.js",
-    path: "/api/v1/projects/proj-other/conformance-runs",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs",
     message: "Conformance runs not found",
   },
   {
     family: "readiness runs",
     module: "../readiness.js",
-    path: "/api/v1/projects/proj-other/readiness-runs/run-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run-1",
     message: "Readiness run not found",
   },
   {
     family: "images",
     module: "../images.js",
-    path: "/api/v1/projects/proj-other/images",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/images",
     message:
       "Environment or project not found, or you do not have access to it.",
   },
   {
     family: "environments",
     module: "../environments.js",
-    path: "/api/v1/projects/proj-other/environments",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/environments",
     message:
       "Environment or project not found, or you do not have access to it.",
   },
   {
     family: "server groups",
     module: "../server-groups.js",
-    path: "/api/v1/projects/proj-other/server-groups",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/server-groups",
     message: "Server group not found",
   },
   {
     family: "clients",
     module: "../clients.js",
-    path: "/api/v1/projects/proj-other/clients",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/clients",
     message: "Project or client not found, or you do not have access to it.",
   },
   {
     // Scoped by `hosts:resolveHostByNameOrId`, not the list read.
     family: "client detail",
     module: "../clients.js",
-    path: "/api/v1/projects/proj-other/clients/cl-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/clients/cl-1",
     message: "Project or client not found, or you do not have access to it.",
   },
   {
@@ -248,13 +248,13 @@ const READ_FAMILIES: ReadFamily[] = [
     // read, and its unknown-id answer is "Client not found".
     family: "legacy host detail",
     module: "../clients.js",
-    path: "/api/v1/projects/proj-other/hosts/h-1",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/hosts/h-1",
     message: "Client not found",
   },
   {
     family: "environment resolve",
     module: "../environments.js",
-    path: "/api/v1/projects/proj-other/environments/env-1/resolve",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/environments/env-1/resolve",
     message:
       "Environment or project not found, or you do not have access to it.",
   },
@@ -300,7 +300,7 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
     };
 
     const response = await createApp(router).request(
-      "/api/v1/projects/proj-other/servers/srv-1",
+      "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/servers/srv-1",
     );
 
     expect(response.status).toBe(403);
@@ -314,7 +314,7 @@ describe("cross-tenant reads answer 404, not a server fault (MJ-021)", () => {
     };
 
     const response = await createApp(router).request(
-      "/api/v1/projects/proj-other/secrets",
+      "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/secrets",
     );
 
     expect(response.status).toBe(401);
@@ -616,7 +616,7 @@ describe("read routes on the write translator (MJ-021)", () => {
     const { default: router } = await import("../images.js");
 
     const response = await createApp(router).request(
-      "/api/v1/projects/proj-other/images/validate",
+      "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/images/validate",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -642,7 +642,7 @@ describe("read routes on the write translator (MJ-021)", () => {
     const { default: router } = await import("../clients.js");
 
     const response = await createApp(router).request(
-      "/api/v1/projects/proj-1/clients/x",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/x",
     );
 
     expect(response.status).toBe(404);
@@ -667,7 +667,7 @@ describe("read routes on the write translator (MJ-021)", () => {
       return null;
     };
     const postServers = (router: Hono) =>
-      createApp(router).request("/api/v1/projects/proj-1/clients/h1/servers", {
+      createApp(router).request("/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/servers", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ serverIds: ["srv-1"], expectedConfigId: "hc1" }),
