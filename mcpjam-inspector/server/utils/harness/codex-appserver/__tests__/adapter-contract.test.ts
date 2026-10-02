@@ -135,6 +135,43 @@ describe("permission mapping", () => {
     }
   });
 
+  it("refuses any sandbox policy that is not MCPJam's workspace-write shape", () => {
+    // The framework only JSON-parses the start message, so this check is the
+    // one that runs: a looser policy must never reach `turn/start`.
+    const loose = [
+      { type: "dangerFullAccess" },
+      { type: "workspaceWrite", writableRoots: ["/"], networkAccess: false },
+      {
+        type: "workspaceWrite",
+        writableRoots: [],
+        networkAccess: false,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: false,
+        extra: true,
+      },
+    ];
+    for (const sandboxPolicy of loose) {
+      expect(() =>
+        toCodexPermissions("allow-all", {
+          sandboxPolicy: sandboxPolicy as never,
+          supervisedLocally: true,
+        }),
+      ).toThrow(CodexPermissionRefusedError);
+    }
+    expect(() =>
+      toCodexPermissions("allow-all", {
+        sandboxPolicy: { ...LOCAL_UNATTENDED_SANDBOX_POLICY, networkAccess: true },
+        supervisedLocally: true,
+      }),
+    ).toThrow(/network access/);
+    expect(
+      toCodexPermissions("allow-all", {
+        sandboxPolicy: { ...LOCAL_UNATTENDED_SANDBOX_POLICY },
+        supervisedLocally: true,
+      }),
+    ).toMatchObject({ approvalPolicy: "never", sandbox: "workspace-write" });
+  });
+
   it("refuses danger-full-access when supervised on a user's machine", () => {
     expect(() =>
       toCodexPermissions("allow-all", { supervisedLocally: true }),

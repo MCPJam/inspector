@@ -26,6 +26,7 @@ import {
 } from "../shared/turn-fingerprint.js";
 import type { StartMessage } from "../codex-appserver-bridge-protocol.js";
 import {
+  parseWorkspaceWriteSandboxPolicy,
   sandboxPolicyFingerprint,
   type CodexWorkspaceWriteSandboxPolicy,
 } from "../shared/sandbox-policy.js";
@@ -127,7 +128,25 @@ export function toCodexPermissions(
   sandbox: CodexSandboxMode;
   sandboxPolicy?: CodexSandboxPolicy;
 } {
-  const sandboxPolicy = options.sandboxPolicy;
+  // Checked here, not trusted: the framework only `JSON.parse`s the start
+  // message, so a policy of any shape (e.g. `dangerFullAccess`) would
+  // otherwise reach `turn/start` as-is.
+  let sandboxPolicy: CodexWorkspaceWriteSandboxPolicy | undefined;
+  if (options.sandboxPolicy !== undefined) {
+    const parsed = parseWorkspaceWriteSandboxPolicy(options.sandboxPolicy);
+    if (parsed === null) {
+      throw new CodexPermissionRefusedError(
+        "Refusing a command-sandbox policy that is not MCPJam's " +
+          "workspace-write policy.",
+      );
+    }
+    if (options.supervisedLocally && parsed.networkAccess) {
+      throw new CodexPermissionRefusedError(
+        "Refusing command network access for a turn on a user's machine.",
+      );
+    }
+    sandboxPolicy = parsed;
+  }
   switch (mode ?? "allow-all") {
     case "allow-reads":
     case "allow-edits":

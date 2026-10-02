@@ -35,6 +35,49 @@ export type CodexWorkspaceWriteSandboxPolicy = {
   excludeTmpdirEnvVar: boolean;
 };
 
+/**
+ * The policy as it arrives on the wire, checked by hand: the bridge's start
+ * message is only `JSON.parse`d by the framework, so the strict schema in
+ * `codex-appserver-bridge-protocol.ts` never runs there. Exactly the five
+ * workspace-write keys with the right types, or null.
+ */
+export function parseWorkspaceWriteSandboxPolicy(
+  value: unknown,
+): CodexWorkspaceWriteSandboxPolicy | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const expected = [
+    "excludeSlashTmp",
+    "excludeTmpdirEnvVar",
+    "networkAccess",
+    "type",
+    "writableRoots",
+  ];
+  const keys = Object.keys(record).sort();
+  if (keys.length !== expected.length || keys.some((key, i) => key !== expected[i])) {
+    return null;
+  }
+  if (
+    record.type !== "workspaceWrite" ||
+    !Array.isArray(record.writableRoots) ||
+    !record.writableRoots.every((root) => typeof root === "string") ||
+    typeof record.networkAccess !== "boolean" ||
+    typeof record.excludeSlashTmp !== "boolean" ||
+    typeof record.excludeTmpdirEnvVar !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    type: "workspaceWrite",
+    writableRoots: [...(record.writableRoots as string[])],
+    networkAccess: record.networkAccess,
+    excludeSlashTmp: record.excludeSlashTmp,
+    excludeTmpdirEnvVar: record.excludeTmpdirEnvVar,
+  };
+}
+
 /** D2: what an unattended local Codex eval or swarm turn runs under. */
 export const LOCAL_UNATTENDED_SANDBOX_POLICY: Readonly<CodexWorkspaceWriteSandboxPolicy> =
   Object.freeze({
