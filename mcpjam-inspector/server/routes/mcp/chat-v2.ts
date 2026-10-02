@@ -1,3 +1,5 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
@@ -52,7 +54,6 @@ import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
 import {
   HOSTED_MODE,
-  LOCAL_HARNESS_ENABLED,
   WEBMCP_INSPECTOR_ENABLED,
 } from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
@@ -944,11 +945,21 @@ chatV2.post("/", async (c) => {
       } else {
         logger.warn(
           "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
-          { hostId: bodyHostId, status: runtime.status, error: runtime.error },
+          {
+            hostId: bodyHostId,
+            status: runtime.status,
+            error: runtime.error,
+            networkCode: runtime.networkCode,
+          },
         );
         return c.json(
           {
             error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
+            // Not shown to the user. Rides the body into the client's
+            // `chat_request_failed` report (`extra.rawMessage`).
+            ...(runtime.networkCode
+              ? { networkCode: runtime.networkCode }
+              : {}),
           },
           runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403),
         );
@@ -1312,21 +1323,32 @@ chatV2.post("/", async (c) => {
       }
       localHarnessActingUserId = actor.actor.userId;
     }
+    const localSelected = await shouldUseLocalHarness(resolvedExecution.harness, requestAuthHeader, typeof body.projectId === "string" ? body.projectId : undefined);
+    if (asksForLocalNative && !localSelected) return c.json({ error: "Local Claude Code is unavailable or no longer authorized for this project" }, 409);
     const harnessTargetParse = parseHarnessExecutionTarget({
-      body,
+      body: body.harnessTarget?.serverAuthorized === true ? {} : body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
       actingUserId: localHarnessActingUserId,
-      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      serverEnabled: localSelected,
       actorEligible:
         !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
     });
     if (harnessTargetParse.kind === "refused") {
       return c.json({ error: harnessTargetParse.reason }, 400);
     }
-    const harnessExecutionTarget =
+    let harnessExecutionTarget =
       harnessTargetParse.kind === "local-native"
         ? harnessTargetParse.target
         : undefined;
+
+    if (localSelected && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
+      if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: "Sign in and choose a project to run Claude Code locally" }, 403);
+      try {
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended" })).target;
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : "Claude Code is not ready" }, 409);
+      }
+    }
 
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
     if (resolvedExecution.harness) {

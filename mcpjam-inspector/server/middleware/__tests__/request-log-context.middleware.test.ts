@@ -262,6 +262,57 @@ describe("requestLogContextMiddleware", () => {
     expect((completed[0][2] as any).statusCode).toBe(401);
   });
 
+  // PLB-145: a rate limiter's 429 logged only its own mount pattern
+  // (`/api/web/*`), so 14k refusals in one storm could not name their caller.
+  it("records the route a short-circuiting middleware turned away", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.use("/api/web/*", async (c) => c.json({ code: "RATE_LIMITED" }, 429));
+    app.post("/api/web/tools/list", (c) => c.json({ ok: true }));
+    app.use("/*", async (_c, next) => next());
+
+    await app.request("/api/web/tools/list", { method: "POST" });
+
+    const [, base] = vi
+      .mocked(logger.event)
+      .mock.calls.find(([name]) => name === "http.request.completed")!;
+    expect(base).toMatchObject({
+      route: "/api/web/*",
+      targetRoute: "/api/web/tools/list",
+    });
+  });
+
+  it("records the target as a pattern, never the raw path", async () => {
+    // Some routes carry a share token in the path.
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.use("/api/web/*", async (c) => c.json({ code: "RATE_LIMITED" }, 429));
+    app.get("/api/web/score/runs/:token", (c) => c.json({ ok: true }));
+
+    await app.request("/api/web/score/runs/secret-share-token");
+
+    const [, base] = vi
+      .mocked(logger.event)
+      .mock.calls.find(([name]) => name === "http.request.completed")!;
+    expect((base as any).targetRoute).toBe("/api/web/score/runs/:token");
+    expect(JSON.stringify(base)).not.toContain("secret-share-token");
+  });
+
+  it("omits targetRoute when the handler itself answered", async () => {
+    // The dev server and the SPA fallback both register a `/*` route after
+    // the API, so it matches every request without being its target.
+    const app = createTestApp();
+    app.get("/api/web/test", (c) => c.json({ ok: true }));
+    app.use("/*", async (_c, next) => next());
+
+    await app.request("/api/web/test");
+
+    const [, base] = vi
+      .mocked(logger.event)
+      .mock.calls.find(([name]) => name === "http.request.completed")!;
+    expect(base).not.toHaveProperty("targetRoute");
+  });
+
   // Regression: hosted connect 502s were logged as `errorCode: "internal_error"`
   // with the cause discarded, because these routes *return* a `webError`
   // response instead of throwing — so the middleware only ever saw a status

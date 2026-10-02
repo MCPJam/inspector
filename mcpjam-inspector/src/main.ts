@@ -3,6 +3,7 @@
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
+import { writeInspectorRuntime } from "../server/services/inspector-runtime";
 import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // Must stay below that guard: `security-policy.js` reaches into `server/`,
 // which pulls in `ws`. Hoisted above it, `ws` evaluates before
@@ -519,18 +520,6 @@ async function startHonoServer(): Promise<number> {
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
 
-    // The session token the local-harness picker presents when it registers a
-    // workspace grant through the server's own route. Read here, after the
-    // server module has generated it, and re-read on every restart.
-    try {
-      const { getSessionToken } = await import(
-        "../server/services/session-token.js"
-      );
-      localHarnessSessionToken = getSessionToken();
-    } catch {
-      localHarnessSessionToken = null;
-    }
-
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under
     // `npx` where there is no Electron and no keychain at all.
@@ -557,6 +546,18 @@ async function startHonoServer(): Promise<number> {
       shutdownLocalBrowserFrameSockets,
       killLocalBrowserFrameSockets,
     } = await createHonoApp();
+    // The session token the local-harness picker presents when it registers a
+    // workspace grant through the server's own route. Read here, after the
+    // server module has generated it, and re-read on every restart.
+    try {
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
+      localHarnessSessionToken = getSessionToken();
+    } catch {
+      localHarnessSessionToken = null;
+    }
+
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
     // latching variant is for a real quit; the plain kill is for
@@ -578,11 +579,20 @@ async function startHonoServer(): Promise<number> {
     shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
     killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
-    server = serve({
-      fetch: honoApp.fetch,
-      port,
-      hostname,
-    });
+    server = serve(
+      {
+        fetch: honoApp.fetch,
+        port,
+        hostname,
+      },
+      (info) => {
+        const cleanup = writeInspectorRuntime(info.port, {
+          hosted: process.env.VITE_MCPJAM_HOSTED_MODE === "true",
+          warn: (message) => log.warn(message),
+        });
+        server?.once("close", cleanup);
+      },
+    );
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
@@ -636,7 +646,12 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
   window.on("closed", () => mcpCallbackDelivery.setReady(false));
-  window.loadURL(rendererDevServerUrl ?? serverUrl);
+  const accessUrl = new URL(rendererDevServerUrl ?? serverUrl);
+  if (localHarnessSessionToken)
+    accessUrl.hash = new URLSearchParams({
+      token: localHarnessSessionToken,
+    }).toString();
+  window.loadURL(accessUrl.href);
 
   if (isDev) {
     window.webContents.openDevTools();

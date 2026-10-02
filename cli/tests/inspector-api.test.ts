@@ -1,9 +1,21 @@
+import os from "node:os";
+import path from "node:path";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  chmodSync,
+  symlinkSync,
+} from "node:fs";
 import assert from "node:assert/strict";
 import http from "node:http";
-import test, { after, before } from "node:test";
+import test, { after, before, mock } from "node:test";
 import type { AddressInfo } from "node:net";
 import {
   InspectorApiClient,
+  fetchInspectorSessionToken,
+  buildInspectorAccessUrl,
   buildInspectorBrowserUrl,
   clearInspectorSessionTokenCache,
   ensureInspector,
@@ -14,15 +26,35 @@ import {
   stopInspector,
 } from "../src/lib/inspector-api.js";
 
+const testHome = mkdtempSync(path.join(os.tmpdir(), "inspector-cli-test-"));
+const TEST_TOKEN = "inspector-cli-test-credential";
+const FRESH_TOKEN = "inspector-cli-fresh-credential";
+function provisionRuntime(port: number, token = TEST_TOKEN) {
+  const directory = path.join(testHome, ".mcpjam", "inspector");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    path.join(directory, `${port}.json`),
+    JSON.stringify({
+      port,
+      pid: process.pid,
+      token,
+      startedAt: new Date().toISOString(),
+    }),
+    { mode: 0o600 }
+  );
+}
 const previousDisableBrowserOpen = process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
 const INSPECTOR_FRONTEND_HTML =
   '<!doctype html><meta name="mcpjam-inspector" content="true"><title>MCPJam Inspector</title><div id="root"></div>';
 
 before(() => {
+  mock.method(os, "homedir", () => testHome);
   process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN = "1";
 });
 
 after(() => {
+  mock.restoreAll();
+  rmSync(testHome, { recursive: true, force: true });
   if (previousDisableBrowserOpen === undefined) {
     delete process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
   } else {
@@ -42,7 +74,7 @@ async function readJsonBody(
 
 async function withServer(
   handler: http.RequestListener,
-  fn: (baseUrl: string) => Promise<void>,
+  fn: (baseUrl: string) => Promise<void>
 ): Promise<void> {
   const server = http.createServer(handler);
   await new Promise<void>((resolve) => {
@@ -51,18 +83,19 @@ async function withServer(
   const { port } = server.address() as AddressInfo;
 
   try {
+    provisionRuntime(port);
     await fn(`http://127.0.0.1:${port}`);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
-  }
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
 }
 
 async function withServerOnAvailablePort(
   ports: number[],
   handler: http.RequestListener,
-  fn: (baseUrl: string) => Promise<void>,
+  fn: (baseUrl: string) => Promise<void>
 ): Promise<void> {
   let lastError: unknown;
 
@@ -78,6 +111,7 @@ async function withServerOnAvailablePort(
       });
 
       try {
+        provisionRuntime(port);
         await fn(`http://127.0.0.1:${port}`);
       } finally {
         await new Promise<void>((resolve, reject) => {
@@ -105,7 +139,7 @@ async function withServerOnAvailablePort(
 async function withServersOnConsecutiveAvailablePorts(
   ports: number[],
   handlers: [http.RequestListener, http.RequestListener],
-  fn: (baseUrls: [string, string]) => Promise<void>,
+  fn: (baseUrls: [string, string]) => Promise<void>
 ): Promise<void> {
   let lastError: unknown;
 
@@ -131,10 +165,9 @@ async function withServersOnConsecutiveAvailablePorts(
       });
 
       try {
-        await fn([
-          `http://127.0.0.1:${port}`,
-          `http://127.0.0.1:${port + 1}`,
-        ]);
+        provisionRuntime(port);
+        provisionRuntime(port + 1);
+        await fn([`http://127.0.0.1:${port}`, `http://127.0.0.1:${port + 1}`]);
       } finally {
         await Promise.all(
           servers.map(
@@ -168,14 +201,14 @@ async function withServersOnConsecutiveAvailablePorts(
 }
 
 test("InspectorApiClient sends session token auth and supported endpoint payloads", async () => {
-  const token = "session-token";
+  const token = TEST_TOKEN;
   const seen: Array<{ url?: string; auth?: string; body?: unknown }> = [];
 
   await withServer(
     async (request, response) => {
       if (request.method === "GET" && request.url === "/api/session-token") {
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ token }));
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -244,7 +277,7 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
           },
         },
       ]);
-    },
+    }
   );
 });
 
@@ -253,7 +286,7 @@ test("InspectorApiClient applies explicit timeout to connectServer", async () =>
     (request, response) => {
       if (request.method === "GET" && request.url === "/api/session-token") {
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ token: "connect-timeout-token" }));
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -282,7 +315,7 @@ test("InspectorApiClient applies explicit timeout to connectServer", async () =>
         /Failed to contact Inspector/,
       );
       assert.ok(Date.now() - startedAt < 1_000);
-    },
+    }
   );
 });
 
@@ -294,7 +327,7 @@ test("InspectorApiClient caches session tokens per base URL", async () => {
       if (request.method === "GET" && request.url === "/api/session-token") {
         tokenRequests += 1;
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ token: "cached-token" }));
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -313,7 +346,7 @@ test("InspectorApiClient caches session tokens per base URL", async () => {
       await client.listServers();
 
       assert.equal(tokenRequests, 1);
-    },
+    }
   );
 });
 
@@ -326,11 +359,7 @@ test("InspectorApiClient refreshes stale session tokens after auth failure", asy
       if (request.method === "GET" && request.url === "/api/session-token") {
         tokenRequests += 1;
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(
-          JSON.stringify({
-            token: tokenRequests === 1 ? "stale-token" : "fresh-token",
-          }),
-        );
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -340,7 +369,8 @@ test("InspectorApiClient refreshes stale session tokens after auth failure", asy
           | undefined;
         seenAuth.push(auth ?? "");
 
-        if (auth !== "Bearer fresh-token") {
+        if (auth !== `Bearer ${FRESH_TOKEN}`) {
+          provisionRuntime(request.socket.localPort!, FRESH_TOKEN);
           response.writeHead(401, { "Content-Type": "application/json" });
           response.end(JSON.stringify({ error: "Unauthorized" }));
           return;
@@ -361,8 +391,11 @@ test("InspectorApiClient refreshes stale session tokens after auth failure", asy
 
       assert.deepEqual(result, { success: true, servers: [] });
       assert.equal(tokenRequests, 2);
-      assert.deepEqual(seenAuth, ["Bearer stale-token", "Bearer fresh-token"]);
-    },
+      assert.deepEqual(seenAuth, [
+        `Bearer ${TEST_TOKEN}`,
+        `Bearer ${FRESH_TOKEN}`,
+      ]);
+    }
   );
 });
 
@@ -386,14 +419,14 @@ test("normalizeInspectorBaseUrl reads MCPJAM_INSPECTOR_URL lazily", () => {
 test("normalizeInspectorBaseUrl preserves explicit localhost hosts", () => {
   assert.equal(
     normalizeInspectorBaseUrl("http://localhost:6274/"),
-    "http://localhost:6274",
+    "http://localhost:6274"
   );
 });
 
 test("normalizeInspectorFrontendUrl accepts absolute frontend URLs only", () => {
   assert.equal(
     normalizeInspectorFrontendUrl("http://localhost:5173/?debug=1#playground"),
-    "http://localhost:5173",
+    "http://localhost:5173"
   );
   assert.equal(normalizeInspectorFrontendUrl("not a url"), undefined);
   assert.equal(normalizeInspectorFrontendUrl(undefined), undefined);
@@ -406,7 +439,7 @@ test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
       "http://localhost:5173/",
       "playground",
     ),
-    "http://localhost:5173/#playground",
+    "http://localhost:5173/#playground"
   );
   assert.equal(
     buildInspectorBrowserUrl(
@@ -414,11 +447,11 @@ test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
       "http://localhost:6274/",
       "playground",
     ),
-    "http://127.0.0.1:6274/#playground",
+    "http://127.0.0.1:6274/#playground"
   );
   assert.equal(
     buildInspectorBrowserUrl("http://127.0.0.1:6274", undefined, "playground"),
-    "http://127.0.0.1:6274/#playground",
+    "http://127.0.0.1:6274/#playground"
   );
 });
 
@@ -533,20 +566,21 @@ test("ensureInspector allows active attach when health frontend is stale", async
   await withServer(
     (request, response) => {
       if (request.method === "GET" && request.url === "/health") {
-        response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(
-          JSON.stringify({
-            status: "ok",
-            hasActiveClient: true,
-            frontend: staleFrontendUrl,
-          }),
-        );
-        return;
-      }
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                status: "ok",
+                hasActiveClient: true,
+                frontend: staleFrontendUrl,
+              }),
+            );
+            return;
+          }
 
-      if (request.method === "GET" && request.url === "/api/session-token") {
+      if (request.method === "GET" &&
+            request.url === "/api/session-token") {
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ token: "ok" }));
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -565,7 +599,7 @@ test("ensureInspector allows active attach when health frontend is stale", async
       assert.equal(result.frontendUrl, staleFrontendUrl);
       assert.equal(result.url, `${staleFrontendUrl}/#playground`);
       assert.equal(result.started, false);
-    },
+    }
   );
 });
 
@@ -608,7 +642,7 @@ test("ensureInspector with skipDiscovery avoids nearby frontend port scans", asy
             request.url === "/api/session-token"
           ) {
             response.writeHead(200, { "Content-Type": "application/json" });
-            response.end(JSON.stringify({ token: "ok" }));
+            response.end(JSON.stringify({ ok: true }));
             return;
           }
 
@@ -627,9 +661,9 @@ test("ensureInspector with skipDiscovery avoids nearby frontend port scans", asy
           assert.equal(result.frontendUrl, staleFrontendUrl);
           assert.equal(result.url, `${staleFrontendUrl}/#playground`);
           assert.equal(result.started, false);
-        },
+        }
       );
-    },
+    }
   );
 });
 
@@ -709,7 +743,7 @@ test("resolveInspectorBrowserBaseUrl prefers first usable discovered frontend de
             request.url === "/api/session-token"
           ) {
             response.writeHead(200, { "Content-Type": "application/json" });
-            response.end(JSON.stringify({ token: "ok" }));
+            response.end(JSON.stringify({ ok: true }));
             return;
           }
 
@@ -722,9 +756,9 @@ test("resolveInspectorBrowserBaseUrl prefers first usable discovered frontend de
             firstFrontendUrl,
           );
           assert.notEqual(firstFrontendUrl, secondFrontendUrl);
-        },
+        }
       );
-    },
+    }
   );
 });
 
@@ -811,7 +845,7 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
             const origin = request.headers.origin;
             if (origin === advertisedUrl) {
               response.writeHead(200, { "Content-Type": "application/json" });
-              response.end(JSON.stringify({ token: "ok" }));
+              response.end(JSON.stringify({ ok: true }));
               return;
             }
 
@@ -855,9 +889,9 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
               return true;
             },
           );
-        },
+        }
       );
-    },
+    }
   );
 });
 
@@ -880,7 +914,7 @@ test("stopInspector posts shutdown with session auth", async () => {
 
       if (request.method === "GET" && request.url === "/api/session-token") {
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ token: "shutdown-token" }));
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -901,20 +935,20 @@ test("stopInspector posts shutdown with session auth", async () => {
       const result = await stopInspector(baseUrl);
 
       assert.deepEqual(result, { stopped: true, baseUrl });
-      assert.deepEqual(seenAuth, ["Bearer shutdown-token"]);
-    },
+      assert.deepEqual(seenAuth, [`Bearer ${TEST_TOKEN}`]);
+    }
   );
 });
 
 test("InspectorApiClient returns structured command bus errors from non-2xx responses", async () => {
-  const token = "command-token";
+  const token = TEST_TOKEN;
   const seen: Array<{ auth?: string; body?: unknown }> = [];
 
   await withServer(
     async (request, response) => {
       if (request.method === "GET" && request.url === "/api/session-token") {
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ token }));
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -967,7 +1001,7 @@ test("InspectorApiClient returns structured command bus errors from non-2xx resp
           },
         },
       ]);
-    },
+    }
   );
 });
 
@@ -979,11 +1013,7 @@ test("InspectorApiClient reports persistent auth failure instead of command enve
       if (request.method === "GET" && request.url === "/api/session-token") {
         tokenRequests += 1;
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(
-          JSON.stringify({
-            token: tokenRequests === 1 ? "stale-token" : "fresh-token",
-          }),
-        );
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
 
@@ -1019,6 +1049,54 @@ test("InspectorApiClient reports persistent auth failure instead of command enve
         /Inspector command request failed authentication with 403/,
       );
       assert.equal(tokenRequests, 2);
-    },
+    }
   );
+});
+
+test("attachment refuses missing, symlinked, and world-readable discovery without making an HTTP request", async () => {
+  let calls = 0;
+  await withServer(
+    (_request, response) => {
+      calls++;
+      response.end("{}");
+    },
+    async (baseUrl) => {
+      const port = Number(new URL(baseUrl).port);
+      const file = path.join(testHome, ".mcpjam", "inspector", `${port}.json`);
+      clearInspectorSessionTokenCache(baseUrl);
+      rmSync(file);
+      await assert.rejects(fetchInspectorSessionToken(baseUrl), /access file/);
+      provisionRuntime(port);
+      if (process.platform !== "win32") {
+        chmodSync(file, 0o644);
+        await assert.rejects(
+          fetchInspectorSessionToken(baseUrl),
+          /access file/
+        );
+        chmodSync(file, 0o600);
+        const target = `${file}.target`;
+        writeFileSync(target, "{}", { mode: 0o600 });
+        rmSync(file);
+        symlinkSync(target, file);
+        await assert.rejects(
+          fetchInspectorSessionToken(baseUrl),
+          /access file/
+        );
+      }
+      assert.equal(calls, 0);
+    }
+  );
+});
+
+test("browser links carry the credential only in the fragment and preserve the tab", () => {
+  const link = new URL(
+    buildInspectorAccessUrl("http://localhost:6274/#tools", TEST_TOKEN)
+  );
+  assert.equal(link.pathname, "/");
+  assert.equal(link.search, "");
+  assert.equal(
+    new URLSearchParams(link.hash.slice(1)).get("token"),
+    TEST_TOKEN
+  );
+  assert.equal(new URLSearchParams(link.hash.slice(1)).get("tab"), "tools");
 });

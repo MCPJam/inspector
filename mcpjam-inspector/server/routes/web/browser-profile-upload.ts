@@ -19,6 +19,10 @@ import {
 } from "../../middleware/internal-service-auth.js";
 import { logger } from "../../utils/logger.js";
 import { isUsableStorageDestination } from "../../utils/storage-destination.js";
+import {
+  confirmUploadedObject,
+  type UploadDestination,
+} from "../../utils/upload-receipt.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, handleRoute } from "./auth.js";
 
@@ -74,7 +78,7 @@ export const BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE =
 async function requestArchiveDestination(
   c: Context,
   projectId: string,
-): Promise<string> {
+): Promise<UploadDestination> {
   const serviceToken = getConfiguredInspectorServiceToken();
   if (!serviceToken) {
     throw HOSTED_MODE
@@ -107,6 +111,7 @@ async function requestArchiveDestination(
     });
     const body = (await response.json().catch(() => null)) as {
       uploadUrl?: unknown;
+      uploadGrantId?: unknown;
       code?: unknown;
       error?: unknown;
     } | null;
@@ -119,14 +124,21 @@ async function requestArchiveDestination(
         typeof body?.error === "string" ? body.error : "Backend error",
       );
     }
-    if (!isUsableStorageDestination(body?.uploadUrl)) {
+    if (
+      !isUsableStorageDestination(body?.uploadUrl) ||
+      (body?.uploadGrantId !== undefined &&
+        (typeof body.uploadGrantId !== "string" || !body.uploadGrantId))
+    ) {
       throw new WebRouteError(
         502,
         ErrorCode.INTERNAL_ERROR,
         UPLOAD_FAILED_MESSAGE,
       );
     }
-    return body.uploadUrl;
+    return {
+      uploadUrl: body.uploadUrl,
+      uploadGrantId: body.uploadGrantId as string | undefined,
+    };
   } catch (error) {
     if (error instanceof WebRouteError) throw error;
     if (controller.signal.aborted) {
@@ -217,7 +229,7 @@ export function handleBrowserProfileUpload(c: Context) {
       ARCHIVE_UPLOAD_TIMEOUT_MS,
     );
     try {
-      const response = await fetch(destination, {
+      const response = await fetch(destination.uploadUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",
@@ -248,6 +260,14 @@ export function handleBrowserProfileUpload(c: Context) {
           UPLOAD_FAILED_MESSAGE,
         );
       }
+      await confirmUploadedObject({
+        convexHttpUrl: convexHttpUrl(),
+        bearer: await getConvexBearerForRequest(c),
+        serviceToken: getConfiguredInspectorServiceToken(),
+        uploadGrantId: destination.uploadGrantId,
+        storageId: stored.storageId,
+        signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
+      });
       return { storageId: stored.storageId };
     } catch (error) {
       if (error instanceof WebRouteError) throw error;

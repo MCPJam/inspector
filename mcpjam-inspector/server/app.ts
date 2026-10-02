@@ -53,11 +53,11 @@ import path from "path";
 // Security imports
 import {
   generateSessionToken,
-  getSessionToken,
+  validateToken,
 } from "./services/session-token.js";
 import {
   mayServeGuestBootstrap,
-  mayServeSessionToken,
+  isAllowedHost,
 } from "./utils/localhost-check.js";
 import { getActiveTunnelDomains } from "./services/tunnel-registry.js";
 import {
@@ -85,6 +85,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.
 import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
@@ -165,6 +166,7 @@ export async function createHonoApp() {
   // kill switch and a consent grant is installed when the user asks, never
   // at startup and never during a session start.
   reportLocalHarnessRuntimeStatusInBackground();
+  if (!HOSTED_MODE) void startLocalHarnessJanitor();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
@@ -517,39 +519,27 @@ export async function createHonoApp() {
     });
   });
 
-  // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
-  // in BOTH hosted and self-hosted mode); tunnel hosts are always vetoed.
+  // Validate a credential delivered by the launcher. Never disclose one over HTTP.
   app.get("/api/session-token", (c) => {
-    if (HOSTED_MODE) {
-      return strictModeResponse(c, "/api/session-token");
-    }
-
-    const host = c.req.header("Host");
-    const forwardedHost = c.req.header("X-Forwarded-Host");
-
-    // SECURITY INVARIANT: tunnel hosts never receive the session token, even
-    // if a tunnel domain is ever allowlisted — see mayServeSessionToken. This
-    // used to call `isAllowedHost` directly, which is the same allowlist
-    // WITHOUT the tunnel veto, so `index.ts` and this file disagreed about the
-    // one rule they must not disagree about.
+    c.header("Cache-Control", "no-store");
+    if (HOSTED_MODE) return strictModeResponse(c, "/api/session-token");
+    const authorization = c.req.header("X-MCP-Session-Auth");
     if (
-      !mayServeSessionToken({
-        host,
-        forwardedHost,
-        allowedHosts: ALLOWED_HOSTS,
-        activeTunnelDomains: getActiveTunnelDomains(),
-      })
+      authorization?.startsWith("Bearer ") &&
+      validateToken(authorization.slice(7))
     ) {
-      appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${
-          forwardedHost || host
-        }`,
-      );
-      return c.json({ error: "Token only available via allowed hosts" }, 403);
+      return c.json({ ok: true });
     }
-
-    return c.json({ token: getSessionToken() });
+    if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS)) {
+      return c.json({ code: "HOST_NOT_ALLOWED" }, 403);
+    }
+    return c.json(
+      {
+        code: "ACCESS_LINK_REQUIRED",
+        hint: "Open the link printed in your terminal. If you use @mcpjam/cli, update it.",
+      },
+      401,
+    );
   });
 
   // Static hosting / dev redirect behavior
@@ -594,45 +584,11 @@ export async function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost or hosts in
-        // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
-        // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
         // Every inline script written into the document carries this
         // response's nonce (see middleware/security-headers.ts).
         const scriptNonce = documentScriptNonce(c);
-
-        // Same invariant as the /api/session-token route above, and the same
-        // bug: this path already captured `forwardedHost` for the guest
-        // bootstrap below but did not consult it here, so a request arriving
-        // through the relay edge — which puts the real tunnel host in
-        // X-Forwarded-Host — got the token injected into its document.
-        if (
-          mayServeSessionToken({
-            host,
-            forwardedHost,
-            allowedHosts: ALLOWED_HOSTS,
-            activeTunnelDomains: getActiveTunnelDomains(),
-          })
-        ) {
-          const token = getSessionToken();
-          const tokenScript = withScriptNonce(
-            `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`,
-            scriptNonce,
-          );
-          html = html.replace("</head>", `${tokenScript}</head>`);
-        } else {
-          // Host not allowed - no token (security measure)
-          appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`,
-          );
-          const warningScript = withScriptNonce(
-            `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`,
-            scriptNonce,
-          );
-          html = html.replace("</head>", `${warningScript}</head>`);
-        }
 
         const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
         if (runtimeConfigScript) {

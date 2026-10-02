@@ -467,6 +467,48 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
+  it("refuses the host's saved effort a harness has not verified — never drops it", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: {
+          modelId: MODEL,
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("setting-unsupported");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a saved effort that belongs to a different model than the turn's", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: {
+          modelId: "openai/gpt-5",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    );
+
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, toolMode: "auto" }),
+    );
+    const body = await response.json();
+    expect(body.details?.kind).not.toBe("setting-unsupported");
+  });
+
   it("refuses a read_only harness turn rather than dropping the narrowing", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code" }),
