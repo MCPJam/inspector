@@ -3854,19 +3854,12 @@ export function useServerState({
                 serverEntryForSave = updatedEntry;
                 saveOAuthConfigToLocalStorage(formData);
                 if (!isAuthenticated) {
-                  const project = appState.projects[appState.activeProjectId];
-                  if (project) {
-                    dispatch({
-                      type: "UPDATE_PROJECT",
-                      projectId: appState.activeProjectId,
-                      updates: {
-                        servers: {
-                          ...project.servers,
-                          [formData.name]: updatedEntry,
-                        },
-                      },
-                    });
-                  }
+                  dispatch({
+                    type: "UPDATE_PROJECT_SERVER",
+                    projectId: appState.activeProjectId,
+                    name: formData.name,
+                    server: updatedEntry,
+                  });
                 }
               } catch (error) {
                 if (isStaleOp(formData.name, token)) return;
