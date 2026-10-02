@@ -28,11 +28,10 @@ import {
 /**
  * One uniform message for every failure that never got an HTTP response.
  *
- * Deliberately says nothing about WHY. `connect ECONNREFUSED 127.0.0.1:6379`
- * and `tls_get_more_records:packet length too long` are the same fact to the
- * person debugging their own server — the inspector could not talk to it — and
- * two different facts to someone walking a port range, which is what made them
- * the finding's Scenario B port scanner.
+ * Deliberately says nothing about WHY. A refused connection, a TLS record
+ * error and a DNS failure are the same fact to the person debugging their own
+ * server — the inspector could not talk to it — so a hosted response reports
+ * them with one sentence.
  */
 export const HOSTED_TRANSPORT_FAILURE_DETAIL =
   "The inspector could not establish a connection to this server.";
@@ -41,11 +40,10 @@ export const HOSTED_TRANSPORT_FAILURE_DETAIL =
  * The one error code every redacted failure collapses to.
  *
  * `normalizeServerDoctorError` derives the code from the raw message by
- * substring, so the code is the message's oracle in miniature: a refused
- * connect matches `econn` and becomes `SERVER_UNREACHABLE`, an open cleartext
- * port's TLS record error matches nothing and becomes `INTERNAL_ERROR`, and a
- * filtered port times out and becomes `TIMEOUT`. Rewriting only the message
- * left those three outcomes as distinguishable as before.
+ * substring: a refused connect matches `econn` and becomes
+ * `SERVER_UNREACHABLE`, a TLS record error matches nothing and becomes
+ * `INTERNAL_ERROR`, and a timeout becomes `TIMEOUT`. The code is derived from
+ * the message, so it is replaced along with it.
  */
 const HOSTED_TRANSPORT_FAILURE_CODE = "SERVER_UNREACHABLE";
 
@@ -59,17 +57,18 @@ const HOSTED_TRANSPORT_FAILURE_CODE = "SERVER_UNREACHABLE";
  * probe copies it onto `attempts[].error`. OAuth discovery adds one more:
  * `oauth.discoveryError` is the failure of a fetch to a host the TARGET named
  * in its own `WWW-Authenticate` challenge, so it is a second origin, chosen
- * separately from the server URL, and the same port oracle pointed at it.
+ * separately from the server URL, and is reduced the same way.
  * `bench-probe-child` copies that string onto a user-visible check detail.
  *
  * THE TEST IS STRUCTURAL, NOT A PATTERN LIST. A denylist of socket-error
- * spellings leaks the first time undici renames one. Instead: an attempt that
- * received no response got no further than the socket, so what it says can only
- * be describing a socket, DNS or TLS outcome — and it is replaced wholesale. An
+ * spellings stops matching the first time undici renames one. Instead: an
+ * attempt that received no response got no further than the socket, so what it
+ * says can only be describing a socket, DNS or TLS outcome — and it is replaced
+ * wholesale. An
  * attempt that did receive one is reported through the projection below rather
  * than as it arrived. That reasoning is per attempt, so the decision is too: a
  * target whose first transport answers and whose second is refused at the
- * socket used to have the second one's message pass through with the first's.
+ * socket has each attempt reported on its own terms.
  *
  * THE ENVELOPE-LEVEL FIELDS TAKE THE STRICTER GATE. `probe.error`,
  * `connection.detail`, `checks[].detail`, `error` and `oauth.discoveryError`
@@ -79,28 +78,22 @@ const HOSTED_TRANSPORT_FAILURE_CODE = "SERVER_UNREACHABLE";
  * doctor's connect leg did not fail. That second condition is not redundant:
  * the connect leg runs after the probe, records no attempt of its own, and
  * writes its raw transport error onto `connection.detail`,
- * `checks.connection.detail` and `error` — so a target that answers the probe
- * cleanly and then redirects the connect elsewhere had its socket outcome
- * reflected verbatim under an attempts-only test. A run that recorded no
- * attempt at all offers no proof either and is redacted with the rest.
+ * `checks.connection.detail` and `error`, which a gate on the attempts alone
+ * would not cover. A run that recorded no attempt at all offers no proof
+ * either and is redacted with the rest.
  *
  * `error.code` GOES WITH `error.message`. It is derived from that message by
- * substring match, so leaving it behind kept the differential the message lost;
- * whenever the message is replaced the code collapses too.
+ * substring match, so whenever the message is replaced the code collapses too.
  *
- * `attempts[].durationMs` IS THE SAME ORACLE WITH A STOPWATCH. A refused port
- * returns in about a millisecond and a filtered one burns the whole timeout, so
- * the number separates the outcomes the message no longer does. An attempt that
- * received a response keeps its real duration — the host is demonstrably open,
- * so the timing discloses nothing and is the latency figure the doctor exists
- * to report. An attempt whose error was replaced never got past the socket, so
- * it collapses to the 0 the probe already writes for an attempt it never
- * dialled.
+ * `attempts[].durationMs` FOLLOWS THE SAME RULE. An attempt that received a
+ * response keeps its real duration — the latency figure the doctor exists to
+ * report. An attempt whose error was replaced never got past the socket, so it
+ * reports the 0 the probe already writes for an attempt it never dialled.
  *
  * An egress refusal keeps its own message: `classifyPinnedTransportError`
  * already phrases it without the address the hostname resolved to, so it is a
- * verdict about the target rather than a resolution oracle, and telling someone
- * their URL is not publicly routable is the one detail that helps them.
+ * verdict about the target as configured, and telling someone their URL is not
+ * publicly routable is the one detail that helps them.
  *
  * WHAT AN ANSWER MAY SAY. Once the socket outcomes are settled, the whole
  * envelope is rebuilt from an allowlist ({@link projectHostedDoctorResult}):
@@ -213,11 +206,9 @@ export function redactHostedTransportFailureText(detail: string): string {
  * writes the other two. Every pattern is anchored end to end, which is the
  * point: these used to be bare substring tests, and a substring test asks
  * whether the phrase appears ANYWHERE in the detail rather than whether the
- * detail IS a refusal. A socket error carrying attacker-influenced text — a
- * certificate subject, a SAN, a redirect target echoed into the message — only
- * had to contain "private or internal address" to be waved through with its
- * open-versus-closed differential intact, which is the leak this module exists
- * to close.
+ * detail IS a refusal. A socket error can carry text from the far side — a
+ * certificate subject, a SAN, a redirect target echoed into the message — and
+ * only a detail that is exactly a refusal keeps its wording.
  *
  * No span is free text. The label is one of the fixed strings callers pass
  * to `assertAllowedHostedTargetUrl`, and the host is limited to the
@@ -227,7 +218,7 @@ export function redactHostedTransportFailureText(detail: string): string {
  *
  * Failure direction is unchanged and deliberate: a reworded refusal — or a
  * new label nobody added here — matches nothing, so it degrades to the
- * uniform message above rather than leaking. The regression test drives the
+ * uniform message above. The regression test drives the
  * real transport at a real reserved address, so a rewording fails a test
  * here instead of silently changing what callers are told.
  */

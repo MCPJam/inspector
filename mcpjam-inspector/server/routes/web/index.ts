@@ -195,12 +195,11 @@ web.use(
   guestRateLimitMiddleware,
 );
 
-// MJ-012. The one credential class this family never metered.
+// MJ-012. The rate limit for signed-in callers on this family.
 //
-// `guestRateLimitMiddleware` returns early when there is no `guestId`, and a
-// signed-in AuthKit JWT has none — so every route above reached its handler
-// with no budget attached to that caller at all. `/api/v1/*` has metered the
-// same class since it was mounted; this is the twin that was missed.
+// `guestRateLimitMiddleware` meters guest bearers, keyed on `guestId`; a
+// signed-in AuthKit JWT carries none, so this middleware meters that class
+// instead, the same way `/api/v1/*` does.
 //
 // Registered here, after the per-family `bearerAuthMiddleware` lines rather
 // than inside each of them: the middleware reads the `authMethod` label auth

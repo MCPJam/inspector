@@ -45,11 +45,28 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const swarmInsights = new Hono();
 
 function translateReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, { scope: "v1.swarm-insights" });
+}
+
+/**
+ * For the SCOPING reads — the ones that authorize a caller-supplied id (the
+ * run/finding preflights, the project-scoped overview/insights/finding
+ * lists). Their refusals are plain errors production Convex masks to "Server
+ * Error", so without `redactedIsRefusal` a cross-tenant probe answered 502
+ * instead of the 404 the scope check exists to guarantee (MJ-021). Reads
+ * AFTER a preflight (the scorecard) keep `translateReadError`: there a
+ * redacted error is a genuine incident.
+ */
+function translatePreflightReadError(error: unknown): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "v1.swarm-insights",
+    redactedIsRefusal: true,
+  });
 }
 
 // ── Convex row shapes (hand-mirrored) ───────────────────────────────────────
@@ -332,7 +349,7 @@ async function requireRunInProject(
       { runId } as never,
     )) as { projectId?: string } | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!run || String(run.projectId) !== projectId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Journey run not found");
@@ -343,13 +360,14 @@ async function listFindingRows(
   client: ConvexHttpClient,
   projectId: string,
 ): Promise<FindingRow[]> {
+  requireProjectIdArg(projectId, "v1.swarm-insights");
   try {
     return ((await client.query(
       "swarmWaveInsights:listSwarmFindings" as never,
       { projectId } as never,
     )) ?? []) as FindingRow[];
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
 }
 
@@ -412,7 +430,10 @@ both(
   "/projects/:projectId/goals-overview",
   "/projects/:projectId/journeys-overview",
   async (c) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(
+      c.req.param("projectId"),
+      "v1.swarm-insights",
+    );
     const client = createConvexClient(await getConvexBearerForRequest(c));
     let row: OverviewRow;
     try {
@@ -421,7 +442,7 @@ both(
         { projectId } as never,
       )) as OverviewRow;
     } catch (error) {
-      throw translateReadError(error);
+      throw translatePreflightReadError(error);
     }
     return v1Resource(c, toOverviewDto(row));
   },
@@ -468,7 +489,10 @@ both(
   "/projects/:projectId/goal-findings",
   "/projects/:projectId/journey-findings",
   async (c) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(
+      c.req.param("projectId"),
+      "v1.swarm-insights",
+    );
     const client = createConvexClient(await getConvexBearerForRequest(c));
     const rows = await listFindingRows(client, projectId);
     return v1PageJson(c, rows.map(toFindingDto));
@@ -514,7 +538,7 @@ bothInsights("get", "/insights", async (c, surface) => {
       { projectId, swarmRunGroupId: swarmRunId } as never,
     )) as WaveInsightsRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!row) {
     // Never requested. 404 rather than an empty `status: "none"` body, so a
