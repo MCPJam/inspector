@@ -358,6 +358,13 @@ export interface StartJourneyRunOptions {
    */
   getBearer: () => Promise<string>;
   localHarnessActor?: LocalHarnessActor;
+  /**
+   * The harnesses this wave declared to the backend as running locally. A
+   * target runs locally exactly when its harness is in this set, so the venue
+   * the runner uses is the venue the backend stamped. Absent (an older
+   * caller): the machine-level check alone, as before.
+   */
+  localHarnessIds?: readonly string[];
   /** Builds a fresh connected manager scoped to one host's `serverIds`. */
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
@@ -418,6 +425,22 @@ export async function shutdownRunningJourneyRuns(
  * the registry on completion. Fire-and-forget from the route (via
  * `setImmediate`) — the HTTP 202 already returned.
  */
+/**
+ * Whether this target runs on the member's machine: a local launch (it has a
+ * local actor), and the target's harness among those the launch declared —
+ * the same set the backend stamped local.
+ */
+function runsLocally(
+  opts: Pick<StartJourneyRunOptions, "localHarnessActor" | "localHarnessIds">,
+  harness: string | undefined,
+): boolean {
+  if (!opts.localHarnessActor) return false;
+  if (opts.localHarnessIds !== undefined) {
+    return harness !== undefined && opts.localHarnessIds.includes(harness);
+  }
+  return isLocalHarnessVenue(harness, "unattended");
+}
+
 export async function startJourneyRun(
   opts: StartJourneyRunOptions,
 ): Promise<void> {
@@ -624,7 +647,7 @@ async function runJourneyFanOut(
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
   if (!opts.budgets) {
     // Only size a platform default. Explicit/frozen limits remain authoritative.
-    const localSessions = hosts.filter(host => (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(host.harness, "unattended"))).length * sessionsPerTarget;
+    const localSessions = hosts.filter(host => runsLocally(opts, host.harness)).length * sessionsPerTarget;
     budgets.runTimeoutMs = Math.min(
       platformExecutionBudgetCeilings("swarms").runTimeoutMs,
       Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
@@ -753,7 +776,7 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const localHarness = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness, "unattended"));
+    const localHarness = runsLocally(opts, target.harness);
     const harnessNeedsBox = target.harness !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
@@ -982,7 +1005,7 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness, "unattended"))
+        const releaseLocalSlot = runsLocally(opts, target.harness)
           ? await acquireLocalHarnessSlot(sessionSignal)
           : undefined;
         try {

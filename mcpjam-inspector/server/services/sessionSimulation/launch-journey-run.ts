@@ -1,6 +1,6 @@
 import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import { resolveLocalHarnessActor } from "../../utils/harness/local/acting-user.js";
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { eligibleUnattendedLocalHarnesses } from "../../utils/harness/local/run-resources.js";
 /**
  * Launching a journey run, with no HTTP in it.
  *
@@ -276,7 +276,9 @@ export async function launchJourneyRun(
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
-  let hasClaudeTarget = false;
+  // The harnesses the wave's targets use, so the launch can declare which of
+  // them this runner will execute locally.
+  let waveHarnesses: Array<string | undefined> = [];
   if (input.waveId) {
     const client = createConvexClient(deps.bearerToken);
     const journey = await client.query("journeys:getJourney" as never, {
@@ -294,10 +296,17 @@ export async function launchJourneyRun(
     const hosts = await Promise.all(hostIds.map(async (hostId: string) =>
       client.query("hosts:getHost" as never, { hostId } as never) as any,
     ));
-    hasClaudeTarget = hosts.some(host => host?.config?.harness === "claude-code");
+    waveHarnesses = hosts.map(host => host?.config?.harness);
   }
-  const localEnabled = hasClaudeTarget && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
-  if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false });
+  // Per harness, unattended (a swarm runs with nobody to approve anything):
+  // machine, sandbox evidence, rollout and authorization. Declared to the
+  // backend below so it stamps exactly these targets local — and the runner
+  // executes exactly these locally.
+  const localHarnessIds = await eligibleUnattendedLocalHarnesses(deps.bearerToken, input.projectId, waveHarnesses);
+  const localEnabled = localHarnessIds.length > 0;
+  for (const harnessId of localHarnessIds) {
+    await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false, harnessId });
+  }
   const localActorResult = localEnabled
     ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
     : undefined;
@@ -310,6 +319,7 @@ export async function launchJourneyRun(
   try {
     created = await createJourneyRun(convexHttpUrl, deps.bearerToken, {
       runtimeVenue: localEnabled ? "local" : "hosted",
+      ...(localEnabled ? { localHarnessIds } : {}),
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,
@@ -447,6 +457,7 @@ export async function launchJourneyRun(
       convexHttpUrl,
       getBearer: deps.getRunBearer,
       localHarnessActor,
+      ...(localEnabled ? { localHarnessIds } : {}),
       // Host-aware: each host connects ONLY its own pinned required servers
       // (optionalServerIds stay off, matching a real no-opt-in visitor).
       managerFactory: async (host) => {

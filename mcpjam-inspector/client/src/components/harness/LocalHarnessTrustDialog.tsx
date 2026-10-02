@@ -92,6 +92,8 @@ export function LocalHarnessTrustDialog({
   const [error, setError] = useState<string | null>(null);
 
   const availability = controller.availability;
+  const name = controller.harnessName ?? "Claude Code";
+  const isCodex = controller.harnessId === "codex";
   const expectedPack = availability?.expectedPack ?? null;
   const suggested = availability?.suggestedWorkspace ?? null;
   const displayRoot =
@@ -137,7 +139,7 @@ export function LocalHarnessTrustDialog({
     try {
       if (!(await useSuggestedIfNeeded())) {
         setError(
-          "Choose a folder for Claude Code to work in before allowing it.",
+          `Choose a folder for ${name} to work in before allowing it.`,
         );
         return;
       }
@@ -156,7 +158,7 @@ export function LocalHarnessTrustDialog({
         scopeKey,
       });
       if (approval === null) {
-        setError("Choose a folder for Claude Code to work in.");
+        setError(`Choose a folder for ${name} to work in.`);
         return;
       }
 
@@ -236,16 +238,16 @@ export function LocalHarnessTrustDialog({
   // false for has copy — including the two that are facts about the machine
   // rather than states of the flow.
   const blockingCopy =
-    blockingReason(controller.phase, controller.reason) ??
+    blockingReason(controller.phase, controller.reason, name) ??
     (expectedPack === null
-      ? "MCPJam hasn't published a Claude Code runtime for this machine's " +
+      ? `MCPJam hasn't published a ${name} runtime for this machine's ` +
         "operating system and processor, so there is nothing to install."
       : availability !== null && availability.machineId == null
         ? "This Inspector couldn't establish an identity for this machine, so " +
           "it can't bind an authorization to it. Restart the Inspector, or " +
           "check that it can write to its own state directory."
         : displayRoot === null
-          ? "Choose a folder for Claude Code to work in."
+          ? `Choose a folder for ${name} to work in.`
           : null);
 
   return (
@@ -258,14 +260,30 @@ export function LocalHarnessTrustDialog({
           <DialogTitle className="flex items-center gap-2 text-base">
             <Laptop className="size-4 text-muted-foreground" aria-hidden />
             {displayRoot
-              ? `Run Claude Code in ${displayRoot}?`
-              : "Run Claude Code on this machine?"}
+              ? `Run ${name} in ${displayRoot}?`
+              : `Run ${name} on this machine?`}
           </DialogTitle>
           <DialogDescription className="text-left leading-relaxed">
-            Claude Code will run on this computer as your user account. The
-            folder is where it starts, not a sandbox — anything you can read or
-            change, it can. Edits inside the folder run freely; commands ask for
-            approval in chat.
+            {isCodex ? (
+              <>
+                Codex will run on this computer as your user account, in a
+                runtime MCPJam manages, with models brokered by MCPJam. It does
+                not use a personal Codex or ChatGPT subscription. The folder is
+                where it starts. In chat it asks before every command and file change,
+                reads included. In evals and swarms nobody is there to ask, so
+                its commands run in Codex's own sandbox: they can write only
+                that run's folder and a private temp folder, and have no
+                network. Reads are not restricted, and MCP tools run in MCPJam
+                under your tool policy, outside that sandbox.
+              </>
+            ) : (
+              <>
+                Claude Code will run on this computer as your user account. The
+                folder is where it starts, not a sandbox — anything you can read
+                or change, it can. Edits inside the folder run freely; commands
+                ask for approval in chat.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -403,12 +421,13 @@ export function LocalHarnessTrustDialog({
 function blockingReason(
   phase: LocalHarnessPhase,
   reason: string | null,
+  name = "Claude Code",
 ): string | null {
   switch (phase) {
     case "needs-signin":
       return (
         reason ??
-        "Sign in to authorize Claude Code to run on this machine."
+        `Sign in to authorize ${name} to run on this machine.`
       );
     case "unavailable":
       return (
@@ -416,7 +435,7 @@ function blockingReason(
         // NOT "so turns run hosted": `localHarnessBlocksSend` disables Send in
         // this phase, so the turn does not run anywhere. Saying it falls back
         // to the cloud describes the one behaviour this design removed.
-        "This Inspector can't run Claude Code on this machine."
+        `This Inspector can't run ${name} on this machine.`
       );
     case "failed":
       return FAILURE_COPY[installFailureReason(reason)] ?? FAILURE_COPY.unknown;

@@ -21,13 +21,19 @@ describe("in scope", () => {
 describe("out of scope", () => {
   it.each([
     ["a hosted replica", { ...IN_SCOPE, hostedMode: true }],
-    ["a different harness", { ...IN_SCOPE, harnessId: "codex" }],
+    ["a harness with no local runtime", { ...IN_SCOPE, harnessId: "cursor" }],
     ["no harness at all — ordinary emulated chat", { ...IN_SCOPE, harnessId: null }],
     ["an unresolved harness", { ...IN_SCOPE, harnessId: undefined }],
     ["a scenario session", { ...IN_SCOPE, scenarioId: "cbx-1" }],
     ["a shared or replayed run", { ...IN_SCOPE, sharedRun: true }],
   ])("excludes %s", (_label, input) => {
     expect(isLocalHarnessScope(input as never)).toBe(false);
+  });
+
+  it("includes every harness with a local runtime, Codex as well as Claude Code", () => {
+    // Each is gated separately everywhere else; the shape of the send applies.
+    expect(isLocalHarnessScope({ ...IN_SCOPE, harnessId: "codex" })).toBe(true);
+    expect(isLocalHarnessScope({ ...IN_SCOPE, harnessId: "claude-code" })).toBe(true);
   });
 
   it("treats an unknown harness as out of scope, not as a maybe", () => {

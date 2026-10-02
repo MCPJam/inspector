@@ -66,6 +66,44 @@ runtime-conflicting variables are refused. Model access remains brokered through
 a registered machine key. Local eval and swarm leases bind to the live owned
 run and pinned harness/model, and are rechecked for new generations.
 
+## Local Codex
+
+Codex runs locally on the same terms as Claude Code: a verified pack and
+platform conformance, its own account rollout, and the operator kill switch.
+Each harness is installed, rolled out and authorized separately. Add client →
+Codex → Create installs Codex's pack and records authorization for Codex only;
+authorizing one harness never authorizes the other. Forget revokes every local
+harness for the project.
+
+Codex runs as the pinned `@openai/codex` CLI behind MCPJam's app-server bridge,
+under a private per-session `CODEX_HOME`. It never reads the operator's
+`~/.codex`, ChatGPT login or OpenAI key. Inference goes through the MCPJam model
+broker on the registered machine key, exactly as hosted Codex does. MCP servers
+selected by MCPJam reach Codex through the turn-scoped host-tool relay; Codex's
+own MCP configuration, plugins and web search stay off. Because the host runs
+those tool calls, eval grading for local Codex reads the run's transcript
+rather than the local evidence protocol.
+
+Interactive chats are attended. Codex's command and file-change approvals show
+as the normal approval cards, and the answer goes back to the same live Codex
+process, so a turn waiting on an approval keeps its process until it is
+answered, stopped or expired. Stop interrupts the turn; the next turn resumes
+the saved thread.
+
+Unattended evals and swarms run Codex commands without approval prompts only
+inside Codex's command sandbox: writes are limited to the run's scratch folder
+and its temporary folder, `/tmp` is excluded, and commands get no network. A
+platform is eligible for unattended local Codex only once that sandbox has
+conformance evidence on it; until then, evals and swarms with a Codex host run
+in the cloud.
+
+When it launches a local eval, quick run or swarm, the Inspector declares
+`local-harness:<id>` for each harness this machine can run unattended for the
+project, and the backend runs exactly those harnesses locally and the rest in
+the cloud. An older Inspector declares none and keeps its Claude Code-only
+behavior. Pinned computer images, seeded eval attachments and injected
+browser/desktop/bash tools are refused for local Codex, as for Claude Code.
+
 ## Runtime distribution
 
 The runtime is versioned independently of Inspector, and each harness's pack is

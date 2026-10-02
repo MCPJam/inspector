@@ -35,6 +35,13 @@ const {
 }));
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
+// The local Codex flag, read through posthog directly (Claude Code's comes from
+// `useLocalHarnessEnabled` above).
+const codexFlag = vi.hoisted(() => ({ value: false as boolean | undefined }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) =>
+    key === "local-codex-enabled" ? codexFlag.value : undefined,
+}));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalHarnessEnabled: flagMock,
 }));
@@ -966,6 +973,7 @@ describe("installing", () => {
       await result.current.startInstall();
     });
     expect(startInstallMock).toHaveBeenCalledWith({
+      harnessId: "claude-code",
       expectedPack: { packVersion: "3.4.0", treeDigest: DIGEST },
     });
   });
@@ -1068,4 +1076,50 @@ it("keeps an existing cloud client hosted in a project without local setup", asy
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.requestedTarget).toBeNull();
   expect(result.current.effectiveTarget).toBe("hosted");
+});
+
+describe("a Codex controller is its own harness", () => {
+  beforeEach(() => {
+    codexFlag.value = true;
+    fetchAvailabilityMock.mockResolvedValue({ ok: true, availability: AVAILABILITY });
+  });
+  afterEach(() => {
+    codexFlag.value = false;
+  });
+
+  it("asks about Codex, with Codex's own flag, and keeps its own stored choice", async () => {
+    const { result } = render({ harnessId: "codex", scopeKey: "host-1:codex" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchAvailabilityMock).toHaveBeenCalledWith(PROJECT, "codex");
+    expect(result.current.harnessId).toBe("codex");
+    expect(result.current.harnessName).toBe("Codex");
+    // The preferred-venue default is recorded for Codex, not for Claude Code.
+    await waitFor(() => expect(loadStoredHarnessTarget(PROJECT, "codex")).toBe("local-native"));
+    expect(loadStoredHarnessTarget(PROJECT)).toBeNull();
+    // A Claude Code consent is not a Codex one.
+    window.localStorage.setItem(localHarnessConsentStorageKey(PROJECT), JSON.stringify(storedConsent()));
+    expect(result.current.consent).toBeNull();
+  });
+
+  it("is not offered when only Claude Code's flag is on", async () => {
+    codexFlag.value = false;
+    const { result } = render({ harnessId: "codex", scopeKey: "host-1:codex" });
+    await waitFor(() => expect(result.current.phase).toBe("unavailable"));
+    expect(fetchAvailabilityMock).not.toHaveBeenCalledWith(PROJECT, "codex");
+  });
+
+  it("starts the Codex install, not Claude Code's", async () => {
+    const { result } = render({ harnessId: "codex", scopeKey: "host-1:codex" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    startInstallMock.mockResolvedValue({ ok: true, kind: "ready", status: { state: "ready", packVersion: "3.4.0" } });
+    await act(async () => {
+      await result.current.chooseWorkspace({ useSuggested: true });
+      result.current.captureApproval({
+        expectations: EXPECTATIONS,
+        scopeKey: "host-1:codex",
+      });
+      await result.current.startInstall();
+    });
+    expect(startInstallMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: "codex" }));
+  });
 });

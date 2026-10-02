@@ -1,4 +1,5 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { listBaseServers } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
@@ -2461,10 +2462,17 @@ export async function prepareEvalRun(
   const environmentHostConfig = environmentId && venueHostId
     ? await loadSuiteHostConfig(convexClient, suiteId, venueHostId)
     : undefined;
+  // Unattended: an eval runs with nobody to approve anything, so a harness is
+  // local only where its unattended evidence (Codex: its command sandbox) holds.
   let localAvailable = environmentHostConfig && venueProjectId
-    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), convexAuthToken, venueProjectId)
+    ? await shouldUseLocalHarness(harnessOfHostConfig(environmentHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" })
     : false;
   const requestedVenue = localAvailable ? "local" as const : "hosted" as const;
+  // The ONE harness this launch will run locally, declared to the backend so
+  // the venue it stamps (and the preview it resolves) is this runner's own.
+  const environmentLocalHarness = localAvailable
+    ? localHarnessIdOf(harnessOfHostConfig(environmentHostConfig))
+    : null;
 
   // Environment launch (P0.1): resolve the environment's closed execution
   // set BEFORE server resolution and tool capture, and use it INSTEAD of
@@ -2494,6 +2502,9 @@ export async function prepareEvalRun(
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
             runtimeVenue: requestedVenue,
+            ...(environmentLocalHarness
+              ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) }
+              : {}),
             projectId,
             environmentId,
           }).catch((error) => {
@@ -2581,9 +2592,12 @@ export async function prepareEvalRun(
     convexClient, resolvedSuiteId, environmentLaunch?.hostId ?? namedHostId,
   );
   if (!environmentId && venueProjectId) {
-    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), convexAuthToken, venueProjectId);
+    localAvailable = await shouldUseLocalHarness(harnessOfHostConfig(launchHostConfig), convexAuthToken, venueProjectId, { scope: "unattended" });
   }
   const launchVenue = localAvailable ? "local" as const : "hosted" as const;
+  const launchLocalHarness = localAvailable
+    ? localHarnessIdOf(harnessOfHostConfig(launchHostConfig))
+    : null;
 
   const {
     runId,
@@ -2621,6 +2635,7 @@ export async function prepareEvalRun(
     // the mutation reject that drift instead of starting a run whose tool
     // snapshot describes a different configuration than it executes.
     runtimeVenue: launchVenue,
+    ...(launchLocalHarness ? { localHarnessIds: [launchLocalHarness] } : {}),
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,
     expectedEnvironmentHostConfigId: environmentLaunch?.hostConfigId,
     expectedEnvironmentServerIds: environmentLaunch
@@ -3421,7 +3436,7 @@ export async function prepareSingleCaseExecution(
     ? undefined
     : (hostConfigOverride as Record<string, unknown> | undefined);
   const effectiveHostConfig = legacyHostConfigOverride ?? liveHostConfig;
-  const harnessRuntimeVenue = await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, testCase.projectId ?? projectId ?? undefined) ? "local" : "hosted";
+  const harnessRuntimeVenue = await shouldUseLocalHarness(harnessOfHostConfig(effectiveHostConfig), convexAuthToken, testCase.projectId ?? projectId ?? undefined, { scope: "unattended" }) ? "local" : "hosted";
   // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
   // path); refused only where this deployment cannot seal the policy into the
   // proxy token. Host-executed delivery enforces in-process and mints no token.

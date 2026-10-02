@@ -61,8 +61,14 @@ const mockLocalHarness = vi.hoisted(() => ({
     resolveSendTarget: vi.fn(() => null),
   },
 }));
+const localControllerArgs = vi.hoisted(() => ({
+  last: null as { harnessId?: string | null } | null,
+}));
 vi.mock("@/hooks/useLocalHarnessTarget", () => ({
-  useLocalHarnessController: () => mockLocalHarness.state,
+  useLocalHarnessController: (args: { harnessId?: string | null }) => {
+    localControllerArgs.last = args;
+    return mockLocalHarness.state;
+  },
   useLocalHarnessRunsHere: () => false,
 }));
 vi.mock("@/hooks/useComputersEnabled", async (importOriginal) => {
@@ -807,7 +813,7 @@ describe("PlaygroundMain — local Claude Code", () => {
     mockHostQueryState.result = null;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
-    // A Claude Code host: the only harness local execution is in scope for.
+    // A Claude Code host, unless a test previews another local harness.
     mockHarnessState.harnessId = "claude-code";
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
@@ -885,10 +891,25 @@ describe("PlaygroundMain — local Claude Code", () => {
       expect(chipData()).toMatchObject({ phase: "needs-consent" });
     });
 
-    it("is not offered on another harness", () => {
-      // Codex, and ordinary emulated chat, must not inherit a local
-      // authorization requirement they can never satisfy.
+    it("asks the previewed harness's own controller", () => {
+      // Each local harness has its own runtime, rollout and authorization, so
+      // a Codex host must never be answered by Claude Code's controller.
       mockHarnessState.harnessId = "codex";
+      (mockLocalHarness.state as Record<string, unknown>).harnessName = "Codex";
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        expect(localControllerArgs.last?.harnessId).toBe("codex");
+        expect(chipData()).toMatchObject({ harnessName: "Codex" });
+      } finally {
+        delete (mockLocalHarness.state as Record<string, unknown>).harnessName;
+      }
+    });
+
+    it("is not offered on a harness this machine cannot run locally", () => {
+      // What the controller answers when that harness's rollout is off or it
+      // has no runtime for this platform.
+      mockHarnessState.harnessId = "codex";
+      mockLocalHarness.state.phase = "unavailable";
       render(<PlaygroundMain {...defaultProps} />);
       expect(chipData()).toBeUndefined();
     });

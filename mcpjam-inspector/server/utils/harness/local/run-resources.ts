@@ -67,6 +67,53 @@ export async function shouldUseLocalHarness(
   return id !== null && isLocalHarnessVenue(id, options.scope) && await localHarnessAccountEnabled(bearer, projectId, id);
 }
 
+/**
+ * The local harnesses this runner will execute UNATTENDED (evals, swarms) for
+ * this member and project: machine, conformance, sandbox evidence and the
+ * account's own rollout, per harness. `harnesses` narrows the candidates to
+ * the ones a launch actually involves; omitted, every local harness.
+ *
+ * What a launch declares to the backend (`local-harness:<id>`) and what its
+ * runner then executes locally both come from this one answer, so the venue
+ * the backend stamps is the venue the runner uses.
+ */
+export async function eligibleUnattendedLocalHarnesses(
+  bearer: string | undefined,
+  projectId: string | undefined,
+  harnesses?: readonly (string | undefined)[],
+): Promise<SupportedLocalHarnessId[]> {
+  const candidates = harnesses === undefined
+    ? [...SUPPORTED_LOCAL_HARNESS_IDS]
+    : [...new Set(harnesses.map(localHarnessIdOf).filter((id): id is SupportedLocalHarnessId => id !== null))];
+  const eligible: SupportedLocalHarnessId[] = [];
+  for (const id of candidates) {
+    if (await shouldUseLocalHarness(id, bearer, projectId, { scope: "unattended" })) eligible.push(id);
+  }
+  return eligible;
+}
+
+/**
+ * Whether an eval launch from this member may ask for the local venue at all,
+ * before its harness is known: some local harness is eligible here. The
+ * launch itself then decides per harness (and declares what it decided).
+ */
+export async function anyUnattendedLocalHarness(
+  bearer: string | undefined,
+  projectId: string | undefined,
+): Promise<boolean> {
+  return (await eligibleUnattendedLocalHarnesses(bearer, projectId)).length > 0;
+}
+
+/**
+ * The harnesses this MACHINE can run unattended, without the account check —
+ * for previews that run before a launch's harness is known. A preview may be
+ * wider than the launch (the launch re-checks the account and declares only
+ * what it will run), never narrower.
+ */
+export function machineUnattendedLocalHarnesses(): SupportedLocalHarnessId[] {
+  return SUPPORTED_LOCAL_HARNESS_IDS.filter((id) => isLocalHarnessVenue(id, "unattended"));
+}
+
 /** All schedulers share these slots; waiting happens before iteration deadlines. */
 let active = 0;
 const waiters: Array<() => void> = [];

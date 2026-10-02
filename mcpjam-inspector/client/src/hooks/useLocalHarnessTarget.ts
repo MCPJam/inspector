@@ -1,5 +1,6 @@
 /**
- * The local Claude Code execution controller: what the user asked for, what the
+ * The local harness execution controller (Claude Code, Codex — one per
+ * harness, each with its own runtime, rollout and authorization): what the user asked for, what the
  * machine is doing about it, and what a turn may actually carry.
  *
  * ── Three pieces of state, deliberately not one ──────────────────────────
@@ -43,7 +44,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { HOSTED_MODE } from "@/lib/config";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
 import {
   fetchLocalHarnessAvailability,
   fetchLocalHarnessRuntimeStatus,
@@ -57,6 +60,9 @@ import {
   revokeLocalHarnessGrantId,
   startLocalHarnessRuntimeInstall,
   subscribeLocalHarnessConsent,
+  asLocalHarnessClientId,
+  LOCAL_HARNESS_CLIENT_NAMES,
+  type LocalHarnessClientId,
   type LocalHarnessAvailabilityView,
   type LocalHarnessConsentExpectations,
   type LocalHarnessError,
@@ -71,8 +77,25 @@ const TARGET_EVENT = "local-harness-target-changed";
 /** How often to re-read a running install. Matches the route's Retry-After. */
 const POLL_INTERVAL_MS = 1_000;
 
-function storageKey(projectId: string): string {
-  return `${STORAGE_PREFIX}:${projectId}`;
+function storageKey(
+  projectId: string,
+  harnessId: LocalHarnessClientId = "claude-code",
+): string {
+  // Claude Code keeps its original key; every other harness has its own.
+  return harnessId === "claude-code"
+    ? `${STORAGE_PREFIX}:${projectId}`
+    : `${STORAGE_PREFIX}:${harnessId}:${projectId}`;
+}
+
+/**
+ * Whether local execution of THIS harness is enabled for the member. Each
+ * harness is its own rollout; both flags are read unconditionally (hooks
+ * cannot be conditional) and the harness picks its own.
+ */
+function useLocalHarnessFlag(harnessId: LocalHarnessClientId): boolean {
+  const claudeCode = useLocalHarnessEnabled();
+  const codex = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
+  return harnessId === "codex" ? codex : claudeCode;
 }
 
 /**
@@ -97,8 +120,9 @@ const sessionTargets = new Map<string, HarnessExecutionTarget>();
 
 export function loadStoredHarnessTarget(
   projectId: string,
+  harnessId: LocalHarnessClientId = "claude-code",
 ): HarnessExecutionTarget | null {
-  const key = storageKey(projectId);
+  const key = storageKey(projectId, harnessId);
   // The unstored choice FIRST, and it is not shadowing a good stored value:
   // `sessionTargets` only ever holds a key whose write localStorage refused.
   // Reading storage first meant a value it accepted EARLIER — say `hosted`,
@@ -120,8 +144,9 @@ export function loadStoredHarnessTarget(
 export function saveHarnessTarget(
   projectId: string,
   target: HarnessExecutionTarget,
+  harnessId: LocalHarnessClientId = "claude-code",
 ): void {
-  const key = storageKey(projectId);
+  const key = storageKey(projectId, harnessId);
   try {
     localStorage.setItem(key, target);
     // Durably stored, so the fallback must stop speaking for this key —
@@ -177,7 +202,7 @@ function subscribeTarget(callback: () => void): () => void {
 export type LocalHarnessPhase =
   /** Nothing is known yet, or the last fetch failed and told us nothing. */
   | "loading"
-  /** This Inspector cannot run Claude Code locally at all. */
+  /** This Inspector cannot run this harness locally at all. */
   | "unavailable"
   /** A member identity is required and there is not one. */
   | "needs-signin"
@@ -221,6 +246,9 @@ export interface LocalHarnessPendingApproval {
 }
 
 export interface LocalHarnessControllerState {
+  /** The harness this controller manages, and the name a user reads for it. */
+  harnessId?: LocalHarnessClientId;
+  harnessName?: string;
   /** The user's explicit choice, preserved through everything below. */
   requestedTarget: HarnessExecutionTarget | null;
   /** What a turn would actually run on right now. */
@@ -310,13 +338,22 @@ export interface UseLocalHarnessControllerArgs {
   inScope: boolean;
   /** Identifies the host/surface an approval was captured under. */
   scopeKey: string;
+  /**
+   * The harness this controller manages. Each local harness has its own
+   * runtime, rollout, authorization and stored choice. Absent or not a local
+   * harness: Claude Code, which is what this controller meant before there
+   * was a second one.
+   */
+  harnessId?: string | null;
 }
 
 export function useLocalHarnessController(
   args: UseLocalHarnessControllerArgs,
 ): LocalHarnessControllerState {
   const { projectId, userKey, inScope, scopeKey } = args;
-  const flagEnabled = useLocalHarnessEnabled();
+  const harnessId: LocalHarnessClientId = asLocalHarnessClientId(args.harnessId) ?? "claude-code";
+  const harnessName = LOCAL_HARNESS_CLIENT_NAMES[harnessId];
+  const flagEnabled = useLocalHarnessFlag(harnessId);
   const offerable = !HOSTED_MODE && flagEnabled;
 
   const [availability, setAvailability] =
@@ -371,12 +408,12 @@ export function useLocalHarnessController(
   // loop.
   const consentSnapshot = useSyncExternalStore(
     subscribeLocalHarnessConsent,
-    () => readLocalHarnessConsentSnapshot(projectId),
+    () => readLocalHarnessConsentSnapshot(projectId, harnessId),
     () => null,
   );
   const storedTarget = useSyncExternalStore(
     subscribeTarget,
-    () => (projectId ? loadStoredHarnessTarget(projectId) : null),
+    () => (projectId ? loadStoredHarnessTarget(projectId, harnessId) : null),
     () => null,
   );
 
@@ -433,7 +470,7 @@ export function useLocalHarnessController(
     }
     let cancelled = false;
     setLoading(true);
-    void fetchLocalHarnessAvailability(projectId).then((result) => {
+    void fetchLocalHarnessAvailability(projectId, harnessId).then((result) => {
       if (cancelled) return;
       if (result.ok) {
         setAvailability(result.availability);
@@ -442,7 +479,7 @@ export function useLocalHarnessController(
       } else {
         // Kept as an ERROR, never folded into "no local target". A 401 means
         // sign in; a network failure means retry; neither means this machine
-        // cannot run Claude Code.
+        // cannot run this harness.
         setAvailability(null);
         setAvailabilityError(result);
       }
@@ -451,7 +488,7 @@ export function useLocalHarnessController(
     return () => {
       cancelled = true;
     };
-  }, [offerable, inScope, refreshToken, projectId]);
+  }, [offerable, inScope, refreshToken, projectId, harnessId]);
 
   // Re-read on remount, focus and reconnect. Cheap, and it is what makes a
   // second window notice the first one's finished install.
@@ -481,7 +518,7 @@ export function useLocalHarnessController(
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const tick = async () => {
-      const result = await fetchLocalHarnessRuntimeStatus();
+      const result = await fetchLocalHarnessRuntimeStatus({ harnessId });
       if (cancelled) return;
       if (!result.ok) {
         // A status fetch that failed is NOT a failed install. Saying so would
@@ -533,7 +570,7 @@ export function useLocalHarnessController(
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [offerable, inScope, operationActive]);
+  }, [offerable, inScope, operationActive, harnessId]);
 
   // ── Invalidating a captured approval ─────────────────────────────────────
   //
@@ -590,7 +627,7 @@ export function useLocalHarnessController(
       if (cancelled || renewing) return;
       renewing = true;
       try {
-        const ready = await ensureLocalHarnessReady(projectId, false, abort.signal);
+        const ready = await ensureLocalHarnessReady(projectId, false, abort.signal, undefined, harnessId);
         if (!cancelled) {
           setRefreshToken(value => value + 1);
           timer = setTimeout(renew, Math.max(30_000, Date.parse(ready.expiresAt) - Date.now() - 60_000));
@@ -602,7 +639,7 @@ export function useLocalHarnessController(
     const focus = () => { if (timer) clearTimeout(timer); void renew(); };
     window.addEventListener("focus", focus);
     return () => { cancelled = true; abort.abort(); if (timer) clearTimeout(timer); window.removeEventListener("focus", focus); };
-  }, [offerable, inScope, projectId, userKey, availability?.preferredVenue]);
+  }, [offerable, inScope, projectId, userKey, availability?.preferredVenue, harnessId]);
 
   // ── The requested target ─────────────────────────────────────────────────
   const hostedAvailable = availability?.hostedAvailable ?? null;
@@ -613,8 +650,8 @@ export function useLocalHarnessController(
   }, [offerable, inScope, availability?.preferredVenue, availabilityError, consent?.serverAuthorized]);
 
   useEffect(() => {
-    if (availability?.preferredVenue === "local" && offerable && inScope && projectId && storedTarget !== "local-native") saveHarnessTarget(projectId, "local-native");
-  }, [offerable, inScope, projectId, storedTarget, availability?.preferredVenue]);
+    if (availability?.preferredVenue === "local" && offerable && inScope && projectId && storedTarget !== "local-native") saveHarnessTarget(projectId, "local-native", harnessId);
+  }, [offerable, inScope, projectId, storedTarget, availability?.preferredVenue, harnessId]);
 
   const effectiveTarget: HarnessExecutionTarget =
     requestedTarget === "local-native" && consent !== null
@@ -637,7 +674,7 @@ export function useLocalHarnessController(
       if (availabilityError.kind === "not-found") {
         return {
           phase: "unavailable",
-          reason: "Running Claude Code on this machine is off on this server.",
+          reason: `Running ${harnessName} on this machine is off on this server.`,
         };
       }
       // A network failure or a 5xx tells us nothing about this machine, so the
@@ -651,7 +688,7 @@ export function useLocalHarnessController(
       return {
         phase: "needs-signin",
         reason:
-          "Sign in to authorize Claude Code to run on this machine.",
+          `Sign in to authorize ${harnessName} to run on this machine.`,
       };
     }
     if (
@@ -696,7 +733,7 @@ export function useLocalHarnessController(
         phase: "failed",
         reason:
           status.message ??
-          "The installed Claude Code runtime no longer matches what MCPJam " +
+          `The installed ${harnessName} runtime no longer matches what MCPJam ` +
             "expects. Reinstall it.",
       };
     }
@@ -733,6 +770,7 @@ export function useLocalHarnessController(
     }
     return { phase: "needs-consent", reason: null };
   }, [
+    harnessName,
     offerable,
     inScope,
     availabilityError,
@@ -749,9 +787,9 @@ export function useLocalHarnessController(
   const select = useCallback(
     (next: HarnessExecutionTarget) => {
       if (!projectId) return;
-      saveHarnessTarget(projectId, next);
+      saveHarnessTarget(projectId, next, harnessId);
     },
-    [projectId],
+    [projectId, harnessId],
   );
 
   const refresh = useCallback(() => setRefreshToken((n) => n + 1), []);
@@ -848,6 +886,7 @@ export function useLocalHarnessController(
       };
     }
     const result = await startLocalHarnessRuntimeInstall({
+      harnessId,
       expectedPack: {
         packVersion: approval.expectations.packVersion,
         treeDigest: approval.expectations.treeDigest,
@@ -862,7 +901,7 @@ export function useLocalHarnessController(
     setRuntimeStatus(result.status);
     setStatusFetchFailed(false);
     return { ok: true as const, kind: result.kind };
-  }, []);
+  }, [harnessId]);
 
   const authorize = useCallback(async () => {
     const approval = pendingApprovalRef.current;
@@ -878,6 +917,7 @@ export function useLocalHarnessController(
     setAuthorizing(true);
     try {
       const result = await mintLocalHarnessConsent({
+        harnessId,
         projectId: approval.projectId,
         workspaceGrantId: approval.workspaceGrantId,
         expect: approval.expectations,
@@ -918,7 +958,7 @@ export function useLocalHarnessController(
         };
       }
 
-      if (!persistLocalHarnessConsent(projectId, result.consent)) {
+      if (!persistLocalHarnessConsent(projectId, result.consent, harnessId)) {
         // Storage is disabled or full. Failing to persist leaves the grant
         // unusable next render, so this is an authorization FAILURE rather
         // than a ready state that will mysteriously stop working.
@@ -928,7 +968,7 @@ export function useLocalHarnessController(
           kind: "malformed" as const,
           status: null,
           message:
-            "This browser would not store the authorization, so Claude Code " +
+            `This browser would not store the authorization, so ${harnessName} ` +
             "cannot run on this machine from here.",
         };
       }
@@ -938,14 +978,14 @@ export function useLocalHarnessController(
     } finally {
       setAuthorizing(false);
     }
-  }, [projectId, userKey]);
+  }, [projectId, userKey, harnessId, harnessName]);
 
   const revoke = useCallback(async () => {
     if (!projectId) return;
     pendingApprovalRef.current = null;
     setPendingApproval(null);
-    await revokeLocalHarnessConsent(projectId);
-  }, [projectId]);
+    await revokeLocalHarnessConsent(projectId, harnessId);
+  }, [projectId, harnessId]);
 
   // ── The send snapshot ────────────────────────────────────────────────────
   //
@@ -957,7 +997,7 @@ export function useLocalHarnessController(
     if (!offerable || !inScope || !projectId || availability?.preferredVenue === "hosted") return null;
     if (userKey === null || userKey === undefined) return null;
     const fresh = parseStoredLocalHarnessConsent(
-      readLocalHarnessConsentSnapshot(projectId),
+      readLocalHarnessConsentSnapshot(projectId, harnessId),
     );
     if (fresh === null) return null;
     // The same staleness rule the phase applies, so the gate and this backstop
@@ -980,9 +1020,11 @@ export function useLocalHarnessController(
       }
     }
     return { target: fresh.target, token: fresh.token, ...(fresh.serverAuthorized ? { serverAuthorized: true } : {}) };
-  }, [offerable, inScope, projectId, userKey, availability]);
+  }, [offerable, inScope, projectId, userKey, availability, harnessId]);
 
   return {
+    harnessId,
+    harnessName,
     requestedTarget,
     effectiveTarget,
     phase,
@@ -1042,19 +1084,20 @@ export function useLocalHarnessRunsHere(args: {
   projectId: string | null | undefined;
   harnessId: string | null | undefined;
 }): boolean {
-  const flagEnabled = useLocalHarnessEnabled();
+  const harnessId = asLocalHarnessClientId(args.harnessId);
+  const flagEnabled = useLocalHarnessFlag(harnessId ?? "claude-code");
   const consentSnapshot = useSyncExternalStore(
     subscribeLocalHarnessConsent,
-    () => readLocalHarnessConsentSnapshot(args.projectId),
+    () => (harnessId ? readLocalHarnessConsentSnapshot(args.projectId, harnessId) : null),
     () => null,
   );
   const storedTarget = useSyncExternalStore(
     subscribeTarget,
-    () => (args.projectId ? loadStoredHarnessTarget(args.projectId) : null),
+    () => (args.projectId && harnessId ? loadStoredHarnessTarget(args.projectId, harnessId) : null),
     () => null,
   );
   if (HOSTED_MODE || !flagEnabled) return false;
-  if (args.harnessId !== "claude-code") return false;
+  if (harnessId === null) return false;
   // BOTH facts, and the stored target is one of them.
   //
   // Accepting "anything but hosted" was an over-correction. It was meant for

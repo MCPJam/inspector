@@ -9,7 +9,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import type { LocalHarnessPhase } from "@/hooks/useLocalHarnessTarget";
 
 /**
- * Where this turn's Claude Code agent will run — an indicator, or a picker.
+ * Where this turn's local harness agent will run — an indicator, or a picker.
  *
  * ── Why it is usually not a picker ───────────────────────────────────────
  * On a normal npx or Electron installation there is no choice to make. "Cloud"
@@ -35,6 +35,8 @@ export type ExecutionTargetChipData = {
   percent?: number;
   /** `~/code/project`. Display only; never an absolute path. */
   displayRoot?: string;
+  /** The local harness this target is for. Absent ⇒ Claude Code. */
+  harnessName?: string;
   /** Null ⇒ unknown. Only `true` offers a choice. */
   hostedAvailable: boolean | null;
   onSelect: (target: "hosted" | "local-native") => void;
@@ -54,6 +56,7 @@ function chipFace(data: ExecutionTargetChipData): {
   tone: "normal" | "busy" | "attention";
   title: string;
 } {
+  const name = data.harnessName ?? "Claude Code";
   // Anything that is not an explicit local target runs hosted, and the phase
   // labels below all assume local — so falling through to them with no target
   // is how the chip came to say "This machine" over a turn bound for the
@@ -67,7 +70,7 @@ function chipFace(data: ExecutionTargetChipData): {
       label: "Cloud",
       icon: Cloud,
       tone: "normal",
-      title: "This host's Claude Code runs in a cloud computer",
+      title: `This host's ${name} runs in a cloud computer`,
     };
   }
   switch (data.phase) {
@@ -78,7 +81,7 @@ function chipFace(data: ExecutionTargetChipData): {
         tone: "busy",
         // No target is claimed while the answer is unknown. Guessing here is
         // how a chip ends up saying "This machine" on a machine that cannot.
-        title: "Checking where Claude Code can run",
+        title: `Checking where ${name} can run`,
       };
     case "installing":
       return {
@@ -88,7 +91,7 @@ function chipFace(data: ExecutionTargetChipData): {
             : `Setting up · ${data.percent}%`,
         icon: Loader2,
         tone: "busy",
-        title: "Downloading and verifying the Claude Code runtime",
+        title: `Downloading and verifying the ${name} runtime`,
       };
     case "authorizing":
       return {
@@ -103,14 +106,14 @@ function chipFace(data: ExecutionTargetChipData): {
         label: "Setup failed",
         icon: TriangleAlert,
         tone: "attention",
-        title: "Claude Code setup did not finish — open for details",
+        title: `${name} setup did not finish — open for details`,
       };
     case "needs-signin":
       return {
         label: "Sign in",
         icon: TriangleAlert,
         tone: "attention",
-        title: "Sign in to run Claude Code on this machine",
+        title: `Sign in to run ${name} on this machine`,
       };
     case "needs-workspace":
     case "needs-consent":
@@ -126,8 +129,8 @@ function chipFace(data: ExecutionTargetChipData): {
         icon: Laptop,
         tone: "normal",
         title: data.displayRoot
-          ? `Claude Code runs here, in ${data.displayRoot}`
-          : "Claude Code runs on this machine",
+          ? `${name} runs here, in ${data.displayRoot}`
+          : `${name} runs on this machine`,
       };
     case "unavailable":
     default:
@@ -135,7 +138,7 @@ function chipFace(data: ExecutionTargetChipData): {
         label: "Cloud",
         icon: Cloud,
         tone: "normal",
-        title: "This machine can't run Claude Code — the turn runs hosted",
+        title: `This machine can't run ${name} — the turn runs hosted`,
       };
   }
 }
