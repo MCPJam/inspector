@@ -209,6 +209,37 @@ describe("hosted chat turn (MJ-001)", () => {
     expect(JSON.parse(payload)._httpLogs?.length).toBeGreaterThan(0);
   });
 
+  it("reports the server's HTTP error after connect by its status line", async () => {
+    // Connects, then answers `tools/list` with its own 500 and an HTML body.
+    upstream.current = async (request) => {
+      const message = (await request
+        .clone()
+        .json()
+        .catch(() => undefined)) as any;
+      if (message?.method === "tools/list") {
+        return new Response(
+          "<html><body>UNEXPECTED_MARKER_BODY fetch failed</body></html>",
+          {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: { "content-type": "text/html", ...EXTRA_HEADERS },
+          },
+        );
+      }
+      return mcpServer(request);
+    };
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", body, token);
+    const payload = await response.text();
+    expect(payload).not.toMatch(MARKER);
+    expect(response.status).toBe(424);
+    const parsed = JSON.parse(payload);
+    expect(parsed.code).toBe("UPSTREAM_HTTP_ERROR");
+    expect(parsed.message).toBe(
+      "The MCP server responded with HTTP 500 Internal Server Error.",
+    );
+  });
+
   it("streams exchange log parts without a stored header value or extra headers", async () => {
     upstream.current = mcpServer;
     const { app, token } = createWebTestApp();
