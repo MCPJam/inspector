@@ -8,7 +8,7 @@ import {
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
-import { isCreditExhaustion } from "../credit-exhaustion";
+import { isCreditExhaustion, isHoldRefusal } from "../credit-exhaustion";
 
 /**
  * The exact string that was being stored on every attempt of a rate-limited
@@ -746,5 +746,98 @@ describe("isCreditExhaustion when a hold and an exhaustion are both in play", ()
     }
     // A truncated envelope cannot be parsed; the sentence still says hold.
     expect(isCreditExhaustion(withoutReason.slice(0, -12))).toBe(false);
+  });
+});
+
+describe("one verdict on a hold", () => {
+  const HELD =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+  const SPENT = "Daily MCPJam model limit reached.";
+
+  // A stored row keeps the sentence under whatever code the RUNNER gave a failed
+  // session when the backend's own code was lost, so a code that names no other
+  // refusal cannot be what keeps a hold from being read as one.
+  it.each(["rate_limited", "session_failed"])(
+    "reads the sentence as a hold under the runner's generic code %s",
+    (code) => {
+      expect(isHeldCreditsRefusal(code, undefined, HELD)).toBe(true);
+      expect(isTransientSpendRefusal(code, undefined, HELD)).toBe(true);
+      expect(isHoldRefusal({ code, message: HELD })).toBe(true);
+      expect(isCreditExhaustion({ code, message: HELD })).toBe(false);
+    },
+  );
+
+  it("never calls a locked wallet a hold, with or without the structured reason", () => {
+    // `buildSpendRefusalBody` can emit both at once.
+    expect(isHeldCreditsRefusal("wallet_locked", "holds_committed")).toBe(
+      false,
+    );
+    expect(
+      isHoldRefusal({ code: "wallet_locked", refusalReason: "holds_committed" }),
+    ).toBe(false);
+  });
+
+  it("reads a hold joined with a stated exhaustion as the exhaustion, wherever it is asked", () => {
+    const joined = `${HELD} ${SPENT}`;
+    expect(isHeldCreditsRefusal(undefined, undefined, joined)).toBe(false);
+    expect(isTransientSpendRefusal("user_rate_limit", undefined, joined)).toBe(
+      false,
+    );
+    expect(isHoldRefusal(joined)).toBe(false);
+    expect(isCreditExhaustion(joined)).toBe(true);
+  });
+
+  it("lets exhaustion nested under details win over a top-level hold sentence", () => {
+    const refusal = {
+      message: HELD,
+      details: {
+        code: "billing_limit_reached",
+        error: "Daily credit limit reached",
+      },
+    };
+    expect(isHoldRefusal(refusal)).toBe(false);
+    expect(isCreditExhaustion(refusal)).toBe(true);
+  });
+
+  it("lets a structured reason decide at any depth, as the dialog's scan does", () => {
+    const nested = {
+      code: "user_rate_limit",
+      message: SPENT,
+      details: { refusal: { refusalReason: "holds_committed" } },
+    };
+    expect(isHoldRefusal(nested)).toBe(true);
+    expect(isCreditExhaustion(nested)).toBe(false);
+  });
+
+  it("gives the field form and the value form of one refusal the same verdict", () => {
+    const refusals: Array<{
+      code?: string;
+      refusalReason?: string;
+      message?: string;
+    }> = [
+      { code: "user_rate_limit", refusalReason: "holds_committed" },
+      {
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+        message: HELD,
+      },
+      { code: "user_rate_limit", message: HELD },
+      { code: "user_rate_limit", message: SPENT },
+      { code: "user_rate_limit", message: `${HELD} ${SPENT}` },
+      { code: "wallet_locked", message: HELD },
+      { code: "wallet_locked", refusalReason: "holds_committed" },
+      { code: "billing_limit_reached", message: HELD },
+      { code: "rate_limited", message: HELD },
+      { message: HELD },
+    ];
+    for (const refusal of refusals) {
+      expect(isHoldRefusal(refusal), JSON.stringify(refusal)).toBe(
+        isHeldCreditsRefusal(
+          refusal.code,
+          refusal.refusalReason,
+          refusal.message,
+        ),
+      );
+    }
   });
 });

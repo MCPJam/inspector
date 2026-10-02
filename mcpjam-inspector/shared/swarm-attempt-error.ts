@@ -86,18 +86,83 @@ export function withoutHeldCreditsSentence(text: string): string {
 }
 
 /**
+ * What an exhaustion SAYS, in words. Kept apart from the codes because the
+ * codes also ride a hold (`user_rate_limit` is the generic code for both), so
+ * only these phrases can tell a text that also states an exhaustion from a text
+ * that is only a hold.
+ */
+export const EXHAUSTION_PHRASES: readonly RegExp[] = [
+  /mcpjam[\w\s-]{0,40}model limit/i,
+  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
+  /\bThis request needs about \d+ MCPJam credits\b/i,
+  /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i,
+];
+
+/**
+ * The exhaustion codes that never ride a hold. A hold answers with the generic
+ * `user_rate_limit` (`buildSpendRefusalBody`), so that one says nothing next to
+ * the sentence; these three do.
+ */
+const EXHAUSTION_ONLY_CODES =
+  /\b(?:mcpjam_rate_limit|org_rate_limit|billing_limit_reached)\b/i;
+
+/**
+ * Does this text state an exhaustion once the held-credits sentence is taken
+ * out of it? The sentence is a hold; what is left may not be.
+ */
+export function statesExhaustion(text: string): boolean {
+  const rest = withoutHeldCreditsSentence(text);
+  return (
+    EXHAUSTION_PHRASES.some((phrase) => phrase.test(rest)) ||
+    EXHAUSTION_ONLY_CODES.test(rest)
+  );
+}
+
+/**
+ * Codes that name a refusal other than a hold. A hold answers with the generic
+ * `user_rate_limit` (not here); a flattened message has no code at all, and a
+ * stored row can carry the runner's own generic code (`rate_limited`,
+ * `session_failed`) when the backend's was lost. None of those rules a hold
+ * out. These do: a locked wallet answers `wallet_locked` with the same
+ * sentence, and the rest are an exhaustion in their own right or a limit no
+ * purchase of credits lifts.
+ */
+const NON_HOLD_CODES: ReadonlySet<string> = new Set([
+  "wallet_locked",
+  "spend_budget_reached",
+  "organization_spend_budget_reached",
+  "platform_free_budget_exhausted",
+  "platform_capacity",
+  "account_suspended",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+  "mcpjam_rate_limit",
+  "org_rate_limit",
+  "billing_limit_reached",
+]);
+
+/** The code names a refusal other than a hold; see {@link NON_HOLD_CODES}. */
+export function namesAnotherRefusal(code?: string | null): boolean {
+  return !!code && NON_HOLD_CODES.has(code.toLowerCase());
+}
+
+/**
  * `holds_committed`: other in-flight requests hold the last credits and
  * release them as they finish.
  *
- * A structured `refusalReason` is the backend's own verdict and decides alone:
- * the sentence is only a fallback for a stored attempt row, which keeps the
- * sentence and loses the reason. Reading the sentence first would let a
- * refusal that quotes one (or aggregates several) outvote its own reason.
+ * This is the one reading of a hold: the card, the retry, the describer and the
+ * dialog all come through it (the dialog by way of `isHoldRefusal`, which reads
+ * a refusal's fields and calls this).
  *
- * The fallback also defers to the code a row kept. A hold rides the generic
- * `user_rate_limit` (or none, once a message is flattened); any other code
- * names a different refusal, so a locked wallet, which answers `wallet_locked`
- * with the same sentence, is not a wait.
+ * - A code that names a different refusal rules it out first (see
+ *   {@link namesAnotherRefusal}): a locked wallet answers `wallet_locked` with
+ *   the same sentence, and can carry the structured reason too.
+ * - A structured `refusalReason` is the backend's own verdict and decides alone:
+ *   the sentence is only a fallback for a stored attempt row, which keeps the
+ *   sentence and loses the reason. Reading the sentence first would let a
+ *   refusal that quotes one (or aggregates several) outvote its own reason.
+ * - The sentence is anchored on the backend's own words, and a text that also
+ *   states an exhaustion is an exhaustion: the hold must not hide it.
  *
  * Split from {@link isTransientSpendRefusal} because a hold and a busy
  * reservation are both waits but read differently to the user: a hold is about
@@ -108,10 +173,13 @@ export function isHeldCreditsRefusal(
   refusalReason?: string | null,
   message?: string | null,
 ): boolean {
-  if (refusalReason)
-    return code === "user_rate_limit" && refusalReason === "holds_committed";
-  if (code && code !== "user_rate_limit") return false;
-  return !!message && HOLDS_COMMITTED_SENTENCE.test(message);
+  if (namesAnotherRefusal(code)) return false;
+  if (refusalReason) return refusalReason === "holds_committed";
+  return (
+    !!message &&
+    HOLDS_COMMITTED_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
 }
 
 /**
@@ -159,17 +227,26 @@ export type SwarmAttemptErrorInfo = {
   httpStatus?: number;
 };
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{")) return null;
+/**
+ * The JSON object an error string wraps. Error envelopes often prefix the
+ * response body with a URL and a status, so this starts at the first `{`.
+ */
+export function parseJsonEnvelope(text: string): Record<string, unknown> | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
   try {
-    const parsed: unknown = JSON.parse(trimmed);
+    const parsed: unknown = JSON.parse(text.slice(start));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") ? parseJsonEnvelope(trimmed) : null;
 }
 
 function str(value: unknown): string | undefined {

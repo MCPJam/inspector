@@ -462,19 +462,11 @@ export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
-  // The backend's structured verdict decides. Its sentence is the fallback for
-  // a stored attempt row, which keeps the sentence and loses the reason, and it
-  // is read by the predicate the dialog uses: a quoted hold, or one joined with
-  // a stated exhaustion, is not a retry here either.
-  const reasons = collectJsonCandidates(message).map((parsed) =>
-    findStringPropertyDeep(parsed, "refusalReason"),
-  );
-  if (
-    reasons.includes("holds_committed") ||
-    (!reasons.some(Boolean) && isHoldRefusal(message))
-  ) {
-    return MCPJAM_HOLDS_COMMITTED_MESSAGE;
-  }
+  // The predicate the dialog uses decides, so the panel never contradicts an
+  // open dialog: the backend's structured verdict at any depth, its sentence
+  // only as the fallback for a stored attempt row, and a quoted hold, or one
+  // joined with a stated exhaustion, is not a retry here either.
+  if (isHoldRefusal(message)) return MCPJAM_HOLDS_COMMITTED_MESSAGE;
   if (!isMCPJamModelLimitError({ message })) return null;
   const described = describeError(message);
   const entry = MCPJAM_LIMIT_SLUGS.has(described.slug)

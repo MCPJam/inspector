@@ -193,22 +193,22 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           // wave's first run may report a shortfall and a later one real
           // exhaustion, so the exhaustion latch follows it.
           const latch = latchFor(state, input, true);
-          // A notice held for auth keeps the newest exhaustion, or the replay
-          // after sign-in would clear the latch this one just set. It keeps
-          // the held notice's organization and surface when the newer one does
-          // not know them, or the dialog would open for no organization.
+          // A notice held for auth keeps the NEWEST evidence, whichever it is:
+          // an older exhaustion would re-set at sign-in a latch that a later
+          // shortfall just cleared, and an older shortfall would clear one a
+          // later exhaustion just set. It keeps the held notice's organization
+          // and surface when the newer one does not know them, or the dialog
+          // would open for no organization.
           const held = state.pendingInput;
-          const pending =
-            state.hasPendingLimit && !input.shortfall
-              ? {
-                  pendingInput: {
-                    ...input,
-                    organizationId:
-                      input.organizationId ?? held?.organizationId,
-                    surface: input.surface ?? held?.surface,
-                  },
-                }
-              : {};
+          const pending = state.hasPendingLimit
+            ? {
+                pendingInput: {
+                  ...input,
+                  organizationId: input.organizationId ?? held?.organizationId,
+                  surface: input.surface ?? held?.surface,
+                },
+              }
+            : {};
           return { notifiedKeys, waveOrganizations, ...latch, ...pending };
         }
         // Not suppressed, so this notice speaks for its waves again: one that
