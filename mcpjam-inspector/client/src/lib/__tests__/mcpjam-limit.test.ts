@@ -16,6 +16,7 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
+    waveOrganizations: {},
     authStatus: "loading",
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -563,7 +564,11 @@ describe("credits held by in-flight requests", () => {
 describe("one dialog per swarm wave", () => {
   const EXHAUSTED =
     "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
-  const notify = (keys: { runId?: string; swarmRunGroupId?: string }) =>
+  const notify = (keys: {
+    runId?: string;
+    swarmRunGroupId?: string;
+    organizationId?: string;
+  }) =>
     notifyMCPJamLimitError({
       ...keys,
       code: "user_rate_limit",
@@ -755,6 +760,104 @@ describe("one dialog per swarm wave", () => {
     // The wave is announced again: its next run is quiet, as before.
     notify({ runId: "run-d", swarmRunGroupId: "wave-1" });
     expect(store.getState().isOpen).toBe(false);
+  });
+
+  // A purchase is for ONE organization. Another organization's wave was
+  // announced and nothing about its balance changed, so its next run stays quiet
+  // instead of reopening the dialog the user already closed.
+  it("makes only the purchasing organization's waves news again", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({
+      runId: "run-a",
+      swarmRunGroupId: "wave-a",
+      organizationId: "org-a",
+    });
+    store.getState().close();
+    notify({
+      runId: "run-b",
+      swarmRunGroupId: "wave-b",
+      organizationId: "org-b",
+    });
+    store.getState().close();
+
+    store.getState().forgetNotifiedWaves("org-a");
+
+    notify({
+      runId: "run-b2",
+      swarmRunGroupId: "wave-b",
+      organizationId: "org-b",
+    });
+    expect(store.getState().isOpen).toBe(false);
+
+    notify({
+      runId: "run-a2",
+      swarmRunGroupId: "wave-a",
+      organizationId: "org-a",
+    });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("treats a wave that named no organization as news for any purchase", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-x", swarmRunGroupId: "wave-x" });
+    store.getState().close();
+
+    store.getState().forgetNotifiedWaves("org-a");
+
+    notify({ runId: "run-x2", swarmRunGroupId: "wave-x" });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("learns a wave's organization from a later run and scopes a purchase by it", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    // The wave is announced from a surface that does not know its organization,
+    // and its next run does.
+    notify({ runId: "run-1", swarmRunGroupId: "wave-1" });
+    store.getState().close();
+    notify({
+      runId: "run-2",
+      swarmRunGroupId: "wave-1",
+      organizationId: "org-a",
+    });
+    expect(store.getState().isOpen).toBe(false);
+
+    store.getState().forgetNotifiedWaves("org-b");
+
+    notify({
+      runId: "run-3",
+      swarmRunGroupId: "wave-1",
+      organizationId: "org-a",
+    });
+    expect(store.getState().isOpen).toBe(false);
+  });
+
+  it("keeps a wave that an earlier purchase made news when another organization buys", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({
+      runId: "run-b",
+      swarmRunGroupId: "wave-b",
+      organizationId: "org-b",
+    });
+    store.getState().close();
+
+    store.getState().forgetNotifiedWaves("org-b");
+    store.getState().forgetNotifiedWaves("org-a");
+
+    // Still news: organization A's purchase does not put B's wave back to sleep.
+    notify({
+      runId: "run-b2",
+      swarmRunGroupId: "wave-b",
+      organizationId: "org-b",
+    });
+    expect(store.getState().isOpen).toBe(true);
   });
 
   it("keeps the wave suppressed across the loading-to-signed-in handoff", () => {

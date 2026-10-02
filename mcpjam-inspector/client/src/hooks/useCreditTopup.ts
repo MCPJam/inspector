@@ -268,8 +268,12 @@ export function useCreditTopup() {
         // runs out again after it is news, not a repeat, so the waves announced
         // so far stop silencing the dialog. On the web the page reloads for the
         // return trip and this is moot; the desktop app stays open while the
-        // browser handles checkout, and a retried launch reuses its wave.
-        useMCPJamLimitDialogStore.getState().forgetNotifiedWaves();
+        // browser handles checkout, and a retried launch reuses its wave. The
+        // purchase is for one organization: another organization's waves are
+        // not news, since nothing about its balance changed.
+        useMCPJamLimitDialogStore
+          .getState()
+          .forgetNotifiedWaves(organizationId);
         if (isDesktopApp()) {
           // The shell sends any cross-origin navigation to the system browser,
           // so `location.assign` here would do nothing and the return URL would
