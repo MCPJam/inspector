@@ -163,6 +163,22 @@ describe("traced watches", () => {
     expect(reportCaught).not.toHaveBeenCalled();
     expect(signOut).toHaveBeenCalledOnce();
   });
+  it("neither reports nor signs out a subscription re-run without identity", () => {
+    // Auth is already on its way back; the readiness gate re-subscribes.
+    const signOut = vi.fn();
+    setSessionRevokedHandler(signOut);
+    const unauthenticated = new ConvexError({
+      kind: "unauthenticated",
+      message: "Authentication required",
+    });
+    const f = fixture();
+    f.set(undefined, unauthenticated);
+    const watch = f.client.watchQuery(query, {});
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow(unauthenticated);
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
+  });
   it("still reports a plain Server Error and does not sign out", () => {
     const signOut = vi.fn();
     setSessionRevokedHandler(signOut);
