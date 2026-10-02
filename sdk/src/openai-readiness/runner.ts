@@ -639,8 +639,8 @@ export interface GatherOpenAIReadinessEvidenceOptions {
    * unauthenticated dial, and the wrong one for a submitter grading their own
    * server with a token they supplied.
    *
-   * Sent only on MCP requests to the endpoint's own origin, never on
-   * discovery. See `DirectoryDiscoveryOptions.mcpHeaders`.
+   * Sent only on MCP requests to the endpoint, never on discovery. See
+   * `DirectoryDiscoveryOptions.mcpHeaders` for the redirect caveat.
    */
   mcpHeaders?: Record<string, string>;
   /**
