@@ -2,6 +2,7 @@ import type { ErrorEvent, EventHint } from "@sentry/react";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
+  isUnauthenticatedError,
 } from "./authorization-refusal";
 
 let backendHostname: string | undefined;
@@ -97,7 +98,8 @@ export function createConvexQueryEventProcessor(limit = 500) {
       if (!details) return event;
       if (
         isAuthorizationRefusal(hint.originalException) ||
-        isSessionRevokedError(hint.originalException)
+        isSessionRevokedError(hint.originalException) ||
+        isUnauthenticatedError(hint.originalException)
       )
         return null;
       const tags = queryFailureTags(exception!.value!)!;
