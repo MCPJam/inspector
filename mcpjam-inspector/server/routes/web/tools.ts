@@ -2,14 +2,17 @@ import { Hono } from "hono";
 import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
+  mapEphemeralServerFailure,
+  projectRouteFailure,
   toolsListSchema,
+  toolsListMultiSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
 } from "./auth.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
-import { listTools } from "../../utils/route-handlers.js";
+import { listTools, listToolsMulti } from "../../utils/route-handlers.js";
 import { detectCreatedTask } from "../../utils/task-route-handlers.js";
 import { toRegistryTaskStatus } from "../../../shared/hosted-tasks.js";
 import { recordCreatedTask } from "../../services/hosted-task-registry.js";
@@ -83,6 +86,47 @@ tools.post("/list", async (c) =>
     // body — so raw/conformance evidence can't be masked by a stale serve.
     listTools(manager, { ...body, cacheMode: "bypass" }),
   ),
+);
+
+/**
+ * One server's failure inside a batch, answered as its own request would
+ * have been: `mapEphemeralServerFailure` picks the status and code (the
+ * egress guard's 400 included, since the manager dials lazily and a refused
+ * target surfaces inside `listTools`), and the hosted projection (MJ-001)
+ * reduces the message, so a batch says no more about a target than a
+ * single-server call does. The client rebuilds its usual `WebApiError` from
+ * these three fields.
+ */
+function batchFailure(error: unknown): {
+  status: number;
+  code: ErrorCode;
+  message: string;
+} {
+  const { routeError } = projectRouteFailure(
+    mapEphemeralServerFailure(error),
+    error,
+    undefined,
+  );
+  return {
+    status: routeError.status,
+    code: routeError.code,
+    message: routeError.message,
+  };
+}
+
+tools.post("/list-multi", async (c) =>
+  withEphemeralConnection(c, toolsListMultiSchema, async (manager, body) => {
+    const { results, failures } = await listToolsMulti(manager, {
+      ...body,
+      cacheMode: "bypass",
+    });
+    if (!failures) return { results };
+    const errors: Record<string, ReturnType<typeof batchFailure>> = {};
+    for (const [serverId, failure] of Object.entries(failures)) {
+      errors[serverId] = batchFailure(failure);
+    }
+    return { results, errors };
+  }),
 );
 
 tools.post("/execute", async (c) =>

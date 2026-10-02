@@ -51,8 +51,8 @@ import swarms from "../swarms.js";
 import swarmInsights from "../swarm-insights.js";
 import { v1OnError } from "../envelope.js";
 
-const PROJECT = "proj_a";
-const OTHER_PROJECT = "proj_b";
+const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const OTHER_PROJECT = "projbxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 function makeApp(...routers: Array<Parameters<Hono["route"]>[1]>) {
   const app = new Hono();

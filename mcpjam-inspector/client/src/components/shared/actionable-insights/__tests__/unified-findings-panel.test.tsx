@@ -875,7 +875,9 @@ describe("analysis states and provenance", () => {
 describe("automatic analysis failure note", () => {
   it("explains analyzer version changes", () => {
     renderPanel({ analysisFailure: { errorCode: "superseded" } });
-    expect(screen.getByTestId("unified-findings-analysis-failed")).toHaveTextContent(
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed"),
+    ).toHaveTextContent(
       "AI analysis did not complete. The analyzer was updated during analysis.",
     );
   });
@@ -892,5 +894,73 @@ describe("automatic analysis failure note", () => {
         expect(note.textContent).toBe("AI analysis did not complete.");
       }
     },
+  );
+});
+
+it.each(["findings", "fallback"])(
+  "shows a safe report failure and retry beside existing %s",
+  (surface) => {
+    const onRun = vi.fn();
+    renderPanel({
+      ...(surface === "fallback"
+        ? {
+            snapshot: null,
+            findings: [],
+            fallback: <p>Recorded eval results</p>,
+          }
+        : {}),
+      build: {
+        available: true,
+        pending: false,
+        error: "Internal detail that must stay private",
+        errorCode: "build_retries_exhausted",
+        onRun,
+      },
+      analyze: {
+        available: true,
+        pending: false,
+        error: "Internal detail that must stay private",
+        onRun: vi.fn(),
+      },
+    });
+    expect(
+      screen.getByTestId("unified-findings-build-error"),
+    ).toHaveTextContent("Couldn’t generate the report");
+    expect(screen.queryByText(/Internal detail/)).toBeNull();
+    expect(screen.queryByTestId("unified-findings-analysis-error")).toBeNull();
+    expect(screen.queryByTestId("unified-findings-loading")).toBeNull();
+    if (surface === "fallback") {
+      expect(screen.getByText("Recorded eval results")).toBeVisible();
+    } else {
+      expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRun).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("disables the report retry during an active request", () => {
+  const onRun = vi.fn();
+  renderPanel({
+    build: { available: true, pending: true, error: "Failed", onRun },
+  });
+  const retry = screen.getByRole("button", { name: "Try again" });
+  expect(retry).toBeDisabled();
+  fireEvent.click(retry);
+  expect(onRun).not.toHaveBeenCalled();
+});
+
+it("keeps an expected build limit refusal specific", () => {
+  renderPanel({
+    build: {
+      available: true,
+      pending: false,
+      error: "This run exceeds the analysis limit.",
+      errorCode: "run_too_large",
+      onRun: vi.fn(),
+    },
+  });
+  expect(screen.getByTestId("unified-findings-build-error")).toHaveTextContent(
+    "This run exceeds the analysis limit.",
   );
 });

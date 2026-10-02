@@ -75,6 +75,12 @@ interface CommonLogContext {
 export interface RequestLogContext extends CommonLogContext {
   requestId: string;
   route: string;
+  /**
+   * The handler pattern the request was headed for, when a middleware answered
+   * before it ran. Only then does it differ from `route`, which names the
+   * middleware's mount (`/api/web/*`).
+   */
+  targetRoute?: string;
   method: string;
   /**
    * The caller's `user-agent`, sanitized and capped.
