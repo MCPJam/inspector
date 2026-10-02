@@ -270,6 +270,22 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
     expect(out.mcpProfile?.mrtrSupport).toBe("none");
   });
 
+  it("projects toolListChanged from HostJson.mcp to mcpProfile", () => {
+    // Fed a HostJson directly: the normalizer's own hostMcpToProfile copy
+    // loops CONFORMANCE_PROFILE_KEYS, which used to omit this knob, so an
+    // SDK eval silently reported a host that listens and re-fetches.
+    const json: HostJson = {
+      ...new Host({ style: "mcpjam", model: "test-model" }).toJSON(),
+      mcp: { toolListChanged: { listens: false, refetches: false } },
+    };
+
+    const out = normalizeSdkEvalHostConfigForWire(json);
+    expect(out.mcpProfile?.toolListChanged).toEqual({
+      listens: false,
+      refetches: false,
+    });
+  });
+
   it("strips public-shape per-server overrides too", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
       .requireServer("a")

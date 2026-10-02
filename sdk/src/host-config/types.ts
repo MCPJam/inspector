@@ -188,10 +188,13 @@ export const TOOL_PARAM_HEADER_MIRRORING_MODES = [
 //   server's integrity check; belongs to the conformance harness.
 // - Elicitation form/url support — already modeled, as
 //   `clientCapabilities.elicitation.{form,url}`. Do not duplicate it here.
-// - list_changed handling — a real divergence between hosts, but making
-//   MCPJam's own tool list go stale is an anti-feature for a debugger.
-//   It belongs in the host catalog as a fact to DISPLAY about a host, not
-//   as a behavior to simulate.
+//
+// list_changed handling used to sit on this list (a stale tool list looked
+// like an anti-feature for a debugger). It is now modeled after all, as
+// `toolListChanged` on the profile below: `listens: false` refuses the
+// standalone listen channel, and `refetches: false` drops
+// `notifications/tools/list_changed` so the cached `tools/list` stays stale —
+// the stale list IS what a server author needs to see from such a host.
 
 /**
  * How the simulated client walks paginated list results (`tools/list`,
@@ -277,6 +280,7 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
   "toolCallCancellation",
+  "toolListChanged",
 ] as const;
 
 export type CspDomainSet = {
