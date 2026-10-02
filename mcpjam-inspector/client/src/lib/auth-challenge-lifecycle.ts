@@ -34,6 +34,7 @@ import {
 } from "@/state/oauth-orchestrator";
 import type { ServerWithName } from "@/state/app-types";
 import {
+  cancelPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
@@ -67,12 +68,7 @@ import {
 } from "@/lib/inspector-command-handlers";
 
 export type AuthChallengeSurface =
-  | "tools"
-  | "playground"
-  | "resources"
-  | "prompts"
-  | "chat"
-  | "widget";
+  "tools" | "playground" | "resources" | "prompts" | "chat" | "widget";
 
 export interface AuthChallengeCard {
   /** Coalescing key: one visible card per server and MCP origin. */
@@ -108,11 +104,7 @@ export type AuthChallengePresentation =
   | { kind: "card"; card: AuthChallengeCard }
   | {
       kind: "notice";
-      reason:
-        | "passthrough"
-        | "blocked"
-        | "permanent"
-        | "dismissed";
+      reason: "passthrough" | "blocked" | "permanent" | "dismissed";
       /** The text to show beside the failed call. */
       message: string;
       /** Developer-only explanation, when there is one. */
@@ -247,7 +239,9 @@ function rememberDismissed(serverName: string, origin: string): void {
 export function clearAuthChallengeDismissed(serverName: string): void {
   try {
     const prefix = `${serverName}\u0000`;
-    const entries = readDismissed().filter((entry) => !entry.startsWith(prefix));
+    const entries = readDismissed().filter(
+      (entry) => !entry.startsWith(prefix),
+    );
     sessionStorage.setItem(DISMISSED_KEY, JSON.stringify(entries));
   } catch {
     // Best-effort.
@@ -416,7 +410,15 @@ export async function connectAuthChallenge(
 
   // Saved before the redirect, so the callback has something to settle. A
   // call that may change something asks "Run again?" instead of replaying.
-  if (card.replay && card.action === "prompt" && !expired) {
+  const savedReplay = Boolean(
+    card.replay && card.action === "prompt" && !expired,
+  );
+  // A sign-in that never redirected has no callback to settle the saved call,
+  // which would otherwise wait for an unrelated later sign-in.
+  const dropSavedReplay = () => {
+    if (savedReplay) cancelPendingDirectScopeStepUpReplay(server.name);
+  };
+  if (savedReplay && card.replay) {
     savePendingDirectScopeStepUpReplay({
       operation: {
         resourceUrl: String(
@@ -451,6 +453,12 @@ export async function connectAuthChallenge(
         setPendingChatScopeStepUpFlowDigest(server.name, digest);
       },
     });
+    if (
+      outcome.kind !== "started" ||
+      outcome.reauthorization.kind !== "redirect"
+    ) {
+      dropSavedReplay();
+    }
     if (outcome.kind === "blocked") {
       return { kind: "blocked", hint: outcome.hint };
     }
@@ -467,6 +475,7 @@ export async function connectAuthChallenge(
     }
     return expired ? { kind: "expired" } : { kind: "started" };
   } catch (error) {
+    dropSavedReplay();
     track("auth_challenge_failed", {
       location: card.surface,
       source: card.signal.source,
@@ -695,10 +704,15 @@ export function presentWidgetAuthChallenge(input: {
         serverName: server.name,
         toolCallId,
         operation: { method: "tools/call", operation: input.toolName },
-        source: signal.source === "tool_result_meta" ? "tool_result_meta" : "http_401",
+        source:
+          signal.source === "tool_result_meta"
+            ? "tool_result_meta"
+            : "http_401",
         action: "passthrough",
         reason: "honored",
-        ...(signal.effectiveAuth ? { effectiveAuth: signal.effectiveAuth } : {}),
+        ...(signal.effectiveAuth
+          ? { effectiveAuth: signal.effectiveAuth }
+          : {}),
         explanation: presentation.message,
       });
       return;

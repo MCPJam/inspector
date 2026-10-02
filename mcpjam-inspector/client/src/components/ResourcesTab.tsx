@@ -455,6 +455,7 @@ export function ResourcesTab({
     signal: AuthChallengeSignal,
     uri: string,
     replay: DirectScopeStepUpReplayDescriptor,
+    isCurrentRead: () => boolean,
   ) => {
     void presentAuthChallenge({
       server,
@@ -464,6 +465,8 @@ export function ResourcesTab({
       readOnly: true,
       replay,
     }).then((presentation) => {
+      // A later read owns the notice area by now.
+      if (!isCurrentRead()) return;
       if (presentation.kind === "notice") setAuthNotice(presentation.message);
     });
   };
@@ -507,13 +510,18 @@ export function ResourcesTab({
               },
             }),
           onAuthChallenge: (signal) =>
-            presentResourceAuthChallenge(signal, uri, {
-              kind: "resource",
-              surface: "resources",
-              serverName,
+            presentResourceAuthChallenge(
+              signal,
               uri,
-              target: "resource",
-            }),
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "resource",
+              },
+              () => readVersion === resourceReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== resourceReadVersionRef.current) return;
@@ -588,14 +596,19 @@ export function ResourcesTab({
               },
             }),
           onAuthChallenge: (signal) =>
-            presentResourceAuthChallenge(signal, uri, {
-              kind: "resource",
-              surface: "resources",
-              serverName,
+            presentResourceAuthChallenge(
+              signal,
               uri,
-              target: "template",
-              selection: selectedTemplate,
-            }),
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "template",
+                selection: selectedTemplate,
+              },
+              () => readVersion === templateReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== templateReadVersionRef.current) return;

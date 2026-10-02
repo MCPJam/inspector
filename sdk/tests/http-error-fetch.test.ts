@@ -202,6 +202,31 @@ describe("Streamable HTTP error diagnostics", () => {
     });
   });
 
+  it("does not record a 401 on initialize, which is a connect-time sign-in", async () => {
+    const recorder: AuthChallengeRecorder = {};
+    const response = new Response(null, {
+      status: 401,
+      headers: { "WWW-Authenticate": challenge },
+    });
+    const wrapped = wrapFetchForHttpErrors(
+      vi.fn(async () => response) as typeof fetch,
+      true,
+      recorder
+    );
+    expect(
+      await wrapped(url, {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {},
+        }),
+      })
+    ).toBe(response);
+    expect(recorder.last).toBeUndefined();
+  });
+
   it("preserves a non-empty response body even without a reason phrase", async () => {
     const transport = transportFor(
       vi.fn(

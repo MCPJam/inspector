@@ -51,6 +51,7 @@ import {
   setPendingChatScopeStepUpFlowDigest,
 } from "@/lib/scope-step-up-pending";
 import {
+  cancelPendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
 } from "@/lib/scope-step-up-replay";
@@ -482,10 +483,21 @@ export function driveScopeStepUp(
             : { kind: "none" },
         );
   void Promise.resolve(started)
-    .catch(() => {
-      // The operation's own error is already surfaced by the caller, so a
-      // failed step-up has nothing further to report to the user.
-    })
+    .then(
+      (outcome) => {
+        // No redirect means no callback will ever settle a call saved for
+        // this step-up; left in place it would replay after an unrelated
+        // sign-in.
+        if (outcome?.reauthorization?.kind !== "redirect") {
+          cancelPendingDirectScopeStepUpReplay(server.name);
+        }
+      },
+      () => {
+        cancelPendingDirectScopeStepUpReplay(server.name);
+        // The operation's own error is already surfaced by the caller, so a
+        // failed step-up has nothing further to report to the user.
+      },
+    )
     .finally(() => {
       inFlight.delete(key);
     });

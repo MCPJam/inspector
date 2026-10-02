@@ -21,10 +21,11 @@ import { callThenAnswer, scriptedModel } from "./support/scripted-model.js";
 const CHALLENGE =
   'Bearer error="invalid_token", resource_metadata="https://x.example/.well-known/oauth-protected-resource", scope="orders:read"';
 
-let fixture: PolicyTargetFixture;
+let fixture: PolicyTargetFixture | undefined;
 
 afterEach(async () => {
-  await fixture.close();
+  await fixture?.close();
+  fixture = undefined;
 });
 
 function suite(prompt: string, toolName: string, iterations = 1): string {
@@ -74,7 +75,7 @@ function run(toolName: string) {
 function options(): RunSuiteFileOptions {
   return {
     servers: {
-      orders: { config: { url: fixture.url }, source: "test-binding" },
+      orders: { config: { url: fixture!.url }, source: "test-binding" },
     },
     inference: { mode: "byok", providerKeys: { anthropic: "sk-ant-test-key" } },
   };
@@ -95,7 +96,7 @@ describe("runSuiteFile — a tool call that asks for sign-in", () => {
       );
 
       // The call never ran on the server, and nothing signed in.
-      expect(fixture.calls.read_note).toBe(0);
+      expect(fixture!.calls.read_note).toBe(0);
       const iterations = result.cases[0]!.iterations;
       expect(iterations).toHaveLength(2);
       for (const iteration of iterations) {
@@ -163,7 +164,7 @@ describe("runSuiteFile — a tool call that asks for sign-in", () => {
         options()
       );
       // The tool ran and refused; its result reached the model unchanged.
-      expect(fixture.calls.list_orders).toBe(1);
+      expect(fixture!.calls.list_orders).toBe(1);
       const [iteration] = result.cases[0]!.iterations;
       expect(iteration?.authRequired).toMatchObject({
         classification: "authorization_required",
