@@ -297,6 +297,31 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
     expect(out.serverConnectionOverrides).toBeUndefined();
     expect((out as Record<string, unknown>).serverOverrides).toBeUndefined();
   });
+
+  it("projects the mid-session sign-in knobs from HostJson.mcp to mcpProfile", async () => {
+    const policy = {
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "bearer-header",
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "any",
+    } as const;
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    Object.assign(host.mcp, policy);
+
+    const out = normalizeSdkEvalHostConfigForWire(host.toJSON());
+    expect(out.mcpProfile).toMatchObject(policy);
+    // And the wire hash is the one the canonical-shape caller computes.
+    expect(await computeHostConfigHashV2(out)).toBe(
+      await computeHostConfigHashV2(
+        baseInput({
+          hostStyle: "mcpjam",
+          modelId: "test-model",
+          systemPrompt: "",
+          mcpProfile: { profileVersion: 1, ...policy },
+        })
+      )
+    );
+  });
 });
 
 describe("normalizeSdkEvalHostConfigForWire — hash semantics", () => {
