@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as recipe from "../../../../../scripts/local-harness-pack-recipes/codex.mjs";
 import { CODEX_LOCAL_ADAPTER_IDENTITY } from "../../codex-appserver/local-identity.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
@@ -39,6 +41,26 @@ describe("the Codex pack recipe", () => {
     // The bridge kit and the bundler: a bump to either changes `bridge.mjs`.
     expect(recipe.dependencyRoots).toEqual(["@ai-sdk/harness", "esbuild"]);
   });
+
+  it("bundles the same bridge bytes from any working directory", () => {
+    // A local session byte-compares the pack's `bridge.mjs` with the bridge
+    // this Inspector carries, and the release check hashes it from the repo
+    // root while the npm task bundles from the package. Neither may depend on
+    // where the bundler was run from.
+    const bundler = fileURLToPath(
+      new URL("../../../../../scripts/bundle-codex-appserver-bridge.mjs", import.meta.url),
+    );
+    const digestFrom = (cwd: string) => execFileSync(process.execPath, [
+      "--input-type=module",
+      "-e",
+      `const { createHash } = await import("node:crypto");
+       const { bundleCodexAppServerBridgeSources } = await import(${JSON.stringify(`file://${bundler}`)});
+       const { bridgeSource, hostToolsSource } = await bundleCodexAppServerBridgeSources();
+       process.stdout.write(createHash("sha256").update(bridgeSource).update("\\0").update(hostToolsSource).digest("hex"));`,
+    ], { cwd, encoding: "utf8" });
+    const packageRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
+    expect(digestFrom(root)).toBe(digestFrom(packageRoot));
+  }, 60_000);
 
   it("has recorded checksums for every target the manifest could certify", () => {
     const checksums = JSON.parse(readFileSync(
