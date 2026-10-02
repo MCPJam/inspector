@@ -548,6 +548,25 @@ describe("mapTargetServerError", () => {
       expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
     });
 
+    it.each([
+      ["a 504 page that says it timed out", 504, "Gateway Timeout: upstream timed out"],
+      ["a 502 page that quotes fetch failed", 502, "Bad Gateway: fetch failed"],
+    ])(
+      "serves %s as a 424 even when the body matches a transport phrase",
+      (_name, status, body) => {
+        const mapped = mapTargetServerError(
+          new SdkHttpError(
+            SdkErrorCode.ClientHttpNotImplemented,
+            `Error POSTing to endpoint (HTTP ${status}): ${body}`,
+            { status, statusText: "", text: body },
+          ),
+        );
+        expect(mapped.status).toBe(424);
+        expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
+        expect(mapped.message).not.toMatch(/Couldn't reach/);
+      },
+    );
+
     it("keeps an unclassified throw a 500, server named or not", () => {
       const mapped = mapTargetServerError(
         new Error('MCP server "srv-1" broke us: kaboom'),

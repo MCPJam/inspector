@@ -581,6 +581,11 @@ export function mapTargetServerError(error: unknown): WebRouteError {
   if (isTargetDependencyFailure(routeError)) {
     routeError.status = 424;
   } else if (isUpstreamHttpErrorAnswer(routeError, error)) {
+    if (routeError.code === ErrorCode.SERVER_UNREACHABLE) {
+      // The server answered, so "couldn't reach" framing is wrong.
+      routeError.message =
+        parseErrorMessage(error).trim() || routeError.message;
+    }
     routeError.status = 424;
     routeError.code = ErrorCode.UPSTREAM_HTTP_ERROR;
   }
@@ -588,13 +593,15 @@ export function mapTargetServerError(error: unknown): WebRouteError {
 }
 
 /**
- * A failure the shared mapper could only call `500 INTERNAL_ERROR` that is in
- * fact the user's MCP server answering with an HTTP error status: a 404 for a
- * wrong endpoint path, a 405, the server's own 500.
+ * A failure the shared mapper called `500 INTERNAL_ERROR`, `502
+ * SERVER_UNREACHABLE` or `504 TIMEOUT` that is in fact the user's MCP server
+ * answering with an HTTP error status: a 404 for a wrong endpoint path, a 405,
+ * the server's own 500.
  *
  * `classifyRuntimeError` recognizes upstream 401/403 and matches words; a
- * transport error carrying any other status matches neither, so it lands on
- * the 500 catch-all. On hosted that 500 is then masked behind the generic
+ * transport error carrying any other status lands on the 500 catch-all, or on
+ * 502/504 when the response body it quotes happens to say "fetch failed" or
+ * "timed out" (a gateway's own 504 page, say). On hosted that 500 is then masked behind the generic
  * "unexpected error" sentence, throwing away the status line the hosted
  * projection already wrote, and it pages us for the user's server.
  *
@@ -608,8 +615,13 @@ function isUpstreamHttpErrorAnswer(
   routeError: WebRouteError,
   error: unknown
 ): boolean {
-  if (routeError.status !== 500) return false;
-  if (routeError.code !== ErrorCode.INTERNAL_ERROR) return false;
+  const classified =
+    (routeError.status === 500 &&
+      routeError.code === ErrorCode.INTERNAL_ERROR) ||
+    (routeError.status === 502 &&
+      routeError.code === ErrorCode.SERVER_UNREACHABLE) ||
+    (routeError.status === 504 && routeError.code === ErrorCode.TIMEOUT);
+  if (!classified) return false;
   const status = upstreamTransportStatus(error);
   return status !== undefined && status >= 400 && status <= 599;
 }
