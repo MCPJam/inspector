@@ -2028,6 +2028,25 @@ describe("prepareChatV2 tool-listing budget", () => {
     expect(error.message).not.toContain('"up"');
   });
 
+  it("does not blame a stale selected id the listing never reached", async () => {
+    vi.useFakeTimers();
+    const manager = hungManager({ live: "connected" });
+    manager.hasServer = vi.fn((id: string) => id === "live");
+
+    const settled = prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["stale", "live"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      toolListingTimeoutMs: 30_000,
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const error = (await settled) as Error;
+
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["live"], undefined);
+    expect(error.message).toContain('MCP server "live" timed out');
+    expect(error.message).not.toContain("stale");
+  });
+
   it("does not arm a timer without a budget", async () => {
     vi.useFakeTimers();
     const manager = mockManager({});

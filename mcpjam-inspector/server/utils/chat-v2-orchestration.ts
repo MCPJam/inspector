@@ -1332,8 +1332,12 @@ async function withinToolListingBudget<T>(
 
 /**
  * `"a", "b"` — the selected servers still not connected when the budget ran
- * out, by their host label. Falls back to every selected server when all of
+ * out, by their host label. Falls back to every listed server when all of
  * them report connected (the listing itself is what hung).
+ *
+ * Only servers the listing actually reached count: a stale selected id the
+ * manager never registered reads as "disconnected" and would otherwise be
+ * blamed for a server that did hang.
  */
 function describeUnconnectedServers(
   mcpClientManager: InstanceType<typeof MCPClientManager>,
@@ -1341,12 +1345,18 @@ function describeUnconnectedServers(
   groups: ConnectionsByServerId | undefined,
   serverLabels: Record<string, string> | undefined,
 ): string {
-  const unconnected = serverIds.filter((id) =>
-    (groups?.[id]?.map((c) => c.key) ?? [id]).some(
+  const keysOf = (id: string) =>
+    (groups?.[id]?.map((c) => c.key) ?? [id]).filter((key) =>
+      mcpClientManager.hasServer(key),
+    );
+  const reached = serverIds.filter((id) => keysOf(id).length > 0);
+  const listed = reached.length ? reached : serverIds;
+  const unconnected = listed.filter((id) =>
+    keysOf(id).some(
       (key) => mcpClientManager.getConnectionStatus(key) !== "connected",
     ),
   );
-  return (unconnected.length ? unconnected : serverIds)
+  return (unconnected.length ? unconnected : listed)
     .map((id) => `"${serverLabels?.[id] ?? id}"`)
     .join(", ");
 }
