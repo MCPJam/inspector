@@ -41,6 +41,7 @@ import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   checkHarnessRuntimeAvailable,
+  selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
@@ -233,6 +234,14 @@ export function resolveChatSessionEngine(args: {
   // The host's own approval gate, read server-side like everything else here.
   const requireToolApproval = hostConfig.requireToolApproval === true;
 
+  const hostSelection = hostConfig.modelSelection as
+    | { modelId?: unknown }
+    | undefined;
+  const hostEffort =
+    hostSelection?.modelId === args.model.id
+      ? selectionReasoningEffort(hostSelection)
+      : undefined;
+
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
     requireToolApproval,
@@ -246,6 +255,10 @@ export function resolveChatSessionEngine(args: {
     // An API chat turn is chat: an unverified harness × model pair runs, and
     // the verdict's reason comes back as `warning`.
     purpose: "chat",
+    // The host's saved effort, when its selection names the model this turn
+    // runs. A harness that cannot apply it refuses the turn instead of running
+    // without it.
+    ...(hostEffort !== undefined ? { reasoningEffort: hostEffort } : {}),
   });
   if (!availability.ok) {
     return {

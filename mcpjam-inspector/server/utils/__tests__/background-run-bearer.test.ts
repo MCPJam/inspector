@@ -1,3 +1,5 @@
+const deployment = vi.hoisted(() => ({ hosted: true }));
+vi.mock("../../config.js", () => ({ get HOSTED_MODE() { return deployment.hosted; } }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -50,6 +52,7 @@ async function authorize(seed?: (c: Context) => void) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deployment.hosted = true;
   subject = `user-background-${++userNumber}`;
   mocks.verify.mockResolvedValue({
     sub: subject,
@@ -185,4 +188,15 @@ describe("browser authorization for detached runs", () => {
       "x-mcpjam-acting-in-org": "key-org",
     });
   });
+});
+
+it("uses the member bearer on a native install without a service token, and stops on expiry", async () => {
+  deployment.hosted = false;
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+  const { getBearer, error } = await authorize();
+  expect(error).toBeUndefined();
+  expect(await getBearer!()).toBe("browser-token");
+  expect(mint).not.toHaveBeenCalled();
+  mocks.verify.mockRejectedValueOnce(new AuthKitVerificationError("expired"));
+  await expect(getBearer!()).rejects.toThrow("expired");
 });

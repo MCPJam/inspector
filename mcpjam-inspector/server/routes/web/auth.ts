@@ -39,6 +39,8 @@ import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
+import { projectHostedSuccessLogs } from "../../utils/hosted-connect-failure.js";
+import { projectHostedRouteFailure } from "../../utils/hosted-route-failure.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
@@ -2156,7 +2158,8 @@ export async function createAuthorizedManager(
           : null;
       if (revealed?.headers && auth.serverConfig.transportType === "http") {
         credentialBindings.set(serverId, {
-          headerNames: Object.keys(revealed.headers),
+          headerNames:
+            revealed.credentialHeaderNames ?? Object.keys(revealed.headers),
           boundOrigins: revealed.boundOrigins ?? [],
         });
       } else if (!revealed && auth.serverConfig.transportType === "http") {
@@ -2960,23 +2963,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
      */
     beforeConnect?: (rawBody: Record<string, unknown>) => Promise<void>;
     /**
-     * Rewrites a mapped failure, and the log envelope sent with it, before the
-     * response is built. The hosted validate route uses it to report a status
-     * line in place of the server's own answer (MJ-001).
-     */
-    redactFailure?: (
-      routeError: WebRouteError,
-      error: unknown,
-      logs: Record<string, unknown> | undefined,
-    ) => {
-      routeError: WebRouteError;
-      logs: Record<string, unknown> | undefined;
-    };
-    /**
-     * Rewrites the log envelope attached to a SUCCESSFUL response. The hosted
-     * validate route projects received frames and header values the same way
-     * its failure path does, so a successful connect does not reflect what
-     * the target answered (MJ-001).
+     * A further reduction of the log envelope attached to a SUCCESSFUL
+     * response, applied after the hosted default (see
+     * {@link attachHostedRouteLogs}). The hosted validate route uses it to
+     * report received frames by their envelope as well (MJ-001).
      */
     redactSuccessLogs?: (
       logs: Record<string, unknown> | undefined,
@@ -3010,26 +3000,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
     );
 
-    let response = attachHostedRpcLogs(result, rpcCollector);
-    if (
-      options?.redactSuccessLogs &&
-      response !== result &&
-      response &&
-      typeof response === "object"
-    ) {
-      const { _rpcLogs, _httpLogs, ...rest } = response as Record<
-        string,
-        unknown
-      >;
-      response = {
-        ...rest,
-        ...options.redactSuccessLogs({
-          ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
-          ...(_httpLogs !== undefined ? { _httpLogs } : {}),
-        }),
-      } as typeof response;
-    }
-    return c.json(response, 200);
+    return c.json(
+      attachHostedRouteLogs(result, rpcCollector, options?.redactSuccessLogs),
+      200,
+    );
   } catch (error) {
     // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
     // helper dials the caller's OWN MCP server, and a connection-class failure
@@ -3044,19 +3018,68 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // A target the egress guard refused is the caller's to change, not a
     // connection that failed: 400, with the guard's own message
     // (MJ-020, MJ-021).
-    const routeError = mapTargetServerError(
-      blockedEgressRouteError(error) ?? error,
+    //
+    // Hosted, what the response says about the failure is then reduced for
+    // every route on this helper (MJ-001) — see `projectRouteFailure`.
+    const projected = projectRouteFailure(
+      mapTargetServerError(blockedEgressRouteError(error) ?? error),
+      error,
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
-    const logs = rpcCollector?.buildEnvelope() as
-      | Record<string, unknown>
-      | undefined;
-    const redacted = options?.redactFailure?.(routeError, error, logs);
-    return webErrorFromRoute(
-      c,
-      redacted?.routeError ?? routeError,
-      redacted ? redacted.logs : logs,
-    );
+    return webErrorFromRoute(c, projected.routeError, projected.logs);
   }
+}
+
+/**
+ * A successful MCP route's payload with its hosted log envelope attached.
+ *
+ * Hosted, the HTTP exchanges in that envelope are always reduced (MJ-001):
+ * response headers to an allowlist, request header values to the protocol
+ * headers — so neither another server's headers nor a value from the stored
+ * server config reaches the response. `redact`, when given, reduces the
+ * envelope further; it runs after the default and cannot undo it. Outside
+ * hosted mode only `redact` applies.
+ */
+export function attachHostedRouteLogs<T>(
+  payload: T,
+  collector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+  redact?: (
+    logs: Record<string, unknown> | undefined,
+  ) => Record<string, unknown> | undefined,
+): T {
+  const response = attachHostedRpcLogs(payload, collector);
+  if (
+    response === payload ||
+    !response ||
+    typeof response !== "object" ||
+    (!HOSTED_MODE && !redact)
+  ) {
+    return response as T;
+  }
+  const { _rpcLogs, _httpLogs, ...rest } = response as Record<string, unknown>;
+  let logs: Record<string, unknown> | undefined = {
+    ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
+    ...(_httpLogs !== undefined ? { _httpLogs } : {}),
+  };
+  if (HOSTED_MODE) logs = projectHostedSuccessLogs(logs);
+  if (redact) logs = redact(logs);
+  return { ...rest, ...logs } as T;
+}
+
+/**
+ * A failed MCP route's mapped error and log envelope, as the response may
+ * report them. Hosted, through `projectHostedRouteFailure` (MJ-001); outside
+ * hosted mode, unchanged. Every route built on `withEphemeralConnection` and
+ * the direct-operation helper answers its failures through this.
+ */
+export function projectRouteFailure(
+  routeError: WebRouteError,
+  error: unknown,
+  logs: Record<string, unknown> | undefined,
+): { routeError: WebRouteError; logs: Record<string, unknown> | undefined } {
+  return HOSTED_MODE
+    ? projectHostedRouteFailure(routeError, error, logs)
+    : { routeError, logs };
 }
 
 // Re-export commonly used error utilities for convenience

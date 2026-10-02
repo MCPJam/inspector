@@ -96,17 +96,21 @@ export async function loadEvalToolMetadata(
     const inFlight = pending.get(id);
     if (inFlight) return inFlight;
     const cached = useEvalToolMetadata.getState().entries[id];
+    // A failure is never fresh: the next mount retries instead of serving it.
     if (
       !force &&
       cached &&
-      cached.status !== "loading" &&
+      (cached.status === "ready" || cached.status === "empty") &&
       Date.now() - cached.updatedAt < FRESH_MS
     )
       return Promise.resolve();
+    // The last catalogue stays visible while revalidating and after a failed
+    // refresh. Blanking it swaps the case editor's tool picker for free text.
+    const previousTools = cached?.tools ?? [];
     publish(id, {
       serverId,
       status: "loading",
-      tools: [],
+      tools: previousTools,
       updatedAt: Date.now(),
     });
     const request = (async () => {
@@ -133,7 +137,7 @@ export async function loadEvalToolMetadata(
           publish(id, {
             serverId,
             status: "error",
-            tools: [],
+            tools: previousTools,
             action: reconnect ? "reconnect" : "retry",
             updatedAt: Date.now(),
           });

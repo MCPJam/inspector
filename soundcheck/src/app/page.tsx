@@ -119,7 +119,7 @@ export default async function Home() {
       <Section
         numeral="II"
         title="Release readiness"
-        description="Checks that mirror release.yml's preflight gates. Green across the board means the Release workflow will pass preflight."
+        description="Where the release stands, and the gates release.yml checks on the tip of main. Once a version PR has merged, Release starts by itself at the first commit where they are all green."
       >
         <Suspense fallback={<ReleaseReadinessSkeleton />}>
           <ReleaseReadiness />
@@ -129,7 +129,7 @@ export default async function Home() {
       <Section
         numeral="III"
         title="Release preview & dispatch"
-        description="What Release would publish from main right now, and the one button that sends it. MCP production lives here too — check deploy_mcp_production to promote mcp-staging.mcpjam.com → mcp.mcpjam.com alongside (or instead of) a release."
+        description="What Start release would put in the version PR, and the one button that opens it. Merging that PR is the release. MCP production lives here too — check deploy_mcp_production to promote mcp-staging.mcpjam.com → mcp.mcpjam.com alongside (or instead of) a release."
       >
         <div className="grid gap-5 md:grid-cols-2">
           <Suspense fallback={<ReleaseDryRunSkeleton />}>

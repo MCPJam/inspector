@@ -497,6 +497,16 @@ export function MultiModelPlaygroundCard({
     messages: [],
   };
   const latestTurn = effectiveLiveTraceEnvelope?.turns?.at(-1);
+  // Key the summary on the numbers it shows, not on `latestTurn`. The live
+  // envelope is rebuilt on every trace event (one per streamed text token),
+  // so `latestTurn` is a new object each token even when these numbers have
+  // not moved. Every new summary is lifted into the parent's
+  // `setCompareSummaries`, and once per token per card was enough nested
+  // updates to trip React's "Maximum update depth exceeded" on a fast stream
+  // (INSPECTOR-CLIENT-2HP).
+  const latestTurnDurationMs = latestTurn?.durationMs ?? null;
+  const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
+  const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
@@ -504,9 +514,9 @@ export function MultiModelPlaygroundCard({
       // field would ripple to ChatTabV2 + evals — keep the field name,
       // change what we put in it.
       modelId: compareId,
-      durationMs: latestTurn?.durationMs ?? null,
-      tokens: latestTurn?.usage?.totalTokens ?? 0,
-      toolCount: latestTurn?.actualToolCalls?.length ?? 0,
+      durationMs: latestTurnDurationMs,
+      tokens: latestTurnTokens,
+      toolCount: latestTurnToolCount,
       status: error
         ? "error"
         : isStreaming || isExecuting
@@ -516,7 +526,16 @@ export function MultiModelPlaygroundCard({
             : "ready",
       hasMessages: !isThreadEmpty,
     }),
-    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn],
+    [
+      compareId,
+      error,
+      isExecuting,
+      isStreaming,
+      isThreadEmpty,
+      latestTurnDurationMs,
+      latestTurnTokens,
+      latestTurnToolCount,
+    ],
   );
   const errorMessage = formatErrorMessage(error);
   // In host mode each column IS a different client, and `compareId` is that

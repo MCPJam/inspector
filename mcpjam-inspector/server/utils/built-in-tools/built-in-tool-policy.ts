@@ -1,12 +1,9 @@
 /**
  * Which of the requested built-in tools a chat turn actually gets (MJ-008).
  *
- * `builtInToolIds` reaches `/api/web/chat-v2` in the request body, and on an
- * ad-hoc or host-bound turn the body used to be the whole answer: any id the
- * inspector recognised was built, including the workspace operations that
- * create servers, run evals and call tools, for whoever sent the request. This
- * narrows the list, before `resolveHostTools` sees it, in three independent
- * ways:
+ * `builtInToolIds` reaches `/api/web/chat-v2` in the request body, on ad-hoc
+ * and host-bound turns alike. This narrows the list, before `resolveHostTools`
+ * sees it, in three independent ways:
  *
  *   1. UNKNOWN IDS are dropped. The registry already skipped them, one warning
  *      at a time; dropping them here makes the list the rest of the turn sees

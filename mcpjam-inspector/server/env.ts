@@ -169,6 +169,45 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
   };
 }
 
+/**
+ * The backend origins this deployment is configured with.
+ *
+ * `api` is the Convex API origin, which also serves file storage
+ * (`/api/storage/…`); `http` is the HTTP-actions origin (`/web/artifact`,
+ * the control-plane routes). Each is read from the variables that name it —
+ * `CONVEX_URL` and `VITE_CONVEX_URL` for the API, `CONVEX_HTTP_URL` for HTTP
+ * actions — and, on Convex's default hosts only, the other half of the same
+ * deployment is derived by suffix (`<name>.convex.cloud` ↔
+ * `<name>.convex.site`), exactly as `getInspectorClientRuntimeConfig` does. A
+ * custom domain (`rt.mcpjam.com`, `rt-http.mcpjam.com`) is used as configured,
+ * and nothing is derived from it.
+ */
+export function getConfiguredConvexOrigins(): {
+  api: string[];
+  http: string[];
+} {
+  const api = new Set<string>();
+  const http = new Set<string>();
+  const add = (set: Set<string>, origin: string | undefined) => {
+    if (origin) set.add(origin);
+  };
+  for (const name of ["CONVEX_URL", "VITE_CONVEX_URL"]) {
+    const value = getNonEmptyEnv(name);
+    add(api, normalizeUrlOrigin(value));
+    add(
+      http,
+      replaceConvexHostnameSuffix(value, ".convex.cloud", ".convex.site"),
+    );
+  }
+  const httpValue = getNonEmptyEnv("CONVEX_HTTP_URL");
+  add(http, normalizeUrlOrigin(httpValue));
+  add(
+    api,
+    replaceConvexHostnameSuffix(httpValue, ".convex.site", ".convex.cloud"),
+  );
+  return { api: Array.from(api), http: Array.from(http) };
+}
+
 export function getInspectorClientRuntimeConfigScript(): string | null {
   const runtimeConfig = getInspectorClientRuntimeConfig();
   if (!Object.values(runtimeConfig).some((value) => value !== undefined)) {
