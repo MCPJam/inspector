@@ -195,4 +195,54 @@ describe("Evaluate history rows", () => {
       expect(cell).not.toHaveTextContent("—");
     }
   });
+
+  it("deletes from its own button without opening the run", async () => {
+    const onOpen = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <table>
+        <EvaluateHistoryHeader showActions />
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[row()]}
+            details={new Map()}
+            historyRows={new Map()}
+            showActions
+            onOpen={onOpen}
+            onDelete={onDelete}
+          />
+        </tbody>
+      </table>,
+    );
+    // The column has no visible title, only a screen-reader label.
+    expect(screen.getByText("Actions")).toHaveClass("sr-only");
+
+    const button = screen.getByRole("button", { name: "Delete run #3" });
+    await userEvent.click(button);
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onDelete).toHaveBeenCalledTimes(2);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("keeps the actions column but hides the button when the row cannot be deleted", () => {
+    render(
+      <table>
+        <EvaluateHistoryHeader showActions />
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[row()]}
+            details={new Map()}
+            historyRows={new Map()}
+            showActions
+          />
+        </tbody>
+      </table>,
+    );
+    expect(screen.queryByRole("button", { name: /Delete run/ })).toBeNull();
+    const [headerRow, bodyRow] = screen.getAllByRole("row");
+    expect(within(bodyRow).getAllByRole("cell")).toHaveLength(
+      within(headerRow).getAllByRole("columnheader").length,
+    );
+  });
 });

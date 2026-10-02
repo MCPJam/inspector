@@ -273,6 +273,51 @@ export interface PlatformMe {
   updatedAt: number | null;
 }
 
+/** What a platform-feedback report is about. */
+export type PlatformFeedbackKind =
+  | "bug"
+  | "missing_capability"
+  | "confusing"
+  | "docs"
+  | "other";
+
+/**
+ * `POST /feedback` body: a report about MCPJam itself, sent to the MCPJam
+ * team (outside the caller's organization) and kept for 180 days.
+ */
+export interface PlatformFeedbackRequest {
+  kind: PlatformFeedbackKind;
+  /** One line, 1–200 characters after trimming. */
+  summary: string;
+  /**
+   * What you were trying to accomplish, what you expected, and what blocked
+   * you. At most 8000 characters. Never emailed; stored only in MCPJam's
+   * database.
+   */
+  details?: string;
+  /** The tool, CLI command or app page in use. At most 120 characters. */
+  operation?: string;
+  /** The failing call's `x-request-id`. At most 128 characters. */
+  requestId?: string;
+  /** The failing call's error code. At most 64 characters. */
+  errorCode?: string;
+  /** A project the caller can see; anything else is a 404. */
+  projectId?: string;
+}
+
+/** `POST /feedback` → the receipt for a STORED report. */
+export interface PlatformFeedbackReceipt {
+  /** The stored report's id. */
+  id: string;
+  /** When the report was received, in epoch milliseconds. */
+  receivedAt: number;
+  /**
+   * True when an identical report from the caller was already recorded in the
+   * last 24 hours; `id` is that report.
+   */
+  duplicate: boolean;
+}
+
 /**
  * An organization the caller belongs to — the ids `list_projects` and
  * `create_project` take as `organizationId`.

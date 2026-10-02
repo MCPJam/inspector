@@ -17,8 +17,8 @@ import {
   isNamedEnvironment,
 } from "@/lib/environment-label";
 
-/** Backend cap on `suite.environmentIds` (and the journey fan-out list). */
-export const MAX_SUITE_ENVIRONMENTS = 10;
+/** Suite matrices retain every target; execution budgets are checked at launch. */
+export const MAX_SUITE_ENVIRONMENTS = Number.POSITIVE_INFINITY;
 
 /**
  * Controlled project-environment selector, shared by every surface that picks
@@ -116,11 +116,7 @@ export function EnvironmentPicker({
 
   const selected = useMemo(
     () =>
-      multi
-        ? ((value as string[] | null) ?? [])
-        : value
-          ? [value as string]
-          : [],
+      multi ? (value as string[] | null) ?? [] : value ? [value as string] : [],
     [multi, value],
   );
 
@@ -195,7 +191,7 @@ export function EnvironmentPicker({
             // "…" is for an id no row resolves at all (the orphan case). A row
             // that merely has no name — an ad-hoc one a journey points at —
             // labels by its client instead.
-            return env ? (labelsById.get(id) ?? environmentLabel(env)) : "…";
+            return env ? labelsById.get(id) ?? environmentLabel(env) : "…";
           })
           .join(", ");
 
@@ -275,8 +271,7 @@ export function EnvironmentPicker({
                     }
                     disabled={capBlocked || inert}
                     aria-label={
-                      labelsById.get(env.environmentId) ??
-                      environmentLabel(env)
+                      labelsById.get(env.environmentId) ?? environmentLabel(env)
                     }
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
@@ -284,8 +279,7 @@ export function EnvironmentPicker({
                         routed through the helper so the type stays honest, the
                         vocabulary stays in one place, and two rows sharing a
                         name are told apart by a `#n`. */}
-                    {labelsById.get(env.environmentId) ??
-                      environmentLabel(env)}
+                    {labelsById.get(env.environmentId) ?? environmentLabel(env)}
                   </span>
                   {multi && checked ? (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
@@ -312,13 +306,11 @@ export function EnvironmentPicker({
                     onCheckedChange={() => toggle(env.environmentId, false)}
                     disabled={inert}
                     aria-label={`${
-                      labelsById.get(env.environmentId) ??
-                      environmentLabel(env)
+                      labelsById.get(env.environmentId) ?? environmentLabel(env)
                     } (archived)`}
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {labelsById.get(env.environmentId) ??
-                      environmentLabel(env)}
+                    {labelsById.get(env.environmentId) ?? environmentLabel(env)}
                     <span className="ml-1 text-[10px] text-muted-foreground">
                       (archived)
                     </span>

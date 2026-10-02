@@ -162,7 +162,7 @@ describe("reasoningEffortProviderOptions", () => {
     expect(
       reasoningEffortProviderOptions({
         providerKey: "anthropic",
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-sonnet-4.6",
         effort: "medium",
       }),
     ).toEqual({
@@ -172,9 +172,17 @@ describe("reasoningEffortProviderOptions", () => {
       reasoningEffortProviderOptions({
         providerKey: "anthropic",
         modelId: "claude-opus-4-5",
+        effort: "high",
+      }),
+    ).toEqual({ anthropic: { effort: "high" } });
+    // Opus 4.5 takes low-high only; max needs 4.6+.
+    expect(
+      reasoningEffortProviderOptions({
+        providerKey: "anthropic",
+        modelId: "claude-opus-4-5",
         effort: "max",
       }),
-    ).toEqual({ anthropic: { effort: "max" } });
+    ).toBeUndefined();
     expect(
       reasoningEffortProviderOptions({
         providerKey: "google",

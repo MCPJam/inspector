@@ -14,6 +14,7 @@
  * groups), so this adds no round-trip to the surfaces that mount it.
  */
 import { useMemo } from "react";
+import { HOSTED_MODE } from "@/lib/config";
 import { useConvexAuth } from "convex/react";
 import {
   isComposeMode,
@@ -60,6 +61,7 @@ export function useCloudServerReadiness({
 
   return useMemo(() => {
     const hostById = new Map(hosts.map((host) => [host.hostId, host]));
+    const isLocalClient = (hostId: string) => !HOSTED_MODE && hostById.get(hostId)?.harness === "claude-code";
     const groupById = new Map(
       serverAttachments.map((group) => [group._id, group])
     );
@@ -76,6 +78,7 @@ export function useCloudServerReadiness({
       if (!host) return null;
       return {
         label: label ?? clientDisplayName(host),
+        localExecution: isLocalClient(hostId),
         serverIds: null,
         serverCount:
           typeof host.serverCount === "number" ? host.serverCount : null,
@@ -85,12 +88,14 @@ export function useCloudServerReadiness({
     /** A named group's set, as a target. An unknown group id is unmeasurable. */
     const groupTarget = (
       label: string,
-      serverAttachmentId: string
+      serverAttachmentId: string,
+      localExecution = false
     ): CloudLaunchTarget | null => {
       const group = groupById.get(serverAttachmentId);
       if (!group) return null;
       return {
         label,
+        localExecution,
         serverIds: group.serverIds,
         serverCount: group.serverIds.length,
       };
@@ -104,7 +109,7 @@ export function useCloudServerReadiness({
       if (serverAttachmentId) {
         const group = groupById.get(serverAttachmentId);
         const target = group
-          ? groupTarget(group.name, serverAttachmentId)
+          ? groupTarget(group.name, serverAttachmentId, state.stack.hostIds.length > 0 && state.stack.hostIds.every(isLocalClient))
           : null;
         if (target) targets.push(target);
       } else {
@@ -138,7 +143,7 @@ export function useCloudServerReadiness({
           continue;
         }
         const target = environment.serverAttachmentId
-          ? groupTarget(label, environment.serverAttachmentId)
+          ? groupTarget(label, environment.serverAttachmentId, isLocalClient(environment.hostId))
           : hostTarget(environment.hostId, label);
         if (target) targets.push(target);
       }

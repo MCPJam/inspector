@@ -37,7 +37,7 @@ a mode gets a user-facing name.
 | Workspace path restriction    | Cloud mount       | Inspector file API + policy only | OS/backend enforced                    |
 | Network restriction           | Cloud policy      | **No Inspector guarantee**       | Backend policy + gateway allowlist     |
 | Hard CPU/memory quota         | Cloud policy      | Best effort                      | Required where advertised              |
-| Suitable for unattended work  | Yes               | **No**                           | Only after a separate product decision |
+| Suitable for unattended work  | Yes               | Authorized evals/swarms, full OS-user permissions | Only where verified |
 
 Per platform, for `local-native`:
 
@@ -381,9 +381,9 @@ and separately approved, a local harness is a long-lived agent process.
 The flag alone is not enough, and deliberately so. Every shipped manifest entry
 carries an empty `lifecycleConformanceVersion`, so
 `resolveLocalHarnessAvailability` refuses with `conformance-missing` before it
-ever looks at a runtime; the all-zero bundle digests are a second closed door
-behind it (a real bundle can never hash to zeroes), surfaced as
-`runtime-unavailable` carrying the underlying `bundle-digest-mismatch`. The flag
+ever looks at a runtime. An absent pack record also prevents installation.
+Windows is included in the native target matrix and requires its verified
+Job Object launcher and recorded conformance. The flag
 enables the feature; it does not certify it.
 
 ## Installing, and who else is holding the door

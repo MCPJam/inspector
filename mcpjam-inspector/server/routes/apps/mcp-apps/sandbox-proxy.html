@@ -1122,6 +1122,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               sandboxAttrs,
               cspDirectives,
               cspSubtypePolicy,
+              clientContext,
               browserStorage,
               permissive,
               colorScheme,
@@ -1264,6 +1265,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 {
                   csp,
                   cspDirectives,
+                  cspSubtypePolicy,
+                  clientContext,
                   permissive: Boolean(permissive),
                 },
               );
