@@ -5,6 +5,7 @@ import {
   TableRow,
 } from "@mcpjam/design-system/table";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
 import {
@@ -30,8 +31,11 @@ import {
 
 export function EvaluateHistoryHeader({
   showSuite = false,
+  showActions = false,
 }: {
   showSuite?: boolean;
+  /** Adds the untitled last column that holds each row's delete button. */
+  showActions?: boolean;
 }) {
   return (
     <TableHeader>
@@ -54,6 +58,11 @@ export function EvaluateHistoryHeader({
             {label}
           </TableHead>
         ))}
+        {showActions && (
+          <TableHead className="w-px">
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        )}
       </TableRow>
     </TableHeader>
   );
@@ -108,8 +117,10 @@ function historyTimestamp(value: number): number | null {
  */
 export function EvaluateHistoryRowSkeleton({
   showSuite = false,
+  showActions = false,
 }: {
   showSuite?: boolean;
+  showActions?: boolean;
 }) {
   // Paired with the header above: one entry per column, sized to what the
   // loaded cell holds so the columns do not jump when the real row lands.
@@ -126,6 +137,7 @@ export function EvaluateHistoryRowSkeleton({
     "w-9",
     "w-9",
     "w-5",
+    ...(showActions ? ["w-4"] : []),
   ];
   return (
     <TableRow aria-hidden data-testid="run-history-row-skeleton">
@@ -145,6 +157,8 @@ export function EvaluateHistoryRow({
   historyRows,
   hostNamesById,
   showSuite = false,
+  showActions = false,
+  onDelete,
   onOpen,
   testId,
   highlighted = false,
@@ -155,6 +169,11 @@ export function EvaluateHistoryRow({
   /** Current names for named hosts, so a renamed host is not shown stale. */
   hostNamesById?: ReadonlyMap<string, string | null>;
   showSuite?: boolean;
+  /** Pairs with the header's `showActions`: the row keeps the column even
+   *  when this caller may not delete it, so the columns stay aligned. */
+  showActions?: boolean;
+  /** Absent hides the button (no permission, or nothing to delete). */
+  onDelete?: () => void;
   onOpen?: () => void;
   testId?: string;
   highlighted?: boolean;
@@ -325,6 +344,25 @@ export function EvaluateHistoryRow({
       <TableCell className="tabular-nums text-muted-foreground">
         {metricCell(rollup?.toolCalls, "number")}
       </TableCell>
+      {showActions && (
+        <TableCell className="w-px pr-3">
+          {onDelete ? (
+            <button
+              type="button"
+              // The row itself opens the run; the button must not.
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              title="Delete run"
+              aria-label={`Delete run #${representative.runNumber}`}
+              className="flex size-6 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          ) : null}
+        </TableCell>
+      )}
     </TableRow>
   );
 }

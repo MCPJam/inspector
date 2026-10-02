@@ -111,7 +111,11 @@ const assistantTurnMock = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => assistantTurnMock(...args),
 }));
-import { runEvalSuiteWithAiSdk } from "../../evals-runner.js";
+import {
+  isRunDeletedError,
+  runEvalSuiteWithAiSdk,
+} from "../../evals-runner.js";
+import { ConvexError } from "convex/values";
 
 import {
   EXECUTION_BUDGET_DEFAULTS,
@@ -606,3 +610,187 @@ describe.each(["local", "hosted"] as const)(
     });
   },
 );
+
+// Deleting a suite (or run) mid-run: the cancellation checker is the only
+// thing that stops the whole run. Production masks a plain error as
+// "Server Error", so the checker must act on the structured refusal and
+// must NOT act on the mask (an outage looks the same).
+describe("cancellation checker: deleted run", () => {
+  const deleted = () =>
+    new ConvexError({
+      code: "NOT_FOUND",
+      reason: "eval_parent_deleted",
+      message: "Suite run not found",
+    });
+  const masked = () => new Error("[Request ID: abc123] Server Error");
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  async function startHangingRun(options: {
+    getRun: (args: Record<string, unknown>) => Promise<unknown>;
+    recorderSaysDeleted?: boolean;
+  }) {
+    vi.useFakeTimers();
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-4-turbo",
+      provider: "openai",
+    };
+    const rows = [
+      {
+        _id: "iter-1",
+        testCaseId: "case-1",
+        iterationNumber: 1,
+        testCaseSnapshot: snapshot,
+        status: "pending",
+        result: "pending",
+      },
+    ] as Array<Record<string, any>>;
+    const recorder = {
+      startIteration: vi.fn(async () => "iter-1"),
+      beginExecutionAttempt: vi.fn(async () => {}),
+      finishIteration: vi.fn(async () => {}),
+      finalize: vi.fn(async () => {}),
+      isRunDeleted: vi.fn(() => options.recorderSaysDeleted === true),
+    };
+    const getRunCalls: Array<Record<string, unknown>> = [];
+    const convexClient = {
+      query: vi.fn(async (name: string, args: Record<string, unknown>) => {
+        if (name === "testSuites:getTestSuiteRunDetails")
+          return { iterations: rows };
+        if (name === "testSuites:getTestSuiteRun") {
+          getRunCalls.push(args);
+          // The pre-run check reads the run once before any poll.
+          if (getRunCalls.length === 1) return { status: "running" };
+          return options.getRun(args);
+        }
+        return { status: "running" };
+      }),
+      mutation: vi.fn(async () => ({})),
+      action: vi.fn(async () => {}),
+    };
+    const manager = {
+      getToolsForAiSdk: vi.fn(async () => ({})),
+      listTools: vi.fn(async () => ({ tools: [] })),
+      getAllToolAnnotations: vi.fn(() => ({})),
+      hasCachedToolAnnotations: vi.fn(() => true),
+      getConnectionStatus: vi.fn(() => "connected"),
+      listServers: vi.fn(() => ["srv-1"]),
+      getAllToolsMetadata: vi.fn(() => ({})),
+      executeTool: vi.fn(),
+    };
+    // The iteration is still working when the suite is deleted: it only ends
+    // when the run is aborted.
+    executeStepsMock.mockImplementation(
+      async ({ isAborted }: { isAborted: () => boolean }) => {
+        await new Promise<void>((resolve) => {
+          const tick = setInterval(() => {
+            if (isAborted()) {
+              clearInterval(tick);
+              resolve();
+            }
+          }, 5);
+        });
+        return { cancelled: true };
+      },
+    );
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder,
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: manager,
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        turnTimeoutMs: 120_000,
+        unitTimeoutMs: 120_000,
+        runTimeoutMs: 60_000,
+      },
+    } as any);
+    return { pending, recorder, getRunCalls };
+  }
+
+  it("stops the run on the structured refusal, naming the suite on the retry", async () => {
+    const { pending, recorder, getRunCalls } = await startHangingRun({
+      // A backend that can only answer readably when the suite is named.
+      getRun: async (args) => {
+        throw "suiteId" in args ? deleted() : masked();
+      },
+    });
+    await vi.advanceTimersByTimeAsync(10_100);
+    await pending;
+
+    expect(getRunCalls).toContainEqual({ runId: "run-1", suiteId: "suite-1" });
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "cancelled",
+        stopReason: "user_cancelled",
+      }),
+    );
+  });
+
+  it("keeps running on a masked Server Error: an outage must not cancel runs", async () => {
+    const { pending, recorder } = await startHangingRun({
+      getRun: async () => {
+        throw masked();
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(recorder.finalize).not.toHaveBeenCalled();
+
+    // Only the run's own deadline ends it.
+    await vi.advanceTimersByTimeAsync(31_000);
+    await pending;
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "timed_out",
+        stopReason: "run_timeout",
+      }),
+    );
+  });
+
+  it("stops the run when an iteration write already learned the run was deleted", async () => {
+    const { pending, recorder } = await startHangingRun({
+      getRun: async () => ({ status: "running" }),
+      recorderSaysDeleted: true,
+    });
+    await vi.advanceTimersByTimeAsync(10_100);
+    await pending;
+
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "cancelled" }),
+    );
+  });
+
+  it("recognizes the refusal and the legacy text, never the mask", () => {
+    expect(isRunDeletedError(deleted())).toBe(true);
+    expect(isRunDeletedError(new Error("Suite run not found"))).toBe(true);
+    expect(isRunDeletedError(masked())).toBe(false);
+    expect(
+      isRunDeletedError(
+        new ConvexError({ code: "NOT_FOUND", message: "Project not found" }),
+      ),
+    ).toBe(true);
+  });
+});

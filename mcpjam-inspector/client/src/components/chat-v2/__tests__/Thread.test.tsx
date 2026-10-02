@@ -6,6 +6,12 @@ import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { useWidgetSurfaceStore } from "../thread/mcp-apps/widget-surface-store";
+import { useHistoryNoticeStore } from "@/stores/history-notice-store";
+import {
+  HISTORY_NOTICE_DATA_PART_TYPE,
+  HISTORY_NOTICE_MESSAGE,
+  isHistoryNoticeDataPart,
+} from "@/shared/history-notice";
 
 const mockMessageView = vi.fn();
 const mockThinkingIndicator = vi.fn();
@@ -718,6 +724,91 @@ describe("Thread", () => {
 
       // The callback is passed down to MessageView
       expect(screen.getByTestId("message-msg-1")).toBeInTheDocument();
+    });
+  });
+
+  describe("earlier replies not sent to the model", () => {
+    const conversation = () => [
+      createMessage({ id: "u1" }),
+      createMessage({
+        id: "a1",
+        role: "assistant",
+        parts: [{ type: "text", text: "An old reply" }],
+      }),
+      createMessage({ id: "u2" }),
+      createMessage({
+        id: "a2",
+        role: "assistant",
+        parts: [{ type: "text", text: "A new reply" }],
+      }),
+    ];
+
+    beforeEach(() => {
+      useHistoryNoticeStore.setState({ chats: {} });
+    });
+
+    it("shows no notice until the server reports one for this chat", () => {
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat_1"
+          messages={conversation()}
+        />,
+      );
+      expect(
+        screen.queryByTestId("history-context-notice"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows one inline notice above the latest prompt once reported", () => {
+      const part = {
+        type: HISTORY_NOTICE_DATA_PART_TYPE,
+        data: { reason: "earlier_replies_not_sent" },
+        transient: true,
+      };
+      expect(isHistoryNoticeDataPart(part)).toBe(true);
+      expect(
+        isHistoryNoticeDataPart({ ...part, data: { reason: "other" } }),
+      ).toBe(false);
+
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat_1"
+          messages={conversation()}
+        />,
+      );
+      act(() => {
+        useHistoryNoticeStore.getState().noteEarlierRepliesNotSent("chat_1");
+        useHistoryNoticeStore.getState().noteEarlierRepliesNotSent("chat_1");
+      });
+
+      const notices = screen.getAllByTestId("history-context-notice");
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toHaveTextContent(HISTORY_NOTICE_MESSAGE);
+      const latestPrompt = screen.getByTestId("message-u2");
+      expect(
+        notices[0]!.compareDocumentPosition(latestPrompt) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        notices[0]!.compareDocumentPosition(screen.getByTestId("message-a1")) &
+          Node.DOCUMENT_POSITION_PRECEDING,
+      ).toBeTruthy();
+    });
+
+    it("does not show another chat's notice", () => {
+      useHistoryNoticeStore.getState().noteEarlierRepliesNotSent("chat_2");
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat_1"
+          messages={conversation()}
+        />,
+      );
+      expect(
+        screen.queryByTestId("history-context-notice"),
+      ).not.toBeInTheDocument();
     });
   });
 });

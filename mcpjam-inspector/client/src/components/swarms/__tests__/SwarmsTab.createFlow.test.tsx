@@ -16,6 +16,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 import { WebApiError } from "@/lib/apis/web/base";
 
@@ -355,6 +356,13 @@ function pickExistingPersona(name: RegExp) {
   fireEvent.click(screen.getByRole("checkbox", { name }));
 }
 
+// jsdom's File has no `text()`; browsers do. Give the fixtures one.
+function textFile(content: string, name: string): File {
+  return Object.assign(new File([content], name), {
+    text: async () => content,
+  });
+}
+
 function openDescribe() {
   // `/swarms/new` is what opens the flow — mount it the way the router does.
   render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
@@ -540,6 +548,107 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(submit).not.toBeDisabled();
     expect(submit).toHaveTextContent("Continue");
     expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
+  });
+
+  it("counts the description against its cap and blocks Continue past it", () => {
+    openDescribe();
+    const submit = screen.getByTestId("new-swarm-continue");
+    const input = screen.getByTestId("new-swarm-describe-input");
+    const count = screen.getByTestId("new-swarm-describe-count");
+    const cap = SWARM_DESCRIPTION_MAX_CHARS.toLocaleString();
+    expect(count).toHaveTextContent(`0 / ${cap}`);
+
+    // Well past the old 2,000 — the multi-persona research this is sized for.
+    fireEvent.change(input, {
+      target: { value: "x".repeat(SWARM_DESCRIPTION_MAX_CHARS) },
+    });
+    expect(count).toHaveTextContent(`${cap} / ${cap}`);
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(submit).not.toBeDisabled();
+
+    // One over, surrounding whitespace aside: trimmed like the route trims it.
+    fireEvent.change(input, {
+      target: { value: `  ${"x".repeat(SWARM_DESCRIPTION_MAX_CHARS + 1)}  ` },
+    });
+    expect(count).toHaveTextContent(
+      `${(SWARM_DESCRIPTION_MAX_CHARS + 1).toLocaleString()} / ${cap}`,
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(submit).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      `Shorten the description to ${cap} characters to continue.`,
+    );
+  });
+
+  it("attaches a .txt or .md file into the description, by picker or by drop", async () => {
+    openDescribe();
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Typed first." } });
+
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [textFile("Persona: Maya.", "research.md")] },
+    });
+    await waitFor(() =>
+      expect(input.value).toBe("Typed first.\n\nPersona: Maya."),
+    );
+
+    fireEvent.drop(input, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [textFile("Persona: Dev.", "more.txt")],
+      },
+    });
+    await waitFor(() =>
+      expect(input.value).toBe(
+        "Typed first.\n\nPersona: Maya.\n\nPersona: Dev.",
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
+  });
+
+  it("holds Continue until an attached file has been read", async () => {
+    openDescribe();
+    const submit = screen.getByTestId("new-swarm-continue");
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Typed first." } });
+    expect(submit).not.toBeDisabled();
+
+    let finishRead!: (text: string) => void;
+    const slowFile = Object.assign(new File(["x"], "slow.md"), {
+      text: () => new Promise<string>((resolve) => (finishRead = resolve)),
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [slowFile] },
+    });
+    await waitFor(() => expect(submit).toBeDisabled());
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      "Reading the attached file…",
+    );
+
+    finishRead("Persona: Maya.");
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    expect(input.value).toBe("Typed first.\n\nPersona: Maya.");
+  });
+
+  it("refuses an unsupported file with an inline error and keeps the draft", async () => {
+    openDescribe();
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.drop(input, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [textFile("binary", "research.docx")],
+      },
+    });
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent("Only .txt and .md files are supported.");
+    expect(input.value).toBe("");
   });
 
   it("auto-seeds the first named environment on open", () => {
@@ -2154,6 +2263,58 @@ describe("SwarmsTab create flow — survives a remount", () => {
     expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
       "Support agents answering refunds",
     );
+  });
+
+  it("says an attachment read was interrupted instead of dropping the file silently", async () => {
+    // Like a generation, a file read dies with the unmounted component, so
+    // the restored Describe step must ask for the file again.
+    openDescribe();
+    fillDescribe();
+    const pending = Object.assign(new File(["x"], "research.md"), {
+      text: () => new Promise<string>(() => {}),
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [pending] },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toBeDisabled(),
+    );
+
+    remount();
+
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent(
+      "Reading research.md was interrupted when this view reloaded. Attach it again.",
+    );
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+      "Support agents answering refunds",
+    );
+    // The dead read no longer holds Continue.
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+
+    // The file is still missing, so the notice survives a second remount...
+    remount();
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent("Reading research.md was interrupted");
+
+    // ...and goes away once a file is attached.
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [textFile("Persona: Maya.", "research.md")] },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("new-swarm-describe-attach-error"),
+      ).toBeNull(),
+    );
+    remount();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+        "Support agents answering refunds\n\nPersona: Maya.",
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
   });
 
   it("leaving the flow ends it — a later visit starts clean", async () => {

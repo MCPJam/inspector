@@ -95,7 +95,7 @@ describe("web routes — oauth requires bearer token", () => {
     executeOAuthProxyMock.mockResolvedValueOnce({
       status: 200,
       statusText: "OK",
-      headers: {},
+      headers: { "content-type": "application/json" },
       body: { ok: true },
       finalUrl: "https://example.com/token",
     });
@@ -112,7 +112,7 @@ describe("web routes — oauth requires bearer token", () => {
     expect(data).toEqual({
       status: 200,
       statusText: "OK",
-      headers: {},
+      headers: { "content-type": "application/json" },
       body: { ok: true },
       finalUrl: "https://example.com/token",
     });
