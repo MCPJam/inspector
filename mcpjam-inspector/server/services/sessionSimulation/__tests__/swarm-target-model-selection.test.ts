@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   swarmTargetBackendSelection,
+  swarmTargetReasoningEffort,
   swarmTargetModelDefinition,
   swarmTargetSettings,
 } from "../swarm-runner";
@@ -188,5 +189,54 @@ describe("swarmTargetSettings", () => {
     expect(() => swarmTargetSettings(target, definitionOf(target))).toThrow(
       /capability_missing/,
     );
+  });
+});
+
+describe("swarmTargetReasoningEffort", () => {
+  const MODEL = "anthropic/claude-haiku-4.5";
+  const none = { provider: "none" as const, model: "none" as const };
+
+  it("reads the effort off a saved selection that names the pinned model", () => {
+    expect(
+      swarmTargetReasoningEffort({
+        modelId: MODEL,
+        resolvedSelection: {
+          modelId: MODEL,
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: none,
+        },
+      }),
+    ).toBe("high");
+  });
+
+  it("reads a LOCAL selection's effort too, though it is never forwarded", () => {
+    expect(
+      swarmTargetReasoningEffort({
+        modelId: MODEL,
+        resolvedSelection: {
+          modelId: MODEL,
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "anthropic" },
+          settings: { reasoningEffort: "low" },
+          fallback: none,
+        },
+      }),
+    ).toBe("low");
+  });
+
+  it("is absent for a legacy snapshot or a selection for another model", () => {
+    expect(swarmTargetReasoningEffort({ modelId: MODEL })).toBeUndefined();
+    expect(
+      swarmTargetReasoningEffort({
+        modelId: MODEL,
+        resolvedSelection: {
+          modelId: "openai/gpt-5",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: none,
+        },
+      }),
+    ).toBeUndefined();
   });
 });

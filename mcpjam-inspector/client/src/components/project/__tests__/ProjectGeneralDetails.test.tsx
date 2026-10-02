@@ -36,7 +36,7 @@ it("keeps details read-only for members", () => {
     screen.queryByRole("button", { name: "Save changes" }),
   ).not.toBeInTheDocument();
 });
-it("shows a description containing markup as literal text (MJ-013)", () => {
+it("shows a description containing markup as literal text (MJ-025)", () => {
   const description = '<img src="x" data-marker="desc"><b>bold</b> -> next';
   const { container } = render(
     <ProjectGeneralDetails

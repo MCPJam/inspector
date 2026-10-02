@@ -9,6 +9,36 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-30
+
+#### Added
+
+- **Send feedback from the app** — **Settings → Support** now has a **Send feedback** form for reporting a bug, a missing capability, or something confusing directly to the MCPJam team. The form notes that submitted text is sent to the MCPJam team and kept for 180 days. Signed-out visitors are prompted to sign in instead. On the hosted app, an MCPJam error's technical details now include a **Report this** link that opens the form with the failing request's id and error code pre-filled. Submitting the form more than once (double-click or retry) never files the same report twice.
+
+- **Reasoning-effort helpers in `@mcpjam/sdk/browser`** — `supportedReasoningEfforts`, `reasoningEffortProviderOptions`, `selectionConfigKey`, and `selectionIfMatches` are now exported from `@mcpjam/sdk/browser`. `reasoningEffortProviderOptions` now refuses model/level pairs the provider documents as unsupported (returning `capability_missing` up front) instead of forwarding them to the provider to fail there. Affected combinations include Opus 4.5 with `max`, Haiku and Sonnet 4.5 and earlier, `gpt-5` with `none`, `gpt-5.1` with `minimal`, Codex with `none`, `-pro` and `-chat` models, `o1-mini`/`o1-preview`, and Gemini 3 Pro with `minimal`.
+
+#### Changed
+
+- **Reasoning effort is now part of a saved model's identity** — an effort-only edit to a host's model now enables the **Save** button (previously read as "unchanged"). The environment composer treats two effort levels of the same model as different compositions, and a named environment is reused only when its saved effort matches the cell's.
+
+- **Reasoning effort on harness hosts is refused before any spend** — a reasoning effort saved on a harness host (Claude Code, Codex, Cursor) is now refused with `setting-unsupported` before the turn runs, instead of being silently dropped. Hosts with a saved effort on a harness will see "can't apply a reasoning effort yet" until an adapter's mapping is verified.
+
+- **Step-by-step case editor shows per-prompt expected tools** — in the Evaluate step-by-step editor (behind `evaluate-observe-first`), each prompt's expected tools now appear under that prompt instead of all being listed under the first one. The suite's evaluators fold into a single summary line that expands to the full list, and opens automatically when one evaluator failed on a run. The Expected Outcome box no longer shows an example from a different case as its placeholder.
+
+#### Fixed
+
+- **Agent now shows a note when it reaches its step limit** — when the agent used its last allowed step on a tool call, the turn ended with no reply and the chat kept re-sending silently. The agent now writes a final answer on its last allowed step instead of stopping after a tool call. If a turn arrives already out of steps, the chat shows a short note — "I reached my step limit for this message. Send a message to continue." — and stops re-sending on its own.
+
+- **Stopping a compare run no longer crashes** — stopping a run in the test editor no longer throws "undefined is not an object (evaluating '….iteration')". The stopped model's record now waits for React's state update before it is counted.
+
+- **Streaming in compare view no longer triggers a React update-depth error** — each compare card now reports its summary (duration, token count, tool count) to the view only when those values change, instead of once per streamed token.
+
+- **Closed rows in the Trace view stay closed while a reply streams** — a row you close in the Trace view now stays closed during streaming. Previously, the trace reopened every row whenever a bar grew longer. Rows now open by default only when they first appear.
+
+- **Streaming with the Timeline or Raw trace view open no longer sets state per token** — the trace viewer resets its timeline filter, zoom, expansion, and reveal highlight during render instead of from effects. View-only JSON renders without the edit buffer that re-serialized the value on every change. A rebuilt trace with unchanged spans no longer resets the timeline filter or expansion.
+
+- **Desktop app no longer shows false "Update failed" alerts on reopen** — stale background download records from a previous session are now discarded on startup, so reopening the desktop app with an expired background download no longer triggers a false update-failure alert. Real recovery failures are still reported.
+
 ### 2026-09-26
 
 #### Changed
