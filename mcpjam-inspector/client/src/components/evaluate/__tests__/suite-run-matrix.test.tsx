@@ -19,6 +19,9 @@ const { ensure, query, mutation, capabilities, projectEnvironments } =
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  // The run preflight's reactive reads; nothing here is under test.
+  useQuery: () => undefined,
+  useQueries: () => ({}),
 }));
 // The mount-time capabilities probe; `query` then only sees launch probes.
 vi.mock("@/hooks/use-environment-capabilities", () => ({
@@ -165,7 +168,11 @@ it("resolves changed combinations only at launch without modifying the suite", a
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["new-env"] }),
-      { iterationOverride: 5, ephemeralEnvironment: true },
+      {
+        iterationOverride: 5,
+        ephemeralEnvironment: true,
+        throwOnFailure: true,
+      },
     ),
   );
   expect(ensure).toHaveBeenCalledWith(
@@ -208,7 +215,7 @@ it("launches saved pairings without a temporary-environment flag or capability p
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["env"] }),
-      { iterationOverride: 5 },
+      { iterationOverride: 5, throwOnFailure: true },
     ),
   );
   expect(ensure).not.toHaveBeenCalled();
@@ -363,7 +370,11 @@ it("launches a derived cell without modifying the suite", async () => {
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["derived"] }),
-      { iterationOverride: 5, ephemeralEnvironment: true },
+      {
+        iterationOverride: 5,
+        ephemeralEnvironment: true,
+        throwOnFailure: true,
+      },
     ),
   );
   expect(mutation).toHaveBeenCalledWith(
@@ -424,7 +435,11 @@ describe("an SDK suite", () => {
     await waitFor(() =>
       expect(onStart).toHaveBeenCalledWith(
         expect.objectContaining({ environmentIds: ["prod"] }),
-        { iterationOverride: 5, ephemeralEnvironment: true },
+        {
+          iterationOverride: 5,
+          ephemeralEnvironment: true,
+          throwOnFailure: true,
+        },
       ),
     );
   });

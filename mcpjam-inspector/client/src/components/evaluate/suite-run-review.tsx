@@ -13,6 +13,11 @@ import {
 import { compactModelIdTail } from "@/lib/environment-label";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { ConfiguredSuiteRunReview } from "./suite-run-matrix";
+import {
+  hasBlockingPreflight,
+  RunPreflightNotices,
+  type RunPreflightState,
+} from "./suite-run-preflight";
 import type { EvalCase, EvalSuite } from "../evals/types";
 
 type ReviewEnvironment = Pick<
@@ -35,10 +40,15 @@ export type SuiteRunReviewProps = {
   onClose: () => void;
   onStart: (
     suite: EvalSuite,
-    options: { iterationOverride: number; ephemeralEnvironment?: boolean },
+    options: {
+      iterationOverride: number;
+      ephemeralEnvironment?: boolean;
+      throwOnFailure?: boolean;
+    },
   ) => unknown;
   onEditSettings?: () => void;
   disabledReason?: string | null;
+  preflight?: RunPreflightState;
 };
 
 export function suiteReviewTargets(
@@ -134,7 +144,8 @@ export function SuiteRunReviewContent({
   onClose,
   onStart,
   onEditSettings,
-  disabledReason,
+  disabledReason: blockedReason,
+  preflight,
   matrix,
 }: SuiteRunReviewProps & {
   matrix?: { count: number; render: (disabled: boolean) => ReactNode };
@@ -157,6 +168,12 @@ export function SuiteRunReviewContent({
   );
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The notices say which server; this only has to stop the launch.
+  const disabledReason =
+    blockedReason ??
+    (hasBlockingPreflight(preflight)
+      ? "Fix the missing server before running."
+      : null);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -189,7 +206,8 @@ export function SuiteRunReviewContent({
               suite,
               activeTargets.map((target) => target.id),
             ),
-        { iterationOverride: count },
+        // Failures come back here to show inline, not as a toast behind it.
+        { iterationOverride: count, throwOnFailure: true },
       );
       onClose();
     } catch (failure) {
@@ -286,6 +304,9 @@ export function SuiteRunReviewContent({
                 </p>
               )}
             </section>
+          )}
+          {preflight && (
+            <RunPreflightNotices preflight={preflight} disabled={starting} />
           )}
           {onEditSettings && (
             <Button

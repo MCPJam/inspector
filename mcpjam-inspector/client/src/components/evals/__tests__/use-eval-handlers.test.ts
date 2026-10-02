@@ -170,6 +170,7 @@ describe("useEvalHandlers", () => {
     usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
     // Pinned so the wall tests can assert the exact toast the handler dismisses.
     vi.mocked(toast.success).mockReturnValue("toast-id");
+    vi.mocked(toast.loading).mockReturnValue("toast-id");
 
     // Default mock implementations
     mockGetAccessToken.mockResolvedValue("mock-access-token");
@@ -1169,9 +1170,8 @@ describe("useEvalHandlers", () => {
     });
 
     it("opens the upgrade wall and clears the optimistic toast when the server rejects the launch on the eval-iteration cap", async () => {
-      // The "Run started successfully!" toast fires before the request
-      // resolves, so leaving it up alongside the wall would claim the run is
-      // on its way.
+      // The "Starting run…" toast fires before the request resolves, so
+      // leaving it up alongside the wall would claim the run is on its way.
       mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
 
       const { result } = renderHook(() =>
@@ -1373,6 +1373,185 @@ describe("useEvalHandlers", () => {
       expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
       expect(toast.error).toHaveBeenCalled();
       expect(toast.dismiss).not.toHaveBeenCalled();
+    });
+
+    const legacySuite = {
+      _id: "suite-123",
+      name: "Test Suite",
+      description: "A test suite",
+      environment: { servers: ["server-1"] },
+    } as any;
+
+    it("turns the starting toast into the failure instead of stacking a success beside it", async () => {
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({ message: "Model unavailable" }, 500),
+      );
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(legacySuite);
+      });
+      expect(toast.loading).toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith(expect.any(String), {
+        id: "toast-id",
+      });
+    });
+
+    it("turns the starting toast into the success once the run is accepted", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(legacySuite);
+      });
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(toast.success).toHaveBeenCalledWith("Eval run started!", {
+        id: "toast-id",
+      });
+    });
+
+    describe("with throwOnFailure (the Setup Run sheet)", () => {
+      it("throws the launch failure instead of toasting it", async () => {
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ message: "Model unavailable" }, 500),
+        );
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("Model unavailable");
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+      });
+
+      it("throws a server that cannot connect instead of toasting it", async () => {
+        const ensureServersReady = vi.fn().mockResolvedValue({
+          readyServerNames: [],
+          missingServerNames: [],
+          failedServerNames: ["server-1"],
+          reauthServerNames: [],
+        });
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady,
+          }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow(
+            "We couldn't connect to server-1. Try again to run this suite.",
+          );
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+      });
+
+      it("still navigates to the run it started", async () => {
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, runId: "run-1" }),
+        );
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            evalsNavigationContext: "evaluate",
+          }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(legacySuite, {
+            throwOnFailure: true,
+          });
+        });
+        expect(mockNavigateApp).toHaveBeenCalledWith(
+          "/evaluate/suite/suite-123/runs/run-1",
+        );
+      });
+    });
+
+    describe("environment suites (local pre-connect)", () => {
+      const envSuite = {
+        _id: "suite-env",
+        name: "Env suite",
+        environment: { servers: [] },
+        environmentIds: ["env-a", "env-b"],
+      } as any;
+      const launchServers: Record<string, unknown> = {
+        "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+        "env-b": { servers: [{ serverId: "srv-2", name: "crm" }] },
+      };
+      const readiness = (failedServerNames: string[] = []) => ({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames,
+        reauthServerNames: [],
+      });
+
+      beforeEach(() => {
+        mockConvexQuery.mockImplementation(
+          async (name: string, args: { environmentId?: string } = {}) => {
+            if (name === "projectEnvironments:resolveEnvironmentForLaunch")
+              return launchServers[args.environmentId ?? ""] ?? null;
+            return [
+              {
+                _id: "case-1",
+                title: "Case 1",
+                query: "Q",
+                runs: 1,
+                models: [],
+                expectedToolCalls: [],
+              },
+            ];
+          },
+        );
+      });
+
+      const runUrls = () =>
+        mockAuthFetch.mock.calls
+          .map((call) => call[0])
+          .filter((url) => String(url).endsWith("/evals/run"));
+
+      it("connects the environments' servers before launching", async () => {
+        const ensureServersReady = vi.fn().mockResolvedValue(readiness());
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(ensureServersReady).toHaveBeenCalledWith(["billing", "crm"]);
+        expect(runUrls()).toHaveLength(2);
+      });
+
+      it("launches nothing when an environment server fails to connect", async () => {
+        const ensureServersReady = vi
+          .fn()
+          .mockResolvedValue(readiness(["crm"]));
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(runUrls()).toHaveLength(0);
+        expect(toast.error).toHaveBeenCalledWith(
+          "We couldn't connect to crm. Try again to run this suite.",
+        );
+      });
+
+      it("connects nothing in the browser in hosted mode", async () => {
+        mockIsHostedMode.mockReturnValue(true);
+        setApiContext({ projectId: "project-1", isAuthenticated: true });
+        const ensureServersReady = vi.fn();
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(ensureServersReady).not.toHaveBeenCalled();
+        expect(runUrls()).toHaveLength(2);
+      });
     });
   });
 

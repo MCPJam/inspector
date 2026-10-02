@@ -25,6 +25,7 @@ import {
   SuiteRunReviewContent,
   type SuiteRunReviewProps,
 } from "./suite-run-review";
+import { useSuiteRunPreflight } from "./suite-run-preflight";
 
 type PlannedCombination = {
   environmentId?: string;
@@ -181,8 +182,13 @@ export function planRunMatrix(
 }
 
 export function ConfiguredSuiteRunReview(
-  props: SuiteRunReviewProps & { projectId: string },
+  reviewProps: SuiteRunReviewProps & { projectId: string },
 ) {
+  // Every branch below renders through the content, which shows these.
+  const props = {
+    ...reviewProps,
+    preflight: useSuiteRunPreflight(reviewProps),
+  };
   const { suite, projectId, environments = [] } = props;
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });

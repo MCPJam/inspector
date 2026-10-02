@@ -759,8 +759,18 @@ export function useEvalHandlers({
         caseIds?: string[];
         /** The selected case explicitly opts out of launch-triggered judging. */
         skipJudge?: boolean;
+        /**
+         * Throw a launch failure instead of toasting it, so the Setup Run
+         * sheet can show it inline and stay open. Unlike `stayOnPage`, the
+         * launch still navigates and may still replay.
+         */
+        throwOnFailure?: boolean;
       },
     ) => {
+      const fail = (message: string) => {
+        if (options?.throwOnFailure) throw new Error(message);
+        toast.error(message);
+      };
       if (rerunningSuiteId) {
         if (options?.stayOnPage)
           throw new Error("Another suite run is already starting.");
@@ -806,7 +816,7 @@ export function useEvalHandlers({
         }
         if (options?.stayOnPage)
           throw new Error("Attach a client to this suite before running it.");
-        toast.error("Attach a client to this suite before running it.");
+        fail("Attach a client to this suite before running it.");
         return;
       }
 
@@ -831,7 +841,7 @@ export function useEvalHandlers({
                   projectServers,
                 ),
               );
-            toast.error(
+            fail(
               formatEnsureServersReadyError(
                 readiness,
                 "run this suite",
@@ -848,12 +858,39 @@ export function useEvalHandlers({
                 kind: "suite",
               }),
             );
-          toast.error(
+          fail(
             formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
               remoteServers: projectServers,
               kind: "suite",
             }),
           );
+          return;
+        }
+      }
+
+      // The local run route executes on this inspector's connection pool and
+      // connects nothing itself, so connect the environments' servers first,
+      // as an environment quick run does. Hosted routes connect them.
+      if (
+        isEnvironmentSuite &&
+        projectId &&
+        !isHostedMode() &&
+        ensureServersReady != null
+      ) {
+        const blocked = await ensureLocalEnvironmentServers({
+          convex,
+          projectId,
+          environmentIds: suite.environmentIds ?? [],
+          ensureServersReady,
+        });
+        if (blocked) {
+          const message = formatEnsureServersReadyError(
+            blocked,
+            "run this suite",
+            projectServers,
+          );
+          if (options?.stayOnPage) throw new Error(message);
+          fail(message);
           return;
         }
       }
@@ -892,13 +929,14 @@ export function useEvalHandlers({
       // single-host rows render identically.
       const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
 
-      // Show toast immediately when user clicks rerun
-      const runStartedToastId = toast.success(
+      // Shown on click, then turned into the outcome: a success toast fired
+      // before the server answered stood next to its own failure.
+      const runStartedToastId = toast.loading(
         runPlans.length > 1
           ? `Starting ${runPlans.length} runs across ${
               isEnvironmentSuite ? "environments" : "hosts"
             }…`
-          : "Run started successfully! Results will appear shortly.",
+          : "Starting run…",
       );
 
       const suiteRunStartedAt = Date.now();
@@ -952,7 +990,9 @@ export function useEvalHandlers({
           : testsPayload;
         if (wantedCaseIds?.length && narrowedTests.length === 0) {
           setRerunningSuiteId(null);
-          toast.error("That case is not in this suite.");
+          toast.error("That case is not in this suite.", {
+            id: runStartedToastId,
+          });
           return;
         }
 
@@ -1081,6 +1121,7 @@ export function useEvalHandlers({
             runPlans.length > 1
               ? `All ${runPlans.length} ${targetNoun} runs started.`
               : "Eval run started!",
+            { id: runStartedToastId },
           );
         } else if (failures.length < runPlans.length) {
           // A cap can reject one target while others launch. This branch never
@@ -1115,6 +1156,7 @@ export function useEvalHandlers({
             conflict
               ? `${failures.length} of ${runPlans.length} ${targetNoun} runs failed (${failedHostNames}): ${conflict}`
               : `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`,
+            { id: runStartedToastId },
           );
         } else {
           // All failed — surface one error for actionable detail. Prefer an
@@ -1157,9 +1199,8 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         if (openEvalIterationWall(error)) {
-          // The optimistic "Run started" toast above fired before the server
-          // rejected the launch; leaving it up next to the wall would claim
-          // the run is on its way.
+          // The "Starting run…" toast above would sit next to the wall,
+          // claiming the run is on its way.
           toast.dismiss(runStartedToastId);
         } else {
           // An environment suite has no browser-side server list to prompt
@@ -1176,8 +1217,11 @@ export function useEvalHandlers({
                 })
               : getEnvironmentConflictMessage(error) ??
                 getBillingErrorMessage(error, "Failed to start eval run");
-          if (options?.stayOnPage) throw new Error(message);
-          toast.error(message);
+          if (options?.stayOnPage || options?.throwOnFailure) {
+            toast.dismiss(runStartedToastId);
+            throw new Error(message);
+          }
+          toast.error(message, { id: runStartedToastId });
         }
         if (options?.stayOnPage) throw error;
       } finally {
@@ -1198,6 +1242,7 @@ export function useEvalHandlers({
       handleReplayRun,
       evalsNavigationContext,
       openEvalIterationWall,
+      convex,
     ],
   );
 
