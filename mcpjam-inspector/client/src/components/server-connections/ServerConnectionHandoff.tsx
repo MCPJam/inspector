@@ -38,6 +38,7 @@ import {
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
 import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
+import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import {
   readClaimRefusal,
@@ -524,6 +525,9 @@ export function ServerConnectionHandoff() {
     // revoked session mid-navigation and redirects to sign-in, losing the
     // handoff link this function exists to return to.
     markSignOutInProgress();
+    // And the gate, for the same reason: Convex drops its identity on the
+    // render that loses the user. See `pause-queries-before-auth-clear`.
+    pauseQueriesBeforeAuthClear();
     const back = `${window.location.pathname}${window.location.search}`;
     // Revoke the session being dropped before WorkOS forgets it; bounded,
     // never rejects. See `revoke-session`.
