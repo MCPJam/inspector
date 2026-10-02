@@ -1183,6 +1183,29 @@ function isConvexNotVisibleError(error: unknown): boolean {
   return /not found|unauthorized|not a member/i.test(message);
 }
 
+type EvalReadPhase = "preflight" | "authorized";
+
+/**
+ * Read-translator options for the id-resolving read at the top of a route —
+ * the suite/run/iteration/case lookup that authorizes a caller-supplied id.
+ *
+ * `redactedIsRefusal` because those refusals are plain errors production
+ * Convex masks to "Server Error": without it a cross-tenant probe answered
+ * 502 — an existence oracle, and on hosted a bare edge page in place of the
+ * JSON envelope — instead of this 404 (MJ-021). Shared catches disable this
+ * flag once the scope check succeeds, so later failures remain incidents.
+ */
+function scopedEvalReadOptions(
+  notFoundMessage: string,
+  phase: EvalReadPhase = "preflight",
+) {
+  return {
+    scope: "v1.evals",
+    notFoundMessage,
+    redactedIsRefusal: phase === "preflight",
+  } as const;
+}
+
 /**
  * Every id parameter on this surface is a Convex document id, so each one is
  * read through the shared shape gate rather than `c.req.param` directly — a
@@ -1263,6 +1286,7 @@ async function readSuiteInProject(
   convexAuthToken: string,
   projectId: string,
   suiteId: string,
+  phase: EvalReadPhase,
 ): Promise<SuiteDoc> {
   // Gated HERE rather than at each caller: the launch routes take `suiteId`
   // from the request BODY, where `RunEvalsRequestSchema` types it as a plain
@@ -1278,10 +1302,10 @@ async function readSuiteInProject(
       { suiteId },
     );
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found", phase),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   return suite!;
@@ -1547,14 +1571,11 @@ export async function fetchSuiteRunServerSelection(
   convexAuthToken: string,
   suiteId: string,
   namedHostId: string | undefined,
+  phase: EvalReadPhase,
 ): Promise<{ serverIds: string[]; serverNames: string[] }> {
-  // Gated HERE, not at the callers: this function does NOT pass through
-  // `readSuiteInProject`, so its `suiteId` reaches `v.id('testSuite')` with
-  // nothing having looked at it, and `namedHostId` — which callers take from
-  // the launch BODY, typed as a plain string — reaches `v.id('hosts')` the same
-  // way. `POST /eval-runs` is guest-reachable (`guest-allowed-paths.ts` sets no
-  // method restriction on it), so an ungated body id here is a caller-mintable
-  // paging event, which is the whole hazard this file's id gate exists for.
+  // Keep the shape gates here so standalone callers cannot send malformed
+  // ids into Convex's validators. The phase distinguishes a new host lookup
+  // from fetching the saved selection of a suite already authorized.
   requireConvexIdShape(suiteId, "suiteId", {
     scope: "v1.evals",
     notFoundMessage: "Eval suite not found",
@@ -1588,10 +1609,10 @@ export async function fetchSuiteRunServerSelection(
         "This deployment cannot derive the suite's saved servers yet. Pass serverIds explicitly.",
       );
     }
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found", phase),
+    );
   }
 
   // A null read means the suite itself wasn't found — match the file's other
@@ -1748,10 +1769,10 @@ function toRunJudgesDto(run: RunDoc) {
         ...(row.status === undefined
           ? { status: "scored" as const }
           : row.status === "scored" ||
-            row.status === "error" ||
-            row.status === "skipped"
-          ? { status: row.status }
-          : {}),
+              row.status === "error" ||
+              row.status === "skipped"
+            ? { status: row.status }
+            : {}),
         ...(typeof row.gradingKey === "string"
           ? { gradingKey: row.gradingKey }
           : {}),
@@ -3789,7 +3810,7 @@ function buildCaseMutationArgs(
   if (body.models !== undefined) {
     args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
-    args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
+    args.models = isModelFreeStepsCase ? [] : (opts.defaultModels ?? []);
   }
 
   // On create, a null override is meaningless (nothing to clear) — omit it so
@@ -3802,11 +3823,11 @@ function buildCaseMutationArgs(
       body.matchOptions === null
         ? null
         : // Create sets a fresh override from the provided fields; update merges
-        // the partial patch onto the case's existing override so unmentioned
-        // fields aren't reset.
-        opts.forCreate
-        ? toInternalMatchOptions(body.matchOptions)
-        : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
+          // the partial patch onto the case's existing override so unmentioned
+          // fields aren't reset.
+          opts.forCreate
+          ? toInternalMatchOptions(body.matchOptions)
+          : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.suppressedSuiteStandardCheckIds !== undefined)
     args.suppressedSuiteStandardCheckIds = body.suppressedSuiteStandardCheckIds;
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
@@ -4442,6 +4463,7 @@ async function resolveLaunchServers(params: {
   convexAuthToken: string;
   projectId: string;
   suiteId: string | undefined;
+  suiteReadPhase: EvalReadPhase;
   requestedEnvironmentId: string | undefined;
   namedHostId: string | undefined;
   requestedServerIds: string[];
@@ -4467,7 +4489,12 @@ async function resolveLaunchServers(params: {
     ? await selectSuiteEnvironmentId({
         convexAuthToken,
         projectId,
-        suite: await readSuiteInProject(convexAuthToken, projectId, suiteId),
+        suite: await readSuiteInProject(
+          convexAuthToken,
+          projectId,
+          suiteId,
+          params.suiteReadPhase,
+        ),
         requestedEnvironmentId: params.requestedEnvironmentId,
         hasServerOverride: params.requestedServerIds.length > 0,
         serverField: "serverIds",
@@ -4508,6 +4535,7 @@ async function resolveLaunchServers(params: {
       convexAuthToken,
       suiteId!,
       namedHostId,
+      namedHostId ? "preflight" : "authorized",
     );
     serverIds = selection.serverIds;
     serverNames = selection.serverNames;
@@ -4587,7 +4615,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   const suiteRerun =
     Boolean(body.suiteId) && body.tests.length === 0
       ? true
-      : body.suiteRerun ?? false;
+      : (body.suiteRerun ?? false);
 
   // Fail unknown models now, with a pointer to valid ids, rather than
   // letting the detached run die later with an opaque stream error.
@@ -4606,6 +4634,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       convexAuthToken,
       projectId,
       suiteId: body.suiteId,
+      suiteReadPhase: "preflight",
       requestedEnvironmentId: body.environmentId,
       namedHostId: body.namedHostId,
       requestedServerIds: body.serverIds ?? [],
@@ -4876,6 +4905,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     convexAuthToken,
     projectId,
     body.suiteId,
+    "preflight",
   );
 
   // Deduplicate by resolved id, preserving the caller's order. Two entries for
@@ -4995,6 +5025,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       convexAuthToken,
       projectId,
       suiteId: body.suiteId,
+      suiteReadPhase: "authorized",
       requestedEnvironmentId: target.environmentId,
       namedHostId: target.namedHostId,
       requestedServerIds: [],
@@ -5321,7 +5352,12 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // creates. Re-read for the same reason the PATCH route does.
     let attachedHostIds: string[] = [];
     const authoredSuite = body.hosts?.length
-      ? await readSuiteInProject(convexAuthToken, projectId, suiteId)
+      ? await readSuiteInProject(
+          convexAuthToken,
+          projectId,
+          suiteId,
+          "authorized",
+        )
       : null;
     if ((authoredSuite?.environmentIds?.length ?? 0) > 0) {
       // Born an environment suite on the requested client: nothing to attach.
@@ -5427,6 +5463,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
     projectId,
     String(result.suite._id),
     vocabularyOf(c),
+    "authorized",
   );
   return v1Resource(
     c,
@@ -5447,10 +5484,10 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5556,10 +5593,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5601,8 +5638,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       baseRunId
         ? "The requested baseline run was not found, is not completed, or belongs to another suite."
         : baseCommitSha
-        ? "No completed run in this suite was recorded against that commit SHA."
-        : "No earlier completed run in this suite to compare against.",
+          ? "No completed run in this suite was recorded against that commit SHA."
+          : "No earlier completed run in this suite to compare against.",
       // A SHA that resolved to nothing is deliberately THIS, not one of the
       // two 400 baseline codes: exit 3 must keep meaning "we looked and
       // established nothing", distinct from "you asked for something
@@ -5627,11 +5664,11 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       (baselineSource.policy === undefined && Boolean(baseCommitSha))
         ? "commit_sha"
         : baselineSource.policy === "run" ||
-          (baselineSource.policy === undefined && Boolean(baseRunId))
-        ? "run"
-        : baselineSource.policy === "previous_completed_same_environment"
-        ? "previous_completed_same_environment"
-        : "previous_completed",
+            (baselineSource.policy === undefined && Boolean(baseRunId))
+          ? "run"
+          : baselineSource.policy === "previous_completed_same_environment"
+            ? "previous_completed_same_environment"
+            : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
     // Echoed for `commit_sha` only. Read from the BACKEND's answer, falling
     // back to what the request asked for, so a mixed-version deployment that
@@ -5675,10 +5712,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5733,10 +5770,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5798,10 +5835,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
       runId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5977,10 +6014,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
       runId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -6024,10 +6061,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -6075,10 +6112,10 @@ evals.delete(
         runId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval run not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(run, projectId, "Eval run");
 
@@ -6156,9 +6193,11 @@ evals.get(
 
     let run: RunDoc | null;
     let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
+    let scopeVerified = false;
     try {
       run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
       requireProjectMatch(run, projectId, "Eval run");
+      scopeVerified = true;
       page = await convex.query(
         "testSuites:listTestSuiteRunIterations" as any,
         {
@@ -6168,8 +6207,8 @@ evals.get(
       );
     } catch (error) {
       throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval run not found",
+        ...scopedEvalReadOptions("Eval run not found"),
+        redactedIsRefusal: !scopeVerified,
       });
     }
 
@@ -6214,17 +6253,19 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
 
   let run: RunDoc | null;
   let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
+  let scopeVerified = false;
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     page = await convex.query("testSuites:listTestSuiteRunIterations" as any, {
       runId,
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
     throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval run not found",
+      ...scopedEvalReadOptions("Eval run not found"),
+      redactedIsRefusal: !scopeVerified,
     });
   }
   const listVocabulary = vocabularyOf(c);
@@ -6251,6 +6292,7 @@ evals.get(
     const convex = createConvexReadClient(convexAuthToken);
 
     let trace: unknown;
+    let scopeVerified = false;
     try {
       const [run, iteration] = await Promise.all([
         convex.query("testSuites:getTestSuiteRun" as any, { runId }),
@@ -6267,13 +6309,14 @@ evals.get(
           "Eval iteration not found",
         );
       }
+      scopeVerified = true;
       trace = await convex.action("testSuites:getTestIterationBlob" as any, {
         iterationId,
       });
     } catch (error) {
       throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval iteration not found",
+        ...scopedEvalReadOptions("Eval iteration not found"),
+        redactedIsRefusal: !scopeVerified,
       });
     }
     if (trace === null || trace === undefined) {
@@ -6335,10 +6378,10 @@ evals.get(
         );
       }
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval iteration not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval iteration not found"),
+      );
     }
 
     const snapshot = (iteration.testCaseSnapshot ?? {}) as Record<string, any>;
@@ -6415,8 +6458,7 @@ evals.get(
     const assembled = assembleStepResults(
       steps,
       iteration.metadata as
-        | { stepResults?: any[]; skippedSteps?: any[] }
-        | undefined,
+        { stepResults?: any[]; skippedSteps?: any[] } | undefined,
       envelope as Parameters<typeof assembleStepResults>[2],
     );
     // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
@@ -6453,17 +6495,19 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
 
   let runs: RunDoc[];
   let suite: { projectId?: unknown } | null;
+  let scopeVerified = false;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
     requireProjectMatch(suite, projectId, "Eval suite");
+    scopeVerified = true;
     runs = await convex.query("testSuites:listTestSuiteRuns" as any, {
       suiteId,
       limit,
     });
   } catch (error) {
     throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
+      ...scopedEvalReadOptions("Eval suite not found"),
+      redactedIsRefusal: !scopeVerified,
     });
   }
   return v1PageJson(c, (runs ?? []).map(toRunDto));
@@ -6543,23 +6587,25 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
     isDone: boolean;
     continueCursor: string;
   };
+  let scopeVerified = false;
   try {
     // Project scope first, on the SUITE — the revision list is scoped by the
-    // suite id alone, so without this a caller could read another project's
-    // history by guessing an id.
+    // suite id alone, so the suite's project is checked against the path
+    // before any revision is read.
     const suite: SuiteDoc | null = await convex.query(
       "testSuites:getTestSuite" as any,
       { suiteId },
     );
     requireProjectMatch(suite, projectId, "Eval suite");
+    scopeVerified = true;
     page = await convex.query("testSuites:listSuiteRevisions" as any, {
       suiteId,
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
     throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
+      ...scopedEvalReadOptions("Eval suite not found"),
+      redactedIsRefusal: !scopeVerified,
     });
   }
 
@@ -6663,6 +6709,7 @@ evals.get(
       isDone: boolean;
       continueCursor: string;
     };
+    let scopeVerified = false;
     try {
       // The suite is read and project-matched FIRST so a valid suite id from
       // another of the caller's projects reads as NOT_FOUND here, rather than
@@ -6673,6 +6720,7 @@ evals.get(
         suiteId,
       });
       requireProjectMatch(suite, projectId, "Eval suite");
+      scopeVerified = true;
       page = await convex.query("testSuites:listEvalStageAnalytics" as any, {
         projectId,
         suiteId,
@@ -6712,7 +6760,10 @@ evals.get(
             : "Invalid stage analytics window",
         );
       }
-      throw error;
+      throw translateConvexReadError(error, {
+        ...scopedEvalReadOptions("Eval suite not found"),
+        redactedIsRefusal: !scopeVerified,
+      });
     }
 
     // Validated at the boundary with the REFINED schema — the structural one
@@ -6788,6 +6839,7 @@ evals.get(
 
     let document: unknown;
     let runSuiteId: string | undefined;
+    let scopeVerified = false;
     try {
       // The run is read and project-matched FIRST, exactly as the suite route
       // matches its suite: a valid run id from another of the caller's projects
@@ -6797,6 +6849,7 @@ evals.get(
         runId,
       });
       requireProjectMatch(run, projectId, "Eval run");
+      scopeVerified = true;
       // Kept for the identity check below — the run we authorized is the only
       // thing that can say which suite this document is allowed to name.
       const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
@@ -6813,7 +6866,10 @@ evals.get(
           RUN_ANALYTICS_NOT_FOUND,
         );
       }
-      throw error;
+      throw translateConvexReadError(error, {
+        ...scopedEvalReadOptions(RUN_ANALYTICS_NOT_FOUND),
+        redactedIsRefusal: !scopeVerified,
+      });
     }
 
     if (document === null || document === undefined) {
@@ -6905,11 +6961,13 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
+  let scopeVerified = false;
   try {
     const run = await convex.query("testSuites:getTestSuiteRun" as any, {
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     document = await convex.query("testSuites:evaluateSuiteGate" as any, {
       runId,
     });
@@ -6922,7 +6980,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_GATE_NOT_FOUND);
     }
-    throw error;
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions(RUN_GATE_NOT_FOUND),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   if (document === null || document === undefined) {
@@ -6996,6 +7057,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
 
   let document: unknown;
   let runSuiteId: string | undefined;
+  let scopeVerified = false;
   try {
     // The run is read and project-matched FIRST, exactly as the suite route
     // matches its suite: a valid run id from another of the caller's projects
@@ -7005,6 +7067,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     // Kept for the identity check below — the run we authorized is the only
     // thing that can say which suite this document is allowed to name.
     const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
@@ -7020,7 +7083,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
         RUN_ROUTE_FACTS_NOT_FOUND,
       );
     }
-    throw error;
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions(RUN_ROUTE_FACTS_NOT_FOUND),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   if (document === null || document === undefined) {
@@ -7092,6 +7158,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
 
   let document: unknown;
   let runSuiteId: string | undefined;
+  let scopeVerified = false;
   try {
     // Project-matched FIRST, same as route facts: a valid run id from another
     // of the caller's projects reads as NOT_FOUND here rather than relying on
@@ -7101,6 +7168,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    scopeVerified = true;
     const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
     runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
     document = await convex.query("testSuites:getEvalRunServerFacts" as any, {
@@ -7123,7 +7191,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
         RUN_SERVER_FACTS_NOT_FOUND,
       );
     }
-    throw error;
+    throw translateConvexReadError(error, {
+      ...scopedEvalReadOptions(RUN_SERVER_FACTS_NOT_FOUND),
+      redactedIsRefusal: !scopeVerified,
+    });
   }
 
   if (document === null || document === undefined) {
@@ -7313,8 +7384,7 @@ async function readBackDescriptionExperimentArms(
         { experimentId },
       )) as Record<string, unknown> | null;
       const recorded = current?.arms as
-        | { original?: unknown; rewrite?: unknown }
-        | undefined;
+        { original?: unknown; rewrite?: unknown } | undefined;
       return current &&
         recorded?.original === arms.original &&
         recorded?.rewrite === arms.rewrite
@@ -7403,9 +7473,7 @@ function descriptionOverrideAttributionRefusal(
   message: string;
 } | null {
   const doc = run as
-    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
-    | null
-    | undefined;
+    { toolSnapshot?: unknown; toolSnapshotDebug?: unknown } | null | undefined;
   const servers = readSnapshotServers(doc?.toolSnapshot);
   const offering = servers
     .filter((server) => server.toolNames?.includes(toolName))
@@ -7428,9 +7496,7 @@ function descriptionOverrideAttributionRefusal(
   const captureResult = (
     doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
   )?.captureResult as
-    | { status?: unknown; failedServerIds?: unknown }
-    | null
-    | undefined;
+    { status?: unknown; failedServerIds?: unknown } | null | undefined;
   if (Array.isArray(captureResult?.failedServerIds)) {
     for (const id of captureResult.failedServerIds) {
       if (typeof id === "string") failed.add(id);
@@ -7480,7 +7546,10 @@ evals.get(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(run, projectId, "Eval run");
 
@@ -7549,7 +7618,10 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(run, projectId, "Eval run");
     // Refused at the door, before the proposal spends: a name two servers
@@ -7613,7 +7685,10 @@ evals.post(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions(DESCRIPTION_EXPERIMENT_NOT_FOUND),
+      );
     }
     if (!experiment) {
       throw new WebRouteError(
@@ -7655,7 +7730,10 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval run not found"),
+      );
     }
     requireProjectMatch(sourceRun, projectId, "Eval run");
     throwIfDescriptionOverrideUnattributable(
@@ -7717,8 +7795,7 @@ evals.post(
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);
     const suiteId = String(launching.suiteId ?? experiment.suiteId);
     const plan = (launching.plan ?? experiment.plan) as
-      | { caseScope?: string; repetitions?: number }
-      | undefined;
+      { caseScope?: string; repetitions?: number } | undefined;
     const caseScope = body.caseScope ?? plan?.caseScope ?? "all";
     const affectedCaseIds = (launching.affectedCaseIds ??
       experiment.affectedCaseIds) as string[] | undefined;
@@ -7731,8 +7808,7 @@ evals.post(
     const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
       ?.configSnapshot;
     const envRef = snapshot?.environmentRef as
-      | { environmentId?: string }
-      | undefined;
+      { environmentId?: string } | undefined;
     const namedHostId =
       (typeof (sourceRun as { namedHostId?: unknown }).namedHostId === "string"
         ? (sourceRun as { namedHostId: string }).namedHostId
@@ -7747,6 +7823,7 @@ evals.post(
         convexAuthToken: token,
         projectId,
         suiteId,
+        suiteReadPhase: "authorized",
         requestedEnvironmentId: envRef?.environmentId,
         namedHostId,
         requestedServerIds: [],
@@ -7978,7 +8055,10 @@ evals.get(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw error;
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions(DESCRIPTION_EXPERIMENT_NOT_FOUND),
+      );
     }
 
     if (document === null || document === undefined) {
@@ -8050,16 +8130,17 @@ async function readSuiteDetail(
   // already cost us one endpoint that answered a vocabulary-2 request with the
   // legacy spelling. Making the compiler ask means a new reader cannot forget.
   vocabulary: EvalVocabulary,
+  phase: EvalReadPhase,
 ) {
   const convex = createConvexReadClient(convexAuthToken);
   let suite: SuiteDoc | null;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found", phase),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   let execConfig: any = null;
@@ -8195,7 +8276,13 @@ evals.get("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const token = await getConvexBearerForRequest(c);
   return suiteResource(
     c,
-    await readSuiteDetail(token, projectId, suiteId, vocabularyOf(c)),
+    await readSuiteDetail(
+      token,
+      projectId,
+      suiteId,
+      vocabularyOf(c),
+      "preflight",
+    ),
   );
 });
 
@@ -8301,10 +8388,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
 
@@ -8665,7 +8752,13 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
 
   return suiteResource(
     c,
-    await readSuiteDetail(token, projectId, suiteId, vocabularyOf(c)),
+    await readSuiteDetail(
+      token,
+      projectId,
+      suiteId,
+      vocabularyOf(c),
+      "authorized",
+    ),
   );
 });
 
@@ -8708,7 +8801,7 @@ evals.post(
     // Scope check first: Convex enforces membership, and this makes a valid id
     // from another of the caller's projects read as NOT_FOUND rather than
     // leaking across the scope the path declares.
-    await readSuiteInProject(token, projectId, suiteId);
+    await readSuiteInProject(token, projectId, suiteId, "preflight");
 
     const { convexClient } = createConvexClients(token);
     let result: { attached?: boolean; environmentIds?: unknown };
@@ -8754,10 +8847,10 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   const { convexClient } = createConvexClients(token);
@@ -8802,10 +8895,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   // Enabling reuses the suite's saved interval when none is supplied (one-click
@@ -8863,7 +8956,13 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   }
   return suiteResource(
     c,
-    await readSuiteDetail(token, projectId, suiteId, vocabularyOf(c)),
+    await readSuiteDetail(
+      token,
+      projectId,
+      suiteId,
+      vocabularyOf(c),
+      "authorized",
+    ),
   );
 });
 
@@ -8874,14 +8973,16 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
   let suite: SuiteDoc | null;
   let cases: CaseDoc[];
+  let scopeVerified = false;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
     requireProjectMatch(suite, projectId, "Eval suite");
+    scopeVerified = true;
     cases = await convex.query("testSuites:listTestCases" as any, { suiteId });
   } catch (error) {
     throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
+      ...scopedEvalReadOptions("Eval suite not found"),
+      redactedIsRefusal: !scopeVerified,
     });
   }
   const listVocabulary = vocabularyOf(c);
@@ -8901,6 +9002,7 @@ async function loadCaseInScope(
   projectId: string,
   suiteId: string,
   caseId: string,
+  phase: EvalReadPhase,
 ): Promise<CaseDoc> {
   let testCase: CaseDoc | null;
   try {
@@ -8908,10 +9010,10 @@ async function loadCaseInScope(
       testCaseId: caseId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval case not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval case not found", phase),
+    );
   }
   if (!testCase || String(testCase.testSuiteId ?? "") !== suiteId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval case not found");
@@ -8928,7 +9030,13 @@ evals.get(
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     const caseId = evalIdParam(c, "caseId", "Eval case");
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
-    const testCase = await loadCaseInScope(convex, projectId, suiteId, caseId);
+    const testCase = await loadCaseInScope(
+      convex,
+      projectId,
+      suiteId,
+      caseId,
+      "preflight",
+    );
     return caseResource(c, testCase);
   },
 );
@@ -8947,10 +9055,10 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       suiteId,
     });
   } catch (error) {
-    throw translateConvexReadError(error, {
-      scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
-    });
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval suite not found"),
+    );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   assertCasePolicyFieldsSupported(
@@ -9002,6 +9110,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     projectId,
     suiteId,
     String(committed.testCaseId),
+    "authorized",
   );
   return caseResource(c, created, 201);
 });
@@ -9036,10 +9145,10 @@ evals.post(
         suiteId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval suite not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
     // Checked for EVERY case before any of them is authored, like
@@ -9170,6 +9279,7 @@ evals.patch(
       projectId,
       suiteId,
       caseId,
+      "preflight",
     );
     // The CASE was loaded above; the SUITE was not. Both create paths already
     // read it for their scope guard, so a PATCH was the one door through which
@@ -9179,7 +9289,7 @@ evals.patch(
     // title edit does not pay for a second round trip.
     if (body.repetitions !== undefined || body.passThreshold !== undefined) {
       assertCasePolicyFieldsSupported(
-        await readSuiteInProject(token, projectId, suiteId),
+        await readSuiteInProject(token, projectId, suiteId, "authorized"),
         body,
         "",
         countFieldNames(vocabularyOf(c)),
@@ -9219,6 +9329,7 @@ evals.patch(
         projectId,
         suiteId,
         caseId,
+        "authorized",
       );
     }
     return caseResource(c, updated);
@@ -9238,6 +9349,7 @@ evals.delete(
       projectId,
       suiteId,
       caseId,
+      "preflight",
     );
     const { convexClient } = createConvexClients(token);
     try {
@@ -9296,10 +9408,10 @@ evals.post(
         suiteId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval suite not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
 
@@ -9342,6 +9454,7 @@ evals.post(
         token,
         suiteId,
         undefined,
+        "authorized",
       );
       serverIds = selection.serverIds;
       serverNames = selection.serverNames;
@@ -9418,10 +9531,10 @@ evals.post(
         suiteId,
       });
     } catch (error) {
-      throw translateConvexReadError(error, {
-        scope: "v1.evals",
-        notFoundMessage: "Eval suite not found",
-      });
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Eval suite not found"),
+      );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
 
@@ -9458,6 +9571,7 @@ evals.post(
         token,
         suiteId,
         undefined,
+        "authorized",
       );
       serverIds = selection.serverIds;
       serverNames = selection.serverNames;
@@ -9514,9 +9628,17 @@ evals.get(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId",
   async (c) => {
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
-    const job = await convex.query("evalAuthoringState:status" as any, {
-      jobId: evalIdParam(c, "jobId", "Authoring job"),
-    });
+    let job: Record<string, unknown> | null;
+    try {
+      job = await convex.query("evalAuthoringState:status" as any, {
+        jobId: evalIdParam(c, "jobId", "Authoring job"),
+      });
+    } catch (error) {
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Authoring job not found."),
+      );
+    }
     if (
       !job ||
       job.projectId !== c.req.param("projectId") ||
@@ -9536,9 +9658,17 @@ evals.post(
     const { convexClient: convex } = createConvexClients(
       await getConvexBearerForRequest(c),
     );
-    const job = await convex.query("evalAuthoringState:status" as any, {
-      jobId: evalIdParam(c, "jobId", "Authoring job"),
-    });
+    let job: Record<string, unknown> | null;
+    try {
+      job = await convex.query("evalAuthoringState:status" as any, {
+        jobId: evalIdParam(c, "jobId", "Authoring job"),
+      });
+    } catch (error) {
+      throw translateConvexReadError(
+        error,
+        scopedEvalReadOptions("Generated authoring job not found."),
+      );
+    }
     const suiteId = c.req.param("suiteId");
     // The app's Markdown flow is deliberately not committable from here: its
     // drafts exist so a person reviews them, and an API commit would decide on
@@ -9675,7 +9805,8 @@ async function startAuthoringJobAndAwait(
   } catch {
     // A 4xx can still be a refusal the backend owns even when the body is not
     // JSON (a WAF page, a proxy error), so classify before calling it ours.
-    if (!response.ok) throw authoringRefusal(response, bodyText, args, undefined);
+    if (!response.ok)
+      throw authoringRefusal(response, bodyText, args, undefined);
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,

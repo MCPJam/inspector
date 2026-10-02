@@ -79,6 +79,15 @@ export type ProjectEnvironmentServerSkillSelection = {
  * `PlatformEnvironment`: that is the public `/api/v1` wire shape (`id`,
  * `archived: boolean`) and the browser never speaks that API.
  */
+/** Explicit execution selection; omission retains pre-cutover read semantics. */
+export type ProjectEnvironmentServerSelection =
+  | { mode: "selected" | "none" }
+  | { mode: "local"; names: string[] }
+  | {
+      mode: "unresolved";
+      references: Array<{ name: string; serverId?: string; reason: string }>;
+    };
+
 export interface ProjectEnvironmentView {
   environmentId: string;
   projectId: string;
@@ -113,6 +122,7 @@ export interface ProjectEnvironmentView {
   hostId: string;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection;
   /**
    * Stored model override. Absent ⇒ this environment inherits its client's
    * model. Deliberately NOT the effective model: a list row that conflated
@@ -257,6 +267,7 @@ export function useCreateProjectEnvironment(): (args: {
   description?: string;
   hostId: string;
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
@@ -301,6 +312,7 @@ export function useEnsureAdhocEnvironment(): (args: {
   projectId: string;
   hostId: string;
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
@@ -335,6 +347,7 @@ export function useEnsureAdhocEnvironments(): (args: {
   stacks: Array<{
     hostId: string;
     serverAttachmentId?: string | null;
+    serverSelection?: ProjectEnvironmentServerSelection;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
     /**
      * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
@@ -414,6 +427,7 @@ export function useUpdateProjectEnvironment(): (args: {
   description?: string | null;
   hostId?: string;
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
