@@ -17,7 +17,12 @@
  *      `runs/finish-call` after. A call the journal already completed is
  *      replayed from its recorded result; a call that BEGAN and never finished
  *      (`409 tool_outcome_unknown`) aborts the turn and parks the run — it is
- *      never re-executed, because it may already have happened.
+ *      never re-executed, because it may already have happened. A call that
+ *      is not read-only runs only once a checkpoint the backend acknowledged
+ *      names it (`createRunCheckpointer`), in both engines: a worker that dies
+ *      after the effect resumes with the call still in its history, so the
+ *      journal replays it instead of the model asking again under a new id.
+ *      A checkpoint that cannot be saved stops the run (`checkpoint_failed`).
  *   4. The trigger's instructions are the ONLY instructions. The event is
  *      rendered as a delimited, JSON-escaped DATA block marked untrusted, and
  *      no event text is ever interpolated into an instruction.
@@ -140,14 +145,39 @@ export function buildEventRunMessages(
 
 /** Thrown inside a tool when the run must stop (the turn is aborted too). */
 export class EventRunHaltError extends Error {
-  constructor(readonly reason: "tool_outcome_unknown" | "lease_lost") {
+  constructor(
+    readonly reason: "tool_outcome_unknown" | "lease_lost" | "checkpoint_failed",
+  ) {
     super(
       reason === "tool_outcome_unknown"
         ? "A tool call from an earlier attempt of this run has an unknown outcome; the run is parked instead of repeating it."
-        : "This executor lost the run's lease.",
+        : reason === "checkpoint_failed"
+          ? "The run's checkpoint could not be saved, so no further tool may run."
+          : "This executor lost the run's lease.",
     );
     this.name = "EventRunHaltError";
   }
+}
+
+/** One tool call the model asked for, as a checkpoint records it. */
+export interface EventRunToolIntent {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
+/** Every tool-call / tool-result id a message list mentions. */
+export function toolCallIdsIn(messages: readonly ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const id = (part as { toolCallId?: unknown } | null)?.toolCallId;
+      if (typeof id === "string") ids.add(id);
+    }
+  }
+  return ids;
 }
 
 export interface ToolJournalPort {
@@ -206,6 +236,13 @@ export function readOnlyToolNames(
  * `halt` is called — and an {@link EventRunHaltError} thrown — when the
  * journal says the run must stop: `tool_outcome_unknown` (park) or a lost
  * lease (someone else owns the run now).
+ *
+ * A call that is not replayable runs only once its intent is durable:
+ * `ensureDurable` resolves when a checkpoint the backend acknowledged names
+ * the call, so a worker that dies after the effect resumes from a checkpoint
+ * that still holds the call, and the journal replays its result instead of
+ * the model asking again under a new id. Once the run has halted (`halted`
+ * returns a reason) no tool runs at all.
  */
 export function wrapToolsForEventRun(
   tools: ToolSet,
@@ -216,6 +253,8 @@ export function wrapToolsForEventRun(
     approvalPolicy: "deny_writes" | "auto_deny";
     readOnlyTools?: ReadonlySet<string>;
     halt: (reason: EventRunHaltError["reason"]) => void;
+    halted?: () => EventRunHaltError["reason"] | undefined;
+    ensureDurable?: (intent: EventRunToolIntent) => Promise<void>;
   },
 ): ToolSet {
   for (const [name, definition] of Object.entries(tools)) {
@@ -233,6 +272,16 @@ export function wrapToolsForEventRun(
       }
       const callId = callOptions?.toolCallId;
       if (!callId) throw new Error("Event run tool call has no identity.");
+      const stopped = options.halted?.();
+      if (stopped) throw new EventRunHaltError(stopped);
+      // Intent before effect. A read-only call may simply run again.
+      if (!readOnly && options.ensureDurable) {
+        await options.ensureDurable({
+          toolCallId: callId,
+          toolName: name,
+          input: input ?? null,
+        });
+      }
       let begun: { replay: boolean; result?: unknown };
       try {
         begun = await options.journal.beginCall({
@@ -274,6 +323,97 @@ export function wrapToolsForEventRun(
     };
   }
   return tools;
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoints
+// ---------------------------------------------------------------------------
+
+export interface RunCheckpointer {
+  /** A real conversation state (resume, a hosted step, the end of the turn). */
+  checkpoint(messages: ModelMessage[], step: number): Promise<void>;
+  /** Resolves once a written checkpoint names `intent.toolCallId`. */
+  ensureDurable(intent: EventRunToolIntent): Promise<void>;
+  /** Rewrites the current state (lease renewal). */
+  heartbeat(): Promise<void>;
+}
+
+/**
+ * The run's durable state, written through ONE queue so no write lands behind
+ * an older one: a heartbeat can never overwrite a newer intent.
+ *
+ * `base` is the last real conversation; `intents` are tool calls made since
+ * that `base` does not hold yet (the direct engine has no per-step hook).
+ * The stored checkpoint is `base` plus one assistant message naming those
+ * calls, so a run resumed after a crash finds them unresolved and finishes
+ * them through the journal: a completed one replays its recorded result, an
+ * unfinished one parks the run. Neither repeats the effect.
+ */
+export function createRunCheckpointer(args: {
+  write: (state: { messages: ModelMessage[]; step: number }) => Promise<void>;
+  messages: ModelMessage[];
+  step: number;
+  /** True when `messages` is already what the backend holds (a resume). */
+  stored: boolean;
+}): RunCheckpointer {
+  let base = args.messages;
+  let step = args.step;
+  let intents: EventRunToolIntent[] = [];
+  let written = args.stored ? toolCallIdsIn(base) : new Set<string>();
+  let queue: Promise<void> = Promise.resolve();
+
+  const state = () => ({
+    messages:
+      intents.length === 0
+        ? base
+        : [
+            ...base,
+            {
+              role: "assistant",
+              content: intents.map((intent) => ({
+                type: "tool-call",
+                toolCallId: intent.toolCallId,
+                toolName: intent.toolName,
+                input: intent.input,
+              })),
+            } as ModelMessage,
+          ],
+    step,
+  });
+
+  const enqueue = (change?: () => void): Promise<void> => {
+    const run = queue.then(async () => {
+      change?.();
+      const next = state();
+      await args.write(next);
+      written = toolCallIdsIn(next.messages);
+    });
+    queue = run.catch(() => undefined);
+    return run;
+  };
+
+  return {
+    checkpoint(messages, nextStep) {
+      return enqueue(() => {
+        base = messages;
+        step = Math.max(step, nextStep);
+        const held = toolCallIdsIn(messages);
+        intents = intents.filter((intent) => !held.has(intent.toolCallId));
+      });
+    },
+    async ensureDurable(intent) {
+      if (written.has(intent.toolCallId)) return;
+      await enqueue(() => {
+        const held = toolCallIdsIn(base);
+        if (
+          !held.has(intent.toolCallId) &&
+          !intents.some((known) => known.toolCallId === intent.toolCallId)
+        )
+          intents = [...intents, intent];
+      });
+    },
+    heartbeat: () => enqueue(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +646,15 @@ export type EventRunOutcome =
   | { status: "parked"; error: string }
   | { status: "lease_lost" };
 
+/** The terminal state a halted run reports. */
+function haltedOutcome(reason: EventRunHaltError["reason"]): EventRunOutcome {
+  if (reason === "lease_lost") return { status: "lease_lost" };
+  if (reason === "tool_outcome_unknown") {
+    return { status: "parked", error: "tool_outcome_unknown" };
+  }
+  return { status: "failed", error: "checkpoint_failed" };
+}
+
 /**
  * Execute one claimed run end to end and report its terminal state. Never
  * throws; a lost lease is the only outcome that writes nothing back (the run
@@ -605,6 +754,54 @@ export async function executeClaimedEventRun(
       requireToolApproval: false,
       skillsSource: { kind: "none" },
     });
+    // Resume from the checkpoint when there is one; its unresolved tool calls
+    // (if the last attempt died between the model and the tools) are finished
+    // first, through the SAME journal — completed calls replay, unknown ones
+    // park.
+    const resumed = Array.isArray(claim.messages) && claim.messages.length > 0;
+    let messages: ModelMessage[] = resumed
+      ? (claim.messages as ModelMessage[])
+      : built.messages;
+    const lastStep = Math.max(0, claim.step ?? 0);
+    const checkpointer = createRunCheckpointer({
+      messages,
+      step: lastStep,
+      stored: resumed,
+      write: (state) =>
+        deps.backend.checkpointRun({
+          runId,
+          token,
+          messages: state.messages,
+          step: state.step,
+        }),
+    });
+    // A checkpoint the run depends on: if it cannot be saved, the turn stops
+    // and no further tool runs (`halted` is set before the error surfaces).
+    const durable = async (write: Promise<void>) => {
+      try {
+        await write;
+      } catch (error) {
+        if (error instanceof EventRunHaltError) throw error;
+        const reason = error instanceof StaleLeaseError ? "lease_lost" : "checkpoint_failed";
+        if (reason === "checkpoint_failed") {
+          logger.warn("[events-executor] checkpoint failed; stopping the run", {
+            ...logContext,
+            error: shortError(error),
+          });
+        }
+        halt(reason);
+        throw new EventRunHaltError(reason);
+      }
+    };
+    heartbeat = setInterval(() => {
+      // Lease renewal only: it rewrites state that is already durable, so a
+      // transient failure loses nothing. A lost lease still stops the run.
+      void checkpointer.heartbeat().catch((error) => {
+        if (error instanceof StaleLeaseError) halt("lease_lost");
+      });
+    }, HEARTBEAT_MS);
+    heartbeat.unref?.();
+
     const tools = wrapToolsForEventRun(prepared.allTools, {
       journal: deps.backend,
       runId,
@@ -612,46 +809,11 @@ export async function executeClaimedEventRun(
       approvalPolicy: input.trigger.approvalPolicy,
       readOnlyTools: readOnlyToolNames(manager, servers.serverIds),
       halt,
+      halted: () => halted,
+      ensureDurable: (intent) => durable(checkpointer.ensureDurable(intent)),
     });
 
-    // Resume from the checkpoint when there is one; its unresolved tool calls
-    // (if the last attempt died between the model and the tools) are finished
-    // first, through the SAME journal — completed calls replay, unknown ones
-    // park.
-    let messages: ModelMessage[] =
-      Array.isArray(claim.messages) && claim.messages.length > 0
-        ? (claim.messages as ModelMessage[])
-        : built.messages;
-    let lastStep = Math.max(0, claim.step ?? 0);
-    const checkpoint = async (nextMessages: ModelMessage[], step: number) => {
-      lastStep = Math.max(lastStep, step);
-      try {
-        await deps.backend.checkpointRun({
-          runId,
-          token,
-          messages: nextMessages,
-          step: lastStep,
-        });
-      } catch (error) {
-        if (error instanceof StaleLeaseError) {
-          halt("lease_lost");
-          throw new EventRunHaltError("lease_lost");
-        }
-        // A checkpoint is crash insurance, not the run: a failed write is
-        // logged and the turn carries on.
-        logger.warn("[events-executor] checkpoint failed", {
-          ...logContext,
-          error: shortError(error),
-        });
-      }
-    };
-    let latest = { messages, step: lastStep };
-    heartbeat = setInterval(() => {
-      void checkpoint(latest.messages, latest.step).catch(() => undefined);
-    }, HEARTBEAT_MS);
-    heartbeat.unref?.();
-
-    if (messages !== built.messages && hasUnresolvedToolCalls(messages)) {
+    if (resumed && hasUnresolvedToolCalls(messages)) {
       try {
         const results = await executeToolCallsFromMessages(messages, {
           tools,
@@ -659,18 +821,12 @@ export async function executeClaimedEventRun(
           abortSignal: abortController.signal,
         });
         messages = [...messages, ...results];
+        await durable(checkpointer.checkpoint(messages, lastStep));
       } catch (error) {
         if (!halted) throw error;
       }
-      if (!halted) await checkpoint(messages, lastStep);
     }
-    if (halted) {
-      return finish(
-        halted === "lease_lost"
-          ? { status: "lease_lost" }
-          : { status: "parked", error: "tool_outcome_unknown" },
-      );
-    }
+    if (halted) return finish(haltedOutcome(halted));
 
     // ONE chat thread per trigger: usage is attributed to it, and each run's
     // transcript is appended to it (see `run-transcript.ts`).
@@ -726,31 +882,32 @@ export async function executeClaimedEventRun(
             authContext: { kind: "user_bearer", token: `Bearer ${bearer}` },
             projectId,
             chatSessionId,
-            durableCheckpoint: async (state: {
+            // The handler awaits this before the next external effect (the
+            // `tools` phase holds the model's tool calls before any runs), so
+            // a failure here stops the turn instead of being logged past.
+            durableCheckpoint: (state: {
               phase: string;
               messages: ModelMessage[];
               step: number;
-            }) => {
-              latest = { messages: state.messages, step: stepBase + state.step };
-              await checkpoint(state.messages, stepBase + state.step);
-            },
+            }) => durable(checkpointer.checkpoint(state.messages, stepBase + state.step)),
           }
         : common,
     );
 
-    if (halted === "lease_lost") return { status: "lease_lost" };
-    if (halted === "tool_outcome_unknown") {
-      return finish({ status: "parked", error: "tool_outcome_unknown" });
-    }
+    if (halted) return finish(haltedOutcome(halted));
     const finalMessages: ModelMessage[] = Array.isArray(result?.messages)
       ? result.messages
       : messages;
     if (!hosted) {
-      await checkpoint(finalMessages, stepBase + (result?.newMessages?.length ?? 0)).catch(
-        () => undefined,
-      );
+      // Crash insurance before the terminal write. Every effect is already
+      // covered by an intent checkpoint, so a failure here loses nothing.
+      await checkpointer
+        .checkpoint(finalMessages, stepBase + (result?.newMessages?.length ?? 0))
+        .catch((error) => {
+          if (error instanceof StaleLeaseError) halt("lease_lost");
+        });
     }
-    if (halted) return { status: "lease_lost" };
+    if (halted) return finish(haltedOutcome(halted));
     const outcome: EventRunOutcome = lastEngineError
       ? isSpendRefusal(lastEngineError)
         ? { status: "failed", error: "spend_refused" }
@@ -800,12 +957,8 @@ export async function executeClaimedEventRun(
       persistedChatSessionId ? { chatSessionId: persistedChatSessionId } : {},
     );
   } catch (error) {
-    if (halted === "lease_lost" || error instanceof StaleLeaseError) {
-      return { status: "lease_lost" };
-    }
-    if (halted === "tool_outcome_unknown") {
-      return finish({ status: "parked", error: "tool_outcome_unknown" });
-    }
+    if (error instanceof StaleLeaseError) halt("lease_lost");
+    if (halted) return finish(haltedOutcome(halted));
     logger.warn("[events-executor] run failed", { ...logContext, error: shortError(error) });
     return finish({ status: "failed", error: shortError(error) });
   } finally {

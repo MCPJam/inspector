@@ -22,6 +22,7 @@ import { persistEventRunTranscript, type TranscriptPort } from "../run-transcrip
 import {
   EventRunHaltError,
   buildEventRunMessages,
+  createRunCheckpointer,
   executeClaimedEventRun,
   isSpendRefusal,
   summarizeEventRun,
@@ -437,6 +438,220 @@ describe("helpers", () => {
       ],
       steps: 1,
     });
+  });
+});
+
+describe("durable intent before tool effects", () => {
+  const calls = (fixture: EventsFixtureHandle) =>
+    fixture.received.filter((row) => row.method === "tools/call");
+  const ids = (messages: unknown) => JSON.stringify(messages);
+
+  it("checkpoints the call's intent before the direct engine runs it", async () => {
+    const { backend, deps, fixture } = await liveDeps();
+    const outcome = await executeClaimedEventRun(claim(), deps);
+    expect(outcome.status).toBe("completed");
+    expect(calls(fixture)).toHaveLength(1);
+    // The first write the backend acknowledged names call_1, and it landed
+    // before the journal began the call.
+    const first = backend.checkpointRun.mock.calls[0]![0] as { messages: unknown };
+    expect(ids(first.messages)).toContain('"toolCallId":"call_1"');
+    expect(backend.checkpointRun.mock.invocationCallOrder[0]).toBeLessThan(
+      backend.beginCall.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("stops before any effect when a checkpoint cannot be saved", async () => {
+    const backend = fakeBackend();
+    backend.checkpointRun.mockRejectedValue(new Error("convex 500"));
+    const { deps, fixture } = await liveDeps(backend);
+    const outcome = await executeClaimedEventRun(claim(), deps);
+    expect(outcome).toEqual({ status: "failed", error: "checkpoint_failed" });
+    expect(calls(fixture)).toHaveLength(0);
+    expect(backend.beginCall).not.toHaveBeenCalled();
+    expect(backend.finishRun).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", error: "checkpoint_failed" }),
+    );
+  });
+
+  it("runs no tool on the hosted engine once its checkpoint failed, even if the failure was swallowed", async () => {
+    const backend = fakeBackend();
+    backend.checkpointRun.mockRejectedValue(new Error("convex 500"));
+    const { deps, fixture } = await liveDeps(backend);
+    const runTurn = vi.fn(async (options: any) => {
+      const withCall = [
+        ...options.messages,
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "reply_to_comment",
+              input: { comment_id: "c1", text: "thanks" },
+            },
+          ],
+        },
+      ];
+      // A handler that logged the failure and carried on would still reach
+      // the tool; the wrapper refuses it.
+      await options.durableCheckpoint({ phase: "tools", messages: withCall, step: 0 }).catch(() => {});
+      await options.tools.reply_to_comment
+        .execute({ comment_id: "c1", text: "thanks" }, { toolCallId: "call_1" })
+        .catch(() => {});
+      return { messages: withCall, newMessages: [], toolCalls: [], toolResults: [], aborted: false };
+    });
+    const outcome = await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveRuntime: async () => ({ runtime: { kind: "hosted", endpointPath: "/stream" } }),
+      runTurn,
+    });
+    expect(outcome).toEqual({ status: "failed", error: "checkpoint_failed" });
+    expect(calls(fixture)).toHaveLength(0);
+    expect(backend.beginCall).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A journal with the backend's rules (completed → replay, began and never
+   * finished → tool_outcome_unknown) and one checkpoint slot. `die()` makes
+   * every later write fail as a lost lease, as when the worker died.
+   */
+  function journalBackend() {
+    const state = {
+      messages: null as unknown[] | null,
+      step: 0,
+      calls: new Map<string, { done: boolean; result?: unknown; replayable: boolean }>(),
+      dead: false,
+    };
+    const guard = (route: string) => {
+      if (state.dead) throw new StaleLeaseError(route, "lease_lost");
+    };
+    const backend = {
+      claimRun: vi.fn(async () => null),
+      checkpointRun: vi.fn(async (args: { messages: unknown[]; step: number }) => {
+        guard("runs/checkpoint");
+        state.messages = JSON.parse(JSON.stringify(args.messages));
+        state.step = args.step;
+      }),
+      beginCall: vi.fn(async (args: { callId: string; replayable: boolean }) => {
+        guard("runs/begin-call");
+        const known = state.calls.get(args.callId);
+        if (known?.done) return { replay: true, result: known.result };
+        if (known && !known.replayable) throw new ToolOutcomeUnknownError("runs/begin-call");
+        state.calls.set(args.callId, { done: false, replayable: args.replayable });
+        return { replay: false };
+      }),
+      finishCall: vi.fn(async (args: { callId: string; result: unknown }) => {
+        guard("runs/finish-call");
+        state.calls.set(args.callId, { ...state.calls.get(args.callId)!, done: true, result: args.result });
+      }),
+      finishRun: vi.fn(async () => guard("runs/finish")),
+    };
+    return { backend, state, die: () => (state.dead = true), revive: () => (state.dead = false) };
+  }
+
+  /** Answers once it sees a tool result; otherwise asks for the write under a NEW id. */
+  function regeneratingModel() {
+    return new MockLanguageModelV3({
+      provider: "openai",
+      modelId: "scripted",
+      doStream: async (options) => {
+        const prompt = (options as { prompt?: Array<{ role: string }> }).prompt ?? [];
+        const sawResult = prompt.some((message) => message.role === "tool");
+        const chunks = sawResult
+          ? [
+              { type: "stream-start", warnings: [] },
+              { type: "text-start", id: "t1" },
+              { type: "text-delta", id: "t1", delta: "Already replied." },
+              { type: "text-end", id: "t1" },
+              { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: usage(5, 2) },
+            ]
+          : [
+              { type: "stream-start", warnings: [] },
+              {
+                type: "tool-call",
+                toolCallId: "call_regenerated",
+                toolName: "reply_to_comment",
+                input: JSON.stringify({ comment_id: "c1", text: "thanks" }),
+              },
+              {
+                type: "finish",
+                finishReason: { unified: "tool-calls", raw: "tool_calls" },
+                usage: usage(5, 2),
+              },
+            ];
+        return { stream: simulateReadableStream({ chunks: chunks as never }) };
+      },
+    });
+  }
+
+  it("executes a write at most once across a crash after it completed, even when the model would ask again under a new id", async () => {
+    const journal = journalBackend();
+    const { deps, fixture } = await liveDeps(journal.backend as never);
+    // The worker dies right after the write is journaled as completed, before
+    // any later checkpoint lands.
+    const finishCall = journal.backend.finishCall.getMockImplementation()!;
+    journal.backend.finishCall.mockImplementation(async (args) => {
+      await finishCall(args);
+      journal.die();
+    });
+    const first = await executeClaimedEventRun(claim(), deps);
+    expect(first).toEqual({ status: "lease_lost" });
+    expect(calls(fixture)).toHaveLength(1);
+
+    // Recovery requeues the run; another worker resumes from what was stored.
+    journal.backend.finishCall.mockImplementation(finishCall);
+    journal.revive();
+    const second = await executeClaimedEventRun(
+      claim({ token: "run_lease_2", messages: journal.state.messages, step: journal.state.step }),
+      {
+        ...deps,
+        resolveRuntime: async () => ({
+          runtime: { kind: "direct", llmModel: regeneratingModel(), modelId: "scripted" },
+        }),
+      },
+    );
+    expect(second.status).toBe("completed");
+    // The stored history still held call_1: the journal replayed it, the model
+    // saw its result, and the server saw ONE write.
+    expect(calls(fixture)).toHaveLength(1);
+    expect(journal.backend.beginCall).toHaveBeenLastCalledWith(
+      expect.objectContaining({ callId: "call_1", token: "run_lease_2" }),
+    );
+    expect(journal.state.calls.has("call_regenerated")).toBe(false);
+  });
+
+  it("serializes writes so a heartbeat never overwrites a newer intent", async () => {
+    const written: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const checkpointer = createRunCheckpointer({
+      messages: [{ role: "user", content: "go" }],
+      step: 0,
+      stored: false,
+      write: async (state) => {
+        if (written.length === 0) await gate;
+        written.push(ids(state.messages));
+      },
+    });
+    const beat = checkpointer.heartbeat();
+    const intent = checkpointer.ensureDurable({ toolCallId: "w1", toolName: "write", input: {} });
+    release();
+    await Promise.all([beat, intent]);
+    expect(written).toHaveLength(2);
+    expect(written[0]).not.toContain("w1");
+    expect(written[1]).toContain('"toolCallId":"w1"');
+    // Durable now: asking again writes nothing.
+    await checkpointer.ensureDurable({ toolCallId: "w1", toolName: "write", input: {} });
+    expect(written).toHaveLength(2);
+    // A real checkpoint that holds the call replaces the synthetic intent.
+    await checkpointer.checkpoint(
+      [
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: "w1", toolName: "write", input: {} }] },
+      ] as never,
+      1,
+    );
+    expect(written[2]!.match(/"toolCallId":"w1"/g)).toHaveLength(1);
   });
 });
 
