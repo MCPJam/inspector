@@ -209,6 +209,16 @@ This is an expected quota state, not an error with your MCP server.
 
 **To wait for the limit to reset:** The warning includes the retry window. Free quota resets daily.
 
+## "Please refresh the page" screen
+
+### App shows "Please refresh the page" instead of loading
+
+If the app displays a full-screen message — **"Please refresh the page"** with the description "Something didn't load. Refresh to try again." — a JavaScript file failed to load. This can happen after a deployment when your browser has cached an older version of the app that references files that no longer exist.
+
+**Fix:** click the **Refresh** button on the screen, or reload the page manually. The browser fetches the current files and the app loads normally.
+
+If the screen reappears after refreshing, try a hard reload (`Cmd+Shift+R` on macOS, `Ctrl+Shift+R` on Windows/Linux) or clear your browser cache for the site.
+
 ## Desktop app startup failures
 
 ### App bounces in the dock and disappears (macOS) or closes immediately
