@@ -185,7 +185,24 @@ function maybePromoteRawMessage(
   entry: ErrorCatalogEntry,
   slug: string,
   rawMessage: string,
+  rawCode?: number | string,
+  fallbackCode?: number,
 ): ErrorCatalogEntry {
+  // The status is the one fact the catalog copy cannot know. Only the number
+  // is used: the raw message can quote the server's response body. When the
+  // SSE fallback failed with a different status, both are named, so the
+  // fallback's 405 cannot hide the real request's 500.
+  if (slug === "server/http_error" && typeof rawCode === "number") {
+    return {
+      ...entry,
+      oneLine:
+        fallbackCode !== undefined &&
+        fallbackCode >= 400 &&
+        fallbackCode !== rawCode
+          ? `The MCP server answered the request with HTTP ${rawCode}, then with HTTP ${fallbackCode} to the SSE fallback.`
+          : `The MCP server answered the request with HTTP ${rawCode}.`,
+    };
+  }
   // The backend's sentence carries the two numbers that make this refusal
   // make sense; the catalog copy cannot know them.
   if (slug === "provider/mcpjam_limit_insufficient") {
@@ -621,6 +638,26 @@ function resolveSlug(error: unknown): {
     if (slug) return { slug, rawCode: httpStatus };
   }
 
+  // (e.5) Any other HTTP error status the MCP server answered with: a 404 for
+  // a wrong endpoint path, a 405, the server's own 500. Read only off an MCP
+  // transport error, never off a bare `status`: MCPJam's own route errors and
+  // LLM provider errors carry one too, and filing those under the user's
+  // server would stop our own failures from paging. Ahead of the message
+  // fallbacks, which read a combined connect failure as `fetch failed`. The
+  // Streamable attempt's status first: it is the real request.
+  const streamableStatus = combinedTransportStatuses(error)?.streamable;
+  const upstreamStatus =
+    streamableStatus !== undefined && streamableStatus >= 400
+      ? streamableStatus
+      : mcpTransportHttpStatusOf(error);
+  if (
+    upstreamStatus !== undefined &&
+    upstreamStatus >= 400 &&
+    classifyHttpStatus(upstreamStatus) === undefined
+  ) {
+    return { slug: "server/http_error", rawCode: upstreamStatus };
+  }
+
   // (f) OAuth body shape.
   const oauthSlug = oauthBodySlug(error);
   if (oauthSlug) return { slug: oauthSlug };
@@ -732,6 +769,84 @@ function httpStatusOf(error: unknown): number | undefined {
     const code = getNumericCode(current);
     if (code !== undefined && code >= 100 && code <= 599) return code;
     if ((current as { name?: string }).name === "UnauthorizedError") return 401;
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current =
+      unwrapped !== current
+        ? unwrapped
+        : (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * The MCP transport errors that raise on an HTTP answer. `SseError` and
+ * `StreamableHTTPError` set no `name`, so they are known by class; the SDK's
+ * `SdkHttpError` names itself.
+ */
+const MCP_TRANSPORT_HTTP_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "StreamableHTTPError",
+  "SseError",
+]);
+
+function isMcpTransportHttpError(node: object): boolean {
+  if ((node as { name?: unknown }).name === "SdkHttpError") return true;
+  const constructor = (node as { constructor?: unknown }).constructor;
+  return (
+    typeof constructor === "function" &&
+    MCP_TRANSPORT_HTTP_ERROR_CLASSES.has(constructor.name)
+  );
+}
+
+/**
+ * The HTTP status an MCP transport error in the chain carries. Walks `cause`,
+ * the era-negotiation wrapper, and the Streamable HTTP attempt a combined
+ * connect failure keeps beside its SSE cause (`streamableCause`).
+ */
+function mcpTransportHttpStatusOf(error: unknown): number | undefined {
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (queue.length > 0 && seen.size < 8) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (isMcpTransportHttpError(current)) {
+      const status = getHttpStatus(current) ?? getNumericCode(current);
+      if (status !== undefined && status >= 100 && status <= 599) {
+        return status;
+      }
+    }
+    const unwrapped = unwrapEraNegotiationCause(current);
+    queue.push(
+      unwrapped !== current ? unwrapped : (current as { cause?: unknown }).cause,
+      (current as { streamableCause?: unknown }).streamableCause,
+    );
+  }
+  return undefined;
+}
+
+/**
+ * The two HTTP statuses of a combined connect failure: the Streamable HTTP
+ * attempt (`streamableCause`) and the SSE fallback (`cause`) beside it. The
+ * Streamable attempt is the real request; a modern-only server answers the
+ * fallback GET with 405 whatever went wrong first.
+ */
+function combinedTransportStatuses(
+  error: unknown,
+): { streamable?: number; fallback?: number } | undefined {
+  let current = error;
+  const seen = new Set<unknown>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const streamable = (current as { streamableCause?: unknown })
+      .streamableCause;
+    if (streamable !== undefined) {
+      return {
+        streamable: mcpTransportHttpStatusOf(streamable),
+        fallback: mcpTransportHttpStatusOf(
+          (current as { cause?: unknown }).cause,
+        ),
+      };
+    }
     const unwrapped = unwrapEraNegotiationCause(current);
     current =
       unwrapped !== current
@@ -924,7 +1039,15 @@ export function describeError(
       resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
     const entry = applyOriginContext(
       annotateWithChallenge(
-        maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+        maybePromoteRawMessage(
+          lookupCatalog(slug),
+          slug,
+          rawMessage,
+          rawCode,
+          slug === "server/http_error"
+            ? combinedTransportStatuses(error)?.fallback
+            : undefined,
+        ),
         slug,
         context?.challenge
           ? context

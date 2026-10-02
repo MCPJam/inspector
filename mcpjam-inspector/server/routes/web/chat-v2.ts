@@ -83,6 +83,7 @@ import {
   webError,
   webErrorFromRoute,
   mapTargetServerError,
+  projectRouteFailure,
   extractMcpInitializeOptions,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
@@ -2361,11 +2362,20 @@ chatV2.post("/", async (c) => {
     // route (including `server-secrets`, which reaches nothing but Convex, and
     // the router-wide `onError`, where the hop is unknown), so a real Convex
     // outage still pages us from everywhere else.
-    return webErrorFromRoute(
-      c,
-      mapTargetServerError(error),
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
-    );
+    //
+    // An `UPSTREAM_HTTP_ERROR` is no longer masked as a hosted 500, and its
+    // message quotes the server's response body, so it is reported like every
+    // other MCP route's failure: by its status line (MJ-001). Other failures
+    // here span the model provider and Convex, and keep their own wording.
+    const routeError = mapTargetServerError(error);
+    const envelope = rpcCollector?.buildEnvelope() as
+      | Record<string, unknown>
+      | undefined;
+    const projected =
+      routeError.code === ErrorCode.UPSTREAM_HTTP_ERROR
+        ? projectRouteFailure(routeError, error, envelope)
+        : { routeError, logs: envelope };
+    return webErrorFromRoute(c, projected.routeError, projected.logs);
   }
 });
 

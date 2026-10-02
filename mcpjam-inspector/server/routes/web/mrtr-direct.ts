@@ -38,7 +38,7 @@ import {
   ErrorCode,
   WebRouteError,
   webErrorFromRoute,
-  mapRuntimeError,
+  mapTargetServerError,
   projectRouteFailure,
   readJsonBody,
 } from "./auth.js";
@@ -292,8 +292,12 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
     return c.json(attachHostedRouteLogs(outcome, rpcCollector), 200);
   } catch (error) {
     // Hosted, reported like every other MCP route's failure (MJ-001).
+    // `mapTargetServerError`, as on `withEphemeralConnection`: the server's
+    // own HTTP error answer, or a refusal naming it, is a 424 rather than a
+    // 5xx the edge would replace. Our own hops (the authorize call) throw
+    // `WebRouteError`s or name no MCP server, and keep their status.
     const projected = projectRouteFailure(
-      mapRuntimeError(error),
+      mapTargetServerError(error),
       error,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
