@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
-import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { createClaudeCodeHarness } from "../../claude-code-bootstrap.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import { createSupervisedLocalHarnessProvider, sessionStateDirFor } from "../supervised-provider.js";
 import { resolveLocalHarnessAvailability } from "../availability.js";
@@ -298,7 +298,7 @@ async function setup() {
   const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
   let bridgePid = -1;
   const provider = createSupervisedLocalHarnessProvider({ harnessId: "claude-code", manifest: plan.manifest, runtime: plan.runtime, supervisor, launcher, workspacePath: plan.workspacePath, workspaceGrantId: target.workspaceGrantId, sessionStateDir, targetKind: "local-native", bridgePort, bridgeReadinessTimeoutMs: 30_000, onBridgeStarted: async ({ pid }) => { bridgePid = pid; } });
-  const harness = createClaudeCode({ model: "haiku", auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: `http://127.0.0.1:${gw.port}` }, thinking: { type: "disabled" }, env: { CLAUDE_CODE_EFFORT_LEVEL: "unset", DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_TMPDIR: join(sessionStateDir, "home", "tmp") }, startupTimeoutMs: 90_000 });
+  const harness = createClaudeCodeHarness({ model: "haiku", auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: `http://127.0.0.1:${gw.port}` }, thinking: { type: "disabled" }, env: { CLAUDE_CODE_EFFORT_LEVEL: "unset", DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_TMPDIR: join(sessionStateDir, "home", "tmp") }, startupTimeoutMs: 90_000 });
   const agent: any = new HarnessAgent({ harness: harness as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "Spike." });
   const session = await agent.createSession({ sessionId });
   return { agent, session, supervisor, sessionId, sessionStateDir, bridgePid: () => bridgePid, mock, gw };

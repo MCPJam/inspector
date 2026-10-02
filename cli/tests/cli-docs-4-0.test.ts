@@ -61,7 +61,6 @@ const EXTRA_DOC_PATHS = [
   "cli/README.md",
   "docs/reference/openapi.json",
   "docs/inspector/evals.mdx",
-  "docs/inspector/computer.mdx",
   "docs/inspector/projects.mdx",
   "docs/getting-started.mdx",
   "docs/contributing/evals-architecture.mdx",

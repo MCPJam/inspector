@@ -19,12 +19,16 @@ interface SessionRefreshState {
   kind: SessionRefreshFailureKind | null;
   /**
    * Bumped by `retry()`. `useUnifiedConvexAuth` lists this in its deps, so a
-   * bump hands Convex a fresh `getAccessToken` identity, which re-runs
+   * bump hands Convex a fresh `fetchAccessToken` identity, which re-runs
    * `client.setAuth` and re-authenticates in place — no page reload.
    */
   retryNonce: number;
   /** Hold readiness-gated reads while Convex is dropping its socket identity. */
   queriesPaused: boolean;
+  /** Only the current Convex auth configuration may release the recovery gate. */
+  authConfirmed: boolean;
+  recoveryId: string | null;
+  recoveryAt: number;
   pauseQueries: () => void;
   resumeQueries: () => void;
   notifyFailure: (kind: SessionRefreshFailureKind) => void;
@@ -38,8 +42,13 @@ export const useSessionRefreshStore = create<SessionRefreshState>(
     kind: null,
     retryNonce: 0,
     queriesPaused: false,
+    authConfirmed: false,
+    recoveryId: null,
+    recoveryAt: 0,
     pauseQueries: () => set({ queriesPaused: true }),
-    resumeQueries: () => set({ queriesPaused: false }),
+    resumeQueries: () => {
+      if (get().authConfirmed) set({ queriesPaused: false });
+    },
     notifyFailure: (kind) => {
       // A sign-out in flight produces this failure on purpose: the session was
       // just revoked, and the refresh timer is reporting the revocation we

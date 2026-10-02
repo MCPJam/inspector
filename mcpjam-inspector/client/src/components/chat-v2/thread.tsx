@@ -33,6 +33,7 @@ import { TranscriptThread } from "./thread/transcript-thread";
 import {
   getLastRenderableConversationMessage,
   hasRenderableConversationContent,
+  isRenderableConversationMessage,
 } from "./thread/thread-helpers";
 import {
   WidgetSurfaceHost,
@@ -41,6 +42,7 @@ import {
 import { InspectorWidgetHostProvider } from "./thread/mcp-apps/use-widget-host";
 import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
+import { useEarlierRepliesNotSent } from "@/stores/history-notice-store";
 import type {
   AppToolInvocation,
   AppToolInvocationUpdate,
@@ -330,6 +332,19 @@ export function Thread({
   const lastRenderableMessageId = hasVisibleAssistantResponse
     ? lastRenderableMessage.id
     : null;
+  // When the server reported that earlier replies in this chat are not sent
+  // to the model, one notice sits above the latest prompt.
+  const earlierRepliesNotSent = useEarlierRepliesNotSent(chatSessionId);
+  const historyNoticeBeforeMessageId = useMemo(() => {
+    if (!earlierRepliesNotSent) return undefined;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i]!;
+      if (message.role === "user" && isRenderableConversationMessage(message)) {
+        return message.id;
+      }
+    }
+    return undefined;
+  }, [earlierRepliesNotSent, messages]);
   const shouldShowStandaloneThinkingIndicator = hasBrandIndicator
     ? isLoading && !hasVisibleAssistantResponse
     : isLoading;
@@ -407,6 +422,7 @@ export function Thread({
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
           recorder={recorder}
+          historyNoticeBeforeMessageId={historyNoticeBeforeMessageId}
         />
         <InspectorWidgetHostProvider>
           <WidgetSurfaceHost chatSessionId={chatSessionId} />
