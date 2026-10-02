@@ -46,6 +46,10 @@ import {
   buildDiscoveryCandidates,
   evaluateDiscovery,
 } from "../../services/xaa-discovery.js";
+import {
+  prepareHostedOAuthRequestHeaders,
+  projectHostedOAuthProxyResponse,
+} from "../../utils/hosted-oauth-proxy.js";
 import { WebRouteError } from "../web/errors.js";
 import {
   fetchServerClientSecret,
@@ -1492,6 +1496,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       } else {
         url = parsed.tokenEndpoint as string;
       }
+      // Hosted: connection and cookie headers are dropped, as on the hosted
+      // OAuth proxy (MJ-001).
+      if (options.httpsOnlyProxy && extraHeaders) {
+        extraHeaders = prepareHostedOAuthRequestHeaders(extraHeaders);
+      }
 
       // The shared helper already handles private_key_jwt correctly: it needs a
       // client_id (its iss/sub) and no secret. RFC 6749 §2.3.1: client_id is
@@ -1554,7 +1563,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         httpsOnly: options.httpsOnlyProxy,
       });
 
-      return c.json(result);
+      // Hosted: the answer is reduced like the hosted OAuth proxy's (MJ-001).
+      return c.json(
+        options.httpsOnlyProxy ? projectHostedOAuthProxyResponse(result) : result
+      );
     } catch (error) {
       if (error instanceof OAuthProxyError) {
         return toJsonError(error.message, {

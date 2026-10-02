@@ -387,6 +387,8 @@ export function SwarmRunDetail({
   // settle. Saying work is in flight here contradicts the count printed right
   // beside it, which is what BB-76 reported seeing.
   const settling = live !== null && live.total > 0 && live.done >= live.total;
+  const hasLocalExecution = wave.runs.some(run => run.executionVenue === "local" || run.executionVenue === "mixed");
+  const hasHostedExecution = wave.runs.some(run => run.executionVenue !== "local");
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
@@ -410,6 +412,7 @@ export function SwarmRunDetail({
             data-testid="swarm-run-detail-title"
           >
             {title}
+            {hasLocalExecution && <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">{hasHostedExecution ? "Local + cloud" : "Ran locally"}</span>}
           </h1>
         }
         meta={

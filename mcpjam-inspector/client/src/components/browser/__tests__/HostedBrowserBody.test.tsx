@@ -1097,6 +1097,9 @@ it("keeps profile saving in settings rather than the browser toolbar", async () 
 vi.mock("@/lib/browser-profiles/client", () => ({
   saveBrowserProfile: vi.fn(),
 }));
+vi.mock("@/lib/browser-profiles/availability", () => ({
+  useBrowserProfileArchivesAvailable: () => true,
+}));
 
 it("returns control before exporting a profile after the user signs in", async () => {
   api.session = { ...RUNNING, lease: { state: "held" }, yours: true };

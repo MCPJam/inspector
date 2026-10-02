@@ -238,7 +238,7 @@ function refuseUnsupportedHostedSemantics(loaded: {
   if (loaded.authored.defaults.toolPolicy !== undefined) {
     throw cliError(
       "TOOL_POLICY_UNSUPPORTED",
-      "defaults.toolPolicy is not representable on a hosted run. The platform would execute the unrestricted tool set while stamping this file's hash. Remove toolPolicy, or run the suite locally.",
+      "defaults.toolPolicy is not representable on a hosted run. The platform would execute the unrestricted tool set while stamping this file's hash. Remove toolPolicy, or run the suite locally with `mcpjam test <file>`, which enforces it.",
       SUITE_FILE_RUN_INVALID_EXIT_CODE
     );
   }

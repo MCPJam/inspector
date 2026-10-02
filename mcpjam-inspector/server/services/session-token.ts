@@ -4,7 +4,7 @@
  * Provides secure session token generation and validation for API authentication.
  *
  * Security features:
- * - 256-bit cryptographically random token (2^256 brute force resistance)
+ * - 192-bit cryptographically random token (2^192 brute force resistance)
  * - Timing-safe comparison to prevent timing attacks
  * - Token generated fresh on each server start
  */
@@ -14,13 +14,20 @@ import { randomBytes, timingSafeEqual } from "crypto";
 let sessionToken: string | null = null;
 
 /**
- * Generate a new 256-bit session token.
+ * Generate a new 192-bit session token.
  * Called once at server startup.
  *
- * @returns The generated token (64 hex characters)
+ * @returns The generated token (32 URL-safe characters)
  */
 export function generateSessionToken(): string {
-  sessionToken = randomBytes(32).toString("hex");
+  const configured = process.env.MCPJAM_SESSION_TOKEN;
+  delete process.env.MCPJAM_SESSION_TOKEN;
+  if (configured !== undefined && !/^[A-Za-z0-9_-]{24,}$/.test(configured)) {
+    throw new Error(
+      "MCPJAM_SESSION_TOKEN must contain at least 24 URL-safe letters, digits, underscores or hyphens",
+    );
+  }
+  sessionToken = configured ?? randomBytes(24).toString("base64url");
   return sessionToken;
 }
 

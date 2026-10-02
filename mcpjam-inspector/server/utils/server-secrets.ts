@@ -20,6 +20,8 @@ export interface ServerSecretsResult {
    * (`bindCredentialHeaders`) — the decision itself is the backend's.
    */
   boundOrigins: string[];
+  /** Stored credential headers only; plugin-declared public literals are excluded. */
+  credentialHeaderNames?: string[];
 }
 
 /**
@@ -57,6 +59,26 @@ function parseRecord(value: unknown): Record<string, string> | null {
     (entry): entry is [string, string] => typeof entry[1] === "string"
   );
   return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+/** The backend classifies values; malformed names must never weaken binding. */
+function parseCredentialHeaderNames(
+  value: unknown,
+  headers: Record<string, string> | null
+): string[] {
+  const allNames = Object.keys(headers ?? {});
+  const normalizedNames = new Set(allNames.map((name) => name.toLowerCase()));
+  // HTTP field names are tokens. Whitespace must not leave a credential
+  // outside the transport's case-insensitive strip set.
+  const token = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+  return Array.isArray(value) &&
+    value.every((name) =>
+      typeof name === "string" &&
+      token.test(name) &&
+      normalizedNames.has(name.toLowerCase())
+    )
+    ? value
+    : allNames;
 }
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -361,6 +383,12 @@ export async function fetchRuntimeServerSecrets(args: {
     env: parseRecord(body.env),
     headers: parseRecord(body.headers),
     boundOrigins: boundOriginsFromReveal(body),
+    // Older backends did not distinguish public literals from credentials.
+    // Preserve their fail-closed behavior unless an explicit valid list arrives.
+    credentialHeaderNames: parseCredentialHeaderNames(
+      body.credentialHeaderNames,
+      parseRecord(body.headers)
+    ),
   };
 }
 

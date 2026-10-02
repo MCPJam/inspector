@@ -492,6 +492,7 @@ export {
 // lets browser hosts keep a target server's authenticated-request rejection in
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
+export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 export {
   isResourceMetadataNotImplemented,
   RESOURCE_METADATA_NOT_IMPLEMENTED,
@@ -964,6 +965,17 @@ export {
   isLegacySelection,
   selectionKey,
   defaultFallbackForPurpose,
+} from "./host-config/index.js";
+export {
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+  supportedReasoningEfforts,
+} from "./host-config/index.js";
+export type {
+  ReasoningEffortProviderOptions,
+  ReasoningEffortRoute,
+  SupportedReasoningEffortsInput,
 } from "./host-config/index.js";
 export type {
   ModelSelection,

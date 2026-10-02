@@ -72,6 +72,7 @@ export function normalizeSendHeaders(
 }
 
 export type LocalHarnessSendSnapshot = {
+  serverAuthorized?: boolean;
   target: LocalHarnessTargetIds;
   token: string;
 };
@@ -96,6 +97,7 @@ export function prepareLocalHarnessSendRequest<UI_MESSAGE extends UIMessage>(
   if (snapshot === null) {
     throw new Error("Local execution is not authorized for this turn");
   }
+  if (snapshot.serverAuthorized) return { body: { ...withSdkSendFields(options), harnessTarget: { kind: "local-native", serverAuthorized: true } }, headers: normalizeSendHeaders(options.headers) };
   return {
     body: {
       ...withSdkSendFields(options),

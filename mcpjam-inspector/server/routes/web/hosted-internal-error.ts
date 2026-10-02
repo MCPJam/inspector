@@ -99,7 +99,10 @@ function catalogOnly(
  * (also set as `x-request-id`) when the middleware did not run, so the body and
  * the header always agree.
  */
-function responseRequestId(c: unknown): { requestId: string; minted: boolean } {
+export function responseRequestId(c: unknown): {
+  requestId: string;
+  minted: boolean;
+} {
   const existing = requestLogContextId(c);
   if (existing) return { requestId: existing, minted: false };
   const requestId = randomUUID();
