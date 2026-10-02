@@ -33,12 +33,7 @@ import {
   projectHostedValidateInitInfo,
   redactHostedDoctorTransportDetail,
 } from "../../utils/hosted-doctor-redaction.js";
-import {
-  describeHostedConnectFailure,
-  projectHostedConnectFailureDetails,
-  projectHostedConnectFailureLogs,
-  redactNormalizedError,
-} from "../../utils/hosted-connect-failure.js";
+import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
@@ -46,6 +41,9 @@ import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
 
+// Hosted, a failure is reported like every other MCP route's (MJ-001; see
+// `withEphemeralConnection`), and a successful connect's log envelope reports
+// received frames by their envelope as well.
 servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
@@ -54,46 +52,11 @@ servers.post("/validate", async (c) =>
     {
       timeoutMs: WEB_CONNECT_TIMEOUT_MS,
       ...(HOSTED_MODE
-        ? {
-            redactFailure: redactHostedValidateFailure,
-            redactSuccessLogs: projectHostedConnectFailureLogs,
-          }
+        ? { redactSuccessLogs: projectHostedConnectFailureLogs }
         : {}),
     },
   ),
 );
-
-/**
- * A failed hosted validate reports the target's status line instead of its
- * answer, and its details and the log envelope sent with it are reduced the
- * same way (MJ-001).
- * A failure this server authored — authorization, the target check — is
- * already worded for the caller and keeps its message.
- */
-function redactHostedValidateFailure(
-  routeError: WebRouteError,
-  error: unknown,
-  logs: Record<string, unknown> | undefined,
-) {
-  const projectedLogs = projectHostedConnectFailureLogs(logs);
-  if (error instanceof WebRouteError) {
-    return { routeError, logs: projectedLogs };
-  }
-  const failure = describeHostedConnectFailure(error, logs);
-  if (failure.blockedTarget) {
-    routeError.status = 400;
-    routeError.code = ErrorCode.VALIDATION_ERROR;
-  }
-  routeError.message = failure.message;
-  routeError.details = projectHostedConnectFailureDetails(routeError.details);
-  if (routeError.normalized) {
-    routeError.normalized = redactNormalizedError(
-      routeError.normalized,
-      failure.message,
-    );
-  }
-  return { routeError, logs: projectedLogs };
-}
 
 /**
  * Connect-and-inspect core shared by POST /api/web/servers/validate and the
@@ -298,20 +261,15 @@ export async function runHostedDoctor(
   // a 400 naming the host they typed, rather than a transport error.
   await assertHostedServerTarget(config.url);
 
-  // THE DOCTOR'S TWO LEGS, NOW ON ONE TRANSPORT.
+  // THE DOCTOR'S TWO LEGS, ON ONE TRANSPORT.
   //
   // `runServerDoctor` probes over `fetchFn`, records a failed probe, and
   // connects anyway — and its connection goes through `withEphemeralClient`,
-  // which threads the config's own `baseFetch` into the MCP transport. Before
-  // MJ-001 the probe had `createGuardedFetch` (which re-checks each hop but
-  // resolves DNS twice, leaving the rebinding window its own docblock
-  // describes) and the connection had nothing at all: a public host that
-  // answered `302 Location: http://127.0.0.1:6379/` was dialled there, and the
-  // socket's own error came back in the response.
-  //
-  // Both legs now dial the pinned transport — resolve once, classify, pin the
-  // address into the socket, re-run on every hop. One transport rather than two
-  // so the probe and the connection cannot disagree about what is dialable.
+  // which threads the config's own `baseFetch` into the MCP transport. Both
+  // legs dial the pinned transport: resolve once, classify, pin the address
+  // into the socket, and re-run all of it on every redirect hop. One transport
+  // rather than two so the probe and the connection cannot disagree about what
+  // is dialable.
   const doctorFetch = hostedMcpBaseFetch();
 
   const result = await runServerDoctor({

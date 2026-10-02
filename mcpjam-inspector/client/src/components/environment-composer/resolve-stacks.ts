@@ -27,7 +27,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import {
-  selectionKey,
+  selectionConfigKey,
   type ModelSelection as SavedModelSelection,
 } from "@mcpjam/sdk/browser";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
@@ -133,11 +133,35 @@ function sharedFields(
 ) {
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
-    skillSelection: skillsEnabled ? (stack.skillSelection ?? null) : null,
+    skillSelection: skillsEnabled ? stack.skillSelection ?? null : null,
     computerEnvironmentId: computersEnabled
-      ? (stack.computerEnvironmentId ?? null)
+      ? stack.computerEnvironmentId ?? null
       : null,
   };
+}
+
+/**
+ * Whether a named row's saved selection is the cell's. With a cell selection
+ * the two must agree on the full config (source, connection AND settings).
+ * With none, a row that carries settings (an effort or temperature) must not
+ * match: reusing it would run the cell with a setting it never asked for,
+ * while a plain selection with no settings still describes the same run.
+ */
+function sameSavedSelection(
+  row: SavedModelSelection | undefined,
+  cell: SavedModelSelection | undefined,
+): boolean {
+  if (cell) {
+    return (
+      row !== undefined && selectionConfigKey(row) === selectionConfigKey(cell)
+    );
+  }
+  const settings = row?.settings;
+  return (
+    settings === undefined ||
+    (settings.reasoningEffort === undefined &&
+      settings.temperature === undefined)
+  );
 }
 
 /**
@@ -178,10 +202,10 @@ function matchingNamedEnvironment(
     env.hostId === hostId &&
     isNamedEnvironment(env) &&
     (env.pluginVersionIds?.length ?? 0) === 0 &&
+    (env.serverSelection === undefined ||
+      env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
-    (!modelSelection ||
-      (env.modelSelection !== undefined &&
-        selectionKey(env.modelSelection) === selectionKey(modelSelection))) &&
+    sameSavedSelection(env.modelSelection, modelSelection) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -273,7 +297,9 @@ export async function resolveComposerEnvironments(args: {
       if (requireServerAttachment && lacksEvalServerSource(env)) {
         throw new ComposerResolveError(
           "NO_SERVER_GROUP",
-          `"${environmentLabel(env)}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
+          `"${environmentLabel(
+            env,
+          )}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
         );
       }
       environments.push(env);
@@ -388,7 +414,9 @@ export async function resolveComposerEnvironments(args: {
     // harness cannot run. Say so rather than persist an empty target list.
     throw new ComposerResolveError(
       "NO_TARGETS",
-      `None of the chosen clients can run the chosen models: ${skipped[0]?.reason ?? "no runnable model"}.`,
+      `None of the chosen clients can run the chosen models: ${
+        skipped[0]?.reason ?? "no runnable model"
+      }.`,
     );
   }
 
@@ -435,7 +463,23 @@ export async function resolveComposerEnvironments(args: {
 
     let results: Awaited<ReturnType<EnsureAdhocEnvironmentsFn>>;
     try {
-      results = await ensureAdhocEnvironments({ projectId, stacks });
+      results = [];
+      // Preparation is bounded independently of the suite's full matrix. The
+      // backend fingerprints each stack, so retrying after a partial batch
+      // reuses earlier rows and never truncates or splits the suite.
+      for (let offset = 0; offset < stacks.length; offset += 10) {
+        const batch = stacks.slice(offset, offset + 10);
+        const prepared = await ensureAdhocEnvironments({
+          projectId,
+          stacks: batch,
+        });
+        if (prepared.length !== batch.length) {
+          throw new Error(
+            "Environment preparation returned an incomplete batch.",
+          );
+        }
+        results.push(...prepared);
+      }
     } catch (err) {
       if (isAdhocUnavailable(err)) {
         throw new ComposerResolveError(
@@ -524,8 +568,17 @@ export function describeSkippedModelCells(
  * (`ENV_NO_SERVERS`); eval surfaces refuse to create them first.
  */
 export function lacksEvalServerSource(
-  env: Pick<ProjectEnvironmentView, "serverAttachmentId" | "pluginVersionIds">,
+  env: Pick<
+    ProjectEnvironmentView,
+    "serverAttachmentId" | "pluginVersionIds" | "serverSelection"
+  >,
 ): boolean {
+  if (env.serverSelection?.mode === "unresolved") return true;
+  if (
+    env.serverSelection?.mode === "none" ||
+    env.serverSelection?.mode === "local"
+  )
+    return false;
   return !env.serverAttachmentId && !(env.pluginVersionIds?.length ?? 0);
 }
 

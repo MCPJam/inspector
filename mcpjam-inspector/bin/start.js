@@ -7,6 +7,12 @@ import { createServer, createConnection } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import open from "open";
+import {
+  createLaunchToken,
+  shouldPrintAccessLink,
+  createAccessLink,
+  networkAccessLinks,
+} from "./access-link.mjs";
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1003,13 +1009,17 @@ async function main() {
     // to become the installed package's root and the server would otherwise
     // have no way back to where the user actually was.
     const launchWorkspace = launchWorkspaceCandidate({ projectRoot });
+    const launchToken = createLaunchToken();
     const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
+        ...(launchToken ? { MCPJAM_SESSION_TOKEN: launchToken } : {}),
         MCPJAM_INSPECTOR_PARENT_PID: process.pid.toString(),
         NODE_ENV: "production",
         PORT: PORT,
-        ...(launchWorkspace ? { MCPJAM_LAUNCH_WORKSPACE: launchWorkspace } : {}),
+        ...(launchWorkspace
+          ? { MCPJAM_LAUNCH_WORKSPACE: launchWorkspace }
+          : {}),
         ...(verboseLogs && { VERBOSE_LOGS: "true" }),
       },
       cwd: projectRoot,
@@ -1095,21 +1105,44 @@ async function main() {
         logWarning(
           `Server did not become ready within 30s. Please visit ${apiBaseUrl} manually.`,
         );
-      } else if (!cancelled && openBrowser) {
-        let url = await resolveBrowserBaseUrl(apiBaseUrl);
-
-        // Append initial tab hash if specified
-        if (initialTab) {
-          url = `${url}#${initialTab}`;
+      } else if (!cancelled) {
+        const base = await resolveBrowserBaseUrl(apiBaseUrl);
+        const url = createAccessLink(base, launchToken, initialTab);
+        const docker = process.env.DOCKER_CONTAINER === "true";
+        let opened = false;
+        if (openBrowser && !docker) {
+          try {
+            await open(url);
+            opened = true;
+          } catch {
+            logWarning("Could not open your browser automatically.");
+          }
         }
-
-        try {
-          await open(url);
-          logSuccess(`🌐 Browser opened at ${url}`);
-        } catch (error) {
-          logWarning(
-            `Could not open browser automatically. Please visit ${url} manually.`,
+        if (shouldPrintAccessLink(launchToken)) {
+          logSuccess("MCPJam Inspector is ready");
+          log("");
+          const printLink = (label, link) => {
+            log(`  ${colors.green}➜ ${colors.bright}${label}${colors.reset}`);
+            log(link, colors.primary);
+          };
+          printLink(docker ? "Open MCPJam" : "Local", url);
+          for (const link of networkAccessLinks(
+            base,
+            launchToken,
+            process.env.MCPJAM_ALLOWED_HOSTS,
+            initialTab,
+          ))
+            printLink("Network", link);
+          log("");
+          log(
+            opened
+              ? "Opened in your browser. Keep this link private: it signs a browser in."
+              : "Open this link in your browser. Keep it private: it signs a browser in.",
           );
+          if (docker)
+            log(
+              "Using another port or computer? Keep the #token=… part and change the address.",
+            );
         }
       }
     }

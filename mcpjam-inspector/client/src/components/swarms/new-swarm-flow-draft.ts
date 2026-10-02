@@ -139,6 +139,13 @@ export type NewSwarmFlowDraft = {
    * Describe step.
    */
   generatingSince: number | null;
+  /**
+   * Name of an attachment still being read, or null. Same reason as
+   * `generatingSince`: the read dies with the unmounted component, so the
+   * restored Describe step says so instead of silently missing the file.
+   * Optional so drafts written before it existed still restore.
+   */
+  attachingFile?: string | null;
   launch: NewSwarmLaunchIdentity;
 };
 
@@ -374,6 +381,8 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     launchedRuns: value.launchedRuns,
     runLabels: value.runLabels,
     generatingSince: value.generatingSince,
+    attachingFile:
+      typeof value.attachingFile === "string" ? value.attachingFile : null,
     launch: value.launch,
   };
 }

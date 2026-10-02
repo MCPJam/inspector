@@ -3,9 +3,13 @@
  *
  * Single dispatch route for every production deploy Soundcheck triggers:
  *
- *   - release.yml when scope !== "none"
- *   - deploy-mcp-prod.yml when deploy_mcp_production === true
- *   - both, if the form asked for both
+ *   - action "start": prepare-release.yml, which opens the version PR.
+ *     Merging that PR is the release; release-trigger.yml runs release.yml
+ *     once main is green.
+ *   - action "publish": release.yml directly. The retry path, for versions
+ *     already merged whose automatic run failed or never started.
+ *   - deploy-mcp-prod.yml when deploy_mcp_production === true, alongside
+ *     either or on its own (action "none").
  *
  * Re-checks WorkOS sign-in + lockdown server-side (defense in depth — the
  * middleware already blocks unauthenticated calls) before exposing the
@@ -14,7 +18,7 @@
  * Write auth:
  *   - Reads `GITHUB_PAT` (same fine-grained token used for reads).
  *   - Scoped to `MCPJam/inspector` with `actions:read/write`. The same
- *     token covers both workflows — no separate MCP token needed.
+ *     token covers every workflow — no separate MCP token needed.
  *
  * Audit:
  *   - Logs the signed-in email + dispatched inputs + which workflows fired
@@ -44,29 +48,30 @@ export const dynamic = "force-dynamic";
 const EXPECTED_DISPATCH_HEADER = "x-soundcheck-action";
 const EXPECTED_DISPATCH_VALUE = "release-dispatch";
 
-type Scope = "none" | "packages-only" | "inspector-only" | "full";
+type Action = "start" | "publish" | "none";
+
+const ACTION_WORKFLOW: Record<Action, string | null> = {
+  start: "prepare-release.yml",
+  publish: "release.yml",
+  none: null
+};
 
 interface DispatchBody {
-  scope: Scope;
+  action: Action;
   deploy_backend_prod: boolean;
   deploy_webapp: boolean;
   deploy_mcp_production: boolean;
   skip_verify: boolean;
 }
 
-function isScope(value: unknown): value is Scope {
-  return (
-    value === "none" ||
-    value === "packages-only" ||
-    value === "inspector-only" ||
-    value === "full"
-  );
+function isAction(value: unknown): value is Action {
+  return value === "start" || value === "publish" || value === "none";
 }
 
 function parseBody(raw: unknown): DispatchBody | null {
   if (!raw || typeof raw !== "object") return null;
   const body = raw as Record<string, unknown>;
-  if (!isScope(body.scope)) return null;
+  if (!isAction(body.action)) return null;
   if (typeof body.deploy_backend_prod !== "boolean") return null;
   if (typeof body.deploy_webapp !== "boolean") return null;
   if (typeof body.deploy_mcp_production !== "boolean") return null;
@@ -77,7 +82,7 @@ function parseBody(raw: unknown): DispatchBody | null {
     return null;
   }
   return {
-    scope: body.scope,
+    action: body.action,
     deploy_backend_prod: body.deploy_backend_prod,
     deploy_webapp: body.deploy_webapp,
     deploy_mcp_production: body.deploy_mcp_production,
@@ -129,20 +134,22 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Expected { scope, deploy_backend_prod, deploy_webapp, deploy_mcp_production } with optional boolean skip_verify"
+          "Expected { action, deploy_backend_prod, deploy_webapp, deploy_mcp_production } with optional boolean skip_verify"
       },
       { status: 400 }
     );
   }
 
-  const runsRelease = parsed.scope !== "none";
+  const releaseWorkflow = ACTION_WORKFLOW[parsed.action];
   const runsMcp = parsed.deploy_mcp_production;
-  const effectiveSkipVerify = runsRelease && parsed.skip_verify;
-  if (!runsRelease && !runsMcp) {
+  // For "publish" this skips release.yml's gates now; for "start" it is ticked
+  // in the version PR, so the release starts on merge without waiting.
+  const effectiveSkipVerify = releaseWorkflow !== null && parsed.skip_verify;
+  if (!releaseWorkflow && !runsMcp) {
     return NextResponse.json(
       {
         error:
-          "Nothing selected: pick a scope or enable deploy_mcp_production."
+          "Nothing selected: pick a release action or enable deploy_mcp_production."
       },
       { status: 400 }
     );
@@ -166,10 +173,10 @@ export async function POST(request: Request) {
   // actual outcome — anything reasoning about what *landed* should read
   // the "outcome" event, not this one. `dispatch_id` ties the two
   // entries together; without it, concurrent dispatches from the same
-  // user/scope are ambiguous in the log stream.
+  // user/action are ambiguous in the log stream.
   const dispatchId = crypto.randomUUID();
   const attemptedWorkflows = [
-    runsRelease ? "release.yml" : null,
+    releaseWorkflow,
     runsMcp ? "deploy-mcp-prod.yml" : null
   ].filter(Boolean) as string[];
   console.info(
@@ -177,7 +184,7 @@ export async function POST(request: Request) {
       event: "soundcheck.release.dispatch.attempt",
       dispatch_id: dispatchId,
       email: user.email,
-      scope: parsed.scope,
+      action: parsed.action,
       deploy_backend_prod: parsed.deploy_backend_prod,
       deploy_webapp: parsed.deploy_webapp,
       deploy_mcp_production: parsed.deploy_mcp_production,
@@ -193,29 +200,31 @@ export async function POST(request: Request) {
   // both fired when only one did.
   const results: { workflow: string; ok: boolean; error?: string }[] = [];
 
-  if (runsRelease) {
+  if (releaseWorkflow) {
+    // Workflow dispatch inputs go over the wire as strings. The flags mean the
+    // same thing to both workflows: prepare-release.yml writes them into the
+    // version PR as checkboxes, release.yml acts on them directly.
+    const inputs: Record<string, string> = {
+      deploy_backend_prod: String(parsed.deploy_backend_prod),
+      deploy_webapp: String(parsed.deploy_webapp),
+      skip_verify: String(effectiveSkipVerify)
+    };
     try {
       await dispatchWorkflow(
         "MCPJam",
         "inspector",
-        "release.yml",
+        releaseWorkflow,
         "main",
-        {
-          scope: parsed.scope,
-          // Workflow dispatch inputs go over the wire as strings.
-          deploy_backend_prod: String(parsed.deploy_backend_prod),
-          deploy_webapp: String(parsed.deploy_webapp),
-          skip_verify: String(effectiveSkipVerify)
-        },
+        inputs,
         writeToken
       );
-      results.push({ workflow: "release.yml", ok: true });
+      results.push({ workflow: releaseWorkflow, ok: true });
     } catch (err) {
-      console.error("dispatch route: release.yml dispatch failed:", err);
+      console.error(`dispatch route: ${releaseWorkflow} dispatch failed:`, err);
       results.push({
-        workflow: "release.yml",
+        workflow: releaseWorkflow,
         ok: false,
-        error: "Failed to dispatch release.yml"
+        error: `Failed to dispatch ${releaseWorkflow}`
       });
     }
   }
@@ -251,14 +260,14 @@ export async function POST(request: Request) {
   // Use a distinct event key so log queries looking for *what actually
   // landed* don't collide with the intent entry above. Anyone reasoning
   // about ground truth reads this one — so it carries the full set of
-  // inputs (not just scope) to stay self-contained without having to
+  // inputs (not just action) to stay self-contained without having to
   // join against the attempt entry.
   console.info(
     JSON.stringify({
       event: "soundcheck.release.dispatch.outcome",
       dispatch_id: dispatchId,
       email: user.email,
-      scope: parsed.scope,
+      action: parsed.action,
       deploy_backend_prod: parsed.deploy_backend_prod,
       deploy_webapp: parsed.deploy_webapp,
       deploy_mcp_production: parsed.deploy_mcp_production,
@@ -283,7 +292,9 @@ export async function POST(request: Request) {
   const failedLabel = failed.map((r) => r.workflow).join(", ");
   const message = failed.length
     ? `${successLabel} dispatched. ${failedLabel} failed — check Soundcheck server logs.`
-    : `${successLabel} dispatched. The progress tile will pick it up within ~10s.`;
+    : parsed.action === "start"
+      ? `${successLabel} dispatched. The version PR opens in about a minute; merging it releases.`
+      : `${successLabel} dispatched. The progress tile will pick it up within ~10s.`;
 
   return NextResponse.json({
     ok: true,
