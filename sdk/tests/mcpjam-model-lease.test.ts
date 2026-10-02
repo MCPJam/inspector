@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   McpjamLeaseClient,
   McpjamLeaseError,
+  McpjamModelLeaseScope,
+  classifyMcpjamLeaseError,
   getMcpjamLeaseClient,
   releaseMcpjamModelLeases,
   resolveMcpjamBaseUrl,
@@ -9,6 +11,7 @@ import {
   MCPJAM_PLACEHOLDER_API_KEY,
   MCPJAM_PROXY_PLACEHOLDER_ORIGIN,
 } from "../src/mcpjam-model-lease.js";
+import type { McpjamLeaseClientOptions } from "../src/mcpjam-model-lease.js";
 
 // MCPJam-hosted inference: the lease client, and the `fetch` the AI SDK
 // provider is built with. Three properties matter here and nowhere else:
@@ -657,5 +660,485 @@ describe("lease lifecycle regressions", () => {
     await mint;
     await cleanup;
     expect(t.revoked).toEqual(["run_1"]);
+  });
+});
+
+// ── refreshed auth, platform headers and auth contexts ─────────────────────
+
+type Call = { url: string; init: RequestInit };
+
+function recordingFetch(
+  respond: (url: string, init: RequestInit, index: number) => Response
+): { fetchImpl: typeof fetch; calls: Call[] } {
+  const calls: Call[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    calls.push({ url, init: init ?? {} });
+    return respond(url, init ?? {}, calls.length - 1);
+  }) as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+function headerRecord(init: RequestInit): Record<string, string> {
+  const out: Record<string, string> = {};
+  new Headers(init.headers).forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+/** A credential that rotates on every read: tok_1, tok_2, … */
+function rotatingAuth() {
+  let reads = 0;
+  const getAuth = vi.fn(async () => `tok_${++reads}`);
+  return { getAuth, reads: () => reads };
+}
+
+const isMint = (url: string) => url.endsWith("/model-leases");
+const isRevoke = (url: string) => url.endsWith("/model-leases/revoke");
+
+describe("refreshed auth", () => {
+  it("reads the credential for every mint, mint retry and revoke", async () => {
+    const auth = rotatingAuth();
+    let mints = 0;
+    const { fetchImpl, calls } = recordingFetch((url) => {
+      if (isMint(url)) {
+        mints += 1;
+        // The first attempt is rate limited, so the retry must re-read.
+        return mints === 1
+          ? json({ code: "RATE_LIMITED", message: "slow down" }, 429, {
+              "retry-after": "0",
+            })
+          : json(leaseBody());
+      }
+      if (isRevoke(url)) return json({ ok: true, revoked: 1 });
+      return json({ ok: true });
+    });
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: auth.getAuth,
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+
+    await client.getLease();
+    await client.revoke();
+
+    const platform = calls.filter(
+      (call) => isMint(call.url) || isRevoke(call.url)
+    );
+    expect(
+      platform.map((call) => headerRecord(call.init).authorization)
+    ).toEqual(["Bearer tok_1", "Bearer tok_2", "Bearer tok_3"]);
+    expect(auth.reads()).toBe(3);
+  });
+
+  it("renews with a fresh credential, and shares one mint across waiters", async () => {
+    const auth = rotatingAuth();
+    let expiresAt = Date.now() + 10_000; // inside the renewal window
+    const { fetchImpl, calls } = recordingFetch((url) => {
+      if (isMint(url)) {
+        const body = leaseBody({ runId: `run_${calls.length}`, expiresAt });
+        expiresAt = Date.now() + 30 * 60_000;
+        return json(body);
+      }
+      return json({ ok: true, revoked: 1 });
+    });
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: auth.getAuth,
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+
+    // Single flight: three concurrent waiters, one mint, one credential read.
+    const [a, b, c] = await Promise.all([
+      client.getLease(),
+      client.getLease(),
+      client.getLease(),
+    ]);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+    expect(calls.filter((call) => isMint(call.url))).toHaveLength(1);
+
+    // That lease is inside the renewal window: the next call re-mints, and
+    // re-reads the credential for it.
+    const renewed = await client.getLease();
+    expect(renewed).not.toBe(a);
+    const mints = calls.filter((call) => isMint(call.url));
+    expect(mints).toHaveLength(2);
+    expect(headerRecord(mints[1]!.init).authorization).toBe(
+      `Bearer tok_${auth.reads()}`
+    );
+  });
+
+  it("reports a credential that cannot be read as an auth refusal", async () => {
+    const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => {
+        throw new Error("login expired; run `mcpjam login`");
+      },
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+    const error = await client.getLease().catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(McpjamLeaseError);
+    expect((error as McpjamLeaseError).code).toBe("AUTH_UNAVAILABLE");
+    expect((error as McpjamLeaseError).message).toContain("login expired");
+    expect(classifyMcpjamLeaseError(error as McpjamLeaseError)).toBe("auth");
+    // Nothing was sent without a credential.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reports a credential service that could not be reached as unavailable, not refused", async () => {
+    const outages: unknown[] = [
+      new TypeError("fetch failed"),
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), {
+        code: "ECONNREFUSED",
+      }),
+      // The CLI's wording, with the network failure only in the text.
+      new Error(
+        "Token refresh failed. Run `mcpjam cloud login` again. Could not reach https://auth.example.com/token: fetch failed"
+      ),
+      Object.assign(new Error("refresh endpoint down"), { retryable: true }),
+      new Error("refresh failed", { cause: new TypeError("fetch failed") }),
+    ];
+    for (const outage of outages) {
+      const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
+      const client = new McpjamLeaseClient({
+        baseUrl: "https://app.mcpjam.com",
+        getAuth: async () => {
+          throw outage;
+        },
+        project: "p_1",
+        model: MODEL,
+        fetchImpl,
+      });
+      const error = await client.getLease().catch((thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(McpjamLeaseError);
+      expect((error as McpjamLeaseError).code).toBe("AUTH_SERVICE_UNREACHABLE");
+      expect(classifyMcpjamLeaseError(error as McpjamLeaseError)).toBe(
+        "unavailable"
+      );
+      expect(calls).toHaveLength(0);
+    }
+    // A refusal still reads as one.
+    const { fetchImpl } = recordingFetch(() => json(leaseBody()));
+    const refused = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => {
+        throw new Error("Token refresh failed. (invalid_grant)");
+      },
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+    const error = await refused.getLease().catch((thrown: unknown) => thrown);
+    expect(classifyMcpjamLeaseError(error as McpjamLeaseError)).toBe("auth");
+  });
+
+  it("sends a callback credential only to an https:// or loopback origin, and never through a redirect", async () => {
+    const base = { getAuth: async () => "tok_1", project: "p_1", model: MODEL };
+    expect(
+      () =>
+        new McpjamLeaseClient({ ...base, baseUrl: "http://app.example.com" })
+    ).toThrow(/https:\/\//);
+    expect(
+      () => new McpjamLeaseClient({ ...base, baseUrl: "not a url" })
+    ).toThrow(/not a URL/);
+    for (const baseUrl of [
+      "https://app.mcpjam.com",
+      "http://localhost:3000",
+      "http://127.0.0.1:8080",
+    ]) {
+      expect(() => new McpjamLeaseClient({ ...base, baseUrl })).not.toThrow();
+    }
+    // The fixed-key path keeps its historical behaviour.
+    expect(
+      () =>
+        new McpjamLeaseClient({
+          baseUrl: "http://app.example.com",
+          apiKey: "sk_test_key",
+          project: "p_1",
+          model: MODEL,
+        })
+    ).not.toThrow();
+
+    const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
+    const client = new McpjamLeaseClient({
+      ...base,
+      baseUrl: "https://app.mcpjam.com",
+      fetchImpl,
+    });
+    await client.getLease();
+    await client.revoke();
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) expect(call.init.redirect).toBe("error");
+  });
+
+  it("redacts what a failing callback said before it reaches the public error", async () => {
+    const { fetchImpl } = recordingFetch(() => json(leaseBody()));
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => {
+        throw new Error(
+          "refresh rejected: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"
+        );
+      },
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+    const error = await client.getLease().catch((thrown: unknown) => thrown);
+    expect((error as McpjamLeaseError).message).not.toContain(
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"
+    );
+  });
+
+  it("refuses an empty token rather than sending `Bearer `", async () => {
+    const { fetchImpl, calls } = recordingFetch(() => json(leaseBody()));
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => "  ",
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+    await expect(client.getLease()).rejects.toMatchObject({
+      code: "AUTH_UNAVAILABLE",
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("requires exactly one credential source", () => {
+    const base = {
+      baseUrl: "https://app.mcpjam.com",
+      project: "p_1",
+      model: MODEL,
+    };
+    expect(
+      () =>
+        new McpjamLeaseClient({
+          ...base,
+          apiKey: "sk_test_key",
+          getAuth: async () => "tok",
+        })
+    ).toThrow(/both an API key and an auth callback/);
+    expect(() => new McpjamLeaseClient(base)).toThrow(
+      /need an API key or an auth callback/
+    );
+  });
+});
+
+describe("platform headers", () => {
+  it("go to MCPJam's API only, and cannot replace the client's own", async () => {
+    const { fetchImpl, calls } = recordingFetch((url) => {
+      if (isMint(url)) return json(leaseBody());
+      if (isRevoke(url)) return json({ ok: true, revoked: 1 });
+      return json({ ok: true });
+    });
+    const client = new McpjamLeaseClient({
+      baseUrl: "https://app.mcpjam.com",
+      getAuth: async () => "tok_login",
+      headers: {
+        "x-mcpjam-client": "cli/5.12.0",
+        Authorization: "Bearer smuggled",
+        "Content-Type": "text/plain",
+      },
+      project: "p_1",
+      model: MODEL,
+      fetchImpl,
+    });
+
+    await client.proxyFetch(...providerRequest());
+    await client.revoke();
+
+    for (const call of calls.filter(
+      (entry) => isMint(entry.url) || isRevoke(entry.url)
+    )) {
+      const headers = headerRecord(call.init);
+      expect(headers["x-mcpjam-client"]).toBe("cli/5.12.0");
+      expect(headers.authorization).toBe("Bearer tok_login");
+      expect(headers["content-type"]).toBe("application/json");
+    }
+    const proxied = calls.find((call) => call.url.startsWith(PROXY));
+    expect(proxied).toBeDefined();
+    const proxyHeaders = headerRecord(proxied!.init);
+    // The proxy sees the lease and the provider's own headers — never the
+    // platform bearer, never the placeholder key, never a platform header.
+    expect(proxyHeaders["x-mcpjam-harness-lease"]).toBe("lease.jwt.value");
+    expect(proxyHeaders.authorization).toBeUndefined();
+    expect(proxyHeaders["x-api-key"]).toBeUndefined();
+    expect(proxyHeaders["x-mcpjam-client"]).toBeUndefined();
+    expect(JSON.stringify(proxied!.init)).not.toContain("tok_login");
+  });
+});
+
+describe("auth contexts and lease scopes", () => {
+  const options = (overrides: Partial<McpjamLeaseClientOptions> = {}) => ({
+    baseUrl: "https://app.mcpjam.com",
+    project: "p_1",
+    model: MODEL,
+    ...overrides,
+  });
+
+  it("never collapses two auth callbacks onto one client", () => {
+    const scope = new McpjamModelLeaseScope();
+    const alice = async () => "tok_alice";
+    const bob = async () => "tok_bob";
+    const first = scope.getClient(options({ getAuth: alice }));
+    expect(scope.getClient(options({ getAuth: alice }))).toBe(first);
+    expect(scope.getClient(options({ getAuth: bob }))).not.toBe(first);
+    // Nor onto a fixed-key client for the same deployment, project and model.
+    expect(scope.getClient(options({ apiKey: "sk_test_key" }))).not.toBe(first);
+  });
+
+  it("keys by deployment, project and model within one bound context", () => {
+    const getAuth = async () => "tok";
+    const scope = new McpjamModelLeaseScope({ auth: { getAuth } });
+    const sonnet = scope.getClient(options({ getAuth }));
+    expect(scope.getClient(options({ getAuth }))).toBe(sonnet);
+    expect(
+      scope.getClient(options({ getAuth, model: "openai/gpt-5-mini" }))
+    ).not.toBe(sonnet);
+    expect(scope.getClient(options({ getAuth, project: "p_2" }))).not.toBe(
+      sonnet
+    );
+  });
+
+  it("a bound scope refuses a different credential", () => {
+    const scope = new McpjamModelLeaseScope({
+      auth: { getAuth: async () => "tok_alice" },
+    });
+    expect(() =>
+      scope.getClient(options({ getAuth: async () => "tok_bob" }))
+    ).toThrow(/bound to a different MCPJam auth context/);
+    expect(() => scope.getClient(options({ apiKey: "sk_test_key" }))).toThrow(
+      /does not mint with a fixed API key/
+    );
+  });
+
+  it("releases only its own leases, never the process-global ones", async () => {
+    const { fetchImpl, calls } = recordingFetch((url) => {
+      if (isMint(url)) {
+        return json(
+          leaseBody({
+            runId: `run_${calls.filter((c) => isMint(c.url)).length}`,
+          })
+        );
+      }
+      return json({ ok: true, revoked: 1 });
+    });
+    const getAuth = async () => "tok_login";
+    const scope = new McpjamModelLeaseScope({ auth: { getAuth } });
+    const scoped = scope.getClient(options({ getAuth, fetchImpl }));
+    const global = getMcpjamLeaseClient(
+      options({ apiKey: "sk_other_user", fetchImpl })
+    );
+    await scoped.getLease();
+    await global.getLease();
+
+    await scope.release();
+
+    const revokes = calls.filter((call) => isRevoke(call.url));
+    expect(revokes).toHaveLength(1);
+    expect(JSON.parse(revokes[0]!.init.body as string)).toEqual({
+      runId: "run_1",
+    });
+    expect(headerRecord(revokes[0]!.init).authorization).toBe(
+      "Bearer tok_login"
+    );
+    // A released scope forgets its clients: the next request mints afresh.
+    expect(scope.getClient(options({ getAuth, fetchImpl }))).not.toBe(scoped);
+  });
+});
+
+describe("refusal detail and classification", () => {
+  async function refusal(body: unknown, status: number) {
+    // `retry-after: 0` so the one 429 retry does not sleep a second per test.
+    const { fetchImpl } = recordingFetch(() =>
+      json(body, status, status === 429 ? { "retry-after": "0" } : undefined)
+    );
+    return (await makeClient(fetchImpl)
+      .getLease()
+      .catch((error: unknown) => error)) as McpjamLeaseError;
+  }
+
+  it("keeps a direct billing code and classifies it as billing", async () => {
+    const error = await refusal(
+      { code: "spend_budget_reached", message: "Spend budget reached" },
+      429
+    );
+    expect(error.code).toBe("spend_budget_reached");
+    expect(classifyMcpjamLeaseError(error)).toBe("billing");
+  });
+
+  it("finds billing nested under an auth-shaped envelope", async () => {
+    // The v1 envelope files a free-tier model restriction as FORBIDDEN; only
+    // the nested code says it is about credits, not about the key.
+    const error = await refusal(
+      {
+        code: "FORBIDDEN",
+        message: "This model is not included in the free daily allowance.",
+        details: { code: "free_tier_model_restricted" },
+      },
+      403
+    );
+    expect(error.status).toBe(403);
+    expect(error.details).toEqual({ code: "free_tier_model_restricted" });
+    expect(classifyMcpjamLeaseError(error)).toBe("billing");
+  });
+
+  it("reads a broker-shaped body's own words and code", async () => {
+    const error = await refusal(
+      {
+        ok: false,
+        code: "wallet_locked",
+        error: "Credit spending is unavailable.",
+      },
+      429
+    );
+    expect(error.message).toBe("Credit spending is unavailable.");
+    expect(classifyMcpjamLeaseError(error)).toBe("billing");
+  });
+
+  it("does not call every 403 bad credentials — only one with no billing detail", async () => {
+    expect(
+      classifyMcpjamLeaseError(
+        await refusal({ code: "FORBIDDEN", message: "Not a member" }, 403)
+      )
+    ).toBe("auth");
+    expect(
+      classifyMcpjamLeaseError(
+        await refusal({ code: "UNAUTHORIZED", message: "Bad key" }, 401)
+      )
+    ).toBe("auth");
+  });
+
+  it("tells a throttle and an outage apart from both", async () => {
+    expect(
+      classifyMcpjamLeaseError(
+        await refusal({ code: "RATE_LIMITED", message: "slow" }, 429)
+      )
+    ).toBe("rateLimited");
+    expect(
+      classifyMcpjamLeaseError(
+        await refusal({ code: "SERVER_UNREACHABLE", message: "down" }, 502)
+      )
+    ).toBe("unavailable");
+    expect(
+      classifyMcpjamLeaseError(
+        await refusal({ code: "VALIDATION_ERROR", message: "bad model" }, 400)
+      )
+    ).toBe("other");
   });
 });

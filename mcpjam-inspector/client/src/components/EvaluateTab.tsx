@@ -1424,6 +1424,8 @@ function EvaluateTabContent({
             evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
+            onDeleteRun={canDeleteRuns ? handlers.directDeleteRun : undefined}
+            canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
             onSelectRun={handleSelectRunFromAllRuns}
             decisionSummaryEnabled={decisionSummaryEnabled}
             emptyState={landingEmpty}
