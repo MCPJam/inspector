@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "fingerprint": "sha256:ed603c7b583bdc2131801986aa991fd1a5816cc60f5ee98f4ab23d5c1f5e8dcf",
+  "fingerprint": "sha256:74e0e9d13cd84ace5ecf811ed24a0929f0fd41e56d181d94f543c7f22db2aaea",
   "inputs": {
-    "pack-dependency-closure": "sha256:c1f0054cc5adba9cf6d38a2dc54c1e27dcc41c5de4b1f9aab91324feb6520c52",
+    "pack-dependency-closure": "sha256:6b0e9c9430dbe8d738e44f15d54c52185dd401923f36a9b7129645567907e453",
     ".github/workflows/local-harness-pack.yml": "sha256:2d3846a18597430e12a11282ae2fd733848f484145f42bca9ee111fe70f3f2dc",
     "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:68b7605cb7d329a745c36f72c4285283150994396b64a8eb245f7cec21fbc4d1",
     "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:639c368195588b96d55d59581ad8fa3aa9a875f8d1c1e7e6b56a7e23f333b588",
@@ -11,8 +11,8 @@
     "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts": "sha256:58f48613f0e6573959938b214501656adf9f1d9b925dbddcb19623b8a7627d66",
     "mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs": "sha256:278f2ac6ca25c64cb4d6421b7c0847efcc945e12e152fcac39501933c238f98f",
     "mcpjam-inspector/server/utils/harness/local/runtime-identity.ts": "sha256:772dbb182a0170c4f5add5365be6a525ede7d0d7717c9e1df1cce528df22bb35",
-    "mcpjam-inspector/tools/mcpjam-job-launcher/go.mod": "sha256:fbca4a6dbab07247ec198d388a18fda8d54ea224b2ac1153d069b3de76f7dffa",
-    "mcpjam-inspector/tools/mcpjam-job-launcher/go.sum": "sha256:ef3aadfe3bfc56cc423184cffdf0fed07e86d45ac3a8eaef5a852f5559fa1fa9",
+    "mcpjam-inspector/tools/mcpjam-job-launcher/go.mod": "sha256:8d05b9270aecb283d89ffe17110a2e73a2d6c86cce72ec03ce61bef3882191de",
+    "mcpjam-inspector/tools/mcpjam-job-launcher/go.sum": "sha256:8636998393adc6606e3d7fcff44b7be8b73925f3ef8d2cd17339dd02adbbcc17",
     "mcpjam-inspector/tools/mcpjam-job-launcher/main.go": "sha256:c3c5a24c16ff609cb7660845b8460d32134c4d4073928cb45b94e5cb6b93a57d",
     "mcpjam-inspector/tools/mcpjam-job-launcher/main_test.go": "sha256:a132f51debb45404e804cf7e06b2a5ab2aedea8f5b9c20cdecb2fea7ad3d1735",
     "recipe/.npmrc": "sha256:33407538312b25ba20b19987a8fff3043c3b258372f720bd574469b3cf2ddb8c",
