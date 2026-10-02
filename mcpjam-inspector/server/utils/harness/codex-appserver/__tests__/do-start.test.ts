@@ -149,6 +149,37 @@ describe("codex app-server doStart", () => {
     await session.doDestroy();
   });
 
+  it("refuses an approval continuation whose bridge is gone instead of re-driving the thread", async () => {
+    // A port nothing listens on: the attach rung fails, and there is no
+    // replayable log. A rerun here would let a fresh Codex proposal inherit
+    // the stored "approved" by id.
+    const probe = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise((resolve) => probe.once("listening", resolve));
+    const deadPort = (probe.address() as { port: number }).port;
+    await new Promise((resolve) => probe.close(() => resolve(undefined)));
+
+    const box = fakeSession({ port: deadPort });
+    const harness = createCodexAppServer({
+      auth: { CODEX_API_KEY: "placeholder", OPENAI_BASE_URL: "http://gw" },
+      startupTimeoutMs: 1_000,
+    });
+    await expect(
+      harness.doStart({
+        sessionId: "session-1",
+        sessionWorkDir: SESSION_WORK_DIR,
+        sandboxSession: box.session,
+        permissionMode: "allow-reads",
+        continueFrom: {
+          data: {
+            threadId: "thread-1",
+            bridge: { port: deadPort, token: "stale-token", lastSeenEventId: 3 },
+          },
+        },
+      } as never),
+    ).rejects.toThrow(/no longer running/);
+    expect(box.spawns).toHaveLength(0);
+  });
+
   it("refuses a session with no leased port rather than binding a random one", async () => {
     const box = fakeSession({ port: 1, ports: [] });
     await expect(

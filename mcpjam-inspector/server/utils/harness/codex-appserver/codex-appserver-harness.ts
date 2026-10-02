@@ -456,6 +456,19 @@ export function createCodexAppServer(
         }
       }
 
+      // A CONTINUATION carries decisions for approvals a live Codex process
+      // was waiting on. With that process gone, a rerun re-drives the thread:
+      // Codex proposes actions afresh, and the framework would apply the
+      // stored decision to whichever request reuses its id. Nothing approved
+      // for one action may run another, so refuse rather than rerun.
+      if (isContinue && respawnStrategy !== "replay") {
+        throw new Error(
+          "The Codex session holding this approval is no longer running, so " +
+            "the pending action will not run. Start a new turn; anything " +
+            "proposed then will ask for approval again.",
+        );
+      }
+
       const port = resolveBridgePort(sandboxSession, settings.port);
       const token = createBridgeToken();
       const env: Record<string, string> = {

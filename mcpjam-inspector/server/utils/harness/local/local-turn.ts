@@ -884,6 +884,18 @@ async function adoptParkedLocalTurn(
   if (!broker.ok) {
     return fail("renewal-failed", "broker-unavailable", broker.error);
   }
+  // The awaits above are a window in which the parked tree can die or a Stop
+  // can land. Re-check before binding the fresh lease: delivering the decision
+  // to a bridge that had to be respawned could approve an action nobody saw.
+  if (claim.parked.state !== "continuing" || !claim.parked.isAlive()) {
+    await revokeLease(broker.runId, args.bearer);
+    return fail(
+      "process-died",
+      "approval-process-died",
+      "The local runtime holding this approval stopped while the decision " +
+        "was being delivered; the pending action will not run.",
+    );
+  }
   try {
     live.rebindLease({ runId: broker.runId, lease: broker.lease, bearer: args.bearer });
   } catch (error) {

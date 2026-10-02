@@ -629,6 +629,35 @@ describe("a local Codex runtime parked on an approval", () => {
     expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
   });
 
+  it("refuses when the process dies while the decision is being delivered", async () => {
+    await parkedSession();
+    // Alive at claim time, gone by the time the renewed lease comes back.
+    startLoopbackModelBroker.mockImplementationOnce(async () => {
+      supervisorFixture.live = 0;
+      return {
+        ok: true,
+        runId: "run_2",
+        expiresAt: Date.now() + 60_000,
+        protocol: "openai" as never,
+        proxyBaseUrl: "https://api.example.test/proxy",
+        delivery: "inspector-loopback-gateway",
+        lease: "lease.two.value",
+      };
+    });
+    const adopted = await prepareLocalHarnessTurn(
+      codexArgs({
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }),
+    );
+    expect(adopted).toMatchObject({ ok: false, status: "approval-process-died" });
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(revokeHarnessModelBroker).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: "run_2" }),
+      ),
+    );
+  });
+
   it("is ended — not re-adopted — when a new prompt arrives instead of a decision", async () => {
     await parkedSession();
     const fresh = await prepareLocalHarnessTurn(codexArgs());
