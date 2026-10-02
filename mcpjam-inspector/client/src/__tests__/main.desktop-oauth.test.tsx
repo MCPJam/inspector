@@ -91,3 +91,17 @@ it.each([false, true])(
     }
   },
 );
+
+it("removes the access fragment before importing the app bootstrap", async () => {
+  const token = "main-bootstrap-access-credential";
+  window.history.replaceState({ index: 2 }, "", `/#token=${token}&tab=tools`);
+  bootstrap.mockImplementation(() => {
+    expect(location.hash).toBe("#tools");
+    expect(location.href).not.toContain(token);
+  });
+  await act(async () => {
+    await import("../main");
+  });
+  expect(bootstrap).toHaveBeenCalledOnce();
+  expect(history.state).toEqual({ index: 2 });
+});
