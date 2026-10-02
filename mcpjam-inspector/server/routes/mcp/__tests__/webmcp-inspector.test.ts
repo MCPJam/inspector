@@ -462,7 +462,10 @@ describe("webmcp-inspector routes", () => {
       await applying;
       if (closing) await webMcpSessions.close(started.sessionId);
       reject(new Error("resize failed"));
-      expect((await result).status).toBe(closing ? 200 : 500);
+      const settled = await result;
+      expect(settled.status).toBe(closing ? 200 : 500);
+      // A local inspector's 500 keeps the message; the reader runs the server.
+      if (!closing) expect(settled.body.error).toBe("resize failed");
     },
   );
 
