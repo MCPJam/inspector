@@ -66,9 +66,27 @@ describe("launch overrides and preview runs", () => {
         ["env-1"],
       ),
     ).toEqual([
-      { journeyRefId: "a", environmentIds: ["env-1"], sessionsPerTarget: 2 },
-      { journeyRefId: "b" },
+      {
+        journeyRefId: "a",
+        kind: "swarm",
+        environmentIds: ["env-1"],
+        sessionsPerTarget: 2,
+      },
+      { journeyRefId: "b", kind: "swarm" },
     ]);
+  });
+
+  // The launch sends `kind: "swarm"` for every run it creates (a wave id makes it
+  // one). Asked without a kind, the backend resolves it from the session count:
+  // a goal with one conversation and no swarm of its own previews as user
+  // testing, which is never sponsored, then launches as a swarm and is refused
+  // for the split it was shown.
+  it("ask as the swarm the launch creates, so a one-conversation goal previews what it will launch", () => {
+    const [run] = fundingPreviewRuns(
+      [target({ journeyId: "solo", sessionsPerTarget: 1 })],
+      null,
+    );
+    expect(run).toMatchObject({ journeyRefId: "solo", kind: "swarm" });
   });
 });
 
@@ -283,8 +301,23 @@ describe("creditFundingExplanation", () => {
       expect(text).not.toMatch(/emulated environments|MCPJam-hosted models/i);
     });
 
+    // The backend stamps `byok_model` on every target when the PERSONA driver
+    // is on an organization or local connection, and on a target whose own model
+    // is. "It uses your own model key" was untrue of the first: the target runs
+    // on MCPJam's hosted model.
+    it("names a model on your own connection without saying which target it belongs to", () => {
+      const one = explain([{ targetId: "a", reason: "byok_model" }]);
+      expect(one).toMatch(/a model it uses is set to your own connection/);
+      expect(one).not.toMatch(/model key|it uses your own/i);
+      expect(
+        explain([
+          { targetId: "a", reason: "byok_model" },
+          { targetId: "b", reason: "byok_model" },
+        ]),
+      ).toMatch(/a model they use is set to your own connection/);
+    });
+
     it.each([
-      ["byok_model", /it uses your own model key/],
       ["harness_target", /it runs a coding-agent harness/],
       ["computer_target", /it uses a computer or shell/],
       ["unresolved", /its setup could not be read/],
@@ -324,6 +357,16 @@ describe("creditFundingExplanation", () => {
       expect(
         explain([{ targetId: "a", reason: "persona_model_not_included" }]),
       ).toMatch(/the persona model isn't included in them/);
+    });
+
+    // The backend names the saved SELECTION (not hosted), not where the judge
+    // would run, so the copy says what the setting is.
+    it("describes a judge on a model MCPJam does not host as a setting, not as where it runs", () => {
+      const text = explain([
+        { targetId: "a", reason: "judge_selection_not_hosted" },
+      ]);
+      expect(text).toMatch(/the judge is set to a model MCPJam doesn't host/);
+      expect(text).not.toMatch(/runs on your own model/i);
     });
 
     it("counts a target once however many runs carry it", () => {

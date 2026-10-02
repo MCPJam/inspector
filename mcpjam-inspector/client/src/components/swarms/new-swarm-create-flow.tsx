@@ -95,6 +95,7 @@ import {
   fundingReviewNotice,
   fundingUnverifiedNotice,
   fundingSplitOf,
+  launchOutcomeNotice,
   launchRunOverrides,
   withChosenIterations,
   type FundingSplit,
@@ -666,6 +667,11 @@ export function NewSwarmCreateFlow({
   const persistedTargetsRef = useRef<LaunchTarget[] | null>(
     restoredDraft?.launch.targets ?? null,
   );
+  // Why a persona or goal of the first attempt was not created. A launch that
+  // follows a stop for review runs only what was created, and without this it
+  // would end in a plain success: the failure was said once, on the stop, and
+  // cleared with the next click. Cleared wherever the persisted rows are.
+  const creationIssueRef = useRef<string | null>(null);
   // Environments baked into those persisted journeys. If the user goes Back
   // and changes the env selection, retrying must NOT relaunch the old
   // single-client journeys while the matrix shows the new multi-client set.
@@ -845,6 +851,7 @@ export function NewSwarmCreateFlow({
     if (persistedTargetsRef.current == null) return;
     if (persistedEnvironmentKeyRef.current === environmentSelectionKey) return;
     persistedTargetsRef.current = null;
+    creationIssueRef.current = null;
     setCreatedTargets(null);
     setFundingNotice(null);
     persistedEnvironmentKeyRef.current = null;
@@ -1202,6 +1209,7 @@ export function NewSwarmCreateFlow({
       // A fresh slate is a fresh set of rows to create — drop any memory of
       // what a previous attempt persisted.
       persistedTargetsRef.current = null;
+      creationIssueRef.current = null;
       setCreatedTargets(null);
       setFundingNotice(null);
       persistedEnvironmentKeyRef.current = null;
@@ -1321,6 +1329,7 @@ export function NewSwarmCreateFlow({
       inFlightRef.current = false;
     }
     persistedTargetsRef.current = null;
+    creationIssueRef.current = null;
     setCreatedTargets(null);
     setFundingNotice(null);
     persistedRunGroupIdRef.current = null;
@@ -1408,6 +1417,12 @@ export function NewSwarmCreateFlow({
       setLaunchNotice(null);
 
       let firstError: string | null = null;
+      /**
+       * Why a persona or goal was not created, now or on the attempt that made
+       * the goals this launch runs. Kept apart from `firstError` so a launch
+       * that otherwise went through still says it.
+       */
+      let creationIssue: string | null = null;
       /**
        * Set when a launch came back 402. Distinct from `firstError` because it
        * changes what the summary SAYS: "some runs were rejected" is advice to
@@ -1497,6 +1512,8 @@ export function NewSwarmCreateFlow({
 
         if (persistedTargetsRef.current) {
           targets = persistedTargetsRef.current;
+          creationIssue = creationIssueRef.current;
+          if (creationIssue) firstError ??= creationIssue;
         } else {
           // Reused journeys get this swarm's GRADING merged into their own
           // rubric — additive, structurally deduped, so existing criterion ids
@@ -1589,10 +1606,11 @@ export function NewSwarmCreateFlow({
                 idempotencyKey: `${flowId}:persona:${persona.key}`,
               });
             } catch (err) {
-              firstError ??= errorMessageOf(
+              creationIssue ??= errorMessageOf(
                 err,
                 "A persona could not be created.",
               );
+              firstError ??= creationIssue;
               continue;
             }
             for (const journey of journeys) {
@@ -1640,10 +1658,11 @@ export function NewSwarmCreateFlow({
                   bornIterations,
                 });
               } catch (err) {
-                firstError ??= errorMessageOf(
+                creationIssue ??= errorMessageOf(
                   err,
                   "A goal could not be created.",
                 );
+                firstError ??= creationIssue;
               }
             }
           }
@@ -1653,6 +1672,7 @@ export function NewSwarmCreateFlow({
           // selection so adding Cursor later can't relaunch Excal-only rows.
           if (targets.length > 0) {
             persistedTargetsRef.current = targets;
+            creationIssueRef.current = creationIssue;
             setCreatedTargets(targets);
             persistedEnvironmentKeyRef.current = environmentSelectionKey;
           }
@@ -1895,9 +1915,22 @@ export function NewSwarmCreateFlow({
         return;
       }
       if (launched === targets.length) {
-        toast.success(
-          `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
-        );
+        if (creationIssue) {
+          // Everything that was created launched, but a persona or goal that
+          // should have been was not. That is not a plain success, and the
+          // explanation has to outlive the toast.
+          const notice = launchOutcomeNotice({
+            launched,
+            total: targets.length,
+            failure: creationIssue,
+          });
+          toast.warning(notice);
+          setLaunchNotice(notice);
+        } else {
+          toast.success(
+            `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
+          );
+        }
       } else if (limitDialogBlocked) {
         // No cause named here — the dialog already carries it. The count is
         // what this toast adds: the runs that DID land are real.
@@ -1907,13 +1940,24 @@ export function NewSwarmCreateFlow({
         // way it doesn't for other partial failures: the remaining runs were
         // never attempted, so "N of M" would read as M-N transient failures
         // to retry rather than as a hard stop.
-        toast.warning(
-          `Launched ${launched} of ${targets.length} runs — ${
-            billingError ?? "the organization's credit limit was reached."
-          }`,
-        );
+        const notice = `Launched ${launched} of ${targets.length} runs — ${
+          billingError ?? "the organization's credit limit was reached."
+        }`;
+        toast.warning(notice);
+        setLaunchNotice(notice);
       } else {
         toast.warning(`Launched ${launched} of ${targets.length} runs`);
+        // The toast names no cause, and the Running screen then shows only the
+        // runs that did launch. Keep the reason where the runs are.
+        if (firstError) {
+          setLaunchNotice(
+            launchOutcomeNotice({
+              launched,
+              total: targets.length,
+              failure: firstError,
+            }),
+          );
+        }
       }
       // Stay in the wizard on Running — Overview gets the runs when the user
       // leaves. Labels are handed off then so session grouping still names them.
