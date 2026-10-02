@@ -423,7 +423,6 @@ export class EventsBackendClient {
     status: "completed" | "failed" | "parked";
     result?: unknown;
     error?: string;
-    costMicros?: number;
     chatSessionId?: string;
   }): Promise<void> {
     const route = "runs/finish";

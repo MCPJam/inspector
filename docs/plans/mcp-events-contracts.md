@@ -178,7 +178,7 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 - Approval policy is snapshotted with the run. `deny_writes` (the default) runs only tools every server marks `readOnlyHint: true`, and denies the rest before any effect. `auto_deny` runs write tools too, with the turn engine's `approvalMode: "auto-deny"`, so a tool that would need interactive approval is denied: nobody is watching.
 - Every tool call is journaled (`beginCall` / `finishCall`). A call that began and never finished is `tool_outcome_unknown`: the run parks with that reason instead of re-executing.
 - Ordering: one running run per `conversationKey` (`trigger:<triggerId>`), FIFO by `createdAt`.
-- Budgets: each trigger has a rate limit (runs per hour) and a daily spend cap, checked in the claim mutation before a run starts. Per-step spend is reserved by the existing `/stream` precheck, whose reservation is atomic across replicas. A refusal ends the run with `spend_refused`, not a retry loop.
+- Budgets: each trigger has a rate limit (runs per hour) and a daily spend cap, checked in the claim mutation before a run starts. Per-step spend is reserved by the existing `/stream` precheck, whose reservation is atomic across replicas. A refusal ends the run with `spend_refused`, not a retry loop. The cap reads a per-UTC-day ledger on the trigger that only the usage-record writer fills: the executor names the run on every model call (`eventRunId` on the `/stream` body and on the local-runtime usage writeback), and inserting a usage record that carries it charges the run and the trigger in the same transaction, once per `generationId`, with the cost backfill charging any difference. Calls from attempts that died count too. Only usage billed to the subscription owner is charged, so another member cannot spend the owner's cap by naming the run.
 
 ## C7. Authorization
 
@@ -243,7 +243,7 @@ Every route takes header `x-inspector-service-token: INSPECTOR_SERVICE_TOKEN` (`
 | `runs/checkpoint` | `{runId, token, messages, step}` → `{ok}` | 409 `lease_lost` |
 | `runs/begin-call` | `{runId, token, callId, operation, input, replayable}` → `{replay: boolean, result?}` | 409 `lease_lost` · 409 `tool_outcome_unknown` |
 | `runs/finish-call` | `{runId, token, callId, result}` → `{ok}` | 409 `lease_lost` |
-| `runs/finish` | `{runId, token, status: "completed" \| "failed" \| "parked", result?, error?, costMicros?, chatSessionId?}` → `{ok}` | 409 `lease_lost` |
+| `runs/finish` | `{runId, token, status: "completed" \| "failed" \| "parked", result?, error?, chatSessionId?}` (no cost: it comes from usage records) → `{ok}` | 409 `lease_lost` |
 
 The client calls user-facing Convex functions directly, all project-member checked:
 

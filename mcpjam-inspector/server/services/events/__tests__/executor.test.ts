@@ -30,6 +30,12 @@ import {
   type EventExecutorDeps,
 } from "../executor.js";
 
+// Only the test that leaves `resolveRuntime` to its default reaches this.
+const resolveTurnRuntimeMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/resolve-turn-runtime.js", () => ({
+  resolveTurnRuntime: resolveTurnRuntimeMock,
+}));
+
 const SERVER_ID = "srv_events";
 
 function input(overrides: Partial<EventRunInput["event"]> = {}): EventRunInput {
@@ -337,6 +343,30 @@ describe("executeClaimedEventRun", () => {
     });
     // The direct engine has no per-step hook: one checkpoint at the end.
     expect(backend.checkpointRun).toHaveBeenCalled();
+  });
+
+  it("names the run on every billed model call, so the backend charges its spend cap", async () => {
+    const { backend, deps } = await liveDeps();
+    const scripted = deps.resolveRuntime!;
+    resolveTurnRuntimeMock.mockImplementation((args) => scripted(args));
+    const outcome = await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveRuntime: undefined,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(resolveTurnRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "event",
+        // Hosted `/stream` body and the local-runtime usage writeback.
+        extraBodyFields: { eventRunId: "run_1" },
+        attribution: { eventRunId: "run_1" },
+      }),
+    );
+    // Cost reaches the cap through those usage records, never the finish call.
+    expect(backend.finishRun).toHaveBeenCalledWith(
+      expect.not.objectContaining({ costMicros: expect.anything() }),
+    );
   });
 
   it("parks with tool_outcome_unknown instead of re-executing", async () => {

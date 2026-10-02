@@ -519,11 +519,16 @@ export interface EventExecutorDeps {
     projectId: string;
     bearer: string;
   }) => Promise<ModelDefinition>;
-  /** Default: `resolveTurnRuntime` with `sourceType: "event"`. */
+  /**
+   * Default: `resolveTurnRuntime` with `sourceType: "event"`, attributing the
+   * turn's model usage to `runId` (the backend charges the trigger's spend
+   * cap from those usage records).
+   */
   resolveRuntime?: (args: {
     modelDefinition: ModelDefinition;
     projectId: string;
     authHeader: string;
+    runId: string;
     chatSessionId: string;
     tools: ToolSet;
     messages: ModelMessage[];
@@ -619,6 +624,7 @@ async function defaultResolveRuntime(args: {
   modelDefinition: ModelDefinition;
   projectId: string;
   authHeader: string;
+  runId: string;
   chatSessionId: string;
   tools: ToolSet;
   messages: ModelMessage[];
@@ -629,6 +635,11 @@ async function defaultResolveRuntime(args: {
     projectId: args.projectId,
     authHeader: args.authHeader,
     sourceType: "event",
+    // Every billed model call names the run, on the hosted `/stream` body and
+    // on the local-runtime usage writeback alike: the backend charges the
+    // trigger's daily spend cap from those usage records (C6).
+    extraBodyFields: { eventRunId: args.runId },
+    attribution: { eventRunId: args.runId },
     chatSessionId: args.chatSessionId,
     tools: args.tools,
     messages: args.messages,
@@ -836,6 +847,7 @@ export async function executeClaimedEventRun(
       modelDefinition,
       projectId,
       authHeader: `Bearer ${bearer}`,
+      runId,
       chatSessionId,
       tools,
       messages,
