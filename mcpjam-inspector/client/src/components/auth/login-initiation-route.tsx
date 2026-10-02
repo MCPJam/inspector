@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { useAppNavigate, useCurrentSearchParam } from "@/lib/app-navigation";
 
 /**
  * `/login` — the WorkOS **Initiate Login URL**, and the fix for IdP-initiated SSO.
@@ -28,15 +28,26 @@ import { useAppNavigate } from "@/lib/app-navigation";
  * `/user_management/authorize` cannot write a verifier into the browser's
  * sessionStorage. The SPA must boot and call `signIn()` itself.
  *
- * Query parameters are deliberately IGNORED. The old `context` hand-off is
- * deprecated (WorkOS "Simplified Login Initiation", 2025-04-30) — the endpoint
- * is only expected to start a fresh sign-in — and forwarding it could not work
- * anyway: authkit-js drops `context` when building the authorize URL. WorkOS's
- * own `react-authkit-example` still forwards it; don't copy it.
+ * `organization_id` selects the organization's SSO connection without relying
+ * on email-domain discovery. Forward only this routing hint through AuthKit's
+ * signIn API so the SDK still owns PKCE and the callback. WorkOS enforces access
+ * to the selected organization; the hint does not grant membership. Other query
+ * parameters, including the deprecated `context` hand-off, stay ignored.
  */
 export function LoginInitiationRoute() {
-  const { user, isLoading, signIn } = useAuth();
+  const {
+    user,
+    organizationId: currentOrganizationId,
+    isLoading,
+    signIn,
+  } = useAuth();
   const navigate = useAppNavigate();
+  const requestedOrganizationId = useCurrentSearchParam("organization_id");
+  const organizationId =
+    requestedOrganizationId &&
+    /^org_[0-9A-HJKMNP-TV-Z]{26}$/.test(requestedOrganizationId)
+      ? requestedOrganizationId
+      : undefined;
   // StrictMode double-invokes effects in dev, and `signIn()` is a full-page
   // navigation — firing it twice races two authorize requests (and two
   // verifiers) against one another.
@@ -53,23 +64,32 @@ export function LoginInitiationRoute() {
     // `try`/`catch` as well as `.catch`, because a throw before the promise is
     // returned is not a rejected promise.
     try {
-      void Promise.resolve(signIn()).catch(() => setFailed(true));
+      void Promise.resolve(
+        organizationId ? signIn({ organizationId }) : signIn(),
+      ).catch(() => setFailed(true));
     } catch {
       setFailed(true);
     }
-  }, [signIn]);
+  }, [signIn, organizationId]);
 
   useEffect(() => {
     if (isLoading || startedRef.current) return;
     startedRef.current = true;
-    // Already signed in — e.g. a second tile click, or a back-navigation onto
-    // this route. Nothing to initiate; send them into the app.
-    if (user) {
+    // An existing session in another organization must still use the requested
+    // SSO connection. Reopening a link for the current organization is a no-op.
+    if (user && (!organizationId || organizationId === currentOrganizationId)) {
       navigate("/", { replace: true });
       return;
     }
     startSignIn();
-  }, [isLoading, user, startSignIn, navigate]);
+  }, [
+    isLoading,
+    user,
+    organizationId,
+    currentOrganizationId,
+    startSignIn,
+    navigate,
+  ]);
 
   if (failed) {
     return (

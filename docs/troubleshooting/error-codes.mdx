@@ -759,6 +759,21 @@ The MCP server rejected the request with HTTP 429 (too many requests). This is t
 - Reduce concurrency or the number of tool calls in the run.
 - Check the server's own rate-limit documentation or logs.
 
+### Server HTTP error
+
+`server/http_error`
+
+The MCP server answered the request with an HTTP error status. The message names the status the server returned. MCPJam reached the server; the server refused or failed the request.
+
+**Likely causes**
+- 404: the URL points at the wrong endpoint path (for example, a missing `/mcp`).
+- 405: the endpoint does not accept MCP requests (POST).
+- 5xx: the server hit an error of its own while handling the request.
+
+**Next steps**
+- Check the server URL, including the MCP endpoint path.
+- Check the server's logs for the failed request.
+
 ---
 
 ## Environment errors
