@@ -150,7 +150,8 @@ describe("originValidationMiddleware", () => {
       expect(res.status).toBe(403);
       const data = await res.json();
       expect(data.error).toBe("Forbidden");
-      expect(data.message).toBe("Request origin not allowed.");
+      // Names what was refused, so a client-side report carries it.
+      expect(data.message).toBe("Request origin not allowed: http://evil.com.");
     });
 
     it("blocks requests from IP addresses on network", async () => {
@@ -341,11 +342,63 @@ describe("originValidationMiddleware", () => {
       app = createTestApp();
 
       const res = await app.request("/api/test", {
-        headers: { Origin: "http://localhost:6274" },
+        headers: { Origin: "http://localhost:5173" },
       });
 
-      // localhost is no longer allowed when custom origins are set
+      // The default dev ports are no longer allowed when custom origins are
+      // set. Only the server's own UI origin survives (next test).
       expect(res.status).toBe(403);
+    });
+
+    // INSPECTOR-CLIENT-2F5: the desktop app inherits the user's OS
+    // environment, and `ALLOWED_ORIGINS` set there for another project
+    // replaced this list, so the app 403'd its own requests.
+    it("keeps the server's own UI origin outside hosted mode", async () => {
+      process.env.ALLOWED_ORIGINS = "http://only-this.com";
+
+      app = createTestApp();
+
+      for (const origin of ["http://localhost:6274", "http://127.0.0.1:6274"]) {
+        const res = await app.request("/api/test", {
+          method: "POST",
+          headers: { Origin: origin },
+        });
+        expect(res.status).toBe(200);
+      }
+      const custom = await app.request("/api/test", {
+        headers: { Origin: "http://only-this.com" },
+      });
+      expect(custom.status).toBe(200);
+    });
+
+    it("still replaces the list in hosted mode", async () => {
+      const hostedEnv = process.env.VITE_MCPJAM_HOSTED_MODE;
+      process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+      process.env.ALLOWED_ORIGINS = "https://app.example.com";
+      vi.resetModules();
+      try {
+        const { originValidationMiddleware: hostedMiddleware } = await import(
+          "../origin-validation.js"
+        );
+        const hosted = new Hono();
+        hosted.use("*", hostedMiddleware);
+        hosted.post("/api/test", (c) => c.json({ message: "success" }));
+
+        const local = await hosted.request("/api/test", {
+          method: "POST",
+          headers: { Origin: "http://127.0.0.1:6274" },
+        });
+        expect(local.status).toBe(403);
+        const allowed = await hosted.request("/api/test", {
+          method: "POST",
+          headers: { Origin: "https://app.example.com" },
+        });
+        expect(allowed.status).toBe(200);
+      } finally {
+        if (hostedEnv === undefined) delete process.env.VITE_MCPJAM_HOSTED_MODE;
+        else process.env.VITE_MCPJAM_HOSTED_MODE = hostedEnv;
+        vi.resetModules();
+      }
     });
   });
 
