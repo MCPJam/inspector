@@ -278,6 +278,12 @@ export type AppAction =
       updates: Partial<Project>;
     }
   | {
+      type: "UPDATE_PROJECT_SERVER";
+      projectId: string;
+      name: string;
+      server: ServerWithName;
+    }
+  | {
       // Merge one section of `clientConfig` into the project's current
       // value, reading the current value from reducer state at the time
       // the action is processed. Necessary so concurrent connection +
