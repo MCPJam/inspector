@@ -107,6 +107,33 @@ function httpStatusOf(node: object): number | undefined {
   );
 }
 
+/**
+ * Whether `node` is one of the MCP transport errors that raise on an HTTP
+ * answer: the Streamable HTTP and SSE transports' own classes, or the SDK's
+ * `SdkHttpError`.
+ */
+function isTransportHttpError(node: object): boolean {
+  return (
+    read(node, "name") === "SdkHttpError" ||
+    HTTP_CODE_ERROR_CLASSES.has(className(node) ?? "")
+  );
+}
+
+/**
+ * The HTTP status the MCP server answered with, when an MCP transport error in
+ * the chain carries one. Only those errors count: any other object with a
+ * `status` (this server's own `WebRouteError`, a backend response) is not
+ * evidence of what the MCP server said.
+ */
+export function upstreamTransportStatus(error: unknown): number | undefined {
+  for (const node of errorChain(error)) {
+    if (!isTransportHttpError(node)) continue;
+    const status = httpStatusOf(node);
+    if (status !== undefined) return status;
+  }
+  return undefined;
+}
+
 function statusLineFromChain(error: unknown): StatusLine | undefined {
   for (const node of errorChain(error)) {
     const name = read(node, "name");

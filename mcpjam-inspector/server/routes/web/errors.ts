@@ -16,6 +16,7 @@ import {
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
 import { internalErrorResponseView } from "./hosted-internal-error.js";
+import { upstreamTransportStatus } from "../../utils/hosted-connect-failure.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -106,6 +107,13 @@ export const ErrorCode = {
   // "SESSION_REVOKED"`, the v1 convention for a specific 401; the mapping sits
   // in `routes/v1/envelope.ts` beside UPSTREAM_AUTH_FAILED's.
   SESSION_REVOKED: "SESSION_REVOKED",
+  // The USER'S MCP server answered with an HTTP error status (a 404 for a
+  // wrong endpoint path, a 405, its own 500). Served at 424 by
+  // `mapTargetServerError`. Not SERVER_UNREACHABLE: the chat client words that
+  // code as "Couldn't reach X. It may be offline", which is wrong for a server
+  // that answered; an unrecognized code falls through to the message, which
+  // names the status.
+  UPSTREAM_HTTP_ERROR: "UPSTREAM_HTTP_ERROR",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -572,8 +580,38 @@ export function mapTargetServerError(error: unknown): WebRouteError {
   // dedupe walks. A fresh `WebRouteError` would drop all three.
   if (isTargetDependencyFailure(routeError)) {
     routeError.status = 424;
+  } else if (isUpstreamHttpErrorAnswer(routeError, error)) {
+    routeError.status = 424;
+    routeError.code = ErrorCode.UPSTREAM_HTTP_ERROR;
   }
   return routeError;
+}
+
+/**
+ * A failure the shared mapper could only call `500 INTERNAL_ERROR` that is in
+ * fact the user's MCP server answering with an HTTP error status: a 404 for a
+ * wrong endpoint path, a 405, the server's own 500.
+ *
+ * `classifyRuntimeError` recognizes upstream 401/403 and matches words; a
+ * transport error carrying any other status matches neither, so it lands on
+ * the 500 catch-all. On hosted that 500 is then masked behind the generic
+ * "unexpected error" sentence, throwing away the status line the hosted
+ * projection already wrote, and it pages us for the user's server.
+ *
+ * The hop is POSITIVELY identified, as {@link namesAnMcpServer} requires for
+ * the 502/504 downgrade, but by the error rather than by wording: only a status
+ * carried by an MCP transport error counts ({@link upstreamTransportStatus}).
+ * A `status` on anything else — a Convex or backend response — is not
+ * evidence, and that failure keeps its 500 and keeps paging.
+ */
+function isUpstreamHttpErrorAnswer(
+  routeError: WebRouteError,
+  error: unknown
+): boolean {
+  if (routeError.status !== 500) return false;
+  if (routeError.code !== ErrorCode.INTERNAL_ERROR) return false;
+  const status = upstreamTransportStatus(error);
+  return status !== undefined && status >= 400 && status <= 599;
 }
 
 /**

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  SdkErrorCode,
+  SdkHttpError,
+  SseError,
+} from "@modelcontextprotocol/client";
+import {
   describeAsSlug,
   mcpjamLimitSlugForMessage,
   describeError,
@@ -981,4 +986,99 @@ it("does not call a partial balance used up when the request needs more than is 
   expect(result.oneLine).toBe(
     "This request needs about 30 MCPJam credits; your organization has 23 left today.",
   );
+});
+
+describe("an MCP server's HTTP error answer", () => {
+  // The Streamable HTTP transport's error class sets no `name`; it is known by
+  // class, like the real one.
+  class StreamableHTTPError extends Error {
+    constructor(
+      readonly code: number,
+      message: string,
+    ) {
+      super(`Streamable HTTP error: ${message}`);
+    }
+  }
+
+  function httpError(status: number, statusText: string) {
+    return new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      `Error POSTing to endpoint (HTTP ${status} ${statusText}): <html>…</html>`,
+      { status, statusText, text: "<html>…</html>" },
+    );
+  }
+
+  /** The connect failure the manager throws when both transports got 404. */
+  function connectFailure404() {
+    const error = new Error(
+      "Server returned HTTP 404 at https://example.com/. Check the MCP endpoint and server logs.",
+      { cause: new SseError(404, "Non-200 status code (404)", {} as ErrorEvent) },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: new StreamableHTTPError(404, "Not Found"),
+      enumerable: false,
+    });
+    return error;
+  }
+
+  it("reads an all-404 connect failure as the server's HTTP error", () => {
+    const d = describeError(connectFailure404());
+    expect(d.slug).toBe("server/http_error");
+    expect(d.title).toBe("MCP server returned an HTTP error");
+    expect(d.oneLine).toBe("The MCP server answered the request with HTTP 404.");
+    expect(d.rawCode).toBe(404);
+    expect(originOf(d)).toBe("user_server");
+  });
+
+  it.each([
+    [404, "Not Found"],
+    [405, "Method Not Allowed"],
+    [500, "Internal Server Error"],
+  ])("reads a raw SdkHttpError %s as the server's HTTP error", (status, text) => {
+    const d = describeError(httpError(status, text));
+    expect(d.slug).toBe("server/http_error");
+    expect(d.rawCode).toBe(status);
+    // The response body never reaches the visible line.
+    expect(d.oneLine).not.toContain("<html>");
+  });
+
+  it("finds the status on the Streamable HTTP attempt beside an SSE cause", () => {
+    const error = new Error(
+      'Failed to connect to MCP server "srv" using HTTP transports. SSE error: fetch failed.',
+      { cause: new TypeError("fetch failed") },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: new StreamableHTTPError(405, "Method Not Allowed"),
+      enumerable: false,
+    });
+    expect(describeError(error).slug).toBe("server/http_error");
+  });
+
+  it("finds the status through the era-negotiation wrapper", () => {
+    const error = makeError("negotiation failed", {
+      name: "SdkError",
+      code: "ERA_NEGOTIATION_FAILED",
+      data: { cause: httpError(502, "Bad Gateway") },
+    });
+    expect(describeError(error).slug).toBe("server/http_error");
+  });
+
+  it.each([
+    [401, "auth/http_401"],
+    [403, "auth/http_403"],
+    [429, "provider/quota"],
+  ])("keeps the existing slug for a transport %s", (status, slug) => {
+    expect(describeError(httpError(status, "x")).slug).toBe(slug);
+  });
+
+  it("does not read a bare status as the MCP server's answer", () => {
+    // MCPJam's own route errors and LLM provider errors carry a `status` too;
+    // neither is the user's server.
+    expect(
+      describeError(makeError("Project not found", { status: 404 })).slug,
+    ).toBe("internal/unknown");
+    expect(
+      describeError(makeError("Provider exploded", { statusCode: 500 })).slug,
+    ).toBe("internal/unknown");
+  });
 });
