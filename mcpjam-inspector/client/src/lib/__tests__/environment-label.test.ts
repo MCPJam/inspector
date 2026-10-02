@@ -4,9 +4,11 @@ import {
   environmentDetailLine,
   environmentImageLabel,
   environmentLabel,
+  environmentLabelsById,
   environmentOrigin,
   isAdhocEnvironment,
   isNamedEnvironment,
+  modelTargetLabel,
   trimOrUndefined,
   type EnvironmentLabelContext,
   type EnvironmentLabelRow,
@@ -217,5 +219,65 @@ describe("environmentLabel without a client-name lookup", () => {
 
   it("still prefers a real name over the generic label", () => {
     expect(environmentLabel(row({ name: "Billing" }), {})).toBe("Billing");
+  });
+});
+
+describe("model target labels (two efforts of one model)", () => {
+  const SONNET = "anthropic/claude-sonnet-4.5";
+  const hosted = (effort?: "low" | "high") => ({
+    modelId: SONNET,
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+  const name = () => "Sonnet 4.5";
+
+  it("adds only what differs among siblings of the same model", () => {
+    const low = { modelId: SONNET, selection: hosted("low") };
+    const high = { modelId: SONNET, selection: hosted("high") };
+    expect(modelTargetLabel(low, [low, high], name)).toBe("Sonnet 4.5 · Low");
+    expect(modelTargetLabel(high, [low, high], name)).toBe("Sonnet 4.5 · High");
+  });
+
+  it("a lone model, or siblings of other models, add no suffix", () => {
+    const high = { modelId: SONNET, selection: hosted("high") };
+    expect(modelTargetLabel(high, [high], name)).toBe("Sonnet 4.5");
+    expect(
+      modelTargetLabel(high, [high, { modelId: "openai/gpt-5" }], name),
+    ).toBe("Sonnet 4.5");
+    expect(modelTargetLabel({ modelId: SONNET }, [])).toBe("claude-sonnet-4.5");
+  });
+
+  it("an unlabelled sibling reads Default, not a source it never stored", () => {
+    const bare = { modelId: SONNET };
+    const high = { modelId: SONNET, selection: hosted("high") };
+    expect(modelTargetLabel(bare, [bare, high], name)).toBe(
+      "Sonnet 4.5 · Default",
+    );
+    expect(modelTargetLabel(high, [bare, high], name)).toBe("Sonnet 4.5 · High");
+  });
+
+  it("labels two ad-hoc rows of one client by their effort instead of #n", () => {
+    const labels = environmentLabelsById(
+      [
+        row({ environmentId: "lo", modelId: SONNET, modelSelection: hosted("low") }),
+        row({ environmentId: "hi", modelId: SONNET, modelSelection: hosted("high") }),
+      ],
+      { ...ctx, modelName: name },
+    );
+    expect(labels.get("lo")).toBe("Claude · Sonnet 4.5 · Low");
+    expect(labels.get("hi")).toBe("Claude · Sonnet 4.5 · High");
+  });
+
+  it("default-only rows label exactly as before", () => {
+    const labels = environmentLabelsById(
+      [
+        row({ environmentId: "a", modelId: SONNET }),
+        row({ environmentId: "b", modelId: SONNET, modelSelection: hosted() }),
+      ],
+      ctx,
+    );
+    expect(labels.get("a")).toBe("Claude · claude-sonnet-4.5 #1");
+    expect(labels.get("b")).toBe("Claude · claude-sonnet-4.5 #2");
   });
 });

@@ -81,36 +81,36 @@ describe("modelsPillTriggerLabel", () => {
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: true,
-        explicitModelIds: [],
+        explicitTargets: [],
       })
     ).toBe("models");
     expect(
       modelsPillTriggerLabel(
-        { includeClientDefaults: true, explicitModelIds: [] },
+        { includeClientDefaults: true, explicitTargets: [] },
         { clientDefaultLabel: "gpt-4", modelName: () => "GPT-4" }
       )
     ).toBe("GPT-4");
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: true,
-        explicitModelIds: ["a", "b"],
+        explicitTargets: [{ modelId: "a" }, { modelId: "b" }],
       })
     ).toBe("models +2");
     expect(
       modelsPillTriggerLabel(
-        { includeClientDefaults: true, explicitModelIds: ["a", "b"] },
+        { includeClientDefaults: true, explicitTargets: [{ modelId: "a" }, { modelId: "b" }] },
         { clientDefaultLabel: "gpt-4", modelName: () => "GPT-4" }
       )
     ).toBe("GPT-4 +2");
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: false,
-        explicitModelIds: ["a", "b"],
+        explicitTargets: [{ modelId: "a" }, { modelId: "b" }],
       })
     ).toBe("2 models");
     expect(
       modelsPillTriggerLabel(
-        { includeClientDefaults: false, explicitModelIds: ["google/gemini"] },
+        { includeClientDefaults: false, explicitTargets: [{ modelId: "google/gemini" }] },
         { modelName: () => "Gemini 2.5 Flash" }
       )
     ).toBe("Gemini 2.5 Flash");
@@ -122,7 +122,7 @@ describe("ModelsPill", () => {
     const { unmount } = render(
       <ModelsPill
         projectId="proj-1"
-        value={{ includeClientDefaults: true, explicitModelIds: [] }}
+        value={{ includeClientDefaults: true, explicitTargets: [] }}
         onChange={vi.fn()}
         testId="models"
       />
@@ -132,7 +132,7 @@ describe("ModelsPill", () => {
     render(
       <ModelsPill
         projectId="proj-1"
-        value={{ includeClientDefaults: true, explicitModelIds: [] }}
+        value={{ includeClientDefaults: true, explicitTargets: [] }}
         onChange={vi.fn()}
         clientDefaultLabel="google/gemini-2.5-flash"
         testId="models"
@@ -143,7 +143,7 @@ describe("ModelsPill", () => {
 
   it("checks Client defaults initially and lists catalog models", async () => {
     const user = userEvent.setup();
-    renderPill({ includeClientDefaults: true, explicitModelIds: [] });
+    renderPill({ includeClientDefaults: true, explicitTargets: [] });
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(option("Client defaults")).toHaveAttribute("aria-checked", "true");
     expect(option("Gemini 2.5 Flash")).toHaveAttribute("aria-checked", "false");
@@ -152,7 +152,7 @@ describe("ModelsPill", () => {
   it("disables a model option that would exceed the product cap", async () => {
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       {
         budget: { hostCount: 3, choiceCount: 1, maxTargets: 10 },
       }
@@ -168,7 +168,7 @@ describe("ModelsPill", () => {
   it("disables a model option when the product would exceed 10", async () => {
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: ["m1", "m2"] },
+      { includeClientDefaults: true, explicitTargets: [{ modelId: "m1" }, { modelId: "m2" }] },
       {
         budget: { hostCount: 3, choiceCount: 3, maxTargets: 10 },
       }
@@ -180,7 +180,7 @@ describe("ModelsPill", () => {
   it("replaces the sole model choice at the cap instead of disabling alternatives", async () => {
     const user = userEvent.setup();
     const onChange = renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       {
         budget: { hostCount: 6, choiceCount: 1, maxTargets: 10 },
       }
@@ -191,20 +191,22 @@ describe("ModelsPill", () => {
     await user.click(gemini);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: false,
-      explicitModelIds: ["google/gemini-2.5-flash"],
-      // The picked row's saved selection rides beside the id.
-      explicitModelSelections: {
-        "google/gemini-2.5-flash": expect.objectContaining({
+      // The picked row's saved selection rides on the target.
+      explicitTargets: [
+        {
           modelId: "google/gemini-2.5-flash",
-          source: "hosted",
-        }),
-      },
+          selection: expect.objectContaining({
+            modelId: "google/gemini-2.5-flash",
+            source: "hosted",
+          }),
+        },
+      ],
     });
   });
 
   it("keeps a catalog-disabled model disabled", async () => {
     const user = userEvent.setup();
-    renderPill({ includeClientDefaults: true, explicitModelIds: [] });
+    renderPill({ includeClientDefaults: true, explicitTargets: [] });
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(option("Locked")).toHaveAttribute("aria-disabled", "true");
   });
@@ -213,7 +215,7 @@ describe("ModelsPill", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: ["retired/old-model"],
+      explicitTargets: [{ modelId: "retired/old-model" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     const stale = option("retired/old-model");
@@ -223,7 +225,7 @@ describe("ModelsPill", () => {
     await user.click(stale);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 
@@ -231,7 +233,7 @@ describe("ModelsPill", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: ["locked-model"],
+      explicitTargets: [{ modelId: "locked-model" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     const locked = option("Locked");
@@ -240,28 +242,30 @@ describe("ModelsPill", () => {
     await user.click(locked);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 
   it("single mode replaces the selection", async () => {
     const user = userEvent.setup();
     const onChange = renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       { mode: "single" }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
     await user.click(option("Gemini 2.5 Flash"));
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: false,
-      explicitModelIds: ["google/gemini-2.5-flash"],
-      // The picked row's saved selection rides beside the id.
-      explicitModelSelections: {
-        "google/gemini-2.5-flash": expect.objectContaining({
+      // The picked row's saved selection rides on the target.
+      explicitTargets: [
+        {
           modelId: "google/gemini-2.5-flash",
-          source: "hosted",
-        }),
-      },
+          selection: expect.objectContaining({
+            modelId: "google/gemini-2.5-flash",
+            source: "hosted",
+          }),
+        },
+      ],
     });
   });
 });
@@ -292,8 +296,7 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-4o"],
-      explicitModelSelections: { "openai/gpt-4o": orgSelection },
+      explicitTargets: [{ modelId: "openai/gpt-4o", selection: orgSelection }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
 
@@ -308,10 +311,12 @@ describe("ModelsPill on the one picker", () => {
     await user.click(hostedRow);
     expect(onChange).toHaveBeenLastCalledWith({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-4o"],
-      explicitModelSelections: {
-        "openai/gpt-4o": expect.objectContaining({ source: "hosted" }),
-      },
+      explicitTargets: [
+        {
+          modelId: "openai/gpt-4o",
+          selection: expect.objectContaining({ source: "hosted" }),
+        },
+      ],
     });
   });
 
@@ -320,7 +325,7 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-4o"],
+      explicitTargets: [{ modelId: "openai/gpt-4o" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(option(/^GPT-4o$/)).toHaveAttribute("aria-checked", "true");
@@ -332,14 +337,16 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: ["google/gemini-2.5-flash"],
+      explicitTargets: [{ modelId: "google/gemini-2.5-flash" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     await user.click(option("Client defaults"));
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({
         includeClientDefaults: false,
-        explicitModelIds: ["google/gemini-2.5-flash"],
+        explicitTargets: [
+          expect.objectContaining({ modelId: "google/gemini-2.5-flash" }),
+        ],
       })
     );
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
@@ -362,7 +369,7 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     const luna = option("GPT-5.6 Luna");
@@ -398,7 +405,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       { harnessTargets: [{ harnessId: "claude-code" }] }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
@@ -422,7 +429,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       // An emulated client runs anything; the Codex cell is skipped at
       // resolve time instead.
       { harnessTargets: [{ harnessId: "codex" }, null] }
@@ -438,7 +445,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       { harnessTargets: [{ harnessId: "claude-code" }], purpose: "chat" }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
@@ -453,7 +460,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     const onChange = renderPill(
-      { includeClientDefaults: true, explicitModelIds: ["openai/gpt-5.6-luna"] },
+      { includeClientDefaults: true, explicitTargets: [{ modelId: "openai/gpt-5.6-luna" }] },
       { harnessTargets: [{ harnessId: "claude-code" }] }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
@@ -463,7 +470,7 @@ describe("ModelsPill — harness × model support", () => {
     await user.click(luna);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 });
@@ -488,22 +495,24 @@ describe("ModelsPill — reasoning effort", () => {
     mockModels.availableModels = [GPT5];
     const onChange = renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-5"],
-      explicitModelSelections: {
-        "openai/gpt-5": {
+      explicitTargets: [
+        {
           modelId: "openai/gpt-5",
-          source: "hosted",
-          fallback: { provider: "none", model: "none" },
+          selection: {
+            modelId: "openai/gpt-5",
+            source: "hosted",
+            fallback: { provider: "none", model: "none" },
+          },
         },
-      },
+      ],
     } as ModelSelection);
     await userEvent.click(screen.getByTestId("effort-control-trigger"));
     await pickEffort("High");
     const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
-    expect(next.explicitModelIds).toEqual(["openai/gpt-5"]);
-    expect(
-      next.explicitModelSelections?.["openai/gpt-5"]?.settings?.reasoningEffort,
-    ).toBe("high");
+    expect(next.explicitTargets.map((t) => t.modelId)).toEqual(["openai/gpt-5"]);
+    expect(next.explicitTargets[0]?.selection?.settings?.reasoningEffort).toBe(
+      "high",
+    );
   });
 
   it("offers a Claude Code target no level (its adapter verifies none), but a Codex target its own", async () => {
@@ -512,14 +521,16 @@ describe("ModelsPill — reasoning effort", () => {
     ];
     const value = {
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-5"],
-      explicitModelSelections: {
-        "openai/gpt-5": {
+      explicitTargets: [
+        {
           modelId: "openai/gpt-5",
-          source: "hosted",
-          fallback: { provider: "none", model: "none" },
+          selection: {
+            modelId: "openai/gpt-5",
+            source: "hosted",
+            fallback: { provider: "none", model: "none" },
+          },
         },
-      },
+      ],
     } as ModelSelection;
     const { unmount } = render(
       <ModelsPill
@@ -548,11 +559,39 @@ describe("ModelsPill — reasoning effort", () => {
     expect(screen.queryByTestId("effort-stop-max")).toBeNull();
   });
 
+  it("keeps two efforts of one model as two targets: one row, one chip each", async () => {
+    mockModels.availableModels = [GPT5];
+    const at = (effort: "low" | "high") => ({
+      modelId: "openai/gpt-5",
+      selection: {
+        modelId: "openai/gpt-5",
+        source: "hosted" as const,
+        fallback: { provider: "none" as const, model: "none" as const },
+        settings: { reasoningEffort: effort },
+      },
+    });
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [at("low"), at("high")],
+    } as ModelSelection);
+    expect(screen.getByRole("button", { name: "Models" })).toHaveTextContent(
+      "2 models",
+    );
+    const chips = screen.getAllByTestId("effort-control-trigger");
+    expect(chips).toHaveLength(2);
+    await userEvent.click(chips[0]!);
+    await pickEffort("Default");
+    const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
+    expect(
+      next.explicitTargets.map((t) => t.selection?.settings?.reasoningEffort),
+    ).toEqual([undefined, "high"]);
+  });
+
   it("shows no chip for a model with no known capability", () => {
     mockModels.availableModels = [{ ...GPT5, supportedReasoningEfforts: [] }];
     renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-5"],
+      explicitTargets: [{ modelId: "openai/gpt-5" }],
     });
     expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
   });
@@ -563,7 +602,7 @@ describe("ModelsPill — reasoning effort", () => {
     ];
     renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["gpt-5"],
+      explicitTargets: [{ modelId: "gpt-5" }],
     });
     expect(screen.getByTestId("effort-control-trigger")).toBeDisabled();
   });
@@ -592,11 +631,13 @@ describe("ModelsPill model source badge", () => {
     mockModels.availableModels = [HOSTED_A, HOSTED_B];
     renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-5", "google/gemini-2.5-flash"],
-      explicitModelSelections: {
-        "openai/gpt-5": hostedSelection("openai/gpt-5"),
-        "google/gemini-2.5-flash": hostedSelection("google/gemini-2.5-flash"),
-      },
+      explicitTargets: [
+        { modelId: "openai/gpt-5", selection: hostedSelection("openai/gpt-5") },
+        {
+          modelId: "google/gemini-2.5-flash",
+          selection: hostedSelection("google/gemini-2.5-flash"),
+        },
+      ],
     } as ModelSelection);
     const badges = screen.getAllByTestId("model-source-badge");
     expect(badges).toHaveLength(1);
@@ -607,7 +648,7 @@ describe("ModelsPill model source badge", () => {
     mockModels.availableModels = [HOSTED_A];
     renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-5"],
+      explicitTargets: [{ modelId: "openai/gpt-5" }],
     });
     expect(screen.queryByTestId("model-source-badge")).toBeNull();
   });
@@ -617,10 +658,9 @@ describe("ModelsPill model source badge", () => {
     renderPill(
       {
         includeClientDefaults: false,
-        explicitModelIds: ["openai/gpt-5"],
-        explicitModelSelections: {
-          "openai/gpt-5": hostedSelection("openai/gpt-5"),
-        },
+        explicitTargets: [
+          { modelId: "openai/gpt-5", selection: hostedSelection("openai/gpt-5") },
+        ],
       } as ModelSelection,
       { selectionOrigin: "backfill" },
     );
