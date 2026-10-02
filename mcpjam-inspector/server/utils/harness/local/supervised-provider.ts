@@ -368,7 +368,7 @@ async function writeBytesAtomically(
  * install — and only when that file actually exists. Nothing is guessed into
  * the child: absent, the CLI reports the missing shell itself.
  */
-async function resolveGitBashPath(
+export async function resolveGitBashPath(
   platform: NodeJS.Platform,
 ): Promise<string | undefined> {
   if (platform !== "win32") return undefined;
@@ -1170,8 +1170,8 @@ export function createSupervisedLocalHarnessProvider(
  * Resolved on both sides before comparison: a prefix test on the raw string
  * would accept `<root>/../../etc`, and this ends in a recursive delete.
  */
-async function removeSessionStateDir(dir: string): Promise<void> {
-  const root = resolve(localHarnessStateRoot());
+export async function removeSessionStateDir(dir: string): Promise<void> {
+  const root = resolve(`${localHarnessStateRoot()}-sessions`);
   const target = resolve(dir);
   if (target === root || !target.startsWith(root + sep)) {
     logger.warn("[local-harness] refusing to remove state outside the root", {
@@ -1198,5 +1198,5 @@ export function sessionStateDirFor(
       )} is not a single safe path segment`,
     );
   }
-  return join(stateRoot, "sessions", sessionId);
+  return join(`${stateRoot}-sessions`, sessionId);
 }
