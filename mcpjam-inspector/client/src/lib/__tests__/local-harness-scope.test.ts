@@ -25,8 +25,6 @@ describe("out of scope", () => {
     ["no harness at all — ordinary emulated chat", { ...IN_SCOPE, harnessId: null }],
     ["an unresolved harness", { ...IN_SCOPE, harnessId: undefined }],
     ["a scenario session", { ...IN_SCOPE, scenarioId: "cbx-1" }],
-    ["an environment run", { ...IN_SCOPE, environmentId: "env-1" }],
-    ["a surface forced onto the web route", { ...IN_SCOPE, requiresWebChatApi: true }],
     ["a shared or replayed run", { ...IN_SCOPE, sharedRun: true }],
   ])("excludes %s", (_label, input) => {
     expect(isLocalHarnessScope(input as never)).toBe(false);
@@ -49,3 +47,5 @@ describe("the feature flag is deliberately not one of the facts", () => {
     expect(isLocalHarnessScope(IN_SCOPE)).toBe(true);
   });
 });
+
+it("includes a member environment chat served by the web route on a local Inspector", () => { expect(isLocalHarnessScope({ ...IN_SCOPE, environmentId: "env-1", requiresWebChatApi: true })).toBe(true); });

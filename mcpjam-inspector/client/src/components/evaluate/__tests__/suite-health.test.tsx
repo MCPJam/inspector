@@ -231,4 +231,11 @@ describe("Suite Health", () => {
       buildSuiteHealth(rows, details, "s1", "style:claude").average,
     ).toBeNull();
   });
+
+  it("skips a finished run whose detail was read while it was still running", () => {
+    const { rows, details } = fixture();
+    details.get("new")!.run.status = "running";
+    const result = buildSuiteHealth(rows, details, "s1", "style:claude");
+    expect(result.points.map((point) => point.key)).toEqual(["run:old"]);
+  });
 });

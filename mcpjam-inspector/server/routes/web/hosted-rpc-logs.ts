@@ -9,6 +9,9 @@ import {
 import { consumeCrossInstanceHarnessScopeStepUpMessage } from "../../utils/harness/harness-scope-step-up.js";
 import { consumeCrossInstanceHarnessPolicyBlockMessage } from "../../utils/harness/harness-policy-block-channel.js";
 import { nextRpcLogEventId } from "../../services/rpc-log-event-id.js";
+import { HOSTED_MODE } from "../../config.js";
+import { projectHostedLogEnvelope } from "../../utils/hosted-upstream-projection.js";
+import { redactHostedTransportFailureText } from "../../utils/hosted-doctor-redaction.js";
 import type {
   HostedHttpLogEvent,
   HostedHttpLogsEnvelope,
@@ -176,7 +179,7 @@ export class HostedRpcLogCollector {
    */
   readonly httpLogger: HttpExchangeLogger = (exchange) => {
     const pluginOrigin = this.pluginOriginByServerId[exchange.serverId];
-    this.httpLogs.push({
+    const event: HostedHttpLogEvent = {
       // Same discipline as `rpcLogger`: identity belongs to the captured
       // exchange, not to whichever delivery happens to carry it.
       eventId: nextRpcLogEventId(),
@@ -185,7 +188,8 @@ export class HostedRpcLogCollector {
       timestamp: new Date().toISOString(),
       exchange,
       ...(pluginOrigin ? { pluginOrigin } : {}),
-    });
+    };
+    this.httpLogs.push(HOSTED_MODE ? projectHostedHttpLogEvent(event) : event);
     this.flushBufferedLogs();
   };
 
@@ -255,6 +259,36 @@ export class HostedRpcLogCollector {
       }
     }
   }
+}
+
+/**
+ * One HTTP exchange as a hosted response or stream part reports it (MJ-001):
+ * the same reduction hosted diagnostics apply — allowlisted response headers,
+ * request header values only for protocol headers, bounded status text, and
+ * transport errors in their uniform wording. Applied when the exchange is
+ * captured, so every delivery — `data-http-log` parts, `_httpLogs` envelopes —
+ * carries the reduced form.
+ */
+function projectHostedHttpLogEvent(
+  event: HostedHttpLogEvent
+): HostedHttpLogEvent {
+  const projected = projectHostedLogEnvelope(
+    { _httpLogs: [event] },
+    redactHostedTransportFailureText
+  )?._httpLogs;
+  return Array.isArray(projected) && projected.length === 1
+    ? (projected[0] as HostedHttpLogEvent)
+    : {
+        eventId: event.eventId,
+        serverId: event.serverId,
+        serverName: event.serverName,
+        timestamp: event.timestamp,
+        exchange: {
+          serverId: event.exchange.serverId,
+          request: { method: "", url: "", headers: {} },
+          durationMs: 0,
+        },
+      };
 }
 
 export function createHostedRpcLogCollector(
