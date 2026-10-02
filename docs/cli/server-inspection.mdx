@@ -55,6 +55,8 @@ mcpjam server doctor --command node --args server.js --cwd /path/to/project
 - Initialization info and negotiated capabilities
 - Counts: tools, resources, resource templates, prompts
 
+`ready` means the server let MCPJam connect and list without a token. It does not mean every tool is public: a server can still ask for sign-in when a protected tool is called. To check, call that tool with `mcpjam tools call`. A 401 challenge fails the call with `AUTH_REQUIRED`, and its details name the `mcpjam oauth login` command to run. A ChatGPT-style challenge returns the tool result with `_authChallenge` next to it. See [Mid-session sign-in](/inspector/lazy-authentication#the-cli-tests-and-evals-never-sign-in).
+
 The `--out <path>` flag writes the full JSON artifact to a file — useful for handoff to another engineer or agent.
 For stdio targets, those artifacts only record the explicit env keys you passed
 via `-e/--env`; inherited shell variables are not enumerated.

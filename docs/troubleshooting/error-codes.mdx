@@ -352,6 +352,25 @@ The server requires authentication that wasn't provided or is no longer valid.
 **Next steps**
 - Re-authenticate using the **Reconnect** button on the server card.
 - If using OAuth, run through the OAuth flow again from Servers.
+- From the CLI, sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`.
+
+If the server connected without a token and returned the 401 on one call, it is asking for sign-in for that call. See [Mid-session sign-in](/inspector/lazy-authentication).
+
+### Auth required
+
+`AUTH_REQUIRED`
+
+The MCP server allowed the connection and asked for sign-in on one call. The CLI and the [public API](/reference/public-api#errors) report this code. In the public API it comes with HTTP `403`, and `details.authChallenge` carries the parsed challenge. In the CLI, `details.challenge` carries the challenge and `details.hint` the command that signs in.
+
+This is not `UNAUTHORIZED`. `UNAUTHORIZED` means your MCPJam API key is missing or invalid. With `AUTH_REQUIRED`, your MCPJam credential is fine and the target MCP server wants a sign-in, so a different MCPJam key will not help.
+
+**Likely causes**
+- The server allows anonymous access to some tools and requires sign-in for this one.
+- The saved token for this server expired or was revoked.
+
+**Next steps**
+- Sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`. Add `--scopes` with the scope the challenge names, if any.
+- In the inspector, run the call from the **Tools** tab and use the **Connect** card. See [Mid-session sign-in](/inspector/lazy-authentication).
 
 ### Forbidden 403
 
@@ -477,6 +496,8 @@ The server reported `insufficient_scope`: the grant does not cover this operatio
 
 **Next steps**
 - Re-authorize and grant the scopes the server names in its challenge.
+- From the CLI, the command fails with `INSUFFICIENT_SCOPE`. Sign in again with `mcpjam oauth login --url <server-url> --scopes "<scope>" --credentials-out <file>`, using the scope the challenge names.
+- A `403` asks for more scopes on an existing sign-in. A server that wants a first sign-in for one call answers `401` instead; see [Auth required](#auth-required).
 
 ### Authorization server unreachable
 
