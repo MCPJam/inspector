@@ -4521,33 +4521,87 @@ export function useServerState({
       const isRegistry =
         !!storedOAuthConfig.registryServerId &&
         storedOAuthConfig.useRegistryOAuthProxy === true;
-      await importHostedOAuthTokens({
-        projectId: resolved.projectId,
-        serverId: resolved.serverId,
-        serverUrl,
-        ...(storedOAuthConfig.resourceUrl
-          ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
-          : {}),
-        // Forward the AS URL discovered by the debugger flow so the hosted
-        // backend can refresh without re-discovering against a resource it
-        // can't reach itself (e.g. localhost). Mirrors the live OAuth path in
-        // MCPOAuthProvider.saveTokens.
-        ...(tokens.authorizationServerUrl
-          ? { authorizationServerUrl: tokens.authorizationServerUrl }
-          : {}),
-        kind: isRegistry ? "registry" : "generic",
-        ...(isRegistry
-          ? {
-              registryServerId: storedOAuthConfig.registryServerId,
-              useRegistryOAuthProxy: true,
-            }
-          : {}),
-        clientInformation: {
-          clientId: tokens.clientId,
-          ...(tokens.clientSecret ? { clientSecret: tokens.clientSecret } : {}),
-        },
-        tokens: normalizedTokens,
-      });
+      const existingServer = appStateServersRef.current[serverName];
+      let authChange: {
+        expectedUpdatedAt: number;
+        previous: {
+          authMethod: string | null;
+          useOAuth: boolean | null;
+          useXaa: boolean | null;
+        };
+      } | null = null;
+      try {
+        // Resolve the saved target by project and id, never by a runtime name.
+        const rows = (await convex.query("servers:getProjectServers" as any, {
+          projectId: resolved.projectId,
+        })) as RemoteServer[];
+        const target = rows?.find(
+          (row) => row._id === resolved.serverId &&
+            remoteServerBelongsToProject(row, resolved.projectId)
+        );
+        if (!target) throw new Error("OAuth server is no longer in this project");
+        if (
+          target.useOAuth !== true ||
+          (target.authMethod !== undefined &&
+            target.authMethod !== "oauth" &&
+            target.authMethod !== "auto") ||
+          (target.authMethod === "auto" && target.useXaa)
+        ) {
+          authChange = await convexUpdateServer({
+            serverId: resolved.serverId,
+            projectId: resolved.projectId,
+            authMethod: "oauth",
+            useOAuth: true,
+            useXaa: false,
+            oauthImportTransition: { kind: "prepare" },
+          });
+          if (!authChange) throw new Error("Could not prepare OAuth token import");
+        }
+        await importHostedOAuthTokens({
+          projectId: resolved.projectId,
+          serverId: resolved.serverId,
+          serverUrl,
+          ...(storedOAuthConfig.resourceUrl
+            ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+            : {}),
+          // Forward the AS URL discovered by the debugger flow so the hosted
+          // backend can refresh without re-discovering against a resource it
+          // can't reach itself (e.g. localhost). Mirrors the live OAuth path in
+          // MCPOAuthProvider.saveTokens.
+          ...(tokens.authorizationServerUrl
+            ? { authorizationServerUrl: tokens.authorizationServerUrl }
+            : {}),
+          kind: isRegistry ? "registry" : "generic",
+          ...(isRegistry
+            ? {
+                registryServerId: storedOAuthConfig.registryServerId,
+                useRegistryOAuthProxy: true,
+              }
+            : {}),
+          clientInformation: {
+            clientId: tokens.clientId,
+            ...(tokens.clientSecret ? { clientSecret: tokens.clientSecret } : {}),
+          },
+          tokens: normalizedTokens,
+        });
+      } catch (error) {
+        let message = error instanceof Error
+          ? error.message
+          : "Could not store OAuth tokens";
+        if (authChange) {
+          try {
+            await convexUpdateServer({
+              serverId: resolved.serverId,
+              projectId: resolved.projectId,
+              oauthImportTransition: { kind: "rollback", ...authChange },
+            });
+          } catch {
+            message +=
+              ". Could not restore the previous auth settings. Check the server configuration.";
+          }
+        }
+        return { success: false, error: message };
+      }
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
       // Stamp the wire era on the config PERSISTED by CONNECT_SUCCESS.
@@ -4558,7 +4612,6 @@ export function useServerState({
       // 2026 OAuth flow is authoritative evidence of the sessionless era (this
       // is a flow completion, not a form save, so there is no downgrade
       // ambiguity — the profile reflects the flow that just ran).
-      const existingServer = appStateServersRef.current[serverName];
       const existingConfig = existingServer?.config;
       const existingWireVersion =
         existingConfig && "mcpProtocolVersion" in existingConfig
@@ -4639,6 +4692,8 @@ export function useServerState({
       storeInitInfo,
       guardedReconnectServer,
       withProjectConnectionDefaults,
+      convexUpdateServer,
+      convex,
     ],
   );
 

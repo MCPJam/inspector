@@ -170,6 +170,25 @@ describe("document case import", () => {
     );
   });
 
+  it("sends the suite's environment when there is nothing to pick", async () => {
+    // Several environments over one server set show no picker, but the
+    // server still refuses a multi-environment suite that names none.
+    renderWithProviders(
+      <ImportDatasetDialog {...props} environmentId="env-a" />,
+    );
+    upload();
+    fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
+    await waitFor(() =>
+      expect(authoringRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: "start",
+          input: expect.objectContaining({ environmentId: "env-a" }),
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
   it("labels file sizes and validation messages in KB", () => {
     renderWithProviders(<ImportDatasetDialog {...props} />);
     expect(screen.getByText(/Up to 100 KB/)).toBeVisible();
