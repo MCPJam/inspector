@@ -538,6 +538,12 @@ export async function driveHostedEvalTurn(
     outputTokens: acc.accumulatedUsage.outputTokens ?? 0,
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
   };
+  // The reasoning / cached-input breakdown at turn start. Kept apart from
+  // `baselineUsage` (the live step sinks only roll the three totals).
+  const baselineBreakdown: UsageTotals = {
+    reasoningTokens: acc.accumulatedUsage.reasoningTokens,
+    cachedInputTokens: acc.accumulatedUsage.cachedInputTokens,
+  };
 
   // Per-turn tool-call accumulator. Index by `promptIndex` (get-or-create)
   // rather than `push()` so a widget `ui/message` follow-up turn — which
@@ -979,6 +985,12 @@ export async function driveHostedEvalTurn(
       baselineUsage.outputTokens + (turnResult.usage.outputTokens ?? 0);
     acc.accumulatedUsage.totalTokens =
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
+    for (const key of ["reasoningTokens", "cachedInputTokens"] as const) {
+      const turnValue = turnResult.usage[key];
+      if (typeof turnValue === "number") {
+        acc.accumulatedUsage[key] = (baselineBreakdown[key] ?? 0) + turnValue;
+      }
+    }
   }
 
   // Per-turn tool calls — rebuilt from the new messages only, then run

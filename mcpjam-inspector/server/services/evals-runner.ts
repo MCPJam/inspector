@@ -26,6 +26,7 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -5583,11 +5584,7 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    const usageFinal: UsageTotals = {
-      inputTokens: acc.accumulatedUsage.inputTokens,
-      outputTokens: acc.accumulatedUsage.outputTokens,
-      totalTokens: acc.accumulatedUsage.totalTokens,
-    };
+    const usageFinal: UsageTotals = copyUsageTotals(acc.accumulatedUsage);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
@@ -5858,11 +5855,7 @@ const runLocalIteration = async ({
           actualToolCalls: extractToolCallsFromConversation({
             messages: failMessages,
           }),
-          usage: {
-            inputTokens: acc.accumulatedUsage.inputTokens,
-            outputTokens: acc.accumulatedUsage.outputTokens,
-            totalTokens: acc.accumulatedUsage.totalTokens,
-          },
+          usage: copyUsageTotals(acc.accumulatedUsage),
           prompts: promptTraceSummaries,
         }),
       );
@@ -5890,11 +5883,7 @@ const runLocalIteration = async ({
       ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
-      usage: {
-        inputTokens: acc.accumulatedUsage.inputTokens,
-        outputTokens: acc.accumulatedUsage.outputTokens,
-        totalTokens: acc.accumulatedUsage.totalTokens,
-      },
+      usage: copyUsageTotals(acc.accumulatedUsage),
       messages: failMessages,
       // Gated exactly as on the success path: a model-free case carries a
       // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be

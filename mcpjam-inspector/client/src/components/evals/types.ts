@@ -873,12 +873,24 @@ export type EvalRunMetrics = {
   costUsd?: number;
   costedIterations: number;
   hasRunnerReportedCost: boolean;
+  /**
+   * One entry per (model × effective reasoning effort), first-seen order. The
+   * optional fields are absent on rollups written before they existed and
+   * when not measured.
+   */
   models: Array<{
     model: string;
     total: number;
     passed: number;
     failed: number;
     timedOut: number;
+    /** The effort the entry's iterations ran at; absent: ran with none. */
+    reasoningEffort?: string;
+    /** Summed priced cost; absent when none of the entry's iterations was priced. */
+    costUsd?: number;
+    costedIterations?: number;
+    /** Summed reasoning tokens; absent when no iteration reported any. */
+    reasoningTokens?: number;
   }>;
 };
 
