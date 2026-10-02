@@ -95,6 +95,7 @@ import {
 } from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
+import { getConfiguredInspectorServiceToken } from "../../middleware/internal-service-auth.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import {
   ensureLocalBrowserSession,
@@ -2611,6 +2612,64 @@ function unattendedOwnerKey(opts: BrowserToolsOptions): string | undefined {
   return scope?.kind === "swarm" ? `swarm:${scope.swarmId}:${run}` : run;
 }
 
+export const SAVED_PROFILE_UNAVAILABLE_NOTICE =
+  "The saved browser profile was not applied: this server can't load saved profiles.";
+
+export const SAVED_PROFILE_LOAD_FAILED_NOTICE =
+  "The saved browser profile could not be loaded, so the browser started with a blank profile.";
+
+/**
+ * The saved profile archive for a local browser's first boot, or null to boot
+ * with a blank profile.
+ *
+ * A saved profile is a nice-to-have on top of a browser, never a precondition
+ * for one: the backend attaches the user's default profile to every new
+ * conversation session, so a profile that cannot be fetched must not cost the
+ * user the browser itself. Both ways it can go wrong boot blank, say so once
+ * in the chat, and log it:
+ *
+ *  - This server holds no inspector service token (local and desktop
+ *    installs). The backend hands an archive location only to a caller that
+ *    holds one, so the download is not attempted at all.
+ *  - The download fails. Only a caller that hung up gets its own abort back.
+ */
+export async function downloadSavedProfileForLocalBoot(args: {
+  service: Pick<BrowserSessionService, "downloadProfile">;
+  projectId: string;
+  profileId: string;
+  bearer: string;
+  signal?: AbortSignal;
+  onNotice?: (notice: string) => void;
+}): Promise<Uint8Array | null> {
+  if (!getConfiguredInspectorServiceToken()) {
+    logger.info(
+      "[built-in-tools] saved browser profile not applied: this server holds no service token to load it with",
+      { projectId: args.projectId },
+    );
+    args.onNotice?.(SAVED_PROFILE_UNAVAILABLE_NOTICE);
+    return null;
+  }
+  try {
+    return await args.service.downloadProfile({
+      projectId: args.projectId,
+      profileId: args.profileId,
+      bearer: args.bearer,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+  } catch (error) {
+    if (args.signal?.aborted) throw error;
+    logger.warn(
+      "[built-in-tools] saved browser profile could not be loaded; booting with a blank profile",
+      {
+        projectId: args.projectId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    args.onNotice?.(SAVED_PROFILE_LOAD_FAILED_NOTICE);
+    return null;
+  }
+}
+
 /** The session path for an engine — the ONE seam between the two. */
 function defaultEnsureSession(
   engine: BrowserEngine,
@@ -2691,11 +2750,13 @@ function defaultEnsureSession(
         service.enabled &&
         logical?.profileId &&
         !logical.lastBootId
-          ? await service.downloadProfile({
+          ? await downloadSavedProfileForLocalBoot({
+              service,
               projectId,
               profileId: logical.profileId,
               bearer,
               ...(signal ? { signal } : {}),
+              onNotice: opts.onBrowserNotice,
             })
           : null;
       const handle = await ensureLocalBrowserSession({

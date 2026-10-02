@@ -48,16 +48,12 @@ const LOCAL_TARGET =
   /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(BASE);
 
 async function sessionToken(): Promise<string> {
-  const res = await fetch(`${BASE}/api/session-token`, {
-    headers: { Origin: ORIGIN },
-  });
+  const token = process.env.MCPJAM_SESSION_TOKEN;
   expect(
-    res.ok,
-    "the inspector should serve its session token to localhost",
-  ).toBe(true);
-  const body = (await res.json()) as { token?: string };
-  expect(body.token, "session token").toBeTruthy();
-  return body.token!;
+    token,
+    "the test launcher must provide its access credential",
+  ).toBeTruthy();
+  return token!;
 }
 
 /**
@@ -887,7 +883,9 @@ test.describe("WebMCP viewport frame stream", () => {
         type: "frame-geometry",
         description:
           `dpr 2: ${socket.frames[0]!.deviceWidth}x` +
-          `${socket.frames[0]!.deviceHeight} at scale ${socket.frames[0]!.scale}`,
+          `${socket.frames[0]!.deviceHeight} at scale ${
+            socket.frames[0]!.scale
+          }`,
       });
     } finally {
       socket?.close();

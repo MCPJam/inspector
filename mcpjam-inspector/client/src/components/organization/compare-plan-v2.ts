@@ -37,6 +37,28 @@ export function buildV2ComparePlanSections(
   };
   const sso = (plan: OrganizationPlan) =>
     catalog.plans[plan]?.features.sso ? check : unavailable;
+  const projects = (plan: OrganizationPlan) => {
+    const limit = catalog.plans[plan]?.limits.maxProjects;
+    return text(limit == null ? "Unlimited" : limit.toLocaleString("en-US"));
+  };
+  const rollover = (plan: OrganizationPlan) => {
+    const cap = catalog.plans[plan]?.rollover;
+    if (cap) return text(`Up to ${cap.capCredits.toLocaleString("en-US")}`);
+    return plan === "enterprise" ? text("Custom") : unavailable;
+  };
+  const topUp = (plan: OrganizationPlan) => {
+    const entry = catalog.plans[plan]?.topUp;
+    if (!entry?.eligible) return unavailable;
+    if (plan === "enterprise") return text("Custom");
+    const perThousand = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: catalog.currency,
+      minimumFractionDigits: 0,
+    }).format((entry.centsPerCredit * 1000) / 100);
+    return text(`${perThousand} / 1,000 credits`);
+  };
+  const cicd = (plan: OrganizationPlan) =>
+    catalog.plans[plan]?.features.cicd ? check : unavailable;
   return [
     {
       title: "Usage",
@@ -58,6 +80,27 @@ export function buildV2ComparePlanSections(
           seats("team"),
           seats("enterprise"),
         ),
+        row(
+          "Projects",
+          projects("free"),
+          projects("pro"),
+          projects("team"),
+          projects("enterprise"),
+        ),
+        row(
+          "Monthly credit roll-over",
+          rollover("free"),
+          rollover("pro"),
+          rollover("team"),
+          rollover("enterprise"),
+        ),
+        row(
+          "Additional credits",
+          topUp("free"),
+          topUp("pro"),
+          topUp("team"),
+          topUp("enterprise"),
+        ),
         row("BYOK", check),
       ],
     },
@@ -68,6 +111,16 @@ export function buildV2ComparePlanSections(
         row("OAuth / XAA Debugger", check),
         row("User Acceptance Testing", check),
         row("Evaluations", check),
+        row("Swarm", check),
+        row(
+          "CI/CD checks",
+          cicd("free"),
+          cicd("pro"),
+          cicd("team"),
+          cicd("enterprise"),
+        ),
+        row("Skills", check),
+        row("WebMCP", check),
         row("Eval history", text("30 days"), text("Unlimited")),
         row("Triage Insights", check),
         row("Traces history", text("30 days"), text("Unlimited")),
