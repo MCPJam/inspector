@@ -75,6 +75,14 @@ export function parseDevelopmentSelector(raw) {
   return match[1];
 }
 
+function originOrNull(value) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function deploymentAddresses(name) {
   return {
     cloudUrl: `https://${name}.convex.cloud`,
@@ -194,12 +202,20 @@ export async function setupGuestAuth({
     ? fs.readFileSync(profilePath, "utf8")
     : "";
   const existing = parseEnvText(existingText);
-  for (const key of ["CONVEX_HTTP_URL", "CONVEX_URL", "VITE_CONVEX_URL"]) {
+  // Exact origins only: the deployment's credentials are about to join this
+  // profile, and a lookalike host (`https://<name>.attacker.example`) kept
+  // here would receive them on every guest request.
+  const expectedOrigins = {
+    CONVEX_HTTP_URL: addresses.siteUrl,
+    CONVEX_URL: addresses.cloudUrl,
+    VITE_CONVEX_URL: addresses.cloudUrl,
+  };
+  for (const [key, expected] of Object.entries(expectedOrigins)) {
     const value = existing[key];
-    if (value && !value.includes(`://${name}.`)) {
+    if (value && originOrNull(value) !== expected) {
       throw new SetupError(
-        `${envFile} already points ${key} at another backend. A profile names ` +
-          "one backend; use a separate --env-file for this deployment.",
+        `${envFile} already points ${key} somewhere other than ${expected}. A ` +
+          "profile names one backend; use a separate --env-file for this deployment.",
       );
     }
   }

@@ -263,18 +263,59 @@ test("refuses a half-present key pair instead of repairing it", async () => {
   }
 });
 
+test("keeps a profile that already names the deployment's exact addresses", async () => {
+  const { file, done } = scratch();
+  try {
+    writeFileSync(
+      file,
+      [
+        "CONVEX_HTTP_URL=https://happy-otter-123.convex.site/",
+        "VITE_CONVEX_URL=https://happy-otter-123.convex.cloud",
+      ].join("\n") + "\n",
+    );
+    const result = await setupGuestAuth({
+      selector: "dev:happy-otter-123",
+      envFile: file,
+      convex: fakeConvex(),
+    });
+    assert.equal(result.applied, true);
+    const profile = parseEnvText(readFileSync(file, "utf8"));
+    assert.equal(
+      profile.CONVEX_HTTP_URL,
+      "https://happy-otter-123.convex.site/",
+    );
+    assert.equal(profile.CONVEX_URL, "https://happy-otter-123.convex.cloud");
+  } finally {
+    done();
+  }
+});
+
 test("refuses a profile that names another backend, and never overwrites a profile secret", async () => {
   const { file, done } = scratch();
   try {
-    writeFileSync(file, "CONVEX_HTTP_URL=https://someone-else-9.convex.site\n");
-    await assert.rejects(
-      setupGuestAuth({
-        selector: "dev:happy-otter-123",
-        envFile: file,
-        convex: fakeConvex(),
-      }),
-      /another backend/,
-    );
+    // Another deployment, and lookalikes that merely contain the name: the
+    // deployment's shared secret must never be added beside them.
+    for (const line of [
+      "CONVEX_HTTP_URL=https://someone-else-9.convex.site",
+      "CONVEX_HTTP_URL=https://happy-otter-123.attacker.example",
+      "CONVEX_HTTP_URL=https://happy-otter-123.convex.site.attacker.example",
+      "VITE_CONVEX_URL=https://happy-otter-123.convex.site",
+      "CONVEX_URL=not a url",
+    ]) {
+      writeFileSync(file, `${line}\n`);
+      const convex = fakeConvex();
+      await assert.rejects(
+        setupGuestAuth({
+          selector: "dev:happy-otter-123",
+          envFile: file,
+          convex,
+        }),
+        /somewhere other than https:\/\/happy-otter-123\.convex\./,
+        line,
+      );
+      assert.deepEqual(convex.sets, [], line);
+      assert.equal(readFileSync(file, "utf8"), `${line}\n`, line);
+    }
 
     writeFileSync(
       file,
