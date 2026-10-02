@@ -64,6 +64,7 @@ import { type RequestedModelSelection } from "@mcpjam/sdk";
 import {
   ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
   computedModelId,
+  modelSelectionSchema,
   requestedModelSelectionSchema,
   selectionModelMismatch,
   selectionOriginField,
@@ -3753,6 +3754,12 @@ const requestRunJudgeSchema = z
     enable: z.boolean().optional(),
     /** Judge model for THIS run only. */
     model: z.string().min(1).optional(),
+    /**
+     * The judge's full selection for THIS run only (source, connection,
+     * reasoning effort). Must name `model` when both are sent; sent alone it
+     * names the judge model. Judges run on MCPJam-hosted models only.
+     */
+    modelSelection: modelSelectionSchema.optional(),
     /** Pass threshold for THIS run only, 0–1. */
     threshold: z.number().min(0).max(1).optional(),
   })
@@ -5985,6 +5992,19 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
   if (parsed.model !== undefined) override.judgeModel = parsed.model;
+  if (parsed.modelSelection !== undefined) {
+    if (
+      parsed.model !== undefined &&
+      parsed.model.trim() !== parsed.modelSelection.modelId
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `modelSelection.modelId (${parsed.modelSelection.modelId}) does not match model (${parsed.model}).`,
+      );
+    }
+    override.judgeSelection = parsed.modelSelection;
+  }
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {

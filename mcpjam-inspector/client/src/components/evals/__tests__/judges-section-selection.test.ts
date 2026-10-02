@@ -51,6 +51,22 @@ describe("judgeModelPatch", () => {
     });
   });
 
+  it("resolves a bare id like a stored choice: the hosted row, not the first id match", () => {
+    expect(
+      judgeModelPatch("anthropic/claude-haiku-4.5", [
+        orgOpenRouterTwin,
+        hosted,
+      ]).judgeSelection,
+    ).toMatchObject({ source: "hosted" });
+  });
+
+  it("saves exactly the row the picker hands over", () => {
+    expect(
+      judgeModelPatch(orgOpenRouterTwin, [hosted, orgOpenRouterTwin])
+        .judgeSelection,
+    ).toMatchObject({ source: "org" });
+  });
+
   it("clears both for the managed default", () => {
     expect(judgeModelPatch(MANAGED_DEFAULT_JUDGE_MODEL, [hosted])).toEqual({
       judgeModel: undefined,
