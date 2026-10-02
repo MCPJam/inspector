@@ -638,6 +638,11 @@ export interface LiveClientState extends BaseClientState {
   connectPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   retryPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   initializedClientCapabilities?: ClientCapabilityOptions;
+  /**
+   * The last 401/403 challenge seen on this HTTP connection. Read back when an
+   * auth provider's error dropped the header.
+   */
+  authChallengeRecorder?: import("./http-error-fetch.js").AuthChallengeRecorder;
 }
 
 // ============================================================================

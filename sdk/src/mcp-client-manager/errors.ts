@@ -2,6 +2,11 @@
  * Custom error classes for MCP SDK
  */
 
+import {
+  parseAuthChallengeSignal,
+  type AuthChallengeSignal,
+} from "./auth-challenge.js";
+
 /**
  * Base error class for all MCP SDK errors
  */
@@ -439,11 +444,82 @@ export function extractInsufficientScopeChallenge(
         ? node.errorDescription
         : undefined;
 
-    if (requiredScope || resourceMetadataUrl || errorDescription) {
-      return { requiredScope, resourceMetadataUrl, errorDescription };
-    }
-    return undefined;
+    // A challenge with no scope and no metadata pointer is still a step-up
+    // request: the authorization flow falls back to discovery's scope
+    // selection (the requested scopes, then `scopes_supported`), as the MCP
+    // authorization spec and Claude do. It used to be dropped here, which left
+    // a bare `Bearer error="insufficient_scope"` with no way forward.
+    return { requiredScope, resourceMetadataUrl, errorDescription };
   });
+}
+
+/**
+ * Recognize a sign-in challenge anywhere in an error's cause chain.
+ *
+ * Three shapes reach a caller:
+ *   - the `SdkHttpError` the HTTP error fetch throws for a `401` on a protected
+ *     operation, which carries the parsed challenge as `data.authChallenge`;
+ *   - an upstream `InsufficientScopeError` (a `403 insufficient_scope`), mapped
+ *     to `source: "http_403_insufficient_scope"`. Unlike
+ *     `extractInsufficientScopeChallenge`, a scope-less one still counts;
+ *   - an error the manager attached a recorded challenge to (`authChallenge`),
+ *     which is how the auth-provider path keeps a header the transport drops.
+ *
+ * Every field originates from the resource server. Treat it as untrusted.
+ */
+export function extractAuthChallenge(
+  error: unknown,
+): AuthChallengeSignal | undefined {
+  return findInCauseChain(error, (node) => {
+    const fromData = parseAuthChallengeSignal(node?.data?.authChallenge);
+    if (fromData) return fromData;
+    const attached = parseAuthChallengeSignal(node?.authChallenge);
+    if (attached) return attached;
+    if (!isInsufficientScopeNode(node)) return undefined;
+    const challenge = extractInsufficientScopeChallenge(node);
+    return {
+      source: "http_403_insufficient_scope",
+      error: "insufficient_scope",
+      ...(challenge?.requiredScope
+        ? { requiredScope: challenge.requiredScope }
+        : {}),
+      ...(challenge?.resourceMetadataUrl
+        ? { resourceMetadataUrl: challenge.resourceMetadataUrl }
+        : {}),
+      ...(challenge?.errorDescription
+        ? { errorDescription: challenge.errorDescription }
+        : {}),
+      facets: {
+        challengeHeader: "bearer",
+        hasResourceMetadata: challenge?.resourceMetadataUrl !== undefined,
+        hasScope: challenge?.requiredScope !== undefined,
+        hasErrorParams: challenge?.errorDescription !== undefined,
+      },
+    } satisfies AuthChallengeSignal;
+  });
+}
+
+/**
+ * Attach a challenge to an error that lost it (the auth-provider path), so
+ * `extractAuthChallenge` finds it. No-op when the error already carries one or
+ * cannot hold a property.
+ */
+export function attachAuthChallenge(
+  error: unknown,
+  challenge: AuthChallengeSignal,
+): void {
+  if (!error || typeof error !== "object") return;
+  if (extractAuthChallenge(error)) return;
+  try {
+    Object.defineProperty(error, "authChallenge", {
+      value: challenge,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // A frozen error keeps its message; the challenge is diagnostic only.
+  }
 }
 
 /**

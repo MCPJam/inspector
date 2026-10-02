@@ -6,7 +6,10 @@ import {
   PROTOCOL_VERSION_META_KEY,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { wrapFetchForHttpErrors } from "../src/mcp-client-manager/http-error-fetch.js";
+import {
+  wrapFetchForHttpErrors,
+  type AuthChallengeRecorder,
+} from "../src/mcp-client-manager/http-error-fetch.js";
 
 const url = new URL("https://example.test/mcp");
 const challenge =
@@ -92,11 +95,111 @@ describe("Streamable HTTP error diagnostics", () => {
     expect(error).toBeInstanceOf(SdkHttpError);
     expect(error.status).toBe(401);
     expect(error.statusText).toBe("Unauthorized");
-    expect(error.code).toBe(SdkErrorCode.ClientHttpNotImplemented);
-    expect(error.data).toMatchObject({ status: 401, text: "" });
+    expect(error.code).toBe(SdkErrorCode.ClientHttpAuthentication);
+    expect(error.data).toMatchObject({
+      status: 401,
+      text: "",
+      authChallenge: {
+        source: "http_401",
+        resourceMetadataUrl:
+          "https://example.test/.well-known/oauth-protected-resource/mcp",
+        facets: {
+          challengeHeader: "bearer",
+          hasResourceMetadata: true,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      },
+    });
     expect(error.message).toContain("HTTP 401 Unauthorized");
     expect(error.message).toContain("(empty body)");
     expect(error.message).toContain(`WWW-Authenticate: ${challenge}`);
+  });
+
+  it.each(["resources/read", "prompts/get"])(
+    "preserves a 401 challenge on %s, which the transport would drop",
+    async (method) => {
+      const transport = transportFor(
+        vi.fn(
+          async () =>
+            new Response(null, {
+              status: 401,
+              headers: {
+                "WWW-Authenticate": 'Bearer scope="orders:read"',
+              },
+            })
+        ) as typeof fetch
+      );
+      const error = await transport
+        .send({ ...request, method, params: { uri: "orders://recent" } })
+        .catch((error) => error);
+      expect(error).toBeInstanceOf(SdkHttpError);
+      expect(error.status).toBe(401);
+      expect(error.data.authChallenge).toMatchObject({
+        source: "http_401",
+        requiredScope: "orders:read",
+        facets: { challengeHeader: "bearer", hasScope: true },
+      });
+    }
+  );
+
+  it.each([
+    [undefined, "none"],
+    ["Bearer", "bearer"],
+    ['Basic realm="x"', "other-scheme"],
+  ])(
+    "recognizes a 401 with WWW-Authenticate %j as a challenge",
+    async (header, challengeHeader) => {
+      const transport = transportFor(
+        vi.fn(
+          async () =>
+            new Response(null, {
+              status: 401,
+              headers: header ? { "WWW-Authenticate": header } : {},
+            })
+        ) as typeof fetch
+      );
+      const error = await transport.send(request).catch((error) => error);
+      expect(error.data.authChallenge).toMatchObject({
+        source: "http_401",
+        facets: { challengeHeader },
+      });
+    }
+  );
+
+  it("classifies a non-insufficient-scope 403 as forbidden, with no sign-in challenge", async () => {
+    const transport = transportFor(
+      vi.fn(
+        async () =>
+          new Response("no", {
+            status: 403,
+            headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' },
+          })
+      ) as typeof fetch
+    );
+    const error = await transport.send(request).catch((error) => error);
+    expect(error.code).toBe(SdkErrorCode.ClientHttpForbidden);
+    expect(error.data).not.toHaveProperty("authChallenge");
+  });
+
+  it("records the challenge for the auth-provider path, which drops the header", async () => {
+    const recorder: AuthChallengeRecorder = {};
+    const response = new Response(null, {
+      status: 401,
+      headers: { "WWW-Authenticate": challenge },
+    });
+    const wrapped = wrapFetchForHttpErrors(
+      vi.fn(async () => response) as typeof fetch,
+      true,
+      recorder
+    );
+    expect(
+      await wrapped(url, { method: "POST", body: JSON.stringify(request) })
+    ).toBe(response);
+    expect(recorder.last).toMatchObject({
+      status: 401,
+      challenge: { source: "http_401", facets: { challengeHeader: "bearer" } },
+    });
   });
 
   it("preserves a non-empty response body even without a reason phrase", async () => {

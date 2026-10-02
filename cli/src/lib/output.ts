@@ -1,3 +1,9 @@
+import {
+  extractAuthChallenge,
+  isUnauthorized401,
+  type AuthChallengeSignal,
+} from "@mcpjam/sdk";
+
 export type OutputFormat = "json" | "human";
 
 const DEFAULT_OUTPUT_FORMAT: OutputFormat = "json";
@@ -38,6 +44,70 @@ export function operationalError(message: string, details?: unknown): CliError {
   return new CliError("OPERATIONAL_ERROR", message, 1, details);
 }
 
+/**
+ * The command that obtains a token for a server that asked for sign-in.
+ * `--scopes` only when the challenge named them; otherwise the server's
+ * metadata decides.
+ */
+/**
+ * A challenge's `scope` is the server's text, and it lands inside a command a
+ * person may paste into a shell. Quoted as-is it could expand there, so only
+ * plain scope tokens are shown; anything else becomes a placeholder.
+ */
+export function displayableScope(scope: string | undefined): string | undefined {
+  if (scope === undefined) return undefined;
+  return /^[A-Za-z0-9._:/@+-]+(?: [A-Za-z0-9._:/@+-]+)*$/.test(scope)
+    ? scope
+    : "<scopes>";
+}
+
+export function authChallengeHint(
+  challenge: Pick<AuthChallengeSignal, "requiredScope">,
+  serverUrl?: string,
+): string {
+  const scope = displayableScope(challenge.requiredScope);
+  const scopes = scope ? ` --scopes "${scope}"` : "";
+  return `Sign in with \`mcpjam oauth login --url ${
+    serverUrl ?? "<server-url>"
+  }${scopes} --credentials-out <file>\`, then retry with \`--credentials-file <file>\`.`;
+}
+
+/**
+ * Classify a server's sign-in challenge before anything reads the message
+ * text: an `error_description` is the server's prose and may say "connect".
+ */
+function authChallengeCliError(
+  error: unknown,
+  message: string,
+): CliError | undefined {
+  const challenge = extractAuthChallenge(error);
+  if (challenge?.source === "http_403_insufficient_scope") {
+    return cliError("INSUFFICIENT_SCOPE", message, 1, {
+      challenge,
+      hint: authChallengeHint(challenge),
+    });
+  }
+  if (challenge?.source === "http_401") {
+    return cliError("AUTH_REQUIRED", message, 1, {
+      challenge,
+      hint: authChallengeHint(challenge),
+    });
+  }
+  // An MCP client auth failure that kept no challenge (e.g. a connect-time
+  // 401). Narrow on purpose: an MCPJam API 401 is a different problem with a
+  // different fix, and must not be told to run `oauth login`.
+  const name = error instanceof Error ? error.name : undefined;
+  if (
+    (name === "MCPAuthError" || name === "UnauthorizedError") &&
+    isUnauthorized401(error)
+  ) {
+    return cliError("AUTH_REQUIRED", message, 1, {
+      hint: authChallengeHint({}),
+    });
+  }
+  return undefined;
+}
+
 export function normalizeCliError(error: unknown): CliError {
   if (error instanceof CliError) {
     return error;
@@ -45,6 +115,12 @@ export function normalizeCliError(error: unknown): CliError {
 
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+
+  const authError = authChallengeCliError(error, message);
+  if (authError) {
+    return authError;
+  }
+
   const lower = message.toLowerCase();
 
   if (lower.includes("timed out") || lower.includes("timeout")) {

@@ -34,7 +34,9 @@
  * FEATURE_NOT_SUPPORTED/SERVER_UNREACHABLE/TIMEOUT/INTERNAL_ERROR (see
  * routes/web/errors.ts `ErrorCode`). The public union adopts those verbatim and
  * adds OAUTH_REQUIRED so callers (our MCP worker, CLI, agents) can distinguish
- * "this server needs an OAuth grant" from a generic 401. Draft-only codes
+ * "this server needs an OAuth grant" from a generic 401, and AUTH_REQUIRED for
+ * a server that allowed the connection and asked for sign-in on one call
+ * (`details.authChallenge` carries the parsed challenge). Draft-only codes
  * UPSTREAM_ERROR/TOOL_TIMEOUT are NOT public; they collapse to
  * SERVER_UNREACHABLE/TIMEOUT at the boundary (see INTERNAL_TO_V1_CODE). Adding
  * codes is backward-compatible; removing or repurposing one is breaking.
@@ -60,6 +62,7 @@ export const V1_ERROR_CODES = [
   "TIMEOUT",
   "OAUTH_REQUIRED",
   "GENERATION_FAILED",
+  "AUTH_REQUIRED",
   "INTERNAL_ERROR",
 ] as const;
 
@@ -98,6 +101,10 @@ export const V1_ERROR_STATUS: Record<V1ErrorCode, number> = {
   TIMEOUT: 504,
   OAUTH_REQUIRED: 401,
   GENERATION_FAILED: 502,
+  // 403, not 401: the caller's MCPJam credential is fine. The target MCP
+  // server asked for sign-in for one call (`details.authChallenge`), and a
+  // client that reads 401 as "your API key is bad" must not do so here.
+  AUTH_REQUIRED: 403,
   INTERNAL_ERROR: 500,
 };
 
