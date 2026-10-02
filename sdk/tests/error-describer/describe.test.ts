@@ -1054,6 +1054,24 @@ describe("an MCP server's HTTP error answer", () => {
     expect(describeError(error).slug).toBe("server/http_error");
   });
 
+  it("names both statuses when the attempts failed differently, the Streamable one first", () => {
+    // A Streamable HTTP 500, then a modern-only server's 405 to the SSE GET.
+    const error = new Error(
+      'Failed to connect to MCP server "srv" using HTTP transports. Streamable HTTP error: Version negotiation failed: the server answered the probe with HTTP 500. SSE error: SSE error: Non-200 status code (405).',
+      { cause: new SseError(405, "Non-200 status code (405)", {} as ErrorEvent) },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: httpError(500, "Internal Server Error"),
+      enumerable: false,
+    });
+    const d = describeError(error);
+    expect(d.slug).toBe("server/http_error");
+    expect(d.rawCode).toBe(500);
+    expect(d.oneLine).toBe(
+      "The MCP server answered the request with HTTP 500, then with HTTP 405 to the SSE fallback.",
+    );
+  });
+
   it("finds the status through the era-negotiation wrapper", () => {
     const error = makeError("negotiation failed", {
       name: "SdkError",

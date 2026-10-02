@@ -119,6 +119,46 @@ describe("describeHostedConnectFailure", () => {
     );
   });
 
+  describe("a connect failure where both attempts got an HTTP error", () => {
+    class SseError extends Error {
+      constructor(readonly code: number) {
+        super("UNEXPECTED_MARKER_TEXT");
+      }
+    }
+    /** Streamable HTTP answered `streamable`; the SSE fallback, `sse`. */
+    function combined(streamable: number, streamableText: string, sse: number) {
+      const error = new Error("UNEXPECTED_MARKER_WRAPPER", {
+        cause: new SseError(sse),
+      });
+      Object.defineProperty(error, "streamableCause", {
+        value: named("SdkHttpError", {
+          status: streamable,
+          statusText: streamableText,
+        }),
+        enumerable: false,
+      });
+      return error;
+    }
+
+    it("names both statuses, the Streamable request's first", () => {
+      expect(
+        describeHostedConnectFailure(
+          combined(500, "Internal Server Error", 405),
+          answeredLogs,
+        ).message,
+      ).toBe(
+        "The MCP server responded with HTTP 500 Internal Server Error, then with HTTP 405 to the SSE fallback.",
+      );
+    });
+
+    it("names one status when both attempts got the same one", () => {
+      expect(
+        describeHostedConnectFailure(combined(404, "Not Found", 404), answeredLogs)
+          .message,
+      ).toBe("The MCP server responded with HTTP 404.");
+    });
+  });
+
   it("reports a version pin refusal with the versions that parse", () => {
     const failure = describeHostedConnectFailure(
       named("ProtocolVersionPinUnsupported", {

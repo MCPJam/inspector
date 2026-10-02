@@ -141,12 +141,26 @@ export function upstreamTransportStatus(error: unknown): number | undefined {
  * answers the fallback GET with 405, so that status is not why it failed.
  */
 export function onlyFallbackAnswered(error: unknown): boolean {
+  const attempts = combinedAttempts(error);
+  return (
+    attempts !== undefined &&
+    upstreamTransportStatus(attempts.streamable) === undefined
+  );
+}
+
+/**
+ * A combined connect failure's two attempts: the Streamable HTTP request
+ * (`streamableCause`) and the SSE fallback (`cause`) beside it.
+ */
+function combinedAttempts(
+  error: unknown,
+): { streamable: unknown; fallback: unknown } | undefined {
   for (const node of errorChain(error)) {
     const streamable = read(node, "streamableCause");
     if (streamable === undefined) continue;
-    return upstreamTransportStatus(streamable) === undefined;
+    return { streamable, fallback: read(node, "cause") };
   }
-  return false;
+  return undefined;
 }
 
 function statusLineFromChain(error: unknown): StatusLine | undefined {
@@ -211,8 +225,46 @@ function findStatusLine(
 ): StatusLine | undefined {
   const fromChain = statusLineFromChain(error);
   if (!fromChain) return statusLineFromLogs(logs);
-  if (typeof fromChain.statusText === "string") return fromChain;
-  return statusLineFromLogs(logs, fromChain.status) ?? fromChain;
+  return completeStatusLine(fromChain, logs);
+}
+
+/** A status line with its reason phrase filled in from the logs if missing. */
+function completeStatusLine(
+  line: StatusLine,
+  logs: Record<string, unknown> | undefined,
+): StatusLine {
+  if (typeof line.statusText === "string") return line;
+  return statusLineFromLogs(logs, line.status) ?? line;
+}
+
+/**
+ * Both answers of a combined connect failure whose two attempts failed with
+ * DIFFERENT HTTP error statuses — a Streamable HTTP 500, then the SSE
+ * fallback's 405. Reporting one status would let the fallback's hide the real
+ * request's. Only statuses the attempts themselves carry count, never the logs'
+ * last answer.
+ */
+function bothAttemptStatusLines(
+  error: unknown,
+  logs: Record<string, unknown> | undefined,
+): { streamable: StatusLine; fallback: StatusLine } | undefined {
+  const attempts = combinedAttempts(error);
+  if (!attempts) return undefined;
+  const streamable = statusLineFromChain(attempts.streamable);
+  const fallback = statusLineFromChain(attempts.fallback);
+  if (
+    !streamable ||
+    !fallback ||
+    streamable.status < 400 ||
+    fallback.status < 400 ||
+    streamable.status === fallback.status
+  ) {
+    return undefined;
+  }
+  return {
+    streamable: completeStatusLine(streamable, logs),
+    fallback: completeStatusLine(fallback, logs),
+  };
 }
 
 function findEgressRefusal(error: unknown): string | undefined {
@@ -398,6 +450,19 @@ export function describeHostedConnectFailure(
         blockedTarget: false,
       };
     }
+  }
+  const both = bothAttemptStatusLines(error, logs);
+  if (both) {
+    return {
+      message: `The MCP server responded with ${formatStatusLine(
+        both.streamable.status,
+        both.streamable.statusText,
+      )}, then with ${formatStatusLine(
+        both.fallback.status,
+        both.fallback.statusText,
+      )} to the SSE fallback.`,
+      blockedTarget: false,
+    };
   }
   const answer = findStatusLine(error, logs);
   if (!answer) {
