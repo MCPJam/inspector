@@ -131,9 +131,11 @@ export function isScopeStepUpRequiredEvent(
     (value.resourceMetadataUrl === undefined ||
       typeof value.resourceMetadataUrl === "string") &&
     (value.errorDescription === undefined ||
-      typeof value.errorDescription === "string") &&
-    (typeof value.requiredScope === "string" ||
-      typeof value.resourceMetadataUrl === "string")
+      typeof value.errorDescription === "string")
+    // Neither a scope nor a metadata pointer is required: a bare
+    // `insufficient_scope` re-authorizes with the previously requested scopes
+    // and discovery's `scopes_supported`. A client that predates this rejects
+    // such a part and does nothing, which is the safe direction.
   );
 }
 

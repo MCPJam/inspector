@@ -1,6 +1,11 @@
 import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import { createHash } from "node:crypto";
-import { describeError, type UnauthorizedRefreshHandler } from "@mcpjam/sdk";
+import {
+  describeError,
+  extractAuthChallenge,
+  type UnauthorizedRefreshHandler,
+} from "@mcpjam/sdk";
+import { stampAuthChallenge } from "./connection-effective-auth.js";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import {
   ErrorCode,
@@ -709,7 +714,22 @@ export function buildHostedOAuthUnauthorizedHandler(
   const refresh = args.allowPrivateAuthorizationServerFallback
     ? refreshHostedOAuthAccessTokenWithLocalFallback
     : forceRefreshHostedOAuthAccessToken;
-  return async () => {
+  return async (context) => {
+    const unauthorized: unknown = context?.error;
+    // The 401 that prompted this refresh may have been a sign-in challenge
+    // for one protected operation. If the refresh cannot repair it, the
+    // failure reports that challenge, so the caller can offer sign-in for it
+    // instead of a generic refresh error.
+    const challenge = extractAuthChallenge(unauthorized);
+    const withChallenge = (failure: WebRouteError): WebRouteError => {
+      if (challenge) {
+        failure.details = {
+          ...(failure.details ?? {}),
+          authChallenge: stampAuthChallenge(challenge, "oauth"),
+        };
+      }
+      return failure;
+    };
     try {
       return {
         accessToken: await refresh(
@@ -728,15 +748,17 @@ export function buildHostedOAuthUnauthorizedHandler(
       };
     } catch (error) {
       if (error instanceof WebRouteError) {
-        throw error.withSetupFailureSource("oauth_refresh");
+        throw withChallenge(error).withSetupFailureSource("oauth_refresh");
       }
       const normalized = describeError(error);
-      const failure = new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        normalized.rawMessage || "OAuth token refresh failed.",
-        undefined,
-        normalized,
+      const failure = withChallenge(
+        new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          normalized.rawMessage || "OAuth token refresh failed.",
+          undefined,
+          normalized,
+        ),
       ).withSetupFailureSource("oauth_refresh");
       failure.cause = error;
       throw failure;
