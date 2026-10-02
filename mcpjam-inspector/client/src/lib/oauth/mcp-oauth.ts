@@ -65,7 +65,7 @@ import {
   writeHostedOAuthPendingMarker,
   type HostedOAuthCallbackContext,
 } from "@/lib/hosted-oauth-callback";
-import { getRedirectUri } from "./constants";
+import { getRedirectUri, supportsMcpJamCimdRedirect } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import {
   appendOAuthTraceHttpHistory,
@@ -2701,11 +2701,30 @@ export async function initiateOAuth(
       },
       undefined
     );
-    const authorizationPlan = await resolveOAuthExecutionPlan(
+    let authorizationPlan = await resolveOAuthExecutionPlan(
       provider,
       fetchFn,
       options
     );
+    if (
+      authorizationPlan.status === "ready" &&
+      authorizationPlan.registrationStrategy === "cimd" &&
+      typeof window !== "undefined" &&
+      !supportsMcpJamCimdRedirect(window.location)
+    ) {
+      if (requestedRegistrationMode !== "auto") {
+        return {
+          success: false,
+          error:
+            "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
+        };
+      }
+      authorizationPlan = await resolveOAuthExecutionPlan(provider, fetchFn, {
+        ...options,
+        registrationMode: "dcr",
+        registrationStrategy: undefined,
+      });
+    }
     traceAuthorizationPlan = authorizationPlan;
     if (
       authorizationPlan.status !== "ready" ||

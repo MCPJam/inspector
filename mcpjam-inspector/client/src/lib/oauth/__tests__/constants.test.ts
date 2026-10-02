@@ -3,6 +3,7 @@ import {
   MCPJAM_HOSTED_APP_ORIGIN,
   getRedirectUri,
   resolveBrowserOAuthRedirectOrigin,
+  supportsMcpJamCimdRedirect,
 } from "../constants";
 
 describe("resolveBrowserOAuthRedirectOrigin", () => {
@@ -34,6 +35,19 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
     ).toBe("https://staging.mcpjam.com");
   });
 
+  it("keeps the callback on a numbered Inspector Railway preview only", () => {
+    expect(
+      resolveBrowserOAuthRedirectOrigin(
+        new URL("https://mcp-inspector-pr-5479.up.railway.app/home")
+      )
+    ).toBe("https://mcp-inspector-pr-5479.up.railway.app");
+    expect(
+      resolveBrowserOAuthRedirectOrigin(
+        new URL("https://unrelated-app.up.railway.app/home")
+      )
+    ).toBe(MCPJAM_HOSTED_APP_ORIGIN);
+  });
+
   it("falls back to the hosted app origin from the marketing site", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
@@ -60,6 +74,20 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
         new URL("https://www.score.mcpjam.com/embed/score")
       )
     ).toBe("https://www.score.mcpjam.com");
+  });
+});
+
+describe("supportsMcpJamCimdRedirect", () => {
+  it("requires DCR on ephemeral Railway previews, but permits stable origins", () => {
+    expect(
+      supportsMcpJamCimdRedirect({
+        hostname: "mcp-inspector-pr-5479.up.railway.app",
+      })
+    ).toBe(false);
+    expect(supportsMcpJamCimdRedirect({ hostname: "app.mcpjam.com" })).toBe(
+      true
+    );
+    expect(supportsMcpJamCimdRedirect({ hostname: "localhost" })).toBe(true);
   });
 });
 
