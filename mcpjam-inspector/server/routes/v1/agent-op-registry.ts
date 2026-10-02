@@ -2752,6 +2752,11 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
   uninstall_registry_server:
     "Agent proposes authoring, never destruction — same rule as delete_project_server.",
+  // Platform feedback ships to MCP, the CLI and the app first. The Slack and
+  // Discord headless turns follow once there is real volume to learn from: a
+  // bot relaying a channel's text to the MCPJam team needs its own disclosure.
+  send_feedback:
+    "v1 ships MCP/CLI/UI first; the Slack/Discord bot follows once volume is seen.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

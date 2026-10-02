@@ -10,12 +10,12 @@
 // signed, published as a release asset, and downloaded on first use.
 //
 // ── What goes in ─────────────────────────────────────────────────────────
-//   - the adapter's recipe files VERBATIM (`package.json`, `pnpm-lock.yaml`,
-//     `pnpm-workspace.yaml`, and `bridge.mjs` byte-identical to the adapter's
-//     `dist/bridge/index.mjs`) — the provider byte-compares the bridge, so a
+//   - the Inspector-patched adapter recipe (`package.json`, `pnpm-lock.yaml`,
+//     `pnpm-workspace.yaml`, `.npmrc`, and `bridge.mjs`) — byte-identical to
+//     the recipe used at runtime. The provider byte-compares the bridge, so a
 //     single changed byte fails the session closed, which is the point;
 //   - `launcher.mjs`, Inspector-owned, which forces the bridge's listener onto
-//     loopback and then imports the verbatim bridge;
+//     loopback and then imports the patched bridge;
 //   - a hoisted, symlink-free `node_modules`, pruned of the unused
 //     `@anthropic-ai/claude-code` wrapper and every `.bin` shim;
 //   - `bin/node`, an official nodejs.org build, because Electron's `RunAsNode`
@@ -32,7 +32,6 @@
 //
 // Usage:
 //   node scripts/build-local-harness-pack.mjs \
-//     --adapter-bridge node_modules/@ai-sdk/harness-claude-code/dist/bridge \
 //     --node-tarball /tmp/node-v24.20.0-linux-x64.tar.xz \
 //     --platform linux-x64 \
 //     --out .pack-out \
@@ -60,6 +59,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = resolve(scriptDir, "..");
+const toolchain = JSON.parse(readFileSync(join(scriptDir, "local-harness-toolchain.json"), "utf8"));
 
 /**
  * Platforms a pack can be built for, and the vendor platform package whose
@@ -86,8 +86,52 @@ const PLATFORMS = {
   "win32-x64": { os: "win32", vendorSuffix: "win32-x64" },
 };
 
-/** Recipe files copied verbatim from the adapter's bridge directory. */
-const RECIPE_FILES = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
+/**
+ * Stage exactly the recipe the application writes, installing dependencies
+ * before adding its runtime-only .npmrc. The pack install must not inherit
+ * dangerously-allow-all-builds from that file in the signing job.
+ *
+ * Load the leaf through tsx only when building a recipe, so importing the
+ * digest helpers remains independent of TypeScript and application services.
+ */
+export async function installClaudeCodePackRecipe(packRoot, installDependencies) {
+  const { tsImport } = await import("tsx/esm/api");
+  const { createClaudeCodeHarness } = await tsImport(
+    "../server/utils/harness/claude-code-bootstrap.ts",
+    { parentURL: import.meta.url, tsconfig: false },
+  );
+  const bootstrap = await createClaudeCodeHarness().getBootstrap();
+  const prefix = `${bootstrap.bootstrapDir}/`;
+  const files = bootstrap.files.map((file) => {
+    const name = file.path.slice(prefix.length);
+    if (
+      !file.path.startsWith(prefix) ||
+      !name ||
+      name === "." ||
+      name === ".." ||
+      name.includes("/") ||
+      name.includes("\\")
+    ) {
+      throw new Error(`Unexpected Claude Code bootstrap path: ${file.path}`);
+    }
+    return { name, content: file.content };
+  });
+  const npmrc = files.find((file) => file.name === ".npmrc");
+  if (!npmrc) throw new Error("Claude Code bootstrap is missing .npmrc");
+
+  mkdirSync(packRoot, { recursive: true });
+  // Also safe when called again after an interrupted build.
+  rmSync(join(packRoot, ".npmrc"), { force: true });
+  for (const file of files) {
+    if (file.name !== ".npmrc") {
+      writeFileSync(join(packRoot, file.name), file.content);
+    }
+  }
+  writeFileSync(join(packRoot, "bootstrap.json"), JSON.stringify(bootstrap));
+  await installDependencies();
+  writeFileSync(join(packRoot, ".npmrc"), npmrc.content);
+  return { bridgeDigest: `sha256:${sha256File(join(packRoot, "bridge.mjs"))}` };
+}
 
 /** The pinned adapter's bridge recipe directory, wherever it installed. */
 function defaultAdapterBridgeDir() {
@@ -453,13 +497,8 @@ function assertPnpmVersion() {
   } catch {
     fail("pnpm is not on PATH; the pack build installs the adapter's recipe with it");
   }
-  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-  if (!Number.isFinite(major) || major < 10) {
-    fail(
-      `pnpm ${version} is too old: the adapter's recipe uses \`allowBuilds\` in ` +
-        `pnpm-workspace.yaml, which needs pnpm 10 or newer (pnpm 9 reports ` +
-        `"packages field missing or empty" instead)`,
-    );
+  if (version !== toolchain.pnpm) {
+    fail(`pnpm ${version} differs from the pack pin ${toolchain.pnpm}; install the pinned version before building`);
   }
 }
 
@@ -524,7 +563,7 @@ function assertNoAppleDoubleMembers(tarBin, archivePath) {
   }
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const platformKey = String(args.platform ?? "");
   if (!(platformKey in PLATFORMS)) {
@@ -538,9 +577,7 @@ function main() {
   // installing under `mcpjam-inspector/node_modules`. A path relative to this
   // script is right on exactly one of those layouts and silently wrong on the
   // other — which is what `check:bundled-runtime-paths` exists to stop.
-  const adapterBridge = resolve(
-    String(args["adapter-bridge"] ?? defaultAdapterBridgeDir()),
-  );
+  const adapterBridge = resolve(defaultAdapterBridgeDir());
   const outRoot = resolve(String(args.out ?? join(inspectorRoot, ".pack-out")));
   const nodeTarball = args["node-tarball"]
     ? resolve(String(args["node-tarball"]))
@@ -549,6 +586,7 @@ function main() {
   if (!existsSync(adapterBridge)) {
     fail(`no adapter bridge directory at ${adapterBridge}`);
   }
+
 
   const required = createRequire(import.meta.url);
   const adapterVersion = JSON.parse(
@@ -563,15 +601,23 @@ function main() {
   rmSync(packRoot, { recursive: true, force: true });
   mkdirSync(packRoot, { recursive: true });
 
-  // 1. Recipe files, verbatim. The bridge especially: the provider compares
-  //    its bytes against the adapter's own copy at session start.
-  for (const file of RECIPE_FILES) {
-    const source = join(adapterBridge, file);
-    if (!existsSync(source)) fail(`adapter recipe is missing ${file}`);
-    copyFileSync(source, join(packRoot, file));
-  }
-  copyFileSync(join(adapterBridge, "index.mjs"), join(packRoot, "bridge.mjs"));
-  const bridgeDigest = `sha256:${sha256File(join(packRoot, "bridge.mjs"))}`;
+  // 1. The same patched recipe used by runtime dispatch and conformance.
+  //    Install the frozen graph before staging the runtime-only .npmrc.
+  const { bridgeDigest } = await installClaudeCodePackRecipe(packRoot, () => {
+    // Hoisted: the verified tree refuses pnpm's default symlink layout.
+    assertPnpmVersion();
+    process.stdout.write("[pack] installing the adapter's frozen dependency graph…\n");
+    runPnpm(
+      [
+        "install",
+        "--frozen-lockfile",
+        "--node-linker=hoisted",
+        "--store-dir",
+        join(outRoot, ".pnpm-store"),
+      ],
+      { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
+    );
+  });
 
   // 2. The Inspector-owned loopback launcher, from the repo (digest-covered,
   //    reviewed in a diff like any other source file).
@@ -580,24 +626,7 @@ function main() {
     join(packRoot, "launcher.mjs"),
   );
 
-  // 3. The adapter's own frozen dependency graph. Hoisted, because the digest
-  //    refuses symlinks and pnpm's default store layout is symlinks all the way
-  //    down. `--ignore-scripts` everywhere except the vendor SDK's own extract
-  //    step, which is what materializes the native CLI.
-  assertPnpmVersion();
-  console.log("[pack] installing the adapter's frozen dependency graph…");
-  runPnpm(
-    [
-      "install",
-      "--frozen-lockfile",
-      "--node-linker=hoisted",
-      "--store-dir",
-      join(outRoot, ".pnpm-store"),
-    ],
-    { cwd: packRoot, stdio: "inherit" },
-  );
-
-  // 4. Prune. The `@anthropic-ai/claude-code` wrapper exists only for the
+  // 3. Prune. The `@anthropic-ai/claude-code` wrapper exists only for the
   //    adapter's `--version` probe, which the translator answers as a no-op;
   //    the SDK resolves its OWN platform package. `.bin` shims are symlinks
   //    and nothing in the pack invokes them.
@@ -615,10 +644,13 @@ function main() {
     rmSync(join(packRoot, "node_modules", stray), { force: true });
   }
 
-  // 5. The pack's own Node.
+  // 4. The pack's own Node.
   const node = installBundledNode(packRoot, nodeTarball, platformKey);
+  if (node.version !== `v${toolchain.node}`) {
+    fail(`Bundled Node ${node.version} differs from the pack pin v${toolchain.node}`);
+  }
 
-  // 5b. Windows only: the Job Object launcher. It goes INSIDE the pack so the
+  // 4b. Windows only: the Job Object launcher. It goes INSIDE the pack so the
   //     tree digest covers it — the supervisor refuses to enforce whole-tree
   //     cleanup with a helper it has not verified, and a helper sitting beside
   //     the pack would be exactly that.
@@ -628,8 +660,7 @@ function main() {
       : null;
     if (helperSource === null || !existsSync(helperSource)) {
       // Not a build failure: a Windows pack without the helper is a pack whose
-      // platform stays ineligible, which is the state Windows is in today and
-      // the state `nativePlatforms` already describes.
+      // platform stays ineligible even when Windows conformance is recorded.
       console.warn(
         "[pack] no --job-launcher given; this Windows pack cannot prove " +
           "whole-tree cleanup and the platform stays refused",
@@ -640,7 +671,7 @@ function main() {
     }
   }
 
-  // 6. Refuse a pack with any symlink left in it. The digest would throw at
+  // 5. Refuse a pack with any symlink left in it. The digest would throw at
   //    verification time on the user's machine; failing here instead means the
   //    artifact is never published.
   const symlinks = findSymlinks(packRoot);
@@ -648,7 +679,7 @@ function main() {
     fail(`pack still contains ${symlinks.length} symlink(s): ${symlinks.slice(0, 5).join(", ")}`);
   }
 
-  // 7. And no hardlinks either, for the same reason one step later: the
+  // 6. And no hardlinks either, for the same reason one step later: the
   //    extractor writes regular files, so the archive has to contain them.
   const flattened = flattenHardLinks(packRoot);
   if (flattened > 0) {
@@ -669,7 +700,10 @@ function main() {
     }
   }
 
+  const { computePackInputs } = await import("./check-local-harness-inputs.mjs");
+  const { fingerprint: inputsFingerprint } = await computePackInputs();
   const manifest = {
+    inputsFingerprint,
     schema: "mcpjam.local-harness-pack/1",
     harnessId: "claude-code",
     packVersion,
@@ -845,5 +879,5 @@ function main() {
 // Only build when run as the entry point, so a test can import the digest
 // implementation and prove it agrees with the server's.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  main().catch((error) => fail(error.stack ?? error.message));
 }

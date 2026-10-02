@@ -105,6 +105,24 @@ export function requireConvexIdShape(
   throw new WebRouteError(404, ErrorCode.NOT_FOUND, options.notFoundMessage);
 }
 
+/**
+ * {@link requireConvexIdShape} for a project id about to reach a
+ * `v.id("projects")` argument.
+ *
+ * Added at the sinks CONVEX-HQ showed unguarded: one caller sending
+ * `projects/badid/…` across the API raised a Convex error on each of about a
+ * dozen reads in a minute, although every caller already got a 4xx back.
+ */
+export function requireProjectIdArg(
+  projectId: string | undefined,
+  scope: string
+): string {
+  return requireConvexIdShape(projectId, "projectId", {
+    scope,
+    notFoundMessage: "Project not found",
+  });
+}
+
 /** {@link requireConvexIdShape} on a path parameter. */
 export function requireConvexIdParam(
   c: Context,

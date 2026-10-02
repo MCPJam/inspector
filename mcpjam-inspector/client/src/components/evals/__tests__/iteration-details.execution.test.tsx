@@ -64,8 +64,9 @@ const execution = {
   },
 };
 
+// The record stays on the iteration, but the details view no longer shows it.
 describe("IterationDetails execution provenance", () => {
-  it("shows what the iteration ran on and a visible deviation banner", () => {
+  it("does not show what the iteration ran on, even with a record", () => {
     render(
       <IterationDetails
         iteration={makeIteration({ execution })}
@@ -73,22 +74,8 @@ describe("IterationDetails execution provenance", () => {
       />,
     );
 
-    expect(
-      screen.getByTestId("iteration-execution-provenance-line").textContent,
-    ).toBe(
-      "Ran on openai/gpt-5 via Vercel AI Gateway (MCPJam key), temperature 0.2, max output 2,048 tokens",
-    );
-    expect(
-      screen.getByTestId("iteration-execution-deviation-banner").textContent,
-    ).toContain("Deviation: Provider fallback");
-  });
-
-  it("shows no provenance for an iteration recorded before records existed", () => {
-    render(<IterationDetails iteration={makeIteration()} testCase={null} />);
-
+    expect(screen.queryByText(/Ran on/)).toBeNull();
+    expect(screen.queryByText(/Deviation:/)).toBeNull();
     expect(screen.queryByTestId("iteration-execution-provenance")).toBeNull();
-    expect(
-      screen.queryByTestId("iteration-execution-deviation-banner"),
-    ).toBeNull();
   });
 });

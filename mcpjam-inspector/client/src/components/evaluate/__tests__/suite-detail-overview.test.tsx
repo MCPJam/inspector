@@ -1379,3 +1379,59 @@ describe("SuiteDetailOverview cancel", () => {
     expect(screen.getByTestId("suite-detail-cancel")).toBeDisabled();
   });
 });
+
+describe("SuiteDetailOverview run delete", () => {
+  function renderSuite(props: Record<string, unknown> = {}) {
+    return renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[]}
+        runs={[
+          makeRun({ _id: "run-1", runNumber: 1 }),
+          makeRun({ _id: "run-2", runNumber: 2, createdBy: "someone-else" }),
+        ]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations([])}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        {...props}
+      />,
+    );
+  }
+
+  it("asks before deleting a run, then deletes it without opening it", async () => {
+    const user = userEvent.setup();
+    const onDeleteRun = vi.fn(async () => {});
+    const onRunClick = vi.fn();
+    renderSuite({ onDeleteRun, onRunClick });
+
+    await user.click(screen.getByRole("button", { name: "Delete run #1" }));
+    expect(onDeleteRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("Delete run #1");
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(onDeleteRun).toHaveBeenCalledWith("run-1");
+    expect(onRunClick).not.toHaveBeenCalled();
+  });
+
+  it("offers delete only on runs the caller may delete", () => {
+    renderSuite({
+      onDeleteRun: vi.fn(),
+      canDeleteRun: (run: EvalSuiteRun) => run.createdBy === "u1",
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Delete run #1" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete run #2" })).toBeNull();
+  });
+
+  it("shows no delete column without a delete handler", () => {
+    renderSuite();
+    expect(screen.queryByRole("button", { name: /Delete run/ })).toBeNull();
+  });
+});
