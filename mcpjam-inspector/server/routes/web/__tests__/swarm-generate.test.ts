@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
 import { SwarmAgentError } from "../../../services/swarm-agent.js";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../../shared/swarm-description.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
@@ -201,12 +202,34 @@ describe("web routes — swarm generation proxy", () => {
         projectId: "proj-1",
         environmentId: "env-1",
         personaCount: 3,
-        description: "x".repeat(2001),
+        description: "x".repeat(SWARM_DESCRIPTION_MAX_CHARS + 1),
       },
       token
     );
     expect(tooLong.status).toBe(400);
     expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a description at the cap, well past the old 2,000", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({ personas: [] });
+    const description = "x".repeat(SWARM_DESCRIPTION_MAX_CHARS);
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 3,
+        description,
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (generateSwarmPersonaBatchMock.mock.calls[0]![2] as any).description
+    ).toHaveLength(SWARM_DESCRIPTION_MAX_CHARS);
   });
 
   it("rejects an out-of-range journeyCount with 400 before calling the backend", async () => {

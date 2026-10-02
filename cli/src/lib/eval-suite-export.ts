@@ -32,6 +32,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   evalSuiteFileSchema,
   isOpaqueId,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   type EvalSuiteFile,
   type EvalSuiteFileCase,
   type EvalSuiteSchemaVersion,
@@ -443,20 +444,14 @@ function suiteLevelFindings(
       );
     }
   } else if (
-    settings.minimumAccuracy === null ||
-    settings.minimumAccuracy === undefined
-  ) {
-    findings.push(
-      unsupported(
-        ["settings", "minimumAccuracy"],
-        "suite sets no minimum accuracy, and `defaults.passThreshold` is " +
-          "required in a suite file. Set one and export again."
-      )
-    );
-  } else if (
-    settings.minimumAccuracy < 0 ||
-    settings.minimumAccuracy > 100 ||
-    percentToFraction(settings.minimumAccuracy) === null
+    // A legacy suite with no minimum accuracy is NOT unset: every legacy
+    // producer grades it at `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` (100, "every
+    // unit must pass"), so exporting that value is lossless. Only a present
+    // value that does not convert cleanly is refused.
+    typeof settings.minimumAccuracy === "number" &&
+    (settings.minimumAccuracy < 0 ||
+      settings.minimumAccuracy > 100 ||
+      percentToFraction(settings.minimumAccuracy) === null)
   ) {
     findings.push(
       unsupported(
@@ -882,11 +877,13 @@ export function buildSuiteFileFromPlatform(
       // A v2 suite uses its own fraction; a legacy one converts its percent.
       // Never the other way round for a v2 suite: `suiteLevelFindings` has
       // already refused the export when a v2 threshold is unreadable, so this
-      // `??` can only reach the legacy branch for a legacy suite.
+      // `??` can only reach the legacy branch for a legacy suite. A legacy
+      // suite with no percent writes the fallback every run already grades at.
       passThreshold: isVerdictPolicyV2Suite(detail.settings)
         ? (suiteVerdictPolicyThreshold(detail.settings) as number)
         : (percentToFraction(
-            detail.settings.minimumAccuracy as number
+            detail.settings.minimumAccuracy ??
+              LEGACY_SUITE_WIDE_THRESHOLD_PERCENT
           ) as number),
       // `{}`, not the resolved defaults: the contract documents them and the
       // loader applies them, and writing them here would put values nobody

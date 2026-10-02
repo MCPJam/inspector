@@ -55,6 +55,8 @@ export type CloudLaunchTarget = {
    * judged on the servers we happen to see.
    */
   opaque?: boolean;
+  /** Server reachability is local for this Claude Code target. */
+  localExecution?: boolean;
 };
 
 export type CloudServerReadiness =
@@ -135,6 +137,8 @@ export function assessCloudServerReadiness(args: {
       emptyLabels.push(target.label);
       continue;
     }
+
+    if (target.localExecution) continue;
 
     let candidates: CloudServerCatalogEntry[];
     if (target.serverIds) {
