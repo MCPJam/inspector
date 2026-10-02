@@ -3,11 +3,9 @@
  *
  * WHY. An approval resumes in a NEW request, and everything that request says
  * about the paused turn — the tool call, its arguments, the approval request,
- * the user's answer — arrives in client-sent history. Before this module the
- * engine took all of it on the client's word: a history that CLAIMED "the
- * server asked about this call and the user said yes" ran the call, with
- * whatever arguments the history carried, on a tool the server may never have
- * asked about at all.
+ * the user's answer — arrives in client-sent history. None of it is taken on
+ * the client's word: an approved call runs only if the server can show it
+ * asked about exactly that call, with exactly those arguments.
  *
  * THE FIX. The approval id IS the proof. When the engine pauses on a call it
  * mints the `approvalId` as an HMAC over what was actually asked:
@@ -24,14 +22,15 @@
  *
  * WHAT IT DOES NOT PROVE. That a human clicked. Nothing a client sends can;
  * the client is the user's own software. It proves the SERVER decided this
- * exact call needed asking about, in this conversation, for this caller —
- * which is the part a forged history could previously fake.
+ * exact call needed asking about, in this conversation, for this caller.
  *
  * ONCE, AND NOT FOR LONG. A verified approval runs its call one time: the
- * engine claims it (`claimToolApprovalUse`) immediately before running the
- * call, and a claimed approval that comes back is answered, not run. Claims
- * are kept per server process, so what bounds an approval everywhere else —
- * another replica, a restarted process — is its lifetime,
+ * engine claims it ({@link claimToolApproval}) immediately before running the
+ * call, and a claimed approval that comes back is answered, not run. Where
+ * approvals are signed with the service-token key (every hosted deployment),
+ * claims are recorded durably by the backend, so each approval runs its call
+ * once across the whole deployment; a claim the backend cannot confirm runs
+ * nothing. An approval also stops being honoured at the end of its lifetime,
  * {@link TOOL_APPROVAL_TOKEN_MAX_AGE_MS}.
  *
  * THE KEY. Derived from `INSPECTOR_SERVICE_TOKEN`, which every hosted
@@ -52,6 +51,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { decodeJwt } from "jose";
+import { recordToolApprovalClaim } from "../services/tool-approval-claims.js";
 
 /** Version tag; also the prefix that marks an id as signed. */
 export const TOOL_APPROVAL_TOKEN_PREFIX = "mjap1";
@@ -62,9 +62,8 @@ export const TOOL_APPROVAL_TOKEN_PREFIX = "mjap1";
  * An approval is a person reading one prompt — the tool, its arguments — and
  * deciding. That takes seconds to a few minutes, and a quarter of an hour
  * still covers stepping away from the tab before answering. It is also the
- * longest an approval can be honoured on any server process, so it is kept
- * to what the decision needs rather than what a tab left open overnight
- * might.
+ * longest an approval can be honoured at all, so it is kept to what the
+ * decision needs rather than what a tab left open overnight might.
  *
  * An answer that arrives later runs nothing: it is answered with
  * {@link EXPIRED_APPROVAL_RESULT}, which says so, and the model can make the
@@ -96,6 +95,15 @@ export const UNAPPROVED_HISTORY_CALL_RESULT =
  */
 export const USED_APPROVAL_RESULT =
   "Not run again: this approval was already used to run this call once. Ask the user for a new approval to run it again.";
+
+/**
+ * Why an approved call did not run: the server could not confirm, just then,
+ * that the approval had not been used, so it ran nothing rather than risk
+ * running the call twice. Shown to the user and the model; the model can make
+ * the call again for a fresh approval.
+ */
+export const UNCONFIRMED_APPROVAL_RESULT =
+  "Not run: the server couldn't confirm this approval just now, so nothing was run. If the call is still needed, make it again so the user can approve it again.";
 
 /**
  * Why an approved call did not run: the answer came back after the approval
@@ -394,7 +402,7 @@ export function verifyToolApprovalId(args: {
 }
 
 /**
- * Approvals that have already run their call, on this process (MJ-008).
+ * Approvals this process has claimed (MJ-008).
  *
  * A verified approval proves the server asked about exactly this call; it
  * should also run that call exactly once. Keyed by the approval id, which is
@@ -403,18 +411,19 @@ export function verifyToolApprovalId(args: {
  * looks at the front, and the map is bounded: past the cap the oldest entries
  * go first.
  *
- * SCOPE: one server process. Single use holds within the process that ran the
- * call; across processes — other replicas, or this one after a restart — an
- * approval's use is bounded by its lifetime,
- * {@link TOOL_APPROVAL_TOKEN_MAX_AGE_MS}, after which no process honours it.
+ * This is the fast path, and the whole ledger in a process whose approvals are
+ * signed with a key only it holds (npx, desktop). Where approvals are signed
+ * with the service-token key, {@link claimToolApproval} also records each
+ * claim with the backend, which is the authority for the deployment.
  */
 const usedApprovalExpiry = new Map<string, number>();
 const MAX_USED_APPROVALS = 50_000;
 
 /**
- * Record that `approvalId` is about to run its call. Returns false when it
- * already has, in which case the caller must not run it again. Call it only
- * for an approval that verified, immediately before running the call.
+ * Record, in this process, that `approvalId` is about to run its call.
+ * Returns false when it already has, in which case the caller must not run it
+ * again. Most callers want {@link claimToolApproval}, which also records the
+ * claim durably where the deployment needs it.
  */
 export function claimToolApprovalUse(
   approvalId: string,
@@ -425,14 +434,99 @@ export function claimToolApprovalUse(
     usedApprovalExpiry.delete(id);
   }
   if (usedApprovalExpiry.has(approvalId)) return false;
-  usedApprovalExpiry.set(
-    approvalId,
-    nowMs + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + MAX_FUTURE_SKEW_MS,
-  );
+  usedApprovalExpiry.set(approvalId, toolApprovalClaimExpiry(nowMs));
   while (usedApprovalExpiry.size > MAX_USED_APPROVALS) {
     const oldest = usedApprovalExpiry.keys().next().value;
     if (oldest === undefined) break;
     usedApprovalExpiry.delete(oldest);
   }
   return true;
+}
+
+/** How long a claim made now must be remembered: past every replica's clock. */
+function toolApprovalClaimExpiry(nowMs: number): number {
+  return nowMs + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + MAX_FUTURE_SKEW_MS;
+}
+
+const CLAIM_HASH_LABEL = "mcpjam/tool-approval-claim/v1";
+
+/**
+ * What a durable claim is keyed on: sha256 (hex) of the approval's nonce,
+ * under a fixed label so the digest means nothing anywhere else. The nonce is
+ * random per issue, so it names one approval; the nonce itself never leaves
+ * this process. Null for an id without the signed shape.
+ */
+export function toolApprovalClaimKey(approvalId: string): string | null {
+  if (!isSignedToolApprovalId(approvalId)) return null;
+  const parts = approvalId.split(".");
+  const nonce = parts.length === 4 ? parts[2] : "";
+  if (!nonce) return null;
+  return createHash("sha256")
+    .update(`${CLAIM_HASH_LABEL}\n${nonce}`)
+    .digest("hex");
+}
+
+/**
+ * - `claimed`: this caller may run the call, now, once.
+ * - `already_claimed`: the approval has been used; answer it with
+ *   {@link USED_APPROVAL_RESULT}.
+ * - `unconfirmed`: the claim could not be recorded; answer it with
+ *   {@link UNCONFIRMED_APPROVAL_RESULT}.
+ *
+ * Only `claimed` runs anything.
+ */
+export type ToolApprovalClaim = "claimed" | "already_claimed" | "unconfirmed";
+
+/**
+ * Claim `approvalId` immediately before running the call it approves. Call it
+ * only for an approval that verified. Never throws.
+ *
+ * The claim is made in this process first, and a claim this process already
+ * holds answers `already_claimed` without asking anyone. Where approvals are
+ * signed with the service-token key, any process holding that token verifies
+ * the same approval, so the claim is then also recorded with the backend
+ * (`POST /internal/v1/tool-approvals/claim`), whose answer decides. When that
+ * cannot be confirmed — no backend configured, an error, a timeout — nothing
+ * runs, and this process lets go of its own claim so that a retry asks the
+ * backend again.
+ *
+ * A claim is spent before the call starts, so an approval whose call was
+ * interrupted after the claim needs a fresh approval.
+ */
+export async function claimToolApproval(
+  approvalId: string,
+  options: {
+    nowMs?: number;
+    env?: NodeJS.ProcessEnv;
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+  } = {},
+): Promise<ToolApprovalClaim> {
+  const nowMs = options.nowMs ?? Date.now();
+  if (!claimToolApprovalUse(approvalId, nowMs)) return "already_claimed";
+
+  const env = options.env ?? process.env;
+  // Signed with this process's own key: no other process can verify it, so
+  // this process's ledger is the whole ledger.
+  if (!deriveServiceTokenKey(KEY_DERIVATION_LABEL, env)) return "claimed";
+
+  const convexHttpUrl = env.CONVEX_HTTP_URL?.trim();
+  const serviceToken = env.INSPECTOR_SERVICE_TOKEN?.trim();
+  const claimKey = toolApprovalClaimKey(approvalId);
+  const recorded =
+    convexHttpUrl && serviceToken && claimKey
+      ? await recordToolApprovalClaim({
+          convexHttpUrl,
+          serviceToken,
+          nonceHash: claimKey,
+          expiresAt: toolApprovalClaimExpiry(nowMs),
+          fetchImpl: options.fetchImpl,
+          timeoutMs: options.timeoutMs,
+        })
+      : "unavailable";
+  if (recorded === "unavailable") {
+    usedApprovalExpiry.delete(approvalId);
+    return "unconfirmed";
+  }
+  return recorded;
 }

@@ -11,7 +11,11 @@
  */
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "@ai-sdk/react";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import {
+  lastAssistantMessageIsCompleteWithToolCalls,
+  readUIMessageStream,
+  type UIMessageChunk,
+} from "ai";
 import {
   lastStepHasPendingApproval,
   shouldAutoResumeTurn,
@@ -105,6 +109,53 @@ describe("shouldAutoResumeTurn (real ai package)", () => {
 
   it("is inert when the last message is not an assistant turn", () => {
     const empty = { messages: [] as UIMessage[] };
+  describe("a turn that ran out of steps", () => {
+    // The last allowed step's tools ran, so its tool calls are all settled —
+    // exactly what resumes a turn. The server's reply to that resume is what
+    // decides whether the browser resends again.
+    const outOfSteps: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [{ type: "step-start" }, fulfilledUiTool],
+    } as unknown as UIMessage;
+
+    async function applyReply(chunks: UIMessageChunk[]): Promise<UIMessage> {
+      let message = outOfSteps;
+      for await (const next of readUIMessageStream({
+        message: structuredClone(outOfSteps),
+        stream: new ReadableStream<UIMessageChunk>({
+          start(controller) {
+            chunks.forEach((chunk) => controller.enqueue(chunk));
+            controller.close();
+          },
+        }),
+      })) {
+        message = next;
+      }
+      return message;
+    }
+
+    it("keeps resuming after an empty reply (the old endless loop)", async () => {
+      const message = await applyReply([
+        { type: "finish", finishReason: "length" },
+      ]);
+      expect(shouldAutoResumeTurn({ messages: [message] })).toBe(true);
+    });
+
+    it("stops resuming once the server's step-limit note arrives", async () => {
+      const id = "step-limit-turn";
+      const message = await applyReply([
+        { type: "start-step" },
+        { type: "text-start", id },
+        { type: "text-delta", id, delta: "I reached my step limit." },
+        { type: "text-end", id },
+        { type: "finish-step" },
+        { type: "finish", finishReason: "length" },
+      ]);
+      expect(shouldAutoResumeTurn({ messages: [message] })).toBe(false);
+    });
+  });
+
     const user = {
       messages: [
         { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },

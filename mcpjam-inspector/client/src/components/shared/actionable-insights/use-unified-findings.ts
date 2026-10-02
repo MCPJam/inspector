@@ -54,6 +54,7 @@ export type UnifiedFindingsState = {
     available: boolean;
     pending: boolean;
     error: string | null;
+    errorCode?: string;
     onRun: () => void;
   };
   enrich: {
@@ -351,13 +352,13 @@ export function useUnifiedFindings(args: {
     args.envelope === undefined || args.envelope === null
       ? null
       : experiment === null
-      ? BACKEND_MISSING_NOTE
-      : // The backend serves findings, yet the borrowed controller says
-      // no. Without this the button is simply dead and the reader is
-      // told nothing at all.
-      args.generation.unavailable
-      ? GENERATION_UNAVAILABLE_NOTE
-      : null;
+        ? BACKEND_MISSING_NOTE
+        : // The backend serves findings, yet the borrowed controller says
+          // no. Without this the button is simply dead and the reader is
+          // told nothing at all.
+          args.generation.unavailable
+          ? GENERATION_UNAVAILABLE_NOTE
+          : null;
 
   const analyzePending =
     awaitingBuild ||
@@ -395,16 +396,16 @@ export function useUnifiedFindings(args: {
       pending: analyzePending,
       error:
         buildError ??
-        (jobFailed
-          ? experiment?.job?.errorMessage ??
+        (jobFailed && !buildRequested
+          ? (experiment?.job?.errorMessage ??
             experiment?.job?.errorCode ??
-            "Evidence could not be prepared."
+            "Evidence could not be prepared.")
           : null) ??
         (enrichAttempted
-          ? args.generation.error ??
+          ? (args.generation.error ??
             (args.generation.failedGeneration
               ? "AI analysis did not complete."
-              : null)
+              : null))
           : null),
       onRun: onAnalyze,
     },
@@ -413,11 +414,17 @@ export function useUnifiedFindings(args: {
       pending: buildRequested || jobPending,
       error:
         buildError ??
-        (jobFailed
-          ? experiment?.job?.errorMessage ??
+        (jobFailed && !buildRequested
+          ? (experiment?.job?.errorMessage ??
             experiment?.job?.errorCode ??
-            "The build failed."
+            "The build failed.")
           : null),
+      ...(buildError === null &&
+      !buildRequested &&
+      jobFailed &&
+      experiment?.job?.errorCode
+        ? { errorCode: experiment.job.errorCode }
+        : {}),
       onRun: onBuild,
     },
     enrich: {
@@ -436,8 +443,8 @@ export function useUnifiedFindings(args: {
       // than guessing which one it was.
       error: enrichAttempted
         ? args.generation.failedGeneration
-          ? args.generation.error ??
-            "The AI explanation did not complete. The observations below are unaffected."
+          ? (args.generation.error ??
+            "The AI explanation did not complete. The observations below are unaffected.")
           : args.generation.error
         : null,
       onRun: onEnrich,

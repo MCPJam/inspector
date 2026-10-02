@@ -2,10 +2,9 @@
  * The sentence a caller sees when MCPJam's own backend answers with a failure
  * (MJ-020, MJ-021).
  *
- * The backend's `error` string on these paths is written for us — it can carry
- * Convex's framing, a function's argument validation output, internal names.
- * In hosted mode the caller gets the route's fixed copy instead, and the text
- * goes to the log. A local inspector keeps showing the text, as it always has:
+ * The backend's `error` string on these paths is written for operators, not
+ * for the caller. In hosted mode the caller gets the route's fixed copy
+ * instead, and the text goes to the log. A local inspector keeps showing the text, as it always has:
  * the person reading it is the one running the server.
  */
 import { HOSTED_MODE } from "../config.js";

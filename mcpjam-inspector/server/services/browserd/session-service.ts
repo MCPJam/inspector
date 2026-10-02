@@ -12,7 +12,7 @@ import {
   getConfiguredInspectorServiceToken,
   INSPECTOR_SERVICE_TOKEN_HEADER,
 } from "../../middleware/internal-service-auth.js";
-import { getInspectorClientRuntimeConfig } from "../../env.js";
+import { getConfiguredConvexOrigins } from "../../env.js";
 
 export type BrowserSessionOwnerKind =
   "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
@@ -53,7 +53,8 @@ export interface BrowserSessionServiceOptions {
   enabled?: boolean;
   /**
    * Origin of the deployment's file storage, where saved profile archives
-   * live. Defaults to the configured Convex URL.
+   * live. Defaults to the configured Convex API origins
+   * (`getConfiguredConvexOrigins().api`).
    */
   storageOrigin?: string;
 }
@@ -97,10 +98,9 @@ function isLoopbackHost(hostname: string): boolean {
  * The same policy `normalizeDataPlaneUrl` already applies to the computers
  * data plane (utils/computers/remote-data-plane.ts), and the one the backend
  * enforces on `/computers/data-plane-url`: http(s) only, and plain `http:`
- * only for loopback, where nothing leaves the machine. This module was the
- * one in the family without it — it posts a user's bearer and pulls back a
- * saved profile archive full of that user's cookies, so a misconfigured
- * `CONVEX_HTTP_URL` could have downgraded both onto the wire in the clear.
+ * only for loopback, where nothing leaves the machine. This module posts a
+ * user's bearer and reads back a saved profile archive holding that user's
+ * cookies, so both requests require it.
  *
  * Thrown, not silently skipped: a deployment pointed at a cleartext origin is
  * misconfigured, and failing loudly at the first call is how that gets found.
@@ -132,23 +132,20 @@ function originOf(value: string | undefined): string | null {
 
 /**
  * A saved profile archive is read only from Convex file storage, under
- * `/api/storage/` and with no embedded credentials: on the configured Convex
- * origin, or on a Convex-hosted `https://*.convex.cloud` origin. Storage URLs
- * are minted on the backend's own storage host, which on a deployment reached
- * through a custom domain is Convex's host rather than the configured one, so
- * a Convex-hosted origin is accepted alongside the configured one. A location
- * anywhere else is refused before any request is made to it.
+ * `/api/storage/` and with no embedded credentials, on a storage origin this
+ * deployment is configured with: the Convex API origin (`CONVEX_URL`, a custom
+ * domain such as `rt.mcpjam.com` included) or, on Convex's default hosts, the
+ * `.convex.cloud` half of the configured deployment. The backend mints storage
+ * URLs on its `CONVEX_CLOUD_URL`, which a deployment points at the same
+ * origin. A location anywhere else is refused before any request is made to
+ * it.
  */
 function assertArchiveStorageLocation(
   url: URL,
-  storageOrigin: string | null,
+  storageOrigins: readonly string[],
 ): void {
-  const onConfiguredOrigin =
-    storageOrigin !== null && url.origin === storageOrigin;
-  const onConvexCloud =
-    url.protocol === "https:" && url.hostname.endsWith(".convex.cloud");
   if (
-    (!onConfiguredOrigin && !onConvexCloud) ||
+    !storageOrigins.includes(url.origin) ||
     !url.pathname.startsWith(STORAGE_PATH_PREFIX) ||
     url.username ||
     url.password
@@ -242,16 +239,19 @@ function parseSession(value: unknown): BrowserLogicalSessionRecord | null {
 export class BrowserSessionService {
   private readonly requestFetch: typeof globalThis.fetch;
   private readonly baseUrl: string | undefined;
-  private readonly storageOrigin: string | null;
+  private readonly storageOrigins: readonly string[];
   readonly enabled: boolean;
 
   constructor(options: BrowserSessionServiceOptions = {}) {
     this.requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.baseUrl = options.baseUrl ?? process.env.CONVEX_HTTP_URL?.trim();
     this.enabled = options.enabled ?? Boolean(this.baseUrl);
-    this.storageOrigin = originOf(
-      options.storageOrigin ?? getInspectorClientRuntimeConfig().convexUrl,
-    );
+    if (options.storageOrigin !== undefined) {
+      const origin = originOf(options.storageOrigin);
+      this.storageOrigins = origin ? [origin] : [];
+    } else {
+      this.storageOrigins = getConfiguredConvexOrigins().api;
+    }
   }
 
   private async post<T>(
@@ -512,7 +512,7 @@ export class BrowserSessionService {
     // thing that should ride cleartext because a signed URL happened to say
     // `http:`.
     assertSecureTransport(location, "browser profile download URL");
-    assertArchiveStorageLocation(location, this.storageOrigin);
+    assertArchiveStorageLocation(location, this.storageOrigins);
     return location;
   }
 
