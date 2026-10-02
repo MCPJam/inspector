@@ -128,6 +128,15 @@ describe("syncExplicitModelSelections", () => {
     const hosted = { ...org, explicitModelSelections: { [SAME_ID]: HOSTED } };
     expect(sameModelSelection(org, hosted)).toBe(false);
     expect(sameModelSelection(org, { ...org })).toBe(true);
+    // An effort-only difference is a different composition.
+    const withEffort = (effort: "low" | "high") => ({
+      ...org,
+      explicitModelSelections: {
+        [SAME_ID]: { ...ORG, settings: { reasoningEffort: effort } },
+      },
+    });
+    expect(sameModelSelection(withEffort("low"), withEffort("high"))).toBe(false);
+    expect(sameModelSelection(withEffort("low"), withEffort("low"))).toBe(true);
     expect(expandModelChoices(org)).toEqual({
       cells: [{ modelId: SAME_ID, modelSelection: ORG }],
       skipped: [],

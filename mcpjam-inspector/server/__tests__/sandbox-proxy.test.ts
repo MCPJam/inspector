@@ -61,6 +61,13 @@ describe("sandbox proxy response headers", () => {
     }
   });
 
+  it("does not let the hosted app or staging frame a local proxy", async () => {
+    const res = await createApp().request(PROXY_PATH);
+    const csp = res.headers.get("Content-Security-Policy") ?? "";
+    expect(csp).not.toContain("https://app.mcpjam.com");
+    expect(csp).not.toContain("https://staging.mcpjam.com");
+  });
+
   it("leaves X-Frame-Options in place on ordinary routes", async () => {
     const res = await createApp().request("/api/mcp/health");
     expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");

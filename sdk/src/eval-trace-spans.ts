@@ -7,6 +7,7 @@ import type {
   OnStepFinishEvent,
 } from "ai";
 import type { EvalTraceSpanInput } from "./eval-reporting-types.js";
+import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 type MutableSpan = EvalTraceSpanInput;
 type SpanStatus = "ok" | "error";
@@ -146,6 +147,8 @@ export type EvalSpanSink = {
     meta?: ToolMeta
   ) => void;
   onToolEnd: (toolCallId: string, meta?: ToolMeta) => void;
+  /** Drop a started tool span: the call never executed (policy refusal). */
+  discardTool: (toolCallId: string) => void;
   onStepFinish: (
     stepNumber?: number,
     startMsHint?: number,
@@ -206,6 +209,13 @@ export function createEvalSpanIntegration(options: {
     },
 
     onToolCallFinish(event: OnToolCallFinishEvent) {
+      // A policy refusal is not an executed call: no MCP request was made, so
+      // it gets no tool span and cannot read as a tool error — the rule the
+      // hosted trace capture applies to the same marker.
+      if (event.success && isToolPolicyBlockResult(event.output)) {
+        sink.discardTool(event.toolCall.toolCallId);
+        return;
+      }
       sink.onToolEnd(event.toolCall.toolCallId, {
         status: event.success ? "ok" : "error",
       });
@@ -455,6 +465,14 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
       toolSpan.endMs = bumpEndMs(toolSpan.startMs, t);
       applyToolMeta(toolSpan, meta);
       pendingToolSpans.delete(toolCallId);
+    },
+
+    discardTool(toolCallId: string) {
+      const toolSpan = pendingToolSpans.get(toolCallId);
+      if (!toolSpan) return;
+      pendingToolSpans.delete(toolCallId);
+      const index = recordedSpans.indexOf(toolSpan);
+      if (index !== -1) recordedSpans.splice(index, 1);
     },
 
     onStepFinish(stepNumber?: number, startMsHint?: number, meta?: StepMeta) {
