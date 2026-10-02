@@ -88,6 +88,12 @@ export type RunPlatformOperationExtras = {
    * audience scope when `cloudScope` is omitted.
    */
   projectScope?: ProjectCloudScope;
+  /**
+   * The failing command's path under the program (`cloud feedback`), for the
+   * error mapping: a platform fault earns a "report it" hint, except on the
+   * command that files the report.
+   */
+  command?: string;
 };
 
 /**
@@ -224,9 +230,9 @@ export async function runPlatformOperation<TOutput>(
       controller.signal.aborted &&
       controller.signal.reason instanceof PlatformApiError
     ) {
-      throw toCliError(controller.signal.reason);
+      throw toCliError(controller.signal.reason, { command: extras.command });
     }
-    const mapped = toCliError(error);
+    const mapped = toCliError(error, { command: extras.command });
     throw new CliError(
       mapped.code,
       appendProjectLinkHint(mapped.message, extras.projectScope),
@@ -280,6 +286,19 @@ function hasCloudAncestor(command: Command): boolean {
   return false;
 }
 
+/** `cloud feedback` for `mcpjam cloud feedback`: the path under the program. */
+function commandPathOf(command: Command): string {
+  const names: string[] = [];
+  for (
+    let current: Command | null = command;
+    current?.parent;
+    current = current.parent
+  ) {
+    names.unshift(current.name());
+  }
+  return names.join(" ");
+}
+
 function commandHasProjectOption(command: Command): boolean {
   return command.options.some((option) => option.long === "--project");
 }
@@ -305,6 +324,10 @@ export type BindOperationExtras<TOutput> = {
    * hosted `readiness` deliberately takes no ambient Cloud project context
    * (pinned in cloud-link-status.test.ts) while `registry` — a group of
    * project writes — must resolve exactly like `cloud projects …`.
+   *
+   * `false` opts a command OUT, even under `mcpjam cloud`: `cloud feedback`
+   * sends `--project` only when it is named, because a report filed against
+   * whatever project the repo happens to be linked to is misfiled.
    */
   ambientProject?: boolean;
   /**
@@ -383,6 +406,7 @@ export function bindOperation<
     // recently updated project even inside a repo linked to a specific one —
     // hence the explicit `ambientProject` opt-in for root-level groups.
     const applyAmbient =
+      bindExtras.ambientProject !== false &&
       (underCloud || bindExtras.ambientProject === true) &&
       commandHasProjectOption(invoked);
     const resolved = applyAmbient
@@ -433,6 +457,7 @@ export function bindOperation<
       {
         announce: bindExtras.announce ?? underCloud,
         quiet: globalOptions.quiet,
+        command: commandPathOf(invoked),
         ...(resolved
           ? {
               projectScope: resolved.projectScope,

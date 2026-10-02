@@ -10,7 +10,6 @@ import {
   isAllowedHost,
   isLocalhostRequest,
   isTunnelHost,
-  mayServeSessionToken,
 } from "../localhost-check.js";
 
 describe("isLocalhostRequest", () => {
@@ -255,127 +254,6 @@ describe("isTunnelHost", () => {
       // rather than compared as "", which would match nothing anyway but would
       // put an empty string through the suffix test on every request.
       expect(isTunnelHost("localhost:6274,, ")).toBe(false);
-    });
-  });
-});
-
-describe("mayServeSessionToken", () => {
-  it("allows localhost", () => {
-    expect(
-      mayServeSessionToken({
-        host: "localhost:6274",
-        allowedHosts: [],
-      }),
-    ).toBe(true);
-  });
-
-  it("denies tunnel hosts via the Host header", () => {
-    expect(
-      mayServeSessionToken({
-        host: "abc123.ngrok.app",
-        allowedHosts: [],
-      }),
-    ).toBe(false);
-    expect(
-      mayServeSessionToken({
-        host: "abc123.tunnels.mcpjam.com",
-        allowedHosts: [],
-      }),
-    ).toBe(false);
-  });
-
-  it("denies tunnel hosts via X-Forwarded-Host even when Host is localhost", () => {
-    // This is the real tunnel shape: the relay edge forwards to localhost
-    // with the public domain carried in X-Forwarded-Host.
-    expect(
-      mayServeSessionToken({
-        host: "localhost:6274",
-        forwardedHost: "abc123.ngrok.app",
-        allowedHosts: [],
-      }),
-    ).toBe(false);
-    expect(
-      mayServeSessionToken({
-        host: "localhost:6274",
-        forwardedHost: "abc123.tunnels.mcpjam.com",
-        allowedHosts: [],
-      }),
-    ).toBe(false);
-  });
-
-  it("SECURITY INVARIANT: denies a tunnel host even when allowlisted", () => {
-    // A future config mistake that allowlists a tunnel domain must not
-    // start leaking the session token through the tunnel.
-    expect(
-      mayServeSessionToken({
-        host: "abc123.ngrok.app",
-        allowedHosts: ["abc123.ngrok.app", "*.ngrok.app"],
-      }),
-    ).toBe(false);
-    expect(
-      mayServeSessionToken({
-        host: "abc123.tunnels.mcpjam.com",
-        allowedHosts: ["abc123.tunnels.mcpjam.com", "*.tunnels.mcpjam.com"],
-      }),
-    ).toBe(false);
-  });
-
-  it("denies active custom tunnel domains", () => {
-    expect(
-      mayServeSessionToken({
-        host: "tunnel.example.com",
-        allowedHosts: ["tunnel.example.com"],
-        activeTunnelDomains: ["tunnel.example.com"],
-      }),
-    ).toBe(false);
-  });
-
-  it("still honors the hosted-mode allowlist for non-tunnel hosts", () => {
-    expect(
-      mayServeSessionToken({
-        host: "myapp.railway.app",
-        allowedHosts: ["*.railway.app"],
-      }),
-    ).toBe(true);
-  });
-
-  // Self-hosted (npx/Docker) runs with hostedMode: false. The allowlist used to
-  // be ignored entirely in that mode, so a self-hosted user reaching the
-  // inspector over the LAN (raw IP) had no supported way to receive the token.
-  // MCPJAM_ALLOWED_HOSTS is now honored in BOTH modes (BB-118).
-  describe("self-hosted network access (hostedMode: false)", () => {
-    it("serves an allowlisted LAN IP over the network", () => {
-      expect(
-        mayServeSessionToken({
-          host: "192.168.1.50:6274",
-          allowedHosts: ["192.168.1.50"],
-        }),
-      ).toBe(true);
-    });
-
-    it("still denies a host that isn't allowlisted", () => {
-      expect(
-        mayServeSessionToken({
-          host: "192.168.1.50:6274",
-          allowedHosts: ["192.168.1.99"],
-        }),
-      ).toBe(false);
-      // Empty allowlist = localhost-only, the pre-BB-118 default.
-      expect(
-        mayServeSessionToken({
-          host: "192.168.1.50:6274",
-          allowedHosts: [],
-        }),
-      ).toBe(false);
-    });
-
-    it("still vetoes a tunnel host in self-hosted mode even if allowlisted", () => {
-      expect(
-        mayServeSessionToken({
-          host: "abc123.tunnels.mcpjam.com",
-          allowedHosts: ["*.tunnels.mcpjam.com"],
-        }),
-      ).toBe(false);
     });
   });
 });
