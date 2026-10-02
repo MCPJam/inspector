@@ -191,6 +191,17 @@ describe("PlaygroundTab loading branch", () => {
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
   });
 
+  it("reports readiness again when an already-ready Playground starts its first-run handoff", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const beforeHandoff = vi.fn();
+    const duringHandoff = vi.fn();
+    const view = render(<PlaygroundTab {...baseProps} onReady={beforeHandoff} />);
+    expect(beforeHandoff).toHaveBeenCalledOnce();
+
+    view.rerender(<PlaygroundTab {...baseProps} onReady={duringHandoff} />);
+    expect(duringHandoff).toHaveBeenCalledOnce();
+  });
+
   it("passes the one-shot first-run prompt into the Playground center", () => {
     mockLoadingState.current = { kind: "ready" };
     const onFirstRunPromptConsumed = vi.fn();

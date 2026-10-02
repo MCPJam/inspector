@@ -86,7 +86,12 @@ if (electronMcpReturnUrl) {
   const firstRunOAuthReturnServerName = getFirstRunOAuthReturnServerName();
   let oauthBootRoot: Root | null = null;
   let oauthBootHost: HTMLDivElement | null = null;
+  let oauthBootTimeoutId: number | null = null;
   const dismissOAuthBootScreen = () => {
+    if (oauthBootTimeoutId !== null) {
+      window.clearTimeout(oauthBootTimeoutId);
+      oauthBootTimeoutId = null;
+    }
     window.removeEventListener(
       FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
       dismissOAuthBootScreen,
@@ -112,6 +117,9 @@ if (electronMcpReturnUrl) {
       dismissOAuthBootScreen,
       { once: true },
     );
+    // If auth or project setup fails before the onboarding overlay mounts,
+    // expose the app's recovery UI instead of covering it indefinitely.
+    oauthBootTimeoutId = window.setTimeout(dismissOAuthBootScreen, 20_000);
   }
 
   // Keep the callback card in its own root while the real app hydrates below
