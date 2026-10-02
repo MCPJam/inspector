@@ -5,7 +5,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { useProjectServers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectServers } from "@/hooks/useProjects";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useHostList } from "@/hooks/useClients";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -162,6 +163,7 @@ export function readEnvironmentResolutions(
 export function useEnvironmentResolutions(
   projectId: string,
   environmentIds: readonly string[],
+  enabled = true,
 ) {
   // Convex resubscribes whenever this object changes identity, and every
   // resubscribe re-renders, so it is rebuilt only when its inputs change.
@@ -169,7 +171,7 @@ export function useEnvironmentResolutions(
   const queries = useMemo(
     () =>
       Object.fromEntries(
-        (key ? key.split(",") : []).map((environmentId) => [
+        (enabled && key ? key.split(",") : []).map((environmentId) => [
           environmentId,
           {
             query: "projectEnvironments:resolveEnvironmentForLaunch" as any,
@@ -182,7 +184,7 @@ export function useEnvironmentResolutions(
           },
         ]),
       ),
-    [projectId, key],
+    [projectId, key, enabled],
   );
   return readEnvironmentResolutions(useQueries(queries));
 }
@@ -201,6 +203,7 @@ export function useSuiteRunPreflight({
   const appState = useOptionalSharedAppState();
   const actions = useServerActionsOptional();
   const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
   const organizationId =
     findProjectByAnyId(appState?.projects ?? {}, projectId)?.organizationId ??
     null;
@@ -215,6 +218,9 @@ export function useSuiteRunPreflight({
   const environment = useEnvironmentResolutions(
     projectId,
     suite.environmentIds ?? [],
+    // The gate `useProjectServers` reads with: a signed-out browser or a
+    // placeholder project id would only collect validator errors.
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
   );
   const preflight = runPreflight({
     ...preflightTargets({

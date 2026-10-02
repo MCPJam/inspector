@@ -430,10 +430,15 @@ export function useEvalHandlers({
   );
 
   const getSuiteExecutionContext = useCallback(
-    async (suite: EvalSuite) => {
+    async (
+      suite: EvalSuite,
+      // Where "not ready" reasons go; a caller that shows them inline passes
+      // its own.
+      report: (message: string) => void = toast.error,
+    ) => {
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
-        toast.error("No test cases found in this suite");
+        report("No test cases found in this suite");
         return null;
       }
 
@@ -550,17 +555,17 @@ export function useEvalHandlers({
           const label = suite.defaultConfig?.provider
             ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
             : suite.defaultConfig?.modelId;
-          toast.error(
+          report(
             `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`,
           );
         } else if (probesSkippedMissingConfig > 0) {
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
-          toast.error(
+          report(
             "No tests to run. The suite's render checks are missing their configuration.",
           );
         } else {
-          toast.error("No tests to run. Please add models to your test cases.");
+          report("No tests to run. Please add models to your test cases.");
         }
         return null;
       }
@@ -591,18 +596,22 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
-      options?: { minimumPassRate?: number },
+      options?: { minimumPassRate?: number; throwOnFailure?: boolean },
     ) => {
       if (rerunningSuiteId || replayingRunId) return;
+      const fail = (message: string) => {
+        if (options?.throwOnFailure) throw new Error(message);
+        toast.error(message);
+      };
 
       if (!run.hasServerReplayConfig) {
-        toast.error(
+        fail(
           "This CI run can't be replayed because it doesn't have stored replay config.",
         );
         return;
       }
 
-      const executionContext = await getSuiteExecutionContext(suite);
+      const executionContext = await getSuiteExecutionContext(suite, fail);
       if (!executionContext) {
         return;
       }
@@ -691,6 +700,11 @@ export function useEvalHandlers({
         if (openEvalIterationWall(error)) {
           // The wall carries the message now; leave no orphaned loading toast.
           toast.dismiss(replayToastId);
+        } else if (options?.throwOnFailure) {
+          toast.dismiss(replayToastId);
+          throw new Error(
+            getBillingErrorMessage(error, "Failed to replay eval run"),
+          );
         } else {
           toast.error(
             getBillingErrorMessage(error, "Failed to replay eval run"),
@@ -811,7 +825,9 @@ export function useEvalHandlers({
             throw new Error(
               "Live suite servers are unavailable. Connect them before running from eval chat.",
             );
-          await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+          await handleReplayRun(suite, rerunEligibility.replayableLatestRun, {
+            throwOnFailure: options?.throwOnFailure,
+          });
           return;
         }
         if (options?.stayOnPage)
@@ -830,7 +846,9 @@ export function useEvalHandlers({
               throw new Error(
                 "Live suite servers are unavailable. Connect them before running from eval chat.",
               );
-            await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+            await handleReplayRun(suite, rerunEligibility.replayableLatestRun, {
+              throwOnFailure: options?.throwOnFailure,
+            });
             return;
           } else {
             if (options?.stayOnPage)
@@ -882,20 +900,28 @@ export function useEvalHandlers({
           projectId,
           environmentIds: suite.environmentIds ?? [],
           ensureServersReady,
-        });
+        }).catch((error: unknown) =>
+          error instanceof Error ? error : new Error(String(error)),
+        );
         if (blocked) {
-          const message = formatEnsureServersReadyError(
-            blocked,
-            "run this suite",
-            projectServers,
-          );
+          const message =
+            blocked instanceof Error
+              ? blocked.message
+              : formatEnsureServersReadyError(
+                  blocked,
+                  "run this suite",
+                  projectServers,
+                );
           if (options?.stayOnPage) throw new Error(message);
           fail(message);
           return;
         }
       }
 
-      const executionContext = await getSuiteExecutionContext(suite);
+      const executionContext = await getSuiteExecutionContext(
+        suite,
+        options?.stayOnPage ? undefined : fail,
+      );
       if (!executionContext) {
         if (options?.stayOnPage)
           throw new Error(

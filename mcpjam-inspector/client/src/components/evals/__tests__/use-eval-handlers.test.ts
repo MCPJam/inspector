@@ -1448,6 +1448,45 @@ describe("useEvalHandlers", () => {
         expect(mockAuthFetch).not.toHaveBeenCalled();
       });
 
+      it("throws a replay fallback that fails instead of toasting it", async () => {
+        mockIsHostedMode.mockReturnValue(true);
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ message: "Replay unavailable" }, 500),
+        );
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady: vi.fn().mockResolvedValue({
+              readyServerNames: [],
+              missingServerNames: [],
+              failedServerNames: ["server-1"],
+              reauthServerNames: [],
+            }),
+            latestRunBySuiteId: new Map<string, any>([
+              ["suite-123", { _id: "run-source", hasServerReplayConfig: true }],
+            ]),
+          }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("Replay unavailable");
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+      });
+
+      it("throws why the suite is not ready instead of toasting it", async () => {
+        mockConvexQuery.mockResolvedValue([]);
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("No test cases found in this suite");
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+      });
+
       it("still navigates to the run it started", async () => {
         mockAuthFetch.mockResolvedValue(
           createFetchResponse({ success: true, runId: "run-1" }),
@@ -1538,6 +1577,34 @@ describe("useEvalHandlers", () => {
           "We couldn't connect to crm. Try again to run this suite.",
         );
       });
+
+      it.each([false, true])(
+        "reports a connect attempt that throws (throwOnFailure: %s)",
+        async (throwOnFailure) => {
+          const ensureServersReady = vi
+            .fn()
+            .mockRejectedValue(new Error("Connection pool unavailable"));
+          const { result } = renderHook(() =>
+            useEvalHandlers({ ...defaultProps, ensureServersReady }),
+          );
+          await act(async () => {
+            const launch = result.current.handleRerun(envSuite, {
+              throwOnFailure,
+            });
+            if (throwOnFailure)
+              await expect(launch).rejects.toThrow(
+                "Connection pool unavailable",
+              );
+            else await launch;
+          });
+          expect(runUrls()).toHaveLength(0);
+          if (throwOnFailure) expect(toast.error).not.toHaveBeenCalled();
+          else
+            expect(toast.error).toHaveBeenCalledWith(
+              "Connection pool unavailable",
+            );
+        },
+      );
 
       it("connects nothing in the browser in hosted mode", async () => {
         mockIsHostedMode.mockReturnValue(true);
