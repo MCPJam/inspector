@@ -312,13 +312,36 @@ export function fundingChangedNotice(args: {
   total: number;
   actualSponsored: number;
   totalConversations: number;
+  /**
+   * The goals that were not started, by label. New swarm launches every goal of a
+   * persona it reuses, so without them "launch them again" sends someone to
+   * relaunch the goals that already ran.
+   */
+  remaining?: readonly string[];
 }): string {
   const refused = `${args.actualSponsored.toLocaleString()} of its ${plural(
     args.totalConversations,
     "conversation",
     "conversations",
   )} sponsored`;
-  return args.launched === 0
-    ? `Sponsored conversations changed before this launch started: a run now has ${refused}. Nothing was launched and nothing was moved to org credits. Review the split, then launch again.`
-    : `Launched ${args.launched} of ${args.total} runs. Sponsored conversations changed for the next run (it now has ${refused}), so the remaining runs were not started and none were moved to org credits. Review the split in New swarm before launching them.`;
+  if (args.launched === 0) {
+    return `Sponsored conversations changed before this launch started: a run now has ${refused}. Nothing was launched and nothing was moved to org credits. Review the split, then launch again.`;
+  }
+  const remaining = args.remaining ?? [];
+  const notStarted =
+    remaining.length > 0
+      ? ` Not started: ${remaining.slice(0, MAX_NAMED_GOALS).join("; ")}${
+          remaining.length > MAX_NAMED_GOALS
+            ? ` and ${remaining.length - MAX_NAMED_GOALS} more`
+            : ""
+        }.`
+      : "";
+  return `Launched ${args.launched} of ${args.total} runs. Sponsored conversations changed for the next run (it now has ${refused}), so the remaining runs were not started and none were moved to org credits.${notStarted} Review the split in New swarm before launching them.${
+    remaining.length > 0
+      ? " New swarm launches every goal of a persona it reuses."
+      : ""
+  }`;
 }
+
+/** How many unstarted goals a notice names before it counts the rest. */
+const MAX_NAMED_GOALS = 3;

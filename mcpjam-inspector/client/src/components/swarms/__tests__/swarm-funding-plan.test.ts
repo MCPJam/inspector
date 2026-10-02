@@ -458,6 +458,55 @@ describe("notices", () => {
     expect(partial).not.toMatch(/retry|retrying/i);
   });
 
+  // New swarm launches every goal of a persona it reuses, so "launch them again"
+  // without saying which goals are left sends someone to relaunch the ones that
+  // already ran. The goals not started are named, a few at a time.
+  it("a partial 409 notice names the goals that were not started, and what New swarm will do with them", () => {
+    const notice = fundingChangedNotice({
+      launched: 1,
+      total: 3,
+      actualSponsored: 0,
+      totalConversations: 1,
+      remaining: ["Ana · Refund the charge", "Ana · Cancel the plan"],
+    });
+    expect(notice).toMatch(
+      /Not started: Ana · Refund the charge; Ana · Cancel the plan\./,
+    );
+    expect(notice).toMatch(/launches every goal of a persona it reuses/i);
+    expect(notice).not.toContain("—");
+  });
+
+  it("names only the first few, and counts the rest", () => {
+    const notice = fundingChangedNotice({
+      launched: 1,
+      total: 6,
+      actualSponsored: 0,
+      totalConversations: 1,
+      remaining: ["A", "B", "C", "D", "E"],
+    });
+    expect(notice).toMatch(/Not started: A; B; C and 2 more\./);
+  });
+
+  it("names nothing for a launch that started nothing, or when no goal is known", () => {
+    expect(
+      fundingChangedNotice({
+        launched: 0,
+        total: 2,
+        actualSponsored: 0,
+        totalConversations: 1,
+        remaining: ["A", "B"],
+      }),
+    ).not.toMatch(/Not started/);
+    expect(
+      fundingChangedNotice({
+        launched: 1,
+        total: 2,
+        actualSponsored: 0,
+        totalConversations: 1,
+      }),
+    ).not.toMatch(/Not started/);
+  });
+
   // `totalConversations` is the refused run's size, not the launch's. "now 0
   // sponsored conversations of 1" beside a 15-conversation split read as a
   // contradiction, so the numbers are said to belong to that run.

@@ -3877,6 +3877,42 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     ).toHaveTextContent(/Launched 1 of 2 runs\.[\s\S]*Network down/);
   });
 
+  // The dialog carries the cause, but it closes; the Running screen then shows
+  // only the runs that did launch.
+  it("keeps a usage-limit stop on the Running screen after its dialog closes", async () => {
+    await openReusedConfirm(2);
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(
+        new LaunchJourneyRunError(402, "Model limit reached.", true),
+      );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Launched 1 of 2 runs\.[\s\S]*usage limit was reached/);
+  });
+
+  it("names the goals a 409 left unstarted on the Running screen", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(2);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    const notice = screen.getByTestId("new-swarm-running-launch-notice");
+    expect(notice).toHaveTextContent(/Not started: Ana · /);
+    expect(notice).toHaveTextContent(/launches every goal of a persona/i);
+  });
+
   it("keeps a credit-limit stop on the Running screen as well", async () => {
     await openReusedConfirm(2);
     launchJourneyRunMock
@@ -3894,6 +3930,64 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     expect(
       screen.getByTestId("new-swarm-running-launch-notice"),
     ).toHaveTextContent(/Launched 1 of 2 runs[\s\S]*credit limit was reached/);
+  });
+
+  // The notice quotes the split as it was when the launch stopped. Changing a
+  // counter refreshes the split above it, and a notice left behind would then
+  // contradict the numbers it sits under.
+  it("clears the stop notice when a counter changes, since the split it quoted is gone", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("new-swarm-funding-notice"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  // `shownSponsored` is null while the preview is not ready, so a click in that
+  // window sent null and the launch stopped again with the first-review wording.
+  it("holds Continue while the split is being re-read after a counter changed", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    let release!: () => void;
+    fundingPreviewMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve(supported([previewRun(2, 0), previewRun(1, 0)]));
+        }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(false));
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+
+    release();
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
   });
 
   it("locks a reused-only swarm the same way once its first launch attempt stopped", async () => {

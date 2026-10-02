@@ -575,6 +575,10 @@ export function NewSwarmCreateFlow({
         ...current,
         [personaKey]: next,
       }));
+      // The notice quotes the split as it stood when a launch stopped. A counter
+      // changes that split, and a notice left behind would then contradict the
+      // numbers it sits under.
+      setFundingNotice(null);
     },
     [],
   );
@@ -1800,11 +1804,17 @@ export function NewSwarmCreateFlow({
       });
 
       if (fundingChange) {
+        const launchedJourneyIds = new Set(
+          launchedBatch.map((run) => run.journeyId),
+        );
         const notice = fundingChangedNotice({
           launched,
           total: targets.length,
           actualSponsored: fundingChange.actualSponsored,
           totalConversations: fundingChange.totalConversations,
+          remaining: targets
+            .filter((target) => !launchedJourneyIds.has(target.journeyId))
+            .map((target) => target.label),
         });
         // Re-read the split so Confirm shows the one a new launch would get.
         // The remaining runs are NEVER retried here: they would run against a
@@ -1877,9 +1887,14 @@ export function NewSwarmCreateFlow({
           );
         }
       } else if (limitDialogBlocked) {
-        // No cause named here — the dialog already carries it. The count is
-        // what this toast adds: the runs that DID land are real.
+        // No cause named in the toast — the dialog already carries it. The count
+        // is what this toast adds: the runs that DID land are real. The dialog
+        // closes, and the Running screen then shows only those runs, so a short
+        // note stays beside them.
         toast.warning(`Launched ${launched} of ${targets.length} runs`);
+        setLaunchNotice(
+          `Launched ${launched} of ${targets.length} runs. The rest were not started because a usage limit was reached.`,
+        );
       } else if (billingBlocked) {
         // ONE billing message for the whole wave. The count matters here in a
         // way it doesn't for other partial failures: the remaining runs were
