@@ -19,11 +19,13 @@ import {
 import {
   readPendingChatScopeStepUp,
   savePendingChatScopeStepUp,
+  setPendingChatScopeStepUpCredentialBinding,
   settlePendingChatScopeStepUpAfterCallback,
 } from "../scope-step-up-pending";
 import {
   claimPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayCredentialBinding,
   settlePendingDirectScopeStepUpReplayAfterCallback,
 } from "../scope-step-up-replay";
 import type { ServerWithName } from "@/state/app-types";
@@ -200,13 +202,10 @@ describe("settling the pending stores on the callback", () => {
     expect(readPendingChatScopeStepUp()?.phase).toBe("ready");
 
     saveChatStepUp("c1");
-    sessionStorage.setItem(
-      "mcp-scope-step-up-chat-v1",
-      JSON.stringify({
-        ...readPendingChatScopeStepUp(),
-        credentialBinding: { kind: "owned", credentialId: "c1" },
-      }),
-    );
+    setPendingChatScopeStepUpCredentialBinding("orders", {
+      kind: "owned",
+      credentialId: "c1",
+    });
     settlePendingChatScopeStepUpAfterCallback("orders", "c2");
     expect(readPendingChatScopeStepUp()).toMatchObject({
       phase: "cancelled",
@@ -242,16 +241,10 @@ describe("settling the pending stores on the callback", () => {
     ).toBeDefined();
 
     save();
-    const stored = JSON.parse(
-      sessionStorage.getItem("mcp-scope-step-up-replay-v1")!,
-    );
-    sessionStorage.setItem(
-      "mcp-scope-step-up-replay-v1",
-      JSON.stringify({
-        ...stored,
-        credentialBinding: { kind: "shared", credentialId: "c1" },
-      }),
-    );
+    setPendingDirectScopeStepUpReplayCredentialBinding("orders", {
+      kind: "shared",
+      credentialId: "c1",
+    });
     expect(
       settlePendingDirectScopeStepUpReplayAfterCallback("orders", "mine"),
     ).toBe(SIGNED_IN_WITH_OWN_ACCOUNT_MESSAGE);
