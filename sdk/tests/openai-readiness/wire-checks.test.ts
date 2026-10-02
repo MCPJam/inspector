@@ -15,6 +15,8 @@
  *     with no token must not pass on the strength of "something answered".
  */
 
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -25,9 +27,10 @@ import {
 import { runOpenAIAuthChecks } from "../../src/openai-readiness/checks/auth.js";
 import { runOpenAIDomainVerificationChecks } from "../../src/openai-readiness/checks/domain-verification.js";
 import { runOpenAIEndpointChecks } from "../../src/openai-readiness/checks/endpoint.js";
-import type {
-  OpenAIAuthEvidence,
-  OpenAIEndpointEvidence,
+import {
+  discoverOpenAIAuthEvidence,
+  type OpenAIAuthEvidence,
+  type OpenAIEndpointEvidence,
 } from "../../src/openai-readiness/discovery.js";
 import type { OpenAIReadinessFinding } from "../../src/openai-readiness/types.js";
 
@@ -259,13 +262,43 @@ describe("auth", () => {
 
   it("treats an authless server as a legitimate shape", () => {
     const findings = runOpenAIAuthChecks(
-      authEvidence({ unauthenticated: { status: 200 } }),
+      authEvidence({
+        unauthenticated: { status: 200 },
+        // Authless means no metadata at all: the well-known paths answered 404.
+        prm: { discoveredVia: "not-found", fetchError: "404" },
+        authorizationServers: undefined,
+        advertisedAuthorizationServerCount: 0,
+      }),
       STAMP,
     );
     // Not-applicable, not unmet: an authless server has nothing to authorize.
     for (const finding of findings) {
       expect(["not-applicable"], finding.id).toContain(finding.status);
     }
+  });
+
+  it("grades the OAuth surface of a server that answers anonymously AND publishes PRM", () => {
+    // Anonymous access with OAuth available: the lazy-authentication shape.
+    // Reading every 2xx as authless graded this whole surface not-applicable.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({ unauthenticated: { status: 200 } }),
+      STAMP,
+    );
+    expect(byId(findings, "openai.auth.challenge").status).toBe(
+      "not-applicable",
+    );
+    for (const id of [
+      "openai.auth.prm-discoverable",
+      "openai.auth.issuers-resolve",
+      "openai.auth.pkce-s256",
+      "openai.auth.client-acquisition",
+    ]) {
+      expect(byId(findings, id).status, id).toBe("satisfied");
+    }
+    // The mid-session challenge needs a protected call nobody made.
+    const runtime = byId(findings, "openai.auth.runtime-challenge");
+    expect(runtime.status).toBe("not-evaluated");
+    expect(runtime.notEvaluatedReason).toMatch(/lazy-auth probe/);
   });
 
   it("fails when ANY advertised issuer is unusable, not just the first", () => {
@@ -526,23 +559,86 @@ describe("auth", () => {
     );
   });
 
-  it("reads a challenge carried in mcp/www_authenticate", () => {
-    const findings = runOpenAIAuthChecks(
-      authEvidence({
-        unauthenticated: {
-          status: 401,
-          metaWwwAuthenticate:
-            'Bearer resource_metadata="https://x/.well-known/y"',
-        },
-      }),
-      STAMP,
-    );
-    // A runner reading only the HTTP header would report a conforming server
-    // as publishing no challenge.
-    expect(byId(findings, "openai.auth.challenge").status).toBe("satisfied");
-    expect(byId(findings, "openai.auth.runtime-challenge").status).toBe(
-      "satisfied",
-    );
+  it("reads a challenge carried in mcp/www_authenticate, in OpenAI's documented array shape", async () => {
+    // REAL EVIDENCE, not a hand-built object: a loopback server refuses the
+    // unauthenticated initialize with a 401 and NO `WWW-Authenticate` header,
+    // carrying the challenge only in the JSON-RPC error's
+    // `_meta["mcp/www_authenticate"]` — as an array, which is the shape OpenAI
+    // documents — and serves its metadata only at that challenge's pointer.
+    let origin = "";
+    const server = http.createServer((req, res) => {
+      const send = (status: number, body: unknown) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      };
+      if (req.url === "/meta/prm.json") {
+        send(200, {
+          resource: `${origin}/mcp`,
+          authorization_servers: [origin],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/.well-known/oauth-authorization-server")) {
+        send(200, {
+          issuer: origin,
+          code_challenge_methods_supported: ["S256"],
+          registration_endpoint: `${origin}/register`,
+          response_types_supported: ["code"],
+        });
+        return;
+      }
+      if (req.url === "/mcp" && req.method === "POST") {
+        send(401, {
+          jsonrpc: "2.0",
+          id: 1,
+          error: {
+            code: -32001,
+            message: "Authentication required",
+            _meta: {
+              "mcp/www_authenticate": [
+                `Bearer resource_metadata="${origin}/meta/prm.json", error="invalid_token", error_description="Sign in"`,
+              ],
+            },
+          },
+        });
+        return;
+      }
+      send(404, {});
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const evidence = await discoverOpenAIAuthEvidence({
+        enteredUrl: `${origin}/mcp`,
+        fetchFn: fetch,
+      });
+      // The array was read, joined as one header would have carried it.
+      expect(evidence.unauthenticated?.wwwAuthenticate).toBeUndefined();
+      expect(evidence.unauthenticated?.metaWwwAuthenticate).toContain(
+        `resource_metadata="${origin}/meta/prm.json"`,
+      );
+      // ...and its pointer is what found the metadata.
+      expect(evidence.prm?.discoveredVia).toBe("www-authenticate");
+
+      const findings = runOpenAIAuthChecks(evidence, STAMP);
+      // A runner reading only the HTTP header would report a conforming
+      // server as publishing no challenge.
+      expect(byId(findings, "openai.auth.challenge").status).toBe("satisfied");
+      expect(byId(findings, "openai.auth.prm-discoverable").status).toBe(
+        "satisfied",
+      );
+      // A refused INITIALIZE is not a mid-session challenge: that needs a
+      // protected tool call, which only the lazy-auth probe makes. The
+      // connect-time challenge is recorded beside the gap, not graded.
+      const runtime = byId(findings, "openai.auth.runtime-challenge");
+      expect(runtime.status).toBe("not-evaluated");
+      expect(runtime.details?.initializeMetaWwwAuthenticate).toContain(
+        "error_description",
+      );
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
@@ -560,6 +656,51 @@ const tool = (
     openWorldHint: true,
   },
   ...overrides,
+});
+
+describe("per-tool securitySchemes", () => {
+  const schemesFinding = (tools: OpenAIToolEvidence[]) =>
+    byId(runOpenAIAnnotationChecks(tools, STAMP), "openai.tools.security-schemes");
+
+  it("passes well-formed declarations and names the tools that inherit the default", () => {
+    const finding = schemesFinding([
+      tool({ name: "get_weather", securitySchemes: [{ type: "noauth" }] }),
+      tool({
+        name: "get_orders",
+        securitySchemes: [{ type: "oauth2", scopes: ["orders:read"] }],
+      }),
+      tool({ name: "get_profile" }),
+    ]);
+    expect(finding.status).toBe("satisfied");
+    // Undeclared is "inherits the server default (unresolved)", never "no OAuth".
+    expect(finding.details?.inheritsServerDefault).toEqual(["get_profile"]);
+  });
+
+  it("reads a declaration from _meta.securitySchemes", () => {
+    expect(
+      schemesFinding([
+        tool({ _meta: { securitySchemes: [{ type: "noauth" }] } }),
+      ]).status,
+    ).toBe("satisfied");
+  });
+
+  it.each([
+    ["a bare string list", ["oauth2"]],
+    ["an object", { type: "oauth2" }],
+    ["an entry with no type", [{ scopes: ["a"] }]],
+    ["oauth2 without scopes", [{ type: "oauth2" }]],
+    ["oauth2 with non-string scopes", [{ type: "oauth2", scopes: [1] }]],
+  ])("fails %s, naming the tool", (_label, securitySchemes) => {
+    const finding = schemesFinding([tool({ securitySchemes })]);
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toContain("get_forecast");
+  });
+
+  it("never reports an all-undeclared listing as having no OAuth", () => {
+    const finding = schemesFinding([tool()]);
+    expect(finding.status).toBe("informational");
+    expect(finding.details?.inheritsServerDefault).toEqual(["get_forecast"]);
+  });
 });
 
 describe("annotations", () => {

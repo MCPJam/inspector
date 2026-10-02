@@ -85,6 +85,14 @@ export interface DirectoryInitializeEvidence {
   /** A JSON-RPC error the server returned, or a transport failure. */
   error?: string;
   /**
+   * `WWW-Authenticate` on a refused `initialize`, verbatim and capped.
+   *
+   * Kept so a caller can parse the refusal once with the shared challenge
+   * parser instead of re-dialling to read a header this request already
+   * carried. Server-controlled text: render it, never interpret it here.
+   */
+  wwwAuthenticate?: string;
+  /**
    * Whether anything answered at all.
    *
    * Distinct from `ok`. A server that answered `401` is REACHABLE and refusing;
@@ -167,6 +175,17 @@ function asString(value: unknown): string | undefined {
 
 /** Cap on a server-controlled free-text field we only ever display. */
 const MAX_INSTRUCTIONS_CHARS = 4_000;
+
+/** Cap on a server-controlled `WWW-Authenticate` value kept as evidence. */
+const MAX_CHALLENGE_CHARS = 2_048;
+
+function readChallengeHeader(headers: Headers | undefined): string | undefined {
+  const value = headers?.get("www-authenticate") ?? undefined;
+  if (value === undefined) return undefined;
+  return value.length > MAX_CHALLENGE_CHARS
+    ? value.slice(0, MAX_CHALLENGE_CHARS)
+    : value;
+}
 
 interface JsonRpcCall {
   document?: Record<string, unknown>;
@@ -269,16 +288,34 @@ export async function dialInitialize(
     clientInfo: DIRECTORY_DIAL_CLIENT_INFO,
   });
 
+  const wwwAuthenticate = readChallengeHeader(call.headers);
+
   if (!call.document) {
     return {
       ok: false,
       status: call.status,
+      ...(wwwAuthenticate !== undefined ? { wwwAuthenticate } : {}),
       unreachable: call.transportError !== undefined || !call.status,
       error:
         call.transportError ??
         (call.status !== undefined
           ? `initialize answered ${call.status} with no readable JSON body`
           : "initialize could not be reached"),
+    };
+  }
+
+  // A refusal that came WITH a body is still a refusal. A server may answer a
+  // 401 with a JSON-RPC error document, and reading the body first would
+  // report it as an ordinary initialize error and lose the challenge.
+  if (call.status !== undefined && (call.status < 200 || call.status >= 300)) {
+    const bodyError = asRecord(call.document.error);
+    return {
+      ok: false,
+      status: call.status,
+      ...(wwwAuthenticate !== undefined ? { wwwAuthenticate } : {}),
+      error:
+        asString(bodyError?.message) ??
+        `initialize answered ${call.status}`,
     };
   }
 
@@ -476,6 +513,7 @@ export async function dialToolListing(
     (record) => {
       const name = asString(record.name);
       if (!name) return undefined;
+      const meta = asRecord(record._meta);
       return {
         name,
         title: asString(record.title),
@@ -483,11 +521,121 @@ export async function dialToolListing(
         annotations: asRecord(record.annotations),
         inputSchema: record.inputSchema,
         outputSchema: record.outputSchema,
-        _meta: asRecord(record._meta),
-        securitySchemes: record.securitySchemes ?? record.security,
+        _meta: meta,
+        // THREE PLACES, in the order a host reads them. OpenAI documents the
+        // per-tool declaration as `securitySchemes` and its Apps SDK examples
+        // also carry it in `_meta.securitySchemes`; a reader that looked only
+        // at the top level would report a tool that declares its schemes as
+        // one that declares none, which then reads as "inherits the server
+        // default" — a different claim. `security` is an older spelling.
+        securitySchemes:
+          record.securitySchemes ?? record.security ?? meta?.securitySchemes,
       };
     },
   );
+}
+
+/**
+ * What one `tools/call` answered, reduced to what readiness reads.
+ *
+ * The tool's CONTENT is deliberately absent. Readiness grades how a server
+ * refuses or serves a call, never what the tool returned, and a result body
+ * kept as evidence would be one more place a server's data could be persisted
+ * and shared with a report.
+ */
+export interface DirectoryToolCallEvidence {
+  /** HTTP status. Absent when nothing answered. */
+  status?: number;
+  /** `WWW-Authenticate` on the response, verbatim and capped. */
+  wwwAuthenticate?: string;
+  /**
+   * The JSON-RPC result's `isError` and `_meta`, when the server answered with
+   * a result. `_meta` is what a tool-level sign-in challenge rides in.
+   */
+  result?: { isError: boolean; _meta?: Record<string, unknown> };
+  /** A JSON-RPC error the server answered with instead of a result. */
+  rpcError?: { code?: number; message?: string };
+  /** Nothing readable answered: a transport failure or a bodyless non-error. */
+  unreachable?: boolean;
+  error?: string;
+}
+
+/**
+ * Call one tool, once, and record how the server answered.
+ *
+ * THE CALLER CHOOSES THE TOOL AND THE CREDENTIAL. This function adds no
+ * policy of its own: it sends exactly the `mcpHeaders` in `options`, which is
+ * none at all for an unauthenticated probe, and the caller is responsible for
+ * calling only a tool it has established is safe to call. Every readiness
+ * caller restricts itself to tools annotated `readOnlyHint: true`.
+ *
+ * Arguments default to `{}`. A probe that invented arguments would be calling
+ * a different operation from the one it was asked to observe.
+ */
+export async function dialToolCall(
+  options: DirectoryDialOptions,
+  toolName: string,
+  sessionId?: string,
+  id = 900,
+  args: Record<string, unknown> = {},
+): Promise<DirectoryToolCallEvidence> {
+  const call = await callJsonRpc(
+    options,
+    id,
+    "tools/call",
+    { name: toolName, arguments: args },
+    sessionId ? { "mcp-session-id": sessionId } : undefined,
+  );
+  const wwwAuthenticate = readChallengeHeader(call.headers);
+  const base: DirectoryToolCallEvidence = {
+    ...(call.status ? { status: call.status } : {}),
+    ...(wwwAuthenticate !== undefined ? { wwwAuthenticate } : {}),
+  };
+
+  if (!call.document) {
+    // A refusal needs no body: a bare 401 is a complete answer, and calling
+    // it unreachable would turn the one signal a probe looks for into a gap.
+    if (call.status && call.status >= 400) {
+      return {
+        ...base,
+        error:
+          call.transportError ?? `tools/call answered ${call.status}`,
+      };
+    }
+    return {
+      ...base,
+      unreachable: true,
+      error:
+        call.transportError ??
+        (call.status !== undefined && call.status !== 0
+          ? `tools/call answered ${call.status} with no readable JSON body`
+          : "tools/call could not be reached"),
+    };
+  }
+
+  const rpcError = asRecord(call.document.error);
+  if (rpcError) {
+    return {
+      ...base,
+      rpcError: {
+        code: typeof rpcError.code === "number" ? rpcError.code : undefined,
+        message: asString(rpcError.message)?.slice(0, 512),
+      },
+      error: asString(rpcError.message)?.slice(0, 512) ?? "tools/call returned an error",
+    };
+  }
+
+  const result = asRecord(call.document.result);
+  if (!result) {
+    return { ...base, error: "tools/call returned no result" };
+  }
+  return {
+    ...base,
+    result: {
+      isError: result.isError === true,
+      ...(asRecord(result._meta) ? { _meta: asRecord(result._meta) } : {}),
+    },
+  };
 }
 
 /** Walk `resources/list`, recording whether the walk finished. */

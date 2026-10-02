@@ -20,6 +20,7 @@
  * Pure data. No transport.
  */
 
+import type { DirectoryLazyAuthProbeEvidence } from "../../directory-readiness/lazy-auth.js";
 import { claudePolicySource } from "../manifest.js";
 import type {
   ClaudeCapabilityBadge,
@@ -63,13 +64,104 @@ export interface ClaudeOptionalFeatureEvidence {
     enterpriseManagedAuth?: boolean;
   };
   /**
-   * Set when the run actually drove a protected call after an unauthenticated
-   * one succeeded — the only observation that establishes lazy auth rather
+   * Set when the run actually drove a public and a protected call without
+   * credentials — the only observation that establishes lazy auth rather
    * than inferring it.
    */
-  lazyAuthProbe?: {
-    unauthenticatedCallSucceeded: boolean;
-    protectedCallChallenged: boolean;
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
+}
+
+/** What the probe established, against Claude's documented trigger. */
+type LazyAuthVerdict =
+  | { state: "supported" | "unsupported"; detail: string }
+  /** The probe ran and established neither answer; say why. */
+  | { state: "undetermined"; detail: string };
+
+/**
+ * Read the probe against CLAUDE'S trigger, not "any 401".
+ *
+ * Claude starts sign-in only when the request itself fails with HTTP 401 and
+ * a `WWW-Authenticate` header. So `supported` needs exactly that on the
+ * protected call — the `challengeHeader === "bearer"` facet — AND a public
+ * call that was served, because a server that refuses every call is not
+ * lazy, however well-formed its challenge. A headerless 401, and a `_meta`
+ * challenge on a 200 `isError` result, are both `unsupported` for Claude, and
+ * the detail says why so the submitter is not left guessing.
+ */
+function judgeLazyAuthProbe(
+  probe: DirectoryLazyAuthProbeEvidence,
+): LazyAuthVerdict {
+  if (!probe.attempted) {
+    return {
+      state: "undetermined",
+      detail: `the lazy-auth probe was requested but did not run: ${probe.reason ?? "it was refused"}`,
+    };
+  }
+  const initialize = probe.initialize;
+  if (initialize && !initialize.ok) {
+    return initialize.unreachable
+      ? {
+          state: "undetermined",
+          detail: "the probe's anonymous initialize could not be reached",
+        }
+      : {
+          state: "unsupported",
+          detail: `the server challenges before any call succeeds (anonymous initialize answered ${initialize.status ?? "an error"})`,
+        };
+  }
+
+  const publicCall = probe.publicCall;
+  if (publicCall && publicCall.outcome !== "unreachable" && publicCall.outcome !== "succeeded") {
+    return {
+      state: "unsupported",
+      detail: `the public tool "${publicCall.toolName}" was refused without credentials (${publicCall.outcome}${publicCall.status ? `, HTTP ${publicCall.status}` : ""})`,
+    };
+  }
+
+  const call = probe.protectedCall;
+  if (!call || call.outcome === "unreachable") {
+    return {
+      state: "undetermined",
+      detail: call
+        ? `the protected call to "${call.toolName}" could not be reached`
+        : `no protected call was made: ${probe.protectedCallSkipped ?? "no protected tool was selected"}`,
+    };
+  }
+  if (call.outcome === "succeeded") {
+    return {
+      state: "undetermined",
+      detail: `"${call.toolName}" ran without credentials, so it is not a protected tool; name one that requires sign-in`,
+    };
+  }
+
+  const bearer401 =
+    call.outcome === "unauthorized" &&
+    call.challenge?.facets.challengeHeader === "bearer";
+  if (!bearer401) {
+    const what =
+      call.outcome === "unauthorized"
+        ? "answered HTTP 401 without a WWW-Authenticate: Bearer header"
+        : call.challenge?.source === "tool_result_meta"
+          ? 'answered with a 200 isError result carrying _meta["mcp/www_authenticate"]'
+          : `answered ${call.outcome}${call.status ? ` (HTTP ${call.status})` : ""}`;
+    return {
+      state: "unsupported",
+      detail: `the protected tool "${call.toolName}" ${what}. Claude starts sign-in only on HTTP 401 with WWW-Authenticate; a 200 isError result is an ordinary tool failure to Claude.`,
+    };
+  }
+
+  if (!publicCall || publicCall.outcome !== "succeeded") {
+    return {
+      state: "undetermined",
+      detail: publicCall
+        ? `the protected call was challenged correctly, but the public call to "${publicCall.toolName}" could not be reached`
+        : `the protected call was challenged correctly, but no public call was made: ${probe.publicCallSkipped ?? "no public tool was selected"}`,
+    };
+  }
+
+  return {
+    state: "supported",
+    detail: `an unauthenticated call to "${publicCall.toolName}" was served, and one to "${call.toolName}" was refused with HTTP 401 and a WWW-Authenticate: Bearer challenge`,
   };
 }
 
@@ -94,21 +186,45 @@ export function runClaudeOptionalFeatureChecks(
     evidence.auth.prm?.discoveredVia !== undefined &&
     evidence.auth.prm.discoveredVia !== "not-found";
 
-  if (probe) {
-    const works =
-      probe.unauthenticatedCallSucceeded && probe.protectedCallChallenged;
+  const verdict = probe ? judgeLazyAuthProbe(probe) : undefined;
+
+  if (verdict && verdict.state !== "undetermined") {
     badges.push({
       id: LAZY_AUTH.id,
       title: LAZY_AUTH.title,
-      state: works ? "supported" : "unsupported",
-      detail: works
-        ? "an unauthenticated call succeeded and a protected one was challenged"
-        : probe.unauthenticatedCallSucceeded
-          ? "unauthenticated calls succeed, but no protected call produced a challenge"
-          : "the server challenges before any call succeeds",
+      state: verdict.state,
+      detail: verdict.detail,
       provenance: "wire",
     });
-    findings.push(informational(LAZY_AUTH, stamp, { probe }));
+    findings.push(
+      informational(
+        LAZY_AUTH,
+        stamp,
+        {
+          probe: summarizeProbe(probe!),
+          protocolVersion: probe!.protocolVersion,
+          eraNote: probe!.eraNote,
+        },
+        verdict.detail,
+      ),
+    );
+  } else if (verdict) {
+    // The probe ran and could not decide. A claim still counts as a claim,
+    // and the probe's reason is the most useful sentence to show.
+    badges.push({
+      id: LAZY_AUTH.id,
+      title: LAZY_AUTH.title,
+      state: claimed ? "claimed" : "not-evaluated",
+      detail: claimed
+        ? `declared by the submitter; not verified by this run: ${verdict.detail}`
+        : verdict.detail,
+      provenance: claimed ? "declared" : "wire",
+    });
+    findings.push(
+      notEvaluated(LAZY_AUTH, stamp, verdict.detail, {
+        probe: summarizeProbe(probe!),
+      }),
+    );
   } else if (servedWithoutCredentials && publishesChallenge) {
     // Consistent with lazy auth and not proof of it: a server that serves
     // everything and publishes metadata it never enforces looks identical from
@@ -185,4 +301,31 @@ export function runClaudeOptionalFeatureChecks(
   );
 
   return { findings, badges };
+}
+
+/** The probe, reduced to what a reader of the finding needs. */
+function summarizeProbe(
+  probe: DirectoryLazyAuthProbeEvidence,
+): Record<string, unknown> {
+  const call = (entry: DirectoryLazyAuthProbeEvidence["publicCall"]) =>
+    entry
+      ? {
+          toolName: entry.toolName,
+          selectedBy: entry.selectedBy,
+          outcome: entry.outcome,
+          status: entry.status,
+          challengeSource: entry.challenge?.source,
+          facets: entry.challenge?.facets,
+        }
+      : undefined;
+  return {
+    initialize: probe.initialize
+      ? { ok: probe.initialize.ok, status: probe.initialize.status }
+      : undefined,
+    publicCall: call(probe.publicCall),
+    publicCallSkipped: probe.publicCallSkipped,
+    protectedCall: call(probe.protectedCall),
+    protectedCallSkipped: probe.protectedCallSkipped,
+    rediscovery: probe.rediscovery,
+  };
 }
