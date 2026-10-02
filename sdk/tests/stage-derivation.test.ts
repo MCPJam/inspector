@@ -844,6 +844,205 @@ describe("call & response", () => {
   });
 });
 
+describe("toolInputMatches files at call", () => {
+  const argumentsRow = (over: Record<string, unknown> = {}) => ({
+    passed: false,
+    reason: '"create_view" called 1×, none matched all 3 patterns',
+    predicate: {
+      type: "toolInputMatches",
+      toolName: "create_view",
+      patterns: ["Idea", "Build", "Ship"],
+    },
+    ...over,
+  });
+
+  test("a required failure fails `call` as an argument mismatch", () => {
+    expect(PREDICATE_STAGE.toolInputMatches).toBe("call");
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [argumentsRow()],
+      },
+    });
+    expect(stateOf(stageResults, "call")).toMatchObject({
+      state: "failed",
+      reason: "argumentMismatch",
+      evidence: {
+        predicateReasons: [
+          '"create_view" called 1×, none matched all 3 patterns',
+        ],
+      },
+    });
+    expect(firstFailedStage).toBe("call");
+    expect(failureCategory).toBe("arguments");
+    // Routed, not copied: the same defect is not also a user-value failure.
+    expect(stateOf(stageResults, "userValue").reason).not.toBe(
+      "predicateFailed"
+    );
+  });
+
+  test("paired with a failing toolCalledWith, the chain breaks at selection", () => {
+    // How the generator and the importer will write it: `toolCalledWith`
+    // (promoted to the matcher) says the tool was called at all, this check
+    // says what the call carried. When the tool was never called, both fail —
+    // and the earlier link is where the chain broke.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            missing: [{ toolName: "create_view" }],
+            passed: false,
+          },
+        ],
+        predicateResults: [argumentsRow()],
+      },
+    });
+    expect(firstFailedStage).toBe("selection");
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    expect(stateOf(stageResults, "call")).toMatchObject({
+      state: "failed",
+      reason: "argumentMismatch",
+    });
+  });
+
+  test("an advisory failure is recorded without failing `call`", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          argumentsRow({
+            predicate: {
+              type: "toolInputMatches",
+              toolName: "create_view",
+              patterns: ["Idea"],
+              role: "advisory",
+              severity: "warn",
+            },
+          }),
+        ],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+
+  test("an unscored row (unreadable calls) establishes nothing", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [argumentsRow({ status: "error" })],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+});
+
+describe("toolResultMatches files at response", () => {
+  const resultRow = (over: Record<string, unknown> = {}) => ({
+    passed: false,
+    reason: '"create_view" returned 1 result, none matched all 3 patterns',
+    predicate: {
+      type: "toolResultMatches",
+      toolName: "create_view",
+      patterns: ["Idea", "Build", "Ship"],
+    },
+    ...over,
+  });
+
+  test("a required failure fails `response` as a failed check", () => {
+    expect(PREDICATE_STAGE.toolResultMatches).toBe("response");
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [resultRow()],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+      evidence: {
+        predicateReasons: [
+          '"create_view" returned 1 result, none matched all 3 patterns',
+        ],
+      },
+    });
+    expect(firstFailedStage).toBe("response");
+    expect(failureCategory).toBe("serverData");
+    // Routed, not copied: the same defect is not also a user-value failure.
+    expect(stateOf(stageResults, "userValue").reason).not.toBe(
+      "predicateFailed"
+    );
+  });
+
+  test("paired with a failing toolInputMatches, the chain breaks at call", () => {
+    // What went in is an earlier link than what came out.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          resultRow(),
+          {
+            passed: false,
+            reason: '"create_view" called 1×, none matched the pattern',
+            predicate: {
+              type: "toolInputMatches",
+              toolName: "create_view",
+              patterns: ["Idea"],
+            },
+          },
+        ],
+      },
+    });
+    expect(firstFailedStage).toBe("call");
+    expect(stateOf(stageResults, "response").state).toBe("failed");
+  });
+
+  test("an advisory failure is recorded without failing `response`", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          resultRow({
+            predicate: {
+              type: "toolResultMatches",
+              patterns: ["Idea"],
+              role: "advisory",
+              severity: "warn",
+            },
+          }),
+        ],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+
+  test("an unscored row (unread results) establishes nothing", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [resultRow({ status: "error" })],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("passed");
+    expect(firstFailedStage).toBeUndefined();
+  });
+});
+
 describe("userValue", () => {
   test("a failed predicate fails it and carries its reason", () => {
     const { stageResults, failureCategory } = derive({

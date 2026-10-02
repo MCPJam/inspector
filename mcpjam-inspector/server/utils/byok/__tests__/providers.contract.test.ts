@@ -12,6 +12,10 @@ import {
   openaiAdapter,
   openrouterAdapter,
 } from "../providers/index.js";
+import {
+  ANTHROPIC_NATIVE_MODEL_IDS,
+  anthropicNativeModelId,
+} from "@mcpjam/sdk/model-factory";
 import { ANTHROPIC_NATIVE_IDS } from "../providers/anthropic.js";
 import { GOOGLE_NATIVE_IDS } from "../providers/google.js";
 import { OPENAI_NATIVE_IDS } from "../providers/openai.js";
@@ -139,6 +143,24 @@ describe("native id tables", () => {
     ["google", GOOGLE_NATIVE_IDS],
   ] as const)("every %s row carries evidence", (_provider, rows) => {
     for (const row of rows) expect(row.evidence.length).toBeGreaterThan(20);
+  });
+
+  it("reads Anthropic's rows from the SDK, the table SDK evals send with", () => {
+    // One table, not a copy: the model list this adapter reports and the id
+    // an SDK BYOK run sends to api.anthropic.com cannot disagree.
+    expect(ANTHROPIC_NATIVE_IDS).toBe(ANTHROPIC_NATIVE_MODEL_IDS);
+    for (const row of ANTHROPIC_NATIVE_MODEL_IDS) {
+      expect(anthropicAdapter.toNativeId(row.canonicalId)).toMatchObject({
+        ok: true,
+        nativeId: row.nativeId,
+      });
+      expect(
+        anthropicNativeModelId(row.canonicalId.slice("anthropic/".length)),
+      ).toBe(row.nativeId);
+      for (const native of [row.nativeId, ...(row.nativeAliases ?? [])]) {
+        expect(anthropicAdapter.toCanonicalId(native)).toBe(row.canonicalId);
+      }
+    }
   });
 
   it("never derives a native id by stripping the canonical prefix", () => {

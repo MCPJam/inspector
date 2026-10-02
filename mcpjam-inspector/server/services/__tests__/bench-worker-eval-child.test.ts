@@ -108,19 +108,11 @@ describe("defaultRunEvalCell", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to the host pin when the backend composed no environment", async () => {
+  it("refuses a named-client-only cell before opening connections", () => {
     const entry = { ...ENTRY, environmentId: undefined };
-    await defaultRunEvalCellForTests()({
-      job: JOB,
-      entry,
-      cell: resolveEvalCellSpec(JOB, entry),
-      grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
-      ledger: createBenchmarkArtifactLedger(),
-    });
-    const request = prepareEvalRun.mock.calls[0][1] as Record<string, unknown>;
-    expect(request.namedHostId).toBe("host-emulated");
-    expect(request).not.toHaveProperty("environmentId");
-    expect(request).not.toHaveProperty("ephemeralEnvironment");
+    expect(() => resolveEvalCellSpec(JOB, entry)).toThrow(/environmentId/);
+    expect(createAuthorizedManager).not.toHaveBeenCalled();
+    expect(prepareEvalRun).not.toHaveBeenCalled();
   });
 
   it("runs the child as the run's scoped bearer, not the inspector", async () => {

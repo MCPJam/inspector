@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   canonicalJson,
+  claimToolApproval,
   claimToolApprovalUse,
   EXPIRED_APPROVAL_RESULT,
   markServerVerifiedApproval,
@@ -10,6 +11,7 @@ import {
   resolveToolApprovalSigningKey,
   TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
   toolApprovalBindingFor,
+  toolApprovalClaimKey,
   toolApprovalSubjectFromAuthHeader,
   verifyToolApprovalId,
   type ToolApprovalBinding,
@@ -205,6 +207,189 @@ describe("claimToolApprovalUse", () => {
     expect(
       verify(id, { nowMs: NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 1_000 }),
     ).toEqual({ ok: false, reason: "expired" });
+  });
+});
+
+describe("claimToolApproval", () => {
+  const SERVICE_TOKEN = "service-token-with-enough-length";
+  const SERVICE_ENV = {
+    INSPECTOR_SERVICE_TOKEN: SERVICE_TOKEN,
+    CONVEX_HTTP_URL: "https://backend.example.test/",
+  };
+  const CLAIM_URL =
+    "https://backend.example.test/internal/v1/tool-approvals/claim";
+
+  type ClaimRequest = {
+    url: string;
+    init: RequestInit;
+    body: { nonceHash: string; expiresAt: number };
+  };
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  /** A backend that answers every claim with `respond`, recording each one. */
+  function backend(respond: () => Response) {
+    const requests: ClaimRequest[] = [];
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({
+          url: String(input),
+          init: init ?? {},
+          body: JSON.parse(String(init?.body)),
+        });
+        return respond();
+      },
+    ) as unknown as typeof fetch;
+    return { requests, fetchImpl };
+  }
+
+  it("keeps claims in this process when approvals are signed with its own key", async () => {
+    const { requests, fetchImpl } = backend(() => json({ status: "claimed" }));
+    const id = mint();
+
+    expect(
+      await claimToolApproval(id, { nowMs: NOW, env: {}, fetchImpl }),
+    ).toBe("claimed");
+    expect(
+      await claimToolApproval(id, { nowMs: NOW, env: {}, fetchImpl }),
+    ).toBe("already_claimed");
+    expect(requests).toEqual([]);
+  });
+
+  it("records the claim with the backend, keyed on a digest of the nonce", async () => {
+    const { requests, fetchImpl } = backend(() => json({ status: "claimed" }));
+    const id = mint();
+
+    expect(
+      await claimToolApproval(id, { nowMs: NOW, env: SERVICE_ENV, fetchImpl }),
+    ).toBe("claimed");
+    expect(requests).toHaveLength(1);
+    const [request] = requests;
+    expect(request.url).toBe(CLAIM_URL);
+    expect(request.init.method).toBe("POST");
+    expect(
+      (request.init.headers as Record<string, string>)[
+        "x-inspector-service-token"
+      ],
+    ).toBe(SERVICE_TOKEN);
+    expect(request.body).toEqual({
+      nonceHash: toolApprovalClaimKey(id),
+      // Past the approval's lifetime on every replica's clock.
+      expiresAt: NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 5 * 60 * 1000,
+    });
+    expect(request.body.nonceHash).toMatch(/^[0-9a-f]{64}$/);
+    // Neither the approval id nor its nonce leaves the process.
+    const nonce = id.split(".")[2]!;
+    expect(String(request.init.body)).not.toContain(nonce);
+    expect(String(request.init.body)).not.toContain(id);
+
+    // A second use is answered here, without asking again.
+    expect(
+      await claimToolApproval(id, { nowMs: NOW, env: SERVICE_ENV, fetchImpl }),
+    ).toBe("already_claimed");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("does not run an approval the backend says was already claimed", async () => {
+    const { requests, fetchImpl } = backend(() =>
+      json({ status: "already_claimed" }),
+    );
+    const id = mint();
+
+    expect(
+      await claimToolApproval(id, { nowMs: NOW, env: SERVICE_ENV, fetchImpl }),
+    ).toBe("already_claimed");
+    expect(
+      await claimToolApproval(id, { nowMs: NOW, env: SERVICE_ENV, fetchImpl }),
+    ).toBe("already_claimed");
+    expect(requests).toHaveLength(1);
+  });
+
+  it.each([
+    ["a server error", () => json({ ok: false }, 503)],
+    ["a refused service token", () => json({ ok: false }, 401)],
+    ["an answer outside the contract", () => json({ status: "maybe" })],
+    ["a body that is not JSON", () => new Response("<html></html>")],
+    [
+      "a network error",
+      (): Response => {
+        throw new TypeError("fetch failed");
+      },
+    ],
+  ])(
+    "confirms nothing on %s, and asks the backend again on a retry",
+    async (_label, failure) => {
+      let failing = true;
+      const { requests, fetchImpl } = backend(() =>
+        failing ? failure() : json({ status: "claimed" }),
+      );
+      const id = mint();
+
+      expect(
+        await claimToolApproval(id, {
+          nowMs: NOW,
+          env: SERVICE_ENV,
+          fetchImpl,
+        }),
+      ).toBe("unconfirmed");
+
+      failing = false;
+      expect(
+        await claimToolApproval(id, {
+          nowMs: NOW,
+          env: SERVICE_ENV,
+          fetchImpl,
+        }),
+      ).toBe("claimed");
+      expect(requests).toHaveLength(2);
+    },
+  );
+
+  it("confirms nothing when the backend does not answer in time", async () => {
+    const fetchImpl = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal?.reason),
+          );
+        }),
+    ) as unknown as typeof fetch;
+
+    expect(
+      await claimToolApproval(mint(), {
+        nowMs: NOW,
+        env: SERVICE_ENV,
+        fetchImpl,
+        timeoutMs: 20,
+      }),
+    ).toBe("unconfirmed");
+  });
+
+  it("confirms nothing when there is no backend to record the claim", async () => {
+    const { requests, fetchImpl } = backend(() => json({ status: "claimed" }));
+
+    expect(
+      await claimToolApproval(mint(), {
+        nowMs: NOW,
+        env: { INSPECTOR_SERVICE_TOKEN: SERVICE_TOKEN },
+        fetchImpl,
+      }),
+    ).toBe("unconfirmed");
+    expect(requests).toEqual([]);
+  });
+
+  it("gives every approval its own claim key, and none to an unsigned id", () => {
+    const first = mint();
+    const second = mint();
+    expect(toolApprovalClaimKey(first)).not.toBe(toolApprovalClaimKey(second));
+    expect(toolApprovalClaimKey(first)).toBe(toolApprovalClaimKey(first));
+    expect(toolApprovalClaimKey("aitxt-client-made-this")).toBeNull();
+    expect(toolApprovalClaimKey("mjap1.only-two")).toBeNull();
   });
 });
 

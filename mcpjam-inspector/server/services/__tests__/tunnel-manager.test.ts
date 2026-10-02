@@ -80,6 +80,27 @@ function grantOptions(port: number) {
 }
 
 describe("tunnelManager relay lifecycle", () => {
+  it("checks exact server/scope secrets and revokes on rotation and close", async () => {
+    const edge = await startFakeEdge();
+    try {
+      const options = grantOptions(edge.port);
+      await tunnelManager.createTunnel("srv", options);
+      expect(tunnelManager.verifyTunnelSecret("adapter-http", "srv", "secret123")).toBe(true);
+      expect(tunnelManager.verifyTunnelSecret("adapter-http", "SRV", "secret123")).toBe(false);
+      expect(tunnelManager.verifyTunnelSecret("harness-web", "srv", "secret123")).toBe(false);
+      expect(tunnelManager.verifyTunnelSecret("adapter-http", "srv", "wrong")).toBe(false);
+      await tunnelManager.rotateTunnel("srv", { ...options, publicUrl: options.publicUrl.replace("secret123", "rotated") });
+      expect(tunnelManager.verifyTunnelSecret("adapter-http", "srv", "secret123")).toBe(false);
+      expect(tunnelManager.verifyTunnelSecret("adapter-http", "srv", "rotated")).toBe(true);
+      await tunnelManager.closeTunnel("srv");
+      expect(tunnelManager.verifyTunnelSecret("adapter-http", "srv", "rotated")).toBe(false);
+    } finally { await tunnelManager.closeAll(); await edge.close(); }
+  });
+
+  it("fails closed on a grant without a secret", async () => {
+    await expect(tunnelManager.createTunnel("srv", { ...grantOptions(1), publicUrl: `https://${HOST}/api/mcp/adapter-http/srv` })).rejects.toThrow("bearer secret");
+  });
+
   it("registers a live tunnel and exposes its bearer URL", async () => {
     const edge = await startFakeEdge();
     try {
