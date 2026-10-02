@@ -534,6 +534,26 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a hosted-catalog model the host saved to run on the user's own key", async () => {
+    // The id is in MCPJam's catalog, but the host's stored legacy selection
+    // means own key only. A harness authenticates with MCPJam's credential,
+    // so running it would bill MCPJam for a turn the user chose to pay for.
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: { source: "legacy", modelId: MODEL },
+      }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("model-not-hosted");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
   it("refuses the host's saved effort a harness has not verified — never drops it", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({
