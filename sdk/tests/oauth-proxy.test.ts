@@ -886,6 +886,17 @@ describe("oauth-proxy helpers", () => {
     expect(redirectResponse.destroyed).toBe(true);
   });
 
+  it("cancels metadata resolution without starting the HTTP request", async () => {
+    dnsLookupMock.mockImplementation(() => {});
+    const controller = new AbortController();
+    const pending = fetchOAuthMetadata("https://example.com/.well-known/oauth", false, 30_000, controller.signal);
+    const rejected = expect(pending).rejects.toThrow();
+    await Promise.resolve();
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await rejected;
+    expect(httpsRequestMock).not.toHaveBeenCalled();
+  });
+
   it("includes DNS resolution in the metadata timeout", async () => {
     dnsLookupMock.mockImplementation(() => {
       // Simulate a resolver that never calls back.

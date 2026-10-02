@@ -8,6 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
@@ -134,8 +135,7 @@ function Screenshot({ url, alt }: { url?: string | null; alt: string }) {
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    <ArtifactImage
       src={url}
       alt={alt}
       loading="lazy"

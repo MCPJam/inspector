@@ -16,13 +16,25 @@ import type { GoalScoreRollup, JourneyRun } from "@/lib/swarm-api";
  * something untrue. Reading `status` alone did exactly that; `stale` was even
  * in the status union already, and nothing ever produced it, so the chip's
  * `case "stale"` was dead code standing in for a state it never received.
+ *
+ * `grading` is the third: the run row stays `running` until the backend
+ * finalizes it, so a run whose sessions have all ended and are being graded
+ * reads "running" next to session chips that already say Broke and carry a
+ * goal result. `SwarmReportPanel` splits the two off `undecidedReason`; this
+ * is the same split, so both views of one run say the same word.
  */
 export function journeyRunDisplayStatus(run: {
   status: string;
   error?: string;
+  report?: { undecidedReason?: string };
 }): string {
   if (run.error === "canceled") return "canceled";
   if (run.error === "stale_runner") return "stale";
+  if (
+    run.status === "running" &&
+    run.report?.undecidedReason === "gradingPending"
+  )
+    return "grading";
   return run.status;
 }
 
@@ -41,7 +53,7 @@ export function runStatusChipClass(status: string): string {
     case "stale":
       return "bg-muted text-muted-foreground";
     default:
-      return "bg-muted text-foreground"; // running
+      return "bg-muted text-foreground"; // running, grading
   }
 }
 

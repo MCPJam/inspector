@@ -1,9 +1,3 @@
-import posthog from "posthog-js";
-import { saveMarkdownCases } from "@/lib/apis/markdown-case-import-api";
-import type {
-  MarkdownDraft,
-  MarkdownSaveRequest,
-} from "@/shared/markdown-case-import";
 import type { MetadataSnapshot } from "./eval-tool-metadata";
 import { deriveQuery, deriveExpectedToolCalls } from "@/shared/steps";
 import { create } from "zustand";
@@ -14,6 +8,7 @@ import {
   stepsSchema,
   authoredEvalCaseSchema,
   authoredCaseBlockedReason,
+  authoringDraftCheckReason,
   type EvalAuthoringDraft,
   type TestStep,
 } from "@mcpjam/sdk/contract";
@@ -43,11 +38,6 @@ export interface EvalDraftBridge {
 }
 export interface EvalSuiteBridge {
   read: () => unknown;
-  generate: (
-    instructions: string,
-    stage: (input: CreateEvalTestCaseInput) => Promise<unknown>,
-    options?: GenerationOptions,
-  ) => Promise<void>;
   save: (input: CreateEvalTestCaseInput) => Promise<unknown>;
   run?: () => Promise<unknown>;
 }
@@ -206,12 +196,15 @@ export interface GeneratedDraft {
   authoringPrepared?: boolean;
   issueResolutions?: Record<string, string>;
   acceptedAdditionIds?: string[];
-  markdownImport?: {
-    source: MarkdownDraft["source"];
-    issues: MarkdownDraft["issues"];
-    warnings: string[];
-    prepared?: MarkdownSaveRequest;
-  };
+  /**
+   * The authoring job that staged this draft.
+   *
+   * Recorded HERE rather than derived from `authoring.draftId`: the status
+   * query answers `draftId` as the Convex row id
+   * (`convex/evalAuthoringState.ts`), overwriting the `<jobId>:<n>` form the
+   * worker wrote into the draft JSON, so the id carries no job.
+   */
+  authoringJobId?: string;
   id: string;
   revision: string;
   input: CreateEvalTestCaseInput;
@@ -227,7 +220,24 @@ export interface GenerationState {
   }>;
   suiteServers?: string[];
   authoringJobId?: string;
+  /**
+   * What the running job is authoring FROM.
+   *
+   * A suite with no cases yet and an import in flight is not an empty suite
+   * waiting to be filled — it is an import in progress, and it belongs on the
+   * import surface rather than behind "No cases yet".
+   */
+  authoringSource?: "markdown" | "generation" | "agent" | "import";
   reviewRequestId?: string;
+  /**
+   * The `reviewRequestId` the reader has already been shown and dismissed.
+   *
+   * Lives in the store, not in component state, because the suite page
+   * unmounts: navigating away and back, or a reload, made a dismissal look
+   * like a fresh import, and a fresh import look like one already dismissed.
+   * Persisted with the drafts it is about.
+   */
+  reviewSeenId?: string;
   status: "running" | "ready" | "error";
   error?: string;
   drafts: GeneratedDraft[];
@@ -293,45 +303,6 @@ function updateGeneration(
     },
   }));
 }
-/** Imported cases share the persisted review queue, but keep their provenance and retry payload. */
-export function stageMarkdownDrafts(
-  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
-  drafts: MarkdownDraft[],
-  warnings: string[],
-) {
-  const staged: GeneratedDraft[] = drafts.map((draft) => ({
-    id: `imported-${generateId()}`,
-    revision: generateId(),
-    input: {
-      suiteId: scope.suiteId!,
-      caseId: mintCaseId(),
-      title: draft.title,
-      query: draft.prompt,
-      expectedOutput: draft.expectedOutput,
-      steps: [{ id: "prompt", kind: "prompt", prompt: draft.prompt }],
-      models: [],
-      runs: 1,
-      isNegativeTest: false,
-      expectedToolCalls: [],
-    },
-    markdownImport: {
-      source: draft.source,
-      issues: draft.issues,
-      warnings,
-    },
-  }));
-  updateGeneration(evalSuiteKey(scope), (state) => ({
-    ...state,
-    drafts: [...state.drafts, ...staged],
-    reviewRequestId: generateId(),
-    // Generation and import share one per-suite store. A failed generation
-    // left its error here, and the import surface then rendered it above
-    // drafts that had just succeeded — telling the reader to change a tool
-    // coverage setting import does not even offer.
-    error: undefined,
-  }));
-}
-
 /**
  * Short label for the draft card's badge.
  *
@@ -343,13 +314,37 @@ export function stageMarkdownDrafts(
 export function importedDraftBlockedBadge(
   draft: GeneratedDraft,
 ): string | undefined {
-  if (!importedDraftBlockedReason(draft)) return undefined;
-  const missing = [
-    !draft.input.title?.trim() && "title",
-    !draft.input.query?.trim() && "prompt",
-    !draft.input.expectedOutput?.trim() && "expected outcome",
-  ].filter((field): field is string => typeof field === "string");
-  return missing.length ? `Missing ${missing.join(", ")}` : "Can't be added";
+  const reason = importedDraftBlockedReason(draft);
+  if (!reason) return undefined;
+  // Short form OF THE REASON. This used to list whichever of title/prompt/
+  // expected outcome was empty, which was a different question: a case
+  // blocked by its issues, or one that opens with a tool call and needs no
+  // prompt, was labelled "Missing expected outcome" and sent the reader
+  // hunting for a field that was never required.
+  if (/blocking issues/i.test(reason)) return "Fix the issues";
+  if (/case title/i.test(reason)) return "Missing title";
+  if (/at least one step/i.test(reason)) return "No steps";
+  if (/each prompt step/i.test(reason)) return "Empty prompt";
+  if (/Step ids/i.test(reason)) return "Repeated step ids";
+  if (/Negative cases/i.test(reason)) return "Tool call in a negative case";
+  if (/assertion, expected outcome/i.test(reason)) return "Nothing to check";
+  return "Can't be added";
+}
+
+/**
+ * What the authoring model was unsure about, as one sentence.
+ *
+ * Distinct from `importedDraftBlockedReason`, which is a refusal: the case
+ * cannot be written. This is a doubt — the case IS writable, and the model
+ * said something about it that a person should read first. A draft carrying
+ * one is kept out of "Add all" and saved one at a time, deliberately.
+ */
+export function draftCheckSummary(draft: GeneratedDraft): string | undefined {
+  // The rule itself is in the SDK contract, because the API route applies the
+  // same one to decide what it may save unattended. Only the closing
+  // instruction is this surface's: an API caller has no steps "above".
+  const reason = draft.authoring && authoringDraftCheckReason(draft.authoring);
+  return reason ? `${reason}. Read the steps above before you save.` : undefined;
 }
 
 export function importedDraftBlockedReason(
@@ -383,95 +378,62 @@ export function importedDraftBlockedReason(
       );
       if (unresolved) return "Resolve the blocking issues before adding.";
     }
-    if (
-      draft.authoring.additions.some(
-        (addition) => !draft.acceptedAdditionIds?.includes(addition.id),
-      )
-    )
-      return "Review each proposed addition before adding.";
+    // Additions are IN the steps, so the case on screen is the case that will
+    // be saved: reading it is the review, and "Add to suite" is the consent.
+    // A tick-box per addition asked for the same yes twice.
     return;
   }
-  const imported = draft.markdownImport;
-  if (!imported || imported.prepared) return;
-  if (
-    !draft.input.title.trim() ||
-    !draft.input.query.trim() ||
-    !draft.input.expectedOutput?.trim()
-  )
-    return "Complete the case title, User Prompt, and Expected Outcome.";
-  if (
-    draft.input.title.length > 500 ||
-    draft.input.query.length > 20000 ||
-    draft.input.expectedOutput.length > 10000
-  )
-    return "Shorten the case title, prompt, or expected outcome before adding.";
 }
 
 export function startEvalGeneration(
   scope: EvalAgentScope,
   instructions: string,
   options?: GenerationOptions,
+  /**
+   * Environment suites: the environment whose servers the job discovers.
+   * Required when the suite's environments connect different servers; the
+   * server refuses to guess.
+   */
+  environmentId?: string,
 ) {
   const key = evalSuiteKey(scope);
-  const bridge = getEvalSuite(scope);
+  // Reading the suite is still the scope check: generation is only startable
+  // from a suite the caller is actually on.
+  getEvalSuite(scope);
   if (useEvalGeneration.getState().suites[key]?.status === "running")
     throw new Error(
       "Generation is already running. Read context for progress; do not start another job.",
     );
   updateGeneration(key, (s) => ({ ...s, status: "running", error: undefined }));
-  if (posthog.isFeatureEnabled("eval-authoring-generation-v1")) {
-    void authoringRequest({
-      operation: "start",
-      input: {
-        projectId: scope.projectId,
-        suiteId: scope.suiteId,
-        source: "generation",
-        requestKey: crypto.randomUUID(),
-        instructions:
-          instructions.trim() || "Generate eval cases for the suite's tools.",
-        options,
-      },
-    })
-      .then(({ jobId }) => followAuthoringJob(scope, jobId))
-      .catch((error) =>
-        updateGeneration(key, (state) => ({
-          ...state,
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        })),
-      );
-    return {
-      status: "generation_started",
-      note: "Drafts will appear for review. Read ui_eval_context for progress.",
-    };
-  }
-  void bridge
-    .generate(
-      instructions,
-      async (input) => {
-        if (input.suiteId !== scope.suiteId)
-          throw new Error("Generated case is outside the scoped suite.");
-        const id = `generated-${generateId()}`;
-        updateGeneration(key, (s) => ({
-          ...s,
-          drafts: [...s.drafts, { id, revision: generateId(), input }],
-        }));
-        return id;
-      },
+  void authoringRequest({
+    operation: "start",
+    input: {
+      projectId: scope.projectId,
+      suiteId: scope.suiteId,
+      source: "generation",
+      requestKey: crypto.randomUUID(),
+      instructions:
+        instructions.trim() || "Generate eval cases for the suite's tools.",
       options,
+      ...(environmentId ? { environmentId } : {}),
+    },
+  })
+    .then(({ jobId }) =>
+      followAuthoringJob(scope, jobId, {
+        takeOver: true,
+        source: "generation",
+      }),
     )
-    .then(
-      () => updateGeneration(key, (s) => ({ ...s, status: "ready" })),
-      (error) =>
-        updateGeneration(key, (s) => ({
-          ...s,
-          status: "error",
-          error: String(error instanceof Error ? error.message : error),
-        })),
+    .catch((error) =>
+      updateGeneration(key, (state) => ({
+        ...state,
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      })),
     );
   return {
     status: "generation_started",
-    note: "Drafts will appear for review. Read ui_eval_context for progress. They are not saved yet.",
+    note: "Drafts will appear for review. Read ui_eval_context for progress.",
   };
 }
 export function editGeneratedDraft(
@@ -497,7 +459,6 @@ export function editGeneratedDraft(
     !current ||
     current.revision !== revision ||
     current.saving ||
-    current.markdownImport?.prepared ||
     current.authoringPrepared
   )
     throw new Error(
@@ -539,7 +500,7 @@ export function removeGeneratedDraft(scope: EvalAgentScope, id: string) {
   const current = useEvalGeneration
     .getState()
     .suites[key]?.drafts.find((draft) => draft.id === id);
-  if (!current || current.saving || current.markdownImport?.prepared) return;
+  if (!current || current.saving) return;
   updateGeneration(key, (state) => ({
     ...state,
     drafts: state.drafts.filter((draft) => draft.id !== id),
@@ -616,7 +577,10 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
         operation: "accept",
         draftId: current.authoring.draftId,
         revision,
-        acceptedAdditionIds: current.acceptedAdditionIds ?? [],
+        // Every addition is already in the steps the reader just approved.
+        acceptedAdditionIds: current.authoring.additions.map(
+          (addition) => addition.id,
+        ),
       });
       updateGeneration(key, (state) => ({
         ...state,
@@ -642,57 +606,6 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
       }
       if (result.committed?.length !== 1)
         throw new Error("Save outcome is unknown. Retry to confirm.");
-    } else if (current.markdownImport) {
-      const blocked = importedDraftBlockedReason(current);
-      if (blocked) throw new Error(blocked);
-      const request = current.markdownImport.prepared ?? {
-        projectId: scope.projectId!,
-        suiteId: scope.suiteId!,
-        cases: [
-          {
-            caseId: current.input.caseId!,
-            idempotencyKey: `markdown:${current.id}:${current.revision}`,
-            title: current.input.title.trim(),
-            prompt: current.input.query.trim(),
-            expectedOutput: current.input.expectedOutput!.trim(),
-            source: current.markdownImport.source,
-          },
-        ],
-      };
-      updateGeneration(key, (state) => ({
-        ...state,
-        drafts: state.drafts.map((draft) =>
-          draft.id === id
-            ? {
-                ...draft,
-                markdownImport: {
-                  ...current.markdownImport!,
-                  prepared: request,
-                },
-              }
-            : draft,
-        ),
-      }));
-      const result = await saveMarkdownCases(request);
-      if (result.failed.length) {
-        // A definitive failure permits editing. Unknown outcomes retain the
-        // exact payload and idempotency key until a retry confirms the save.
-        updateGeneration(key, (state) => ({
-          ...state,
-          drafts: state.drafts.map((draft) =>
-            draft.id === id
-              ? {
-                  ...draft,
-                  markdownImport: {
-                    ...draft.markdownImport!,
-                    prepared: undefined,
-                  },
-                }
-              : draft,
-          ),
-        }));
-        throw new Error(result.failed[0].message);
-      }
     } else {
       await getEvalSuite(scope).save(current.input);
     }
@@ -718,17 +631,76 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
 
 const startingRuns = new Set<string>();
 const authoringPolls = new Set<string>();
+/**
+ * True once another job has taken this suite's follower over.
+ *
+ * `authoringJobId` is cleared when a job reaches a terminal state, so an empty
+ * value means "nobody is following" rather than "someone else is" — only a
+ * DIFFERENT id counts as a takeover.
+ */
+function supersededBy(key: string, jobId: string): boolean {
+  const current = useEvalGeneration.getState().suites[key]?.authoringJobId;
+  return Boolean(current && current !== jobId);
+}
 /** Resume polling persisted jobs after reload; disconnecting never cancels work. */
 export async function followAuthoringJob(
   scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
   jobId: string,
+  options?: {
+    /**
+     * This job was just started from this tab, so it outranks whatever the
+     * suite was pointing at.
+     *
+     * Without it a failed job kept its id on the suite, the next job read that
+     * id as a newer follower and stood down before polling, and the suite sat
+     * on "running" forever — one failed generation was enough to make the
+     * Generate button refuse every retry.
+     */
+    takeOver?: boolean;
+    /**
+     * What this job is, when the caller already knows.
+     *
+     * The surface picks itself from `authoringSource`, which otherwise only
+     * arrives with the first poll: an import started after a generation sat
+     * behind "No cases yet" until the round trip landed, and a generation
+     * started after an import flashed the import surface for the same beat.
+     * Callers that cannot know (a resume, a review link for a job they have
+     * not read) leave it out, and the poll fills it in.
+     */
+    source?: GenerationState["authoringSource"];
+  },
 ) {
   if (authoringPolls.has(jobId)) return;
-  authoringPolls.add(jobId);
   const key = evalSuiteKey(scope);
+  // Claiming the suite is itself a write, so an already-superseded job must
+  // stand down BEFORE it announces itself — otherwise it takes the key back
+  // from the job the reader opened and the guards below never fire.
+  if (!options?.takeOver && supersededBy(key, jobId)) return;
+  authoringPolls.add(jobId);
   updateGeneration(key, (state) => ({
     ...state,
+    // The panel shows the job it is following, and only that one. A second
+    // import used to append its cases to the first one's, so a six-case
+    // document read back as twelve drafts — two of every case, one set
+    // uncommittable because its job was already finished with.
+    //
+    // Drafts with no authoring job are a person's own staging (Describe, a
+    // generated draft they have not saved) and are left alone.
+    //
+    // THIS job's drafts are kept. Re-following one is ordinary: the review
+    // link is revisited, the component remounts, the tab is reloaded. Dropping
+    // them here re-staged every draft from the server on the way back, which
+    // threw away the local half of the review (typed issue resolutions,
+    // accepted additions, edits made in the step editor) with nothing on
+    // screen to say it had happened.
+    drafts: state.drafts.filter(
+      (draft) => !draft.authoring || draft.authoringJobId === jobId,
+    ),
     authoringJobId: jobId,
+    // Set with the claim, not on the first poll. Carrying the PREVIOUS job's
+    // value into this one is the bug; `undefined` when the caller does not
+    // know is merely unknown, and the poll settles it a beat later.
+    authoringSource: options?.source,
     status: "running",
   }));
   try {
@@ -758,6 +730,11 @@ export async function followAuthoringJob(
         );
         continue;
       }
+      // Two jobs can target one suite — a link to an older import opened
+      // while a newer one is being followed. Both polls write to the same
+      // store key, so the loser has to stand down rather than overwrite the
+      // job the reader is actually looking at.
+      if (supersededBy(key, jobId)) break;
       updateGeneration(key, (state) => {
         const known = new Set(state.drafts.map((d) => d.authoring?.draftId));
         const staged: GeneratedDraft[] = status.drafts
@@ -766,6 +743,7 @@ export async function followAuthoringJob(
             id: `authoring-${draft.draftId}`,
             revision: generateId(),
             authoring: draft,
+            authoringJobId: jobId,
             acceptedAdditionIds: [],
             input: {
               suiteId: scope.suiteId!,
@@ -790,6 +768,7 @@ export async function followAuthoringJob(
           drafts: [...state.drafts, ...staged],
           availableTools: status.availableTools,
           suiteServers: status.suiteServers,
+          authoringSource: status.source,
           reviewRequestId: staged.length ? generateId() : state.reviewRequestId,
           status:
             status.status === "pending"
@@ -808,38 +787,41 @@ export async function followAuthoringJob(
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   } catch (error) {
-    updateGeneration(key, (state) => ({
-      ...state,
-      status: "error",
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not read authoring job. Reload to reconnect.",
-    }));
+    // Same standing-down rule as the poll loop: a superseded job's failure is
+    // not news about the job the reader is watching.
+    if (!supersededBy(key, jobId))
+      updateGeneration(key, (state) => ({
+        ...state,
+        status: "error",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not read authoring job. Reload to reconnect.",
+      }));
   } finally {
     authoringPolls.delete(jobId);
   }
 }
-export function acceptAuthoringAddition(
+/** The reader has seen this suite's waiting drafts; stop opening on them. */
+export function markImportReviewSeen(
   scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
-  draftId: string,
-  additionId: string,
-  accepted: boolean,
 ) {
   updateGeneration(evalSuiteKey(scope), (state) => ({
     ...state,
-    drafts: state.drafts.map((draft) =>
-      draft.id === draftId
-        ? {
-            ...draft,
-            acceptedAdditionIds: accepted
-              ? [...new Set([...(draft.acceptedAdditionIds ?? []), additionId])]
-              : draft.acceptedAdditionIds?.filter((id) => id !== additionId),
-          }
-        : draft,
-    ),
+    reviewSeenId: state.reviewRequestId,
   }));
 }
+
+/** Show this suite's waiting drafts again, on request. */
+export function reopenImportReview(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+) {
+  updateGeneration(evalSuiteKey(scope), (state) => ({
+    ...state,
+    reviewSeenId: undefined,
+  }));
+}
+
 export async function runScopedEvalSuite(scope: EvalAgentScope) {
   const key = evalSuiteKey(scope);
   const run = getEvalSuite(scope).run;
@@ -885,7 +867,8 @@ export async function controlAuthoringJob(
   if (!jobId) return;
   try {
     await authoringRequest({ operation, jobId });
-    if (operation === "retry") await followAuthoringJob(scope, jobId);
+    if (operation === "retry")
+      await followAuthoringJob(scope, jobId, { takeOver: true });
   } catch (error) {
     updateGeneration(key, (state) => ({
       ...state,

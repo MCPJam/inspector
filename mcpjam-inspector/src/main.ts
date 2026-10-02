@@ -3,21 +3,26 @@
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
+import { writeInspectorRuntime } from "../server/services/inspector-runtime";
+import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // Must stay below that guard: `security-policy.js` reaches into `server/`,
 // which pulls in `ws`. Hoisted above it, `ws` evaluates before
 // WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
-import { app, BrowserWindow, shell, Menu, dialog, session } from "electron";
+import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
+import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
   buildElectronSentryConfig,
   electronBuildSurface,
 } from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
+  dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
+import { retireConsoleOnStreamError } from "./log-console-safety.js";
 
 // `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
 // a packaged build, so the previous NODE_ENV check reported every shipped
@@ -37,7 +42,15 @@ Sentry.init({
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
   // already on by default in @sentry/electron 5.12 and is left alone.
   integrations: crashReportingIntegrations,
+  // Drops the ONE rejection the app cannot catch: Electron leaves
+  // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
+  // in-flight Update.exe arrives as an unhandled rejection for something that
+  // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
+  // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
+  beforeSend: dropUpdaterInstallSpawnRejection,
 });
+
+const desktopDiagnostics = installDesktopDiagnostics();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -81,6 +94,21 @@ import {
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+// ...and make a dead console survivable. On Windows a packaged build's stdout
+// is a pipe; once nothing reads it, every write fails with EPIPE, delivered as
+// an `'error'` event on the stream — which, unhandled, is an uncaught exception
+// that ends the app (INSPECTOR-ELECTRON-WE, three seconds into launch). Both
+// streams: warn and error lines go to stderr.
+retireConsoleOnStreamError(
+  log.transports.console,
+  [process.stdout, process.stderr],
+  (error) =>
+    // Already retired when this runs, so it reaches the file transport only.
+    log.warn(
+      "[main] console output disabled: stdout/stderr is no longer readable",
+      error,
+    ),
+);
 
 // Sentry's default integrations capture these; this puts them in the log file
 // the user actually attaches to a bug report (and is the only diagnostic when
@@ -492,18 +520,6 @@ async function startHonoServer(): Promise<number> {
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
 
-    // The session token the local-harness picker presents when it registers a
-    // workspace grant through the server's own route. Read here, after the
-    // server module has generated it, and re-read on every restart.
-    try {
-      const { getSessionToken } = await import(
-        "../server/services/session-token.js"
-      );
-      localHarnessSessionToken = getSessionToken();
-    } catch {
-      localHarnessSessionToken = null;
-    }
-
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under
     // `npx` where there is no Electron and no keychain at all.
@@ -530,6 +546,18 @@ async function startHonoServer(): Promise<number> {
       shutdownLocalBrowserFrameSockets,
       killLocalBrowserFrameSockets,
     } = await createHonoApp();
+    // The session token the local-harness picker presents when it registers a
+    // workspace grant through the server's own route. Read here, after the
+    // server module has generated it, and re-read on every restart.
+    try {
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
+      localHarnessSessionToken = getSessionToken();
+    } catch {
+      localHarnessSessionToken = null;
+    }
+
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
     // latching variant is for a real quit; the plain kill is for
@@ -551,11 +579,20 @@ async function startHonoServer(): Promise<number> {
     shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
     killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
-    server = serve({
-      fetch: honoApp.fetch,
-      port,
-      hostname,
-    });
+    server = serve(
+      {
+        fetch: honoApp.fetch,
+        port,
+        hostname,
+      },
+      (info) => {
+        const cleanup = writeInspectorRuntime(info.port, {
+          hosted: process.env.VITE_MCPJAM_HOSTED_MODE === "true",
+          warn: (message) => log.warn(message),
+        });
+        server?.once("close", cleanup);
+      },
+    );
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
@@ -604,9 +641,17 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     show: false, // Don't show until ready
   });
 
+  desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
+
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
-  window.loadURL(rendererDevServerUrl ?? serverUrl);
+  window.on("closed", () => mcpCallbackDelivery.setReady(false));
+  const accessUrl = new URL(rendererDevServerUrl ?? serverUrl);
+  if (localHarnessSessionToken)
+    accessUrl.hash = new URLSearchParams({
+      token: localHarnessSessionToken,
+    }).toString();
+  window.loadURL(accessUrl.href);
 
   if (isDev) {
     window.webContents.openDevTools();
@@ -711,6 +756,22 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   return window;
 }
 
+const mcpCallbackDelivery = new OAuthCallbackDelivery((url) => {
+  mainWindow?.webContents.send("oauth-callback", url);
+  log.info("MCP OAuth callback delivered", {
+    deliveryMode: "ipc",
+    appVersion: app.getVersion(),
+  });
+});
+ipcMain.on("oauth:listener-ready", (event, ready: unknown) => {
+  if (
+    !mainWindow ||
+    event.sender !== mainWindow.webContents ||
+    event.senderFrame !== mainWindow.webContents.mainFrame
+  )
+    return;
+  mcpCallbackDelivery.setReady(ready === true);
+});
 async function handleOAuthCallbackUrl(url: string): Promise<void> {
   if (!url.startsWith("mcpjam://oauth/callback")) {
     return;
@@ -734,6 +795,16 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
     }
 
     const baseUrl = getRendererBaseUrl();
+    if (isMcpCallback && callbackFlow !== "debug") {
+      if (!mainWindow) {
+        mainWindow = createMainWindow(baseUrl);
+        setTrustedUpdateWindow(mainWindow);
+      }
+      mcpCallbackDelivery.enqueue(url);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      return;
+    }
     const rendererCallbackUrl = buildRendererCallbackUrl(parsed, baseUrl);
 
     if (!mainWindow) {
@@ -767,8 +838,10 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
 
     if (mainWindow?.isMinimized()) mainWindow.restore();
     mainWindow?.focus();
-  } catch (error) {
-    log.error("Failed processing OAuth callback URL:", error);
+  } catch {
+    log.error("Failed processing OAuth callback", {
+      failureStage: "delivery", deliveryMode: "ipc", appVersion: app.getVersion(),
+    });
   }
 }
 

@@ -321,6 +321,25 @@ export function swarmAttemptLifecycle(
   return attempt.status === "succeeded" ? "ran" : "broke";
 }
 
+/**
+ * A session whose attempt ENDED without recording a single message never ran.
+ * Nothing about the server under test was exercised, so the refusal is the
+ * only true thing any surface can say about it (MCPJam/inspector#5188).
+ * Published findings count a session as started on the same
+ * `messageCount > 0`, so every reader agrees on which sessions ran.
+ */
+export function swarmSessionNeverRan(
+  lifecycle: SwarmSessionLifecycle,
+  messageCount: number
+): boolean {
+  return (
+    (lifecycle === "broke" ||
+      lifecycle === "limited" ||
+      lifecycle === "withdrawn") &&
+    messageCount === 0
+  );
+}
+
 /** Shared with the stage adapter: advisory observations do not displace the goal judge. */
 export function swarmJudgeIsDecisive(
   input: Pick<SwarmSessionVerdictInput, "rubric" | "judge">

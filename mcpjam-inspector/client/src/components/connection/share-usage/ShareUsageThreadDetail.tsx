@@ -20,6 +20,7 @@ import { modelDefinitionForId } from "@/lib/model-definition-for-id";
 import { useHostSnapshotForSession } from "@/hooks/use-host-snapshot";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { hydrateMessageTimestamps } from "@mcpjam/chat-ui";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -50,11 +51,16 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { SessionClientModelChip } from "@/components/connection/share-usage/session-client-model";
+import { SessionAnalyzeNowButton } from "@/components/connection/share-usage/session-analyze-now";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import {
+  SwarmSessionNotRun,
+  threadNeverRan,
+} from "@/components/swarms/swarm-session-not-run";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
@@ -369,21 +375,31 @@ export function ShareUsageThreadDetail({
    */
   const [spanError, setSpanError] = useState<string | null>(null);
 
-  // Fetch messages from blob URL
+  // Fetch messages from blob URL. Links expire and are re-minted for the same
+  // transcript: a renewed link to the transcript already on screen is not new
+  // content and must not refetch it or swap the viewer for a spinner, while a
+  // renewed link after a FAILED load is exactly how that load gets retried.
+  const loadedMessagesKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!thread?.messagesBlobUrl) {
+    const messagesBlobUrl = thread?.messagesBlobUrl;
+    if (!messagesBlobUrl) {
+      loadedMessagesKeyRef.current = null;
       setMessages(null);
       return;
     }
+    const messagesKey = artifactStableKey(messagesBlobUrl);
+    if (loadedMessagesKeyRef.current === messagesKey) return;
+    // Names only what is on screen: from here the shown transcript is stale.
+    loadedMessagesKeyRef.current = null;
 
     let isActive = true;
     const controller = new AbortController();
 
-    async function fetchMessages() {
+    async function fetchMessages(url: string) {
       setIsLoadingMessages(true);
       setError(null);
       try {
-        const response = await fetch(thread!.messagesBlobUrl!, {
+        const response = await fetchArtifact(url, {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -392,6 +408,7 @@ export function ShareUsageThreadDetail({
         const data = await response.json();
         if (isActive) {
           setMessages(data);
+          loadedMessagesKeyRef.current = messagesKey;
         }
       } catch (err) {
         if (!isActive) return;
@@ -407,7 +424,7 @@ export function ShareUsageThreadDetail({
       }
     }
 
-    void fetchMessages();
+    void fetchMessages(messagesBlobUrl);
     return () => {
       isActive = false;
       controller.abort();
@@ -691,6 +708,22 @@ export function ShareUsageThreadDetail({
     // the journey goal, not the transcript. Render a minimal shell with the
     // judge section instead of a dead-end "No messages" message.
     if (thread.sourceType === "swarm") {
+      // Unless its attempt ended without recording a single message (#5188):
+      // then there is nothing to judge or promote, and "may not have run" is a
+      // guess about something the attempt row already knows. Say it never
+      // ran, and why.
+      if (thread.runAttemptStatus && threadNeverRan(thread)) {
+        return (
+          <div className="flex h-full items-center justify-center px-6">
+            <SwarmSessionNotRun
+              status={thread.runAttemptStatus}
+              errorCode={thread.runAttemptErrorCode}
+              errorMessage={thread.runAttemptErrorMessage}
+              modelId={thread.modelId}
+            />
+          </div>
+        );
+      }
       return (
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
@@ -806,6 +839,7 @@ export function ShareUsageThreadDetail({
               </Button>
             )
           ) : null}
+          <SessionAnalyzeNowButton thread={thread} />
           {/* Labeled, never icon-only: readers who wanted to send a session to
               a teammate did not recognize the copy icon as the way to do it.
               Same label on Swarm and User Testing. */}

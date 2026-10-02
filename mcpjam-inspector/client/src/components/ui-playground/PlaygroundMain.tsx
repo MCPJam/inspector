@@ -1,4 +1,6 @@
+import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { resolveRestoredModel } from "@/lib/model-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -55,7 +57,7 @@ import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bott
 import {
   formatErrorMessage,
   buildMcpPromptMessages,
-  buildSkillToolMessages,
+  buildSkillContextMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
@@ -185,7 +187,11 @@ import {
 } from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
+import {
+  shouldQueryProjectId,
+  useCanManageProjectClients,
+  useProjectMembers,
+} from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -266,6 +272,7 @@ import {
 } from "@/components/chat-v2/thread/thread-helpers";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { artifactStableKey } from "@/lib/artifact-urls";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -297,8 +304,10 @@ function buildHistoryContentSignature(
         snapshot._id,
         snapshot.toolCallId,
         snapshot.resourceUri ?? "",
-        snapshot.widgetHtmlUrl ?? "",
-        snapshot.toolOutputUrl ?? "",
+        // Artifact links are re-minted with new expiries; the object they
+        // point at is what says whether the content changed.
+        artifactStableKey(snapshot.widgetHtmlUrl ?? ""),
+        artifactStableKey(snapshot.toolOutputUrl ?? ""),
       ].join(":"),
     )
     .sort()
@@ -306,7 +315,7 @@ function buildHistoryContentSignature(
   return [
     session._id,
     session.chatSessionId,
-    session.messagesBlobUrl ?? "",
+    artifactStableKey(session.messagesBlobUrl ?? ""),
     snapshotSignature,
   ].join("::");
 }
@@ -657,6 +666,7 @@ export function PlaygroundMain({
   const pendingRestoredModelRef = useRef<{
     chatSessionId: string;
     modelId: string;
+    modelSource?: string;
   } | null>(null);
   // Set by `usePlaygroundConversationUrl` below; called from the chat hook's
   // `onReset` above it, which is why this is a ref rather than the callback.
@@ -1066,6 +1076,8 @@ export function PlaygroundMain({
   // Set after a COLD install finishes, so the composer can say what to do next
   // rather than leaving the user to guess whether anything happened.
   const [localHarnessJustReady, setLocalHarnessJustReady] = useState(false);
+  const [localHarnessPreparing, setLocalHarnessPreparing] = useState(false);
+  const localHarnessPreparingRef = useRef(false);
   const localHarnessWasInstallingRef = useRef(false);
   const localHarnessPhase = localHarness.phase;
   useEffect(() => {
@@ -1567,6 +1579,14 @@ export function PlaygroundMain({
   restoringAdhocRef.current = restoringAdhoc;
   const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
     useHostMutations();
+  // Creating clients is project-admin only (`hosts.ts` `requireAdminAccess`);
+  // a member or guest in an empty project gets no seed instead of refused
+  // creates (and their 1s/4s/10s retries).
+  const { canManage: canSeedHosts, isLoading: seedRoleLoading } =
+    useCanManageProjectClients({
+      isAuthenticated: isConvexAuthenticated,
+      projectId: multiHostProjectId,
+    });
   const seedCatalogState = useHostCatalog();
   const seedThemeMode = usePreferencesStore((s) => s.themeMode);
   // Mirrors `multiHostProjectId` so the seed effect's async continuation
@@ -1645,6 +1665,8 @@ export function PlaygroundMain({
       !isConvexAuthenticated ||
       hostListLoading ||
       !multiHostProjectId ||
+      seedRoleLoading ||
+      !canSeedHosts ||
       hostList.length > 0 ||
       restoringAdhoc ||
       playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
@@ -1878,6 +1900,8 @@ export function PlaygroundMain({
     isConvexAuthenticated,
     hostListLoading,
     multiHostProjectId,
+    seedRoleLoading,
+    canSeedHosts,
     hostList.length,
     restoringAdhoc,
     createPlaygroundHost,
@@ -2764,8 +2788,12 @@ export function PlaygroundMain({
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
-        const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId,
+        // By `modelSource` as well as id: an OpenRouter id can also be a
+        // hosted row, and this thread must reopen on the one it ran on (#5472).
+        const matchingModel = resolveRestoredModel(
+          availableModels,
+          detail.modelId,
+          detail.modelSource,
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -3188,6 +3216,7 @@ export function PlaygroundMain({
           ? {
               chatSessionId: detail.session.chatSessionId,
               modelId: detail.session.modelId,
+              modelSource: detail.session.modelSource,
             }
           : null;
         if (new URLSearchParams(window.location.search).get("browser") === "open") {
@@ -3262,8 +3291,10 @@ export function PlaygroundMain({
       pendingRestoredModelRef.current = null;
       return;
     }
-    const matchingModel = availableModels.find(
-      (model) => String(model.id) === pending.modelId,
+    const matchingModel = resolveRestoredModel(
+      availableModels,
+      pending.modelId,
+      pending.modelSource,
     );
     if (!matchingModel) return;
     pendingRestoredModelRef.current = null;
@@ -3744,57 +3775,24 @@ export function PlaygroundMain({
   }, [ensureServersReady, serverName, servers]);
 
   // Handle follow-up messages from widgets
-  /**
-   * Can this scoped local send actually run — and if not, what does the user
-   * do about it?
-   *
-   * Same shape as `ensureThreadReadyForSend`, and the same rule: return false
-   * and the send does not happen, with the composer state intact. The
-   * distinction that matters here is between CAN INITIATE SETUP and CAN
-   * EXECUTE A TURN. They are not the same gate:
-   *
-   *   - a send with no workspace or no consent is how setup STARTS. Blocking
-   *     it (in `submitDisabled`, say) would make first-send setup unreachable,
-   *     because both Enter and the button are refused before `onSubmit` ever
-   *     runs;
-   *   - a send during setup, or with a hard unavailable state, cannot execute
-   *     and is refused with something to read.
-   *
-   * WARM: the runtime is verified and only consent is missing, so Allow awaits
-   * the grant and this returns true — the original send continues, once, after
-   * the context is re-checked. COLD: setup starts, this returns false, the
-   * draft stays, and the user presses Send again.
-   */
+  // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
-    useCallback(async (): Promise<boolean> => {
-      if (!localHarnessRequested) return true;
-      const phase = localHarnessRef.current.phase;
-      if (phase === "ready") return true;
-
-      if (phase === "installing" || phase === "authorizing") {
-        // Setup is running. Saying so beats a dialog that would only report the
-        // same thing.
-        toast.info("Claude Code is still setting up on this machine.");
+    useCallback(async (setup = false): Promise<boolean> => {
+      if (!localHarnessRequested || (!setup && localHarness.phase === "ready")) return true;
+      if (!convexProjectId || localHarnessPreparingRef.current) return false;
+      localHarnessPreparingRef.current = true;
+      setLocalHarnessPreparing(true);
+      try {
+        await ensureLocalHarnessReady(convexProjectId, setup);
+        return true;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Claude Code is not ready. Retry setup from the client settings.");
         return false;
+      } finally {
+        localHarnessPreparingRef.current = false;
+        setLocalHarnessPreparing(false);
       }
-      if (phase === "unavailable") {
-        toast.error(
-          localHarnessRef.current.reason ??
-            "This Inspector can't run Claude Code on this machine.",
-        );
-        return false;
-      }
-
-      // Deduplicated: repeated Send gestures while the dialog is open must not
-      // stack dialogs or capture a second approval.
-      if (localHarnessDialogOpenRef.current) return false;
-
-      return await new Promise<boolean>((resolve) => {
-        localHarnessPendingSendRef.current = () => resolve(true);
-        localHarnessCancelSendRef.current = () => resolve(false);
-        setLocalHarnessDialog({ trigger: "first_send" });
-      });
-    }, [localHarnessRequested]);
+    }, [localHarnessRequested, convexProjectId, localHarness.phase]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -4408,7 +4406,9 @@ export function PlaygroundMain({
     const promptMessages = buildMcpPromptMessages(
       mcpPromptResults,
     ) as UIMessage[];
-    const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
+    const skillMessages = buildSkillContextMessages(
+      skillResults,
+    ) as UIMessage[];
     const prependMessages = [...promptMessages, ...skillMessages];
 
     if (isCompareMode) {
@@ -4854,8 +4854,9 @@ export function PlaygroundMain({
     localHarnessInScope &&
     (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
       <LocalHarnessComposerNotice
-        controller={localHarness}
-        onRetry={() => setLocalHarnessDialog({ trigger: "chip" })}
+        controller={localHarnessPreparing ? { ...localHarness, phase: "authorizing" } : localHarness}
+        onRetry={() => { void ensureLocalHarnessReadyForSend().then(() => localHarness.refresh()); }}
+        onSetup={() => { void ensureLocalHarnessReadyForSend(true).then(() => localHarness.refresh()); }}
       />
     ) : null;
   const localHarnessReadyNotice =
@@ -4899,7 +4900,7 @@ export function PlaygroundMain({
           ...(localHarness.workspace?.displayRoot
             ? { displayRoot: localHarness.workspace.displayRoot }
             : {}),
-          hostedAvailable: localHarness.hostedAvailable,
+          hostedAvailable: false,
           onSelect: (target) => {
             localHarness.select(target);
             track("local_harness_target_selected", { target });

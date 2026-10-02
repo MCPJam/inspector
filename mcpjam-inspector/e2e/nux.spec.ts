@@ -5,17 +5,8 @@ import { expect, test } from "@playwright/test";
 // require authentication before the NUX can fire, so they are not suitable
 // targets for PLAYWRIGHT_BASE_URL.
 //
-// The NUX logic (App.tsx useLayoutEffect):
-//   1. Waits for isWorkOsLoading = false and effectiveHostedShellGateState = "ready".
-//   2. Skips if hasSeenFirstRunOnboarding (remote Convex flag) is true.
-//   3. Calls isFirstRunEligible(hasBlockingServers, activeTab, workOsUser, remoteFlag):
-//      - returns true when the active route is the root hub ("/", "/home",
-//        "/servers", "/connect", "/hosts") AND no blocking servers AND no prior
-//        localStorage onboarding state.
-//   4. On eligible: navigates to /playground.
-//
-// After the 2631 change, "/" and "/home" both render HomeTab (no feature-flag
-// gate), so they qualify as eligible NUX entry routes.
+// First-run users see onboarding on Home. Returning users stay on Home
+// without onboarding; a provisioned guest project may canonicalize the URL.
 
 const LEGACY_ONBOARDING_KEY = "mcp-onboarding-state";
 const SERVER_CHOICE_KEY = "mcp-first-run-server-choice-state";
@@ -52,7 +43,7 @@ test.describe("NUX first-run redirect", () => {
     ).toBeVisible();
   });
 
-  test("returning user with completed onboarding stays on the root Home surface", async ({
+  test("returning user with completed onboarding stays on the Home surface", async ({
     page,
   }) => {
     // Seed completed onboarding state before the page loads.
@@ -71,7 +62,7 @@ test.describe("NUX first-run redirect", () => {
 
     await page.goto("/");
 
-    // The app shell must mount before we assert the non-redirect.
+    // Wait for the app before checking the returning-user Home surface.
     await expect(page.getByTestId("app-shell")).toBeVisible({
       timeout: 30_000,
     });
@@ -82,7 +73,7 @@ test.describe("NUX first-run redirect", () => {
       try {
         const raw = window.localStorage.getItem("mcp-onboarding-state");
         return raw
-          ? (JSON.parse(raw) as { status?: string }).status ?? null
+          ? ((JSON.parse(raw) as { status?: string }).status ?? null)
           : null;
       } catch {
         return null;
@@ -96,6 +87,9 @@ test.describe("NUX first-run redirect", () => {
     await expect(
       page.getByRole("heading", { name: "Welcome to MCPJam" }),
     ).toHaveCount(0);
-    expect(new URL(page.url()).pathname).toBe("/");
+    // Guest projects use canonical URLs; the local fallback stays unscoped.
+    await expect(page).toHaveURL(
+      /^https?:\/\/[^/]+\/(?:p\/[a-z0-9]{16,64}\/home)?$/,
+    );
   });
 });

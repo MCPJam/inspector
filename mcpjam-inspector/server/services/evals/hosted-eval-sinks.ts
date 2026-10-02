@@ -16,6 +16,7 @@ import type {
   HostedEvalTurnSinks,
 } from "./drive-hosted-eval-turn";
 import type { UsageTotals } from "./types";
+import { toModelMessageToolOutput } from "../../utils/normalize-model-messages-for-convex.js";
 
 export interface HostedEvalSinksDeps {
   emit: (event: EvalStreamEvent) => void;
@@ -121,7 +122,15 @@ export function buildHostedEvalSinks(
               type: "tool-result",
               toolCallId: event.toolCallId,
               ...(event.toolName ? { toolName: event.toolName } : {}),
-              output: event.output,
+              // `event.output` is `part.output ?? rawResult` upstream, so it
+              // arrives undefined, already-enveloped, or as a bare payload.
+              // These messages are persisted through the trace snapshot and
+              // never pass `normalizeModelMessagesForConvex`, so the envelope
+              // has to be built here or not at all.
+              output: toModelMessageToolOutput(event.output) ?? {
+                type: "json",
+                value: null,
+              },
               ...(event.isError ? { isError: true } : {}),
             },
           ],

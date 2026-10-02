@@ -1,3 +1,4 @@
+import { toast as sonnerToast } from "sonner";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useServerState } from "../use-server-state";
@@ -72,6 +73,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   handleOAuthCallback: mockHandleOAuthCallback,
   getStoredTokens: vi.fn(),
   clearOAuthData: vi.fn(),
+  clearPendingOAuthAttempt: vi.fn(),
   initiateOAuth: vi.fn(),
   isElectronMcpCallbackState: (state: string | null | undefined) =>
     Boolean(state?.startsWith("electron_mcp:")),
@@ -168,6 +170,8 @@ function renderHostedServerState(
       isLoading: false,
       isAuthenticated: true,
       hasSignedInUser: true,
+        currentUserId: "user_1",
+        oauthProjectIds: new Set(["ws_1"]),
       isAuthLoading: false,
       isLoadingProjects: false,
       useLocalFallback: false,
@@ -319,6 +323,8 @@ describe("useServerState hosted OAuth callback guards", () => {
         isLoading: false,
         isAuthenticated: true,
         hasSignedInUser: true,
+        currentUserId: "user_1",
+        oauthProjectIds: new Set(["ws_1"]),
         isAuthLoading: false,
         isLoadingProjects: false,
         useLocalFallback: false,
@@ -352,6 +358,7 @@ describe("useServerState hosted OAuth callback guards", () => {
   it("completes hosted project OAuth callbacks through the backend path", async () => {
     writeHostedOAuthPendingMarker({
       surface: "project",
+      initiatingUserId: "user_1",
       projectId: "ws_1",
       serverId: "srv_asana",
       serverName: "asana",
@@ -382,6 +389,8 @@ describe("useServerState hosted OAuth callback guards", () => {
         isLoading: false,
         isAuthenticated: true,
         hasSignedInUser: true,
+        currentUserId: "user_1",
+        oauthProjectIds: new Set(["ws_1"]),
         isAuthLoading: false,
         isLoadingProjects: false,
         useLocalFallback: false,
@@ -410,6 +419,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
           surface: "project",
+      initiatingUserId: "user_1",
           projectId: "ws_1",
           serverId: "srv_asana",
           serverName: "asana",
@@ -433,6 +443,127 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  it.each(["guest", "changed", "legacy", "membership"])(
+    "blocks token completion after %s recovery",
+    async (reason) => {
+      const requestSignIn = vi.fn();
+      writeHostedOAuthPendingMarker({
+        surface: "project",
+        initiatingUserId: reason === "legacy" ? undefined : "original",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        returnPath: "/p/abcdefghijklmnop/servers",
+      });
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      window.history.replaceState(
+        {},
+        "",
+        "/oauth/callback?code=secret&state=one",
+      );
+      renderHook(() =>
+        useServerState({
+          appState: { servers: {}, selectedMultipleServers: [] } as any,
+          dispatch: vi.fn(),
+          requestSignIn,
+          isLoading: false,
+          isAuthenticated: true,
+          hasSignedInUser: reason !== "guest",
+          currentUserId:
+            reason === "guest"
+              ? null
+              : reason === "changed"
+                ? "other"
+                : "original",
+          oauthProjectIds: new Set(reason === "membership" ? [] : ["ws_1"]),
+          isAuthLoading: false,
+          isLoadingProjects: false,
+          useLocalFallback: false,
+          effectiveProjects: {},
+          effectiveActiveProjectId: "ws_1",
+          activeProjectServersFlat: [],
+          logger: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+          },
+        }),
+      );
+      expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+      const action = vi.mocked(sonnerToast.error).mock.calls.at(-1)?.[1]?.action as any;
+      if (reason === "guest" || reason === "changed") {
+        expect(action.label).toBe("Sign in");
+        action.onClick();
+        expect(requestSignIn).toHaveBeenCalledWith("/p/abcdefghijklmnop/servers");
+      } else {
+        expect(action).toBeUndefined();
+        expect(requestSignIn).not.toHaveBeenCalled();
+      }
+      expect(window.location.pathname).toBe("/p/abcdefghijklmnop/servers");
+      expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+    },
+  );
+
+  it("waits for auth, completes duplicate delivery once, then completes a new attempt", async () => {
+    const prepare = (state: string) => {
+      writeHostedOAuthPendingMarker({
+        surface: "project",
+        initiatingUserId: "user_1",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        returnPath: "/servers",
+      });
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      window.history.replaceState(
+        {},
+        "",
+        `/oauth/callback?code=${state}&state=${state}`,
+      );
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    };
+    prepare("first");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: false,
+      error: "test failure",
+    });
+    const { rerender } = renderHook(
+      ({ loading }) =>
+        useServerState({
+          appState: { servers: {}, selectedMultipleServers: [] } as any,
+          dispatch: vi.fn(),
+          isLoading: false,
+          isAuthenticated: true,
+          hasSignedInUser: true,
+          currentUserId: "user_1",
+          oauthProjectIds: new Set(["ws_1"]),
+          isAuthLoading: loading,
+          isLoadingProjects: false,
+          useLocalFallback: false,
+          effectiveProjects: {},
+          effectiveActiveProjectId: "ws_1",
+          activeProjectServersFlat: [],
+          logger: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+          },
+        }),
+      { initialProps: { loading: true } },
+    );
+    expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+    rerender({ loading: false });
+    await waitFor(() => expect(window.location.pathname).toBe("/servers"));
+    expect(mockHandleOAuthCallback).toHaveBeenCalledTimes(1);
+    act(() => prepare("first"));
+    expect(mockHandleOAuthCallback).toHaveBeenCalledTimes(1);
+    act(() => prepare("second"));
+    await waitFor(() => expect(mockHandleOAuthCallback).toHaveBeenCalledTimes(2));
+  });
   it("forwards the OAuth callback state parameter to completeHostedOAuthCallback", async () => {
     window.history.replaceState(
       {},
@@ -441,6 +572,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     );
     writeHostedOAuthPendingMarker({
       surface: "project",
+      initiatingUserId: "user_1",
       projectId: "ws_1",
       serverId: "srv_asana",
       serverName: "asana",
@@ -469,6 +601,8 @@ describe("useServerState hosted OAuth callback guards", () => {
         isLoading: false,
         isAuthenticated: true,
         hasSignedInUser: true,
+        currentUserId: "user_1",
+        oauthProjectIds: new Set(["ws_1"]),
         isAuthLoading: false,
         isLoadingProjects: false,
         useLocalFallback: false,
@@ -488,6 +622,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
           surface: "project",
+      initiatingUserId: "user_1",
           serverName: "asana",
         }),
         "oauth-code",

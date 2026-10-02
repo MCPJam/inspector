@@ -98,7 +98,7 @@ function makeRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
     runNumber: 1,
     status: "completed",
     result: "passed",
-    summary: { total: 4, passed: 3, failed: 1, passRate: 75 },
+    summary: { total: 4, passed: 3, failed: 1, passRate: 0.75 },
     source: "sdk",
     ciMetadata: null,
     createdBy: "user_1",
@@ -254,6 +254,30 @@ describe("ProjectRunsTable", () => {
     expect(table.getByText("Results")).toBeTruthy();
     expect(table.queryByText("Pass rate")).not.toBeNull();
     expect(table.queryByText("Accuracy")).not.toBeNull();
+  });
+
+  // `summary.passRate` is a 0-1 fraction by contract. Rounding it unscaled
+  // printed every run as 0% or 1%, and a perfect run as 1%.
+  it("renders the stored pass rate fraction as a percentage", () => {
+    setRows([
+      makeRow({
+        _id: "run_partial",
+        summary: { total: 3, passed: 2, failed: 1, passRate: 0.6667 },
+      }),
+      makeRow({
+        _id: "run_perfect",
+        summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
+      }),
+    ]);
+
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    expect(inTable().getByText("(2/3)").closest("td")).toHaveTextContent(
+      /^67% \(2\/3\)/,
+    );
+    expect(inTable().getByText("(3/3)").closest("td")).toHaveTextContent(
+      /^100% \(3\/3\)/,
+    );
   });
 
   it("filters loaded origins without changing the feed", async () => {
@@ -635,6 +659,120 @@ describe("project run history metrics", () => {
       suiteId: "suite_1",
       runId: "new",
     });
+  });
+
+  it("keeps Suite Health drawn while the next page's history is read", async () => {
+    const first = makeRow({ _id: "first", runNumber: 2, createdAt: 2000 });
+    const older = makeRow({ _id: "older", runNumber: 1, createdAt: 1000 });
+    setRows([first], "CanLoadMore");
+    let releaseOlder!: (value: unknown) => void;
+    const olderRun = new Promise((resolve) => {
+      releaseOlder = resolve;
+    });
+    mocks.query.mockImplementation(async (name: string, args: any) => {
+      if (name === "testSuites:getTestSuiteRun")
+        return args.runId === "older" ? olderRun : first;
+      return {
+        page: [
+          {
+            _id: `${args.runId}-iteration`,
+            suiteRunId: args.runId,
+            status: "completed",
+            result: "passed",
+          },
+        ],
+        isDone: true,
+        continueCursor: "",
+      };
+    });
+    const view = () => (
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+      />
+    );
+    const { rerender } = render(view());
+    expect(await screen.findByTestId("suite-health-average")).toHaveTextContent(
+      "100%",
+    );
+
+    mocks.paginated.current = {
+      ...mocks.paginated.current,
+      results: [first, older],
+    };
+    rerender(view());
+    expect(screen.getByTestId("suite-health-average")).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Loading run history" }),
+    ).toBeNull();
+
+    await act(async () => releaseOlder(older));
+    await waitFor(() =>
+      expect(screen.getByText(/average across 2 runs/)).toBeVisible(),
+    );
+  });
+
+  it("keeps the Suite Health skeleton while a just-finished run is re-read", async () => {
+    const running = makeRow({
+      _id: "only",
+      status: "running",
+      result: "pending",
+    });
+    setRows([running]);
+    let releaseFinished!: (value: unknown) => void;
+    const finishedRun = new Promise((resolve) => {
+      releaseFinished = resolve;
+    });
+    let runReads = 0;
+    mocks.query.mockImplementation(async (name: string, args: any) => {
+      if (name === "testSuites:getTestSuiteRun")
+        return (runReads += 1) === 1 ? running : finishedRun;
+      return {
+        page: [
+          {
+            _id: `${args.runId}-iteration`,
+            suiteRunId: args.runId,
+            status: "completed",
+            result: "passed",
+          },
+        ],
+        isDone: true,
+        continueCursor: "",
+      };
+    });
+    const view = () => (
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+      />
+    );
+    const { rerender } = render(view());
+    expect(
+      await screen.findByText(/No completed runs with recorded results/),
+    ).toBeVisible();
+
+    const finished = {
+      ...running,
+      status: "completed" as const,
+      result: "passed" as const,
+    };
+    setRows([finished]);
+    rerender(view());
+    expect(
+      screen.getByRole("status", { name: "Loading run history" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/No completed runs with recorded results/),
+    ).toBeNull();
+
+    await act(async () => releaseFinished(finished));
+    expect(await screen.findByTestId("suite-health-average")).toHaveTextContent(
+      "100%",
+    );
   });
 
   it("renders the grouped table shell on the first page load", () => {

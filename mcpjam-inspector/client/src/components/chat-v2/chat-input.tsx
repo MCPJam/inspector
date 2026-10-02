@@ -1950,28 +1950,8 @@ export function ChatInput({
                               onCheckedChange={(checked) =>
                                 onRequireToolApprovalChange(checked)
                               }
-                              aria-describedby="tool-approval-floor-note"
                             />
                           </div>
-                          {/* A caption rather than a tooltip: the row contains
-                              the switch itself, so a tooltip trigger wrapped
-                              around it would open over the control the user is
-                              reaching for, and a non-focusable trigger div
-                              would never open for a keyboard user at all.
-                              The switch decides for every tool that acts, so
-                              the only thing left to say is which calls it does
-                              not cover — reads, and an app's own tools, which
-                              belong to the iframe the user opened rather than
-                              to this setting. That belongs in front of someone
-                              rather than behind a hover. */}
-                          <p
-                            id="tool-approval-floor-note"
-                            className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
-                          >
-                            Pause before tool calls: MCP servers, the browser,
-                            a page's own tools, the shell. Read-only lookups
-                            and an open app's own actions never pause.
-                          </p>
                         </div>
                       )}
 
@@ -2023,6 +2003,10 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  // Servers attached means the turn can call tools.
+                  workload={
+                    (selectedServers?.length ?? 0) > 0 ? "mcpChat" : "chat"
+                  }
                 />
               )}
             </div>

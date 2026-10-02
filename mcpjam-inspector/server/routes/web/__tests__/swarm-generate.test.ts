@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
 import { SwarmAgentError } from "../../../services/swarm-agent.js";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../../shared/swarm-description.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
@@ -201,12 +202,34 @@ describe("web routes — swarm generation proxy", () => {
         projectId: "proj-1",
         environmentId: "env-1",
         personaCount: 3,
-        description: "x".repeat(2001),
+        description: "x".repeat(SWARM_DESCRIPTION_MAX_CHARS + 1),
       },
       token
     );
     expect(tooLong.status).toBe(400);
     expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a description at the cap, well past the old 2,000", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({ personas: [] });
+    const description = "x".repeat(SWARM_DESCRIPTION_MAX_CHARS);
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 3,
+        description,
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (generateSwarmPersonaBatchMock.mock.calls[0]![2] as any).description
+    ).toHaveLength(SWARM_DESCRIPTION_MAX_CHARS);
   });
 
   it("rejects an out-of-range journeyCount with 400 before calling the backend", async () => {
@@ -362,6 +385,61 @@ describe("web routes — swarm generation proxy", () => {
     expect(response.headers.get("Retry-After")).toBe("1800");
     expect(data.details?.code).toBe("platform_capacity");
     expect(data.details?.canTopUp).toBe(false);
+  });
+
+  it("forwards the backend's own 403 code so a client can tell WHICH 403 it is", async () => {
+    // The status alone cannot separate these: 403 covers both "sign in" (one
+    // click away) and "not a member of this project" (not). The backend's own
+    // code is what does, and `upstreamRefusalRouteError` forwards the whole
+    // refusal envelope as `details` so a client can read it.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        403,
+        JSON.stringify({
+          ok: false,
+          code: "sign_in_required",
+          feature: "swarm generation",
+        }),
+        "Sign in to generate personas and journeys."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      message?: string;
+      details?: { code?: string };
+    }>(response);
+    expect(status).toBe(403);
+    // The proxy's HTTP-shaped code, and the backend's own beneath it.
+    expect(data.code).toBe("FORBIDDEN");
+    expect(data.details?.code).toBe("sign_in_required");
+    expect(data.message).toBe("Sign in to generate personas and journeys.");
+  });
+
+  it("does not invent an upstream code when the backend sent none", async () => {
+    // `parseRefusalEnvelope` is shape-gated: a WAF interstitial or a proxy
+    // error page must not land arbitrary text in a field a client reads.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(403, "<html>Forbidden</html>", "Forbidden.")
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      details?: Record<string, unknown>;
+    }>(response);
+    expect(status).toBe(403);
+    expect(data.details).toBeUndefined();
   });
 
   it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {

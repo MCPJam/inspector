@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-4.5",
+      "canonical_slug": "anthropic/claude-4.5-sonnet-20250929",
+      "name": "Anthropic: Claude Sonnet 4.5",
+      "created": 1759161676,
+      "context_length": 1000000,
+      "supported_parameters": [
+        "max_tokens",
+        "temperature",
+        "tools",
+        "tool_choice"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.6",
+      "canonical_slug": "z-ai/glm-4.6",
+      "name": "Z.AI: GLM 4.6",
+      "created": 1759235576,
+      "context_length": 202752,
+      "supported_parameters": ["max_tokens", "temperature", "tools"]
+    },
+    {
+      "id": "openrouter/auto",
+      "canonical_slug": "openrouter/auto",
+      "name": "Auto Router",
+      "created": 1699401600,
+      "context_length": 2000000
+    }
+  ]
+}

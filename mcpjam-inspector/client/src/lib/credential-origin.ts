@@ -3,9 +3,9 @@
  *
  * The backend clears a row's saved headers, env, OAuth tokens and client secret
  * when the row's DESTINATION moves — a `url` change that crosses their origin,
- * or a `command`/`args` swap on a stdio row. Either one is the same primitive:
- * anyone who can edit a project points a server somewhere they control and has
- * the Inspector deliver somebody else's credential to it.
+ * or a `command`/`args` swap on a stdio row. Either one would send a stored
+ * credential to a destination it was not entered for, so it is cleared rather
+ * than carried over.
  *
  * That is the right behaviour and a genuinely surprising one — it destroys data
  * the person saving may not have entered and cannot see. So the edit form has
@@ -17,10 +17,16 @@
  * stdio trigger is held to the same standard — an `args` value that was absent
  * and is now `[]` runs the same process, so it is not a change.
  *
- * These rules mirror `convex/lib/serverSecretOrigin.ts` in the backend. A copy
- * rather than an import because the renderer cannot import backend code. If the
- * rules diverge, this warns about the wrong saves — either crying wolf, or
- * staying silent while the backend wipes a credential.
+ * These rules mirror `convex/lib/serverSecretOrigin.ts` in the backend, and the
+ * origin itself is `originForCredentialBinding` in `convex/lib/canonicalUrl.ts`
+ * — the same reduction the backend uses when it decides whether a saved
+ * credential may be released for a connection. A copy rather than an import
+ * because the renderer cannot import backend code. If the rules diverge, this
+ * warns about the wrong saves — either crying wolf, or staying silent while
+ * the backend wipes a credential.
+ *
+ * This is a WARNING, never a gate: whether a credential is used is decided by
+ * the backend alone (`client/src/lib/credential-refusal.ts` renders its answer).
  */
 
 /**

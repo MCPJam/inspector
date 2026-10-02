@@ -1,3 +1,5 @@
+import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
+import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities } from "../../utils/harness/local/run-resources.js";
 import {
   isTransientSpendRefusal,
   humanizeSwarmAttemptError,
@@ -11,9 +13,22 @@ import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
 import {
   resolveExecutionBudgetsForSurface,
+  platformExecutionBudgetCeilings,
   type ResolvedExecutionBudgets,
 } from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
+import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+  readStoredModelSelection,
+  wireModelIdForSelection,
+} from "../../utils/model-resolution-local.js";
+import {
+  resolveEffectiveModelSettings,
+  type EffectiveModelSettings,
+} from "../../utils/model-selection-settings.js";
+import type { ModelSelection } from "@mcpjam/sdk";
+import type { ModelDefinition } from "@/shared/types";
 import {
   captureAndPersistWidgetSnapshotsForSession,
   runSyntheticHostSession,
@@ -174,6 +189,113 @@ export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
 /** Session-id identity for a pinned execution target (shared mint — D1).
  * `environmentId` comes from the FIRST-CLASS `environmentRef`; the opaque
  * `targetId` is never parsed. */
+/**
+ * The model a swarm target runs on. With a saved selection in the snapshot,
+ * the selection decides the rail: `hosted` is marked hosted, and an explicit
+ * `org` / `local` selection is marked `hosted: false` so it never matches the
+ * hosted catalog first, executed with its provider-native id. A `local`
+ * selection also names its provider. Without one (legacy snapshot), the
+ * pinned `hosted` flag and id-based lookup apply exactly as before.
+ *
+ * An `org` selection's provider still comes from the id: the snapshot carries
+ * the connection's row id, not its provider key, and mapping one to the other
+ * is the backend resolver's job.
+ */
+export function swarmTargetModelDefinition(
+  target: Pick<
+    PinnedHostExecutionSpec,
+    "modelId" | "hosted" | "resolvedSelection"
+  >,
+): ModelDefinition {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return buildSyntheticModelDefinition(target.modelId, {
+      hosted: target.hosted,
+    });
+  }
+  const wireModelId = wireModelIdForSelection(selection);
+  const definition = buildSyntheticModelDefinition(wireModelId, {
+    hosted: selection.source === "hosted",
+  });
+  const ref = selection.connectionRef;
+  if (selection.source === "local" && ref?.kind === "localProvider") {
+    return {
+      ...definition,
+      id: wireModelId,
+      provider: ref.providerKey,
+      ...(ref.customProviderName
+        ? { customProviderName: ref.customProviderName }
+        : {}),
+    };
+  }
+  return definition;
+}
+
+/**
+ * The target's saved selection as the backend should see it: the same
+ * selection {@link swarmTargetModelDefinition} routes by (valid and naming the
+ * pinned model), put through `backendModelSelection()`, so a `hosted` or `org`
+ * one is forwarded as the request body's `modelSelection` and a `local` one
+ * never is. `undefined` for a legacy snapshot.
+ */
+/**
+ * The reasoning effort the target's saved selection carries, when that
+ * selection names the pinned model. Read from the STORED selection rather than
+ * the backend-facing one, because a `local` selection is never forwarded yet
+ * still asks for its effort: the harness gate must see it either way.
+ */
+export function swarmTargetReasoningEffort(
+  target: Pick<PinnedHostExecutionSpec, "modelId" | "resolvedSelection">,
+) {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return undefined;
+  }
+  return selection.settings?.reasoningEffort;
+}
+
+export function swarmTargetBackendSelection(
+  target: Pick<PinnedHostExecutionSpec, "modelId" | "resolvedSelection">,
+): ModelSelection | undefined {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return undefined;
+  }
+  return backendModelSelection(selection);
+}
+
+/**
+ * The settings a swarm target runs with, resolved once per target:
+ * the saved selection's settings over the host's defaults (a swarm has no
+ * per-run override). Without a saved selection the host's temperature
+ * applies exactly as before. The effort's rail is not known until the turn
+ * resolves its runtime (an org connection is cloud or local at call time),
+ * so it is checked there, by `resolveTurnRuntime`. Throws the refusal when a
+ * saved setting cannot be honoured.
+ */
+export function swarmTargetSettings(
+  target: Pick<
+    PinnedHostExecutionSpec,
+    "modelId" | "resolvedSelection" | "temperature"
+  >,
+  modelDefinition: ModelDefinition,
+): EffectiveModelSettings {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return target.temperature !== undefined
+      ? { temperature: target.temperature }
+      : {};
+  }
+  const result = resolveEffectiveModelSettings({
+    route: selection.source === "hosted" ? "hosted" : "org",
+    modelDefinition,
+    selection,
+    host: { temperature: target.temperature },
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError([result.refusal]);
+  return result.settings;
+}
+
 function targetSessionIdentity(target: PinnedHostExecutionSpec): {
   hostId: string;
   environmentId?: string;
@@ -235,6 +357,7 @@ export interface StartJourneyRunOptions {
    * matters; threading an await through all ~35 call sites would buy noise.
    */
   getBearer: () => Promise<string>;
+  localHarnessActor?: LocalHarnessActor;
   /** Builds a fresh connected manager scoped to one host's `serverIds`. */
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
@@ -499,6 +622,14 @@ async function runJourneyFanOut(
   // Run-level stop controller. Aborting it cancels every in-flight session's
   // turns; composed with the incoming abort so a shutdown/cancel does the same.
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
+  if (!opts.budgets) {
+    // Only size a platform default. Explicit/frozen limits remain authoritative.
+    const localSessions = hosts.filter(host => (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(host.harness))).length * sessionsPerTarget;
+    budgets.runTimeoutMs = Math.min(
+      platformExecutionBudgetCeilings("swarms").runTimeoutMs,
+      Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
+    );
+  }
 
   // The RUN's clock. Nested under the caller's abort (shutdown / cancel) and
   // composed with `runStop`, the spend-cap short-circuit — so every session's
@@ -622,22 +753,24 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const harnessNeedsBox = target.harness !== undefined;
+    const localHarness = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness));
+    const harnessNeedsBox = target.harness !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
     let harnessTargetIntent: SandboxIntent | undefined;
     try {
       bearer = await getBearer();
+      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined });
 
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId, {
-        hosted: target.hosted,
-      });
+      const modelDefinition = swarmTargetModelDefinition(target);
+      const modelSelection = swarmTargetBackendSelection(target);
+      const targetSettings = swarmTargetSettings(target, modelDefinition);
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -713,6 +846,7 @@ async function runJourneyFanOut(
             ? undefined
             : checkHarnessRuntimeAvailable({
                 harnessId: target.harness,
+                localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
                 // from a plugin has an empty `serverIds` and would otherwise slip
@@ -745,6 +879,11 @@ async function runJourneyFanOut(
                 // request body to override it — and passed explicitly so it
                 // STAYS identical if that ever stops being true.
                 hostModelId: modelId,
+                // The saved selection's effort: a harness that cannot apply it
+                // refuses the target here, before a box is booted.
+                ...(swarmTargetReasoningEffort(target) !== undefined
+                  ? { reasoningEffort: swarmTargetReasoningEffort(target) }
+                  : {}),
                 // TRI-STATE, read without throwing, and INVALID counts as ON —
                 // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
                 // (the web route's variant) THROWS a 409 on a malformed profile,
@@ -759,6 +898,9 @@ async function runJourneyFanOut(
                 // absent-host-config path.
                 xaaEnterprisePolicyOn:
                   readXaaEnterprisePolicy(target.mcpProfile).kind !== "off",
+                // A swarm's results are compared, so an unverified harness ×
+                // model pair is refused, not run with a warning.
+                purpose: "swarm",
               });
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
@@ -838,6 +980,12 @@ async function runJourneyFanOut(
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
 
+        // Queue before claiming an attempt or starting its deadline. Release
+        // after each session so other runs share the machine fairly.
+        const releaseLocalSlot = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness))
+          ? await acquireLocalHarnessSlot(sessionSignal)
+          : undefined;
+        try {
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
         // session's lifetime: the browser-artifact outbox, the widget-snapshot
@@ -1178,15 +1326,21 @@ async function runJourneyFanOut(
           // Because it persists per-turn and returns only after the last persist,
           // the transcript is durable before we report the terminal below.
           if (stoppedByBackend) return;
-          const sessionResult = await runSyntheticHostSession({
+          const runSession = async () => {
+            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor }) : undefined;
+            try { return await runSyntheticHostSession({
             runId,
             projectId,
             chatSessionId,
             maxTurns,
             runtime: {
               modelDefinition,
+              ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,
-              temperature: target.temperature,
+              temperature: targetSettings.temperature,
+              ...(targetSettings.reasoningEffort
+                ? { reasoningEffort: targetSettings.reasoningEffort }
+                : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
@@ -1206,6 +1360,7 @@ async function runJourneyFanOut(
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
               harness: target.harness,
+              ...(localResources ? { harnessExecutionTarget: { ...localResources.target, targetId, sessionIdx } } : {}),
               // The trusted binding to THIS attempt's disposable box. It reaches
               // `resolveHostTools` on `ctx`, never on the host config, so nothing
               // in the (member-readable) run snapshot can forge one.
@@ -1302,6 +1457,9 @@ async function runJourneyFanOut(
               });
             },
           });
+            } finally { await localResources?.cleanup(); }
+          };
+          const sessionResult = await runSession();
           const { outcome, errorMessage, errorReason, errorRefusal } =
             sessionResult;
 
@@ -1584,6 +1742,7 @@ async function runJourneyFanOut(
             await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
           }
         }
+        } finally { releaseLocalSlot?.(); }
       }
     } catch (err) {
       // A worker-level throw (a model-less pinned spec whose modelId can't

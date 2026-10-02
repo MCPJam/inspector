@@ -44,14 +44,36 @@ on:
 permissions:
   contents: read
 
-env:
-  # Pinned deliberately. The pack's `bin/node` is what interprets the bridge on
-  # every user's machine, and it is inside the digest — so bumping it is a
-  # reviewed change that produces a new pack, not something a runner picks.
-  BUNDLED_NODE_VERSION: "24.20.0"
+concurrency:
+  group: local-harness-pack-${{ inputs.pack_version }}
+  cancel-in-progress: false
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate publication request
+        uses: actions/github-script@v7
+        env:
+          PACK_VERSION: ${{ inputs.pack_version }}
+        with:
+          script: |
+            if (context.ref !== 'refs/heads/main') throw new Error('Pack publication requires main');
+            if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.env.PACK_VERSION)) throw new Error('pack_version must be an independent semver, e.g. 1.0.0');
+            const tag = `local-harness-pack-v${process.env.PACK_VERSION}`;
+            const releases = await github.paginate(github.rest.repos.listReleases, { ...context.repo, per_page: 100 });
+            if (releases.some(release => release.tag_name === tag)) throw new Error(`Release ${tag} already exists (including drafts)`);
+            for (const check of [
+              () => github.rest.repos.getReleaseByTag({ ...context.repo, tag }),
+              () => github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` }),
+            ]) {
+              try { await check(); }
+              catch (error) { if (error.status === 404) continue; throw error; }
+              throw new Error('Pack tag or release already exists; publish a new version');
+            }
+
   build:
+    needs: preflight
     name: ${{ matrix.platform_key }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -73,30 +95,31 @@ jobs:
           - platform_key: linux-arm64
             runner: ubuntu-24.04-arm
             node_dist: linux-arm64
-          # Built so the artifact and the digest exist, and so a regression in
-          # the pack build is caught on Windows too. The PLATFORM stays refused
-          # regardless: `nativePlatforms` does not list win32 until the
-          # conformance suite passes on `windows-latest`.
+          # Windows includes the verified Job Object launcher.
           - platform_key: win32-x64
             runner: windows-latest
             node_dist: win-x64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
 
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
-          version: 10
+          version: ${{ steps.toolchain.outputs.pnpm }}
 
       # Only the adapter package is needed: the pack build reads its bridge
       # recipe and installs that recipe's own frozen graph inside the pack.
@@ -108,6 +131,9 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+
+      - name: Check reviewed pack inputs
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
 
       # The pack ships an official nodejs.org build, not the runner's Node:
       # the runner's is not signed the way a binary we ask users to execute
@@ -153,6 +179,13 @@ jobs:
       # Object — and the helper that creates one has to live INSIDE the pack,
       # covered by its tree digest. Built here rather than checked in, so the
       # binary that ships is the one this commit's source produces.
+      - name: Set up the pinned Go toolchain
+        if: startsWith(matrix.platform_key, 'win32')
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
       - name: Build the Job Object launcher
         if: startsWith(matrix.platform_key, 'win32')
         working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
@@ -165,36 +198,18 @@ jobs:
         # vcs.revision into the binary, and the binary is inside the pack's
         # tree digest — so the digest changed on every commit to main, and the
         # committed table was one SHA stale by construction (that is why the
-        # 3.3.6 table was unshipped). The Go toolchain is still the runner
-        # image's; a bump there changes the binary too, and the table with it.
+        # 3.3.6 table was unshipped). The pinned Go toolchain above is part
+        # of the reviewed pack input fingerprint.
         run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
-
-      # A release that publishes unsigned packs publishes packs no Inspector
-      # will install: `verifyPackManifestSignature` refuses a network-sourced
-      # pack with no signature, so the artifacts would exist and be inert. The
-      # build itself only warns, because a local build without the key is the
-      # normal development case — this is the release saying it is not.
-      - name: A release must have the pack signing key
-        if: ${{ inputs.enforce_committed_digests }}
-        shell: bash
-        env:
-          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
-        run: |
-          if [ -z "${LOCAL_HARNESS_PACK_SIGNING_KEY:-}" ]; then
-            echo "LOCAL_HARNESS_PACK_SIGNING_KEY is not set; a release cannot" >&2
-            echo "publish packs that no Inspector build will accept." >&2
-            exit 1
-          fi
 
       - name: Build the pack
         working-directory: mcpjam-inspector
         shell: bash
         env:
-          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
           # Through the ENVIRONMENT, never interpolated into the shell source.
           # `pack_version` is a `workflow_dispatch` input — a string a person
           # types — and `${{ }}` substitutes before bash parses, so a quote in
-          # it would run commands in a job that holds the pack signing key.
+          # it would run commands in the build job.
           PACK_VERSION: ${{ inputs.pack_version }}
           PLATFORM_KEY: ${{ matrix.platform_key }}
         run: |
@@ -245,7 +260,7 @@ jobs:
           "${{ inputs.pack_version }}"
 
       - name: Upload the pack
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}
           path: ${{ runner.temp }}/pack-out/local-harness-pack-*
@@ -265,7 +280,7 @@ jobs:
       flat: ${{ steps.merge.outputs.flat }}
     steps:
       - name: Download every pack
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: local-harness-pack-*
           path: packs
@@ -290,12 +305,16 @@ jobs:
           echo "$map"
 
       - name: Check out the Inspector sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
 
       # The gate that makes the checked-in digest table load-bearing.
       #
@@ -316,3 +335,74 @@ jobs:
           set -euo pipefail
           node scripts/write-pack-digests.mjs \
             --check --version "$PACK_VERSION" --digests "$DIGESTS"
+
+  sign:
+    needs: [build, collect]
+    environment: local-harness-pack-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: local-harness-pack-*
+          path: packs
+          merge-multiple: true
+      # No vendor code or install scripts execute in the job holding this key.
+      - name: Sign manifests and verify against the committed public key
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+          import { sign, verify } from 'node:crypto';
+          const key = process.env.LOCAL_HARNESS_PACK_SIGNING_KEY;
+          if (!key) throw new Error('Protected signing key is missing');
+          const source = readFileSync('mcpjam-inspector/server/utils/harness/local/pack-signing-key.ts', 'utf8');
+          const publicKey = source.match(/-----BEGIN PUBLIC KEY-----[\s\S]*?-----END PUBLIC KEY-----/)[0];
+          const manifests = readdirSync('packs').filter(name => name.endsWith('.manifest.json'));
+          if (manifests.length !== 5) throw new Error('Expected all five pack manifests');
+          for (const name of manifests) {
+            const bytes = readFileSync('packs/' + name);
+            const signature = sign(null, bytes, key);
+            if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match Inspector');
+            writeFileSync('packs/' + name + '.sig', signature.toString('base64') + '\n');
+          }
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-local-harness-pack
+          path: packs/local-harness-pack-*
+          if-no-files-found: error
+
+  publish:
+    needs: [sign, collect]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: signed-local-harness-pack
+          path: packs
+          merge-multiple: true
+      - name: Publish a new immutable pack version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PACK_VERSION: ${{ inputs.pack_version }}
+          PACK_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="local-harness-pack-v$PACK_VERSION"
+          # This job has contents:write and can see unpublished drafts.
+          releases="$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[].tag_name')"
+          if printf '%s\n' "$releases" | grep -Fx "$tag"; then
+            echo "A release or draft already exists for $tag; choose a new version." >&2
+            exit 1
+          fi
+          # No upload --clobber or release-edit retry: an existing version is never replaced.
+          gh release create "$tag" packs/local-harness-pack-* \
+            --target "$PACK_SHA" --title "Local harness pack $PACK_VERSION" \
+            --notes "Signed local Claude Code runtime for Node and Electron." --draft --latest=false
+          gh release edit "$tag" --draft=false --latest=false

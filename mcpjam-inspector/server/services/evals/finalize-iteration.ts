@@ -12,6 +12,7 @@ import type {
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
+import { evalSnapshotUploadTarget } from "../../utils/snapshot-upload-target.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
@@ -30,6 +31,7 @@ import {
   finalMessageEndsWithQuestion,
 } from "@mcpjam/sdk/predicates";
 import { buildIterationMetadata } from "./iteration-metadata.js";
+import { buildIterationErrorMetadata } from "./iteration-error-metadata.js";
 import {
   buildHostIterationMetadata,
   type HostExecutionPolicy,
@@ -61,6 +63,7 @@ import {
   buildHostedScoreContract,
   shadowVerdictFromScores,
   type HostedEvaluationLike,
+  type HostedMatcherTurnLike,
   type HostedPredicateResultLike,
 } from "./score-rows.js";
 import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
@@ -309,16 +312,16 @@ function isHostedPredicateResult(
 }
 
 /** Read only the matcher fields the projection needs, typed rather than cast. */
-function narrowEvaluation(
-  evaluation: Record<string, unknown>,
-): HostedEvaluationLike {
+function narrowMatcherTurn(
+  turn: Record<string, unknown>,
+): HostedMatcherTurnLike {
   const list = (key: string): readonly unknown[] | undefined => {
-    const value = evaluation[key];
+    const value = turn[key];
     return Array.isArray(value) ? value : undefined;
   };
   return {
-    ...(typeof evaluation.passed === "boolean"
-      ? { passed: evaluation.passed }
+    ...(typeof turn.promptIndex === "number"
+      ? { promptIndex: turn.promptIndex }
       : {}),
     ...(list("expectedToolCalls")
       ? { expectedToolCalls: list("expectedToolCalls") }
@@ -328,6 +331,28 @@ function narrowEvaluation(
     ...(list("argumentMismatches")
       ? { argumentMismatches: list("argumentMismatches") }
       : {}),
+  };
+}
+
+function narrowEvaluation(
+  evaluation: Record<string, unknown>,
+): HostedEvaluationLike {
+  // Per turn, because the matcher applies the extras cap per turn and the
+  // selection verdict has to read it the same way.
+  const promptSummaries = Array.isArray(evaluation.promptSummaries)
+    ? evaluation.promptSummaries
+        .filter(
+          (turn): turn is Record<string, unknown> =>
+            typeof turn === "object" && turn !== null,
+        )
+        .map(narrowMatcherTurn)
+    : undefined;
+  return {
+    ...(typeof evaluation.passed === "boolean"
+      ? { passed: evaluation.passed }
+      : {}),
+    ...narrowMatcherTurn(evaluation),
+    ...(promptSummaries?.length ? { promptSummaries } : {}),
   };
 }
 
@@ -940,6 +965,16 @@ export function buildIterationFinishParams(args: {
     resultSource: "reported" as const,
     metadata: {
       ...iterationMetadataBase,
+      ...buildIterationErrorMetadata({
+        messages,
+        spans,
+        toolErrors: stageToolErrors,
+        browserInteractionSteps,
+        widgetRenderObservations,
+        status,
+        error,
+        stepError: args.stepError,
+      }),
       ...buildIterationMetadata(evaluation as never),
       // Written for EVERY trial, from the same helper the `noEndingQuestion`
       // check uses — not only when somebody authored that check.
@@ -988,6 +1023,12 @@ export function buildIterationFinishParams(args: {
 
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
+  /**
+   * The Convex bearer `convexClient` writes with. Screenshots and the replay
+   * video are uploaded as this identity (MJ-006); without it they are left out
+   * and the rows still persist.
+   */
+  convexAuthToken?: string;
   iterationId?: string;
   passed: boolean;
   toolsCalled: ToolCallRecord[];
@@ -1092,6 +1133,7 @@ export async function finalizeEvalIteration(
 ): Promise<void> {
   const {
     convexClient,
+    convexAuthToken,
     iterationId,
     passed,
     toolsCalled,
@@ -1184,8 +1226,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-      ? "eval_failed"
-      : "eval_completed";
+        ? "eval_failed"
+        : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -1196,24 +1238,25 @@ export async function finalizeEvalIteration(
   // through the convex sanitizer) so the W2 fanout and the W1 fallback share a
   // single upload pass. Owning this in the shared finalize step is what keeps
   // recorder + direct quick-run callers from double-uploading.
+  const uploadTarget = evalSnapshotUploadTarget(convexAuthToken, iterationId);
   const serializedWidgetRenderObservations =
     await serializeRenderObservationsForBackend(
       widgetRenderObservations,
-      convexClient,
+      uploadTarget,
     );
   const serializedBrowserInteractionSteps =
     await serializeBrowserStepsForBackend(
       browserInteractionSteps,
-      convexClient,
+      uploadTarget,
     );
 
   // Upload the iteration replay video alongside the screenshots, in the same
   // single-pass choke point. Best-effort: a failed upload is logged + dropped
   // (videoBlobId stays undefined → no player) and NEVER fails the iteration.
   let videoBlobId: string | undefined;
-  if (videoBytes && videoBytes.length > 0) {
+  if (videoBytes && videoBytes.length > 0 && uploadTarget) {
     try {
-      videoBlobId = await uploadVideoBlob(convexClient, videoBytes, {
+      videoBlobId = await uploadVideoBlob(uploadTarget, videoBytes, {
         ...(videoMime ? { contentType: videoMime } : {}),
       });
     } catch (err) {

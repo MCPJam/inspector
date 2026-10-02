@@ -1,6 +1,10 @@
 import { getModelById } from "../../shared/types";
 import { logger } from "./logger";
 import { fetchTokenizerCount } from "./tokenizer-backend.js";
+import {
+  getFetchErrorCause,
+  isFetchConnectionFailure,
+} from "./fetch-error-cause.js";
 
 /**
  * Mapping from AI SDK model IDs to ai-tokenizer model IDs.
@@ -159,28 +163,9 @@ export function estimateTokensFromChars(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-/**
- * Detect Node/undici connection-level fetch failures
- * (`TypeError: fetch failed` with a populated `cause`).
- *
- * These happen on the *client's* network — DNS miss, connection refused, TLS
- * failure, etc. — so logging them as warnings to Sentry conflates user-side
- * connectivity with backend issues. Callers should route these to a debug
- * log instead while still surfacing backend HTTP/logical errors as warnings.
- */
-export function isFetchConnectionFailure(error: unknown): boolean {
-  return error instanceof TypeError && /fetch failed/i.test(error.message);
-}
-
-/**
- * Pull the underlying network error code (e.g. `ECONNREFUSED`, `ENOTFOUND`)
- * out of a `fetch failed` TypeError. `error.cause` is where undici stashes
- * the real reason; `error.message` is the useless generic wrapper.
- */
-export function getFetchErrorCause(error: unknown): string | undefined {
-  const cause = (error as { cause?: { code?: unknown } })?.cause?.code;
-  return typeof cause === "string" ? cause : undefined;
-}
+// Moved to `fetch-error-cause.ts` so modules outside the tokenizer can use them
+// without its model-catalog imports. Re-exported for existing callers.
+export { getFetchErrorCause, isFetchConnectionFailure };
 
 /**
  * Above this, count locally instead of asking the backend.

@@ -414,7 +414,7 @@ export function deriveHonestyFootnotes(args: {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
     notes.push(
-      "Evaluator findings only: deterministic signals unavailable for this wave",
+      "Evaluator findings only: deterministic signals unavailable for this swarm run",
     );
   } else {
     if (!signals.terminal) {

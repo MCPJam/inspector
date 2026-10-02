@@ -1,3 +1,6 @@
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
+import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { apiSessionWriteAllowed } from "./api-session-write-guard";
 import { BrowserSessionService } from "../../services/browserd/session-service";
@@ -30,7 +33,6 @@ import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
-  LOCAL_HARNESS_ENABLED,
   WEB_STREAM_TIMEOUT_MS,
   webmcpInspectorReachable,
 } from "../../config.js";
@@ -69,6 +71,7 @@ import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
+  authorizeProject,
   createAuthorizedManager,
   buildServerNamesById,
   callerContextFromHono,
@@ -144,6 +147,10 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import {
+  resolveTurnBuiltInToolIds,
+  type ProjectDefaultToolConfig,
+} from "../../utils/built-in-tools/built-in-tool-policy.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -367,6 +374,20 @@ chatV2.post("/", async (c) => {
         400,
         ErrorCode.VALIDATION_ERROR,
         "model is not supported",
+      );
+    }
+
+    // The caller's `projectId` is checked here, before anything is resolved or
+    // billed against it (MJ-013). The server batch below applies the same
+    // membership check to the servers a turn selected; this one covers every
+    // turn, including one that selected none. Scenario turns are exempt, since
+    // their access is the `scenarioId` grant, re-checked by the runtime-config
+    // fetch, not membership.
+    if (!isScenarioSession) {
+      await authorizeProject(
+        callerContextFromHono(c),
+        bearerToken,
+        hostedBody.projectId,
       );
     }
 
@@ -818,6 +839,52 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // WHICH BUILT-IN TOOLS THIS TURN MAY HAVE (MJ-008). The body's list is
+    // bounded by the host/project configuration, unknown ids are dropped, and
+    // workspace tools follow the caller's project role — see
+    // `built-in-tool-policy.ts`. Every consumer below reads this, never the
+    // resolved body value. It also resolves, from the same saved
+    // configuration, when this turn's workspace tools pause for approval; the
+    // turn's own setting can raise that, never lower it.
+    const builtInToolPolicy = await resolveTurnBuiltInToolIds({
+      requested: resolvedExecution.builtInToolIds,
+      targetKind: executionTarget.kind,
+      hostRuntimeConfig,
+      isGuest: Boolean(c.get("guestId")),
+      requestedToolApproval: resolvedExecution.requireToolApproval,
+      loadProjectDefaultConfig: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
+          "hostConfigsV2:getProjectDefault" as never,
+          {
+            projectId: hostedBody.projectId,
+          } as never,
+        )) as ProjectDefaultToolConfig | null,
+      loadProjectAccess: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
+          "projects:getProjectCapabilities" as never,
+          { projectId: hostedBody.projectId } as never,
+        )) as { projectRole?: string | null } | null,
+    });
+    if (builtInToolPolicy.dropped.length > 0) {
+      getRequestLogger(c, "routes.web.chat-v2").event(
+        "chat.builtin_tools.withheld",
+        {
+          // Catalog ids only. An unknown id is whatever the body said, so it
+          // is counted and never echoed.
+          toolIds: builtInToolPolicy.dropped
+            .filter((entry) => entry.reason !== "unknown")
+            .map((entry) => entry.id),
+          unknownCount: builtInToolPolicy.dropped.filter(
+            (entry) => entry.reason === "unknown",
+          ).length,
+          reasons: [
+            ...new Set(builtInToolPolicy.dropped.map((entry) => entry.reason)),
+          ],
+          targetKind: executionTarget.kind,
+        },
+      );
+    }
+    const turnBuiltInToolIds = builtInToolPolicy.ids;
     // `modelId` stays a special case — the resolver yields the resolved
     // string, and `resolveHostModelDefinition` lifts it (catalog hit →
     // full def; miss → org provider config lookup, then id-shape
@@ -929,26 +996,23 @@ chatV2.post("/", async (c) => {
     // construction (HOSTED_MODE forces the kill switch off) and an explicit ask
     // gets a 400 saying so. Dropping the field silently would leave a
     // misconfigured client believing its turn ran locally.
-    const hostedHarnessTargetParse = parseHarnessExecutionTarget({
-      body: body as { harnessTarget?: RawHarnessTargetInput },
-      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
-      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
-      // Even on a non-hosted deployment this route is the org-aware one, whose
-      // turns are not necessarily an attended member running on their own
-      // machine. Local execution belongs on the local route.
-      actorEligible: false,
-      // Nothing here can consent, so there is no acting user to bind a grant
-      // to. Both gates above already refuse a local target on this route; this
-      // says the same thing in the one field a grant would be verified against.
-      actingUserId: null,
-    });
-    if (hostedHarnessTargetParse.kind === "refused") {
-      return c.json({ error: hostedHarnessTargetParse.reason }, 400);
+    let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
+    if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
+      if (!hostedBody.projectId) return c.json({ error: "A project is required for local Claude Code" }, 400);
+      try {
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: bearerToken, projectId: hostedBody.projectId, scope: "attended" })).target;
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : "Claude Code is not ready" }, 409);
+      }
+    } else {
+      const parsed = parseHarnessExecutionTarget({ body: body as { harnessTarget?: RawHarnessTargetInput }, grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER), serverEnabled: false, actorEligible: false, actingUserId: null });
+      if (parsed.kind === "refused") return c.json({ error: parsed.reason }, 400);
     }
 
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        localExecution: Boolean(harnessExecutionTarget),
         requireToolApproval,
         // Use the SERVER-resolved host server list, not the request body — a
         // stale/tampered request mustn't send an empty array to bypass the
@@ -982,7 +1046,21 @@ chatV2.post("/", async (c) => {
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
         xaaEnterprisePolicyOn: xaaPolicy != null,
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session is an eval
+        // surface and may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        getRequestLogger(c, "routes.web.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
+      }
       if (!availability.ok) {
         throw new WebRouteError(
           503,
@@ -1563,9 +1641,7 @@ chatV2.post("/", async (c) => {
     //     personal shell to a share-link-reachable scenario turn.
     const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
-      bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
-        BASH_TOOL_NAME,
-      ),
+      bashRequested: (turnBuiltInToolIds ?? []).includes(BASH_TOOL_NAME),
       ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
       hasChatSessionId: Boolean(body.chatSessionId),
       secretsUnavailable,
@@ -1740,7 +1816,7 @@ chatV2.post("/", async (c) => {
       ...(browserSessionScope
         ? { conversationId: browserSessionScope.sessionId }
         : {}),
-      builtInToolIds: resolvedExecution.builtInToolIds,
+      builtInToolIds: turnBuiltInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
       isHarnessTurn: Boolean(resolvedExecution.harness),
@@ -1778,7 +1854,7 @@ chatV2.post("/", async (c) => {
       | undefined;
     const builtInTools = resolveHostTools(
       {
-        builtInToolIds: resolvedExecution.builtInToolIds,
+        builtInToolIds: turnBuiltInToolIds,
         // Computer comes exclusively from the server-resolved runtime config —
         // scenario OR host-by-id — never the request body.
         computer:
@@ -1807,6 +1883,8 @@ chatV2.post("/", async (c) => {
         // it today; the model turn and voice already send their own.
         ...(isScenarioSession && scenarioId ? { scenarioId } : {}),
         requireToolApproval,
+        // Workspace tools take the server-resolved setting instead (MJ-008).
+        workspaceToolApproval: builtInToolPolicy.workspaceToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and
         // rejects anything that isn't `personal`, so a union on the config
@@ -2006,7 +2084,7 @@ chatV2.post("/", async (c) => {
           customProviders: body.customProviders,
           uiMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness }
+            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -2084,7 +2162,7 @@ chatV2.post("/", async (c) => {
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness }
+            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.

@@ -3,10 +3,9 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import type { EvalIteration } from "@/components/evals/types";
-import { TrialScorecard, summaryLine } from "../case-scorecard/trial-scorecard";
+import { TrialScorecard } from "../case-scorecard/trial-scorecard";
 import type { CaseScorecardInput } from "../case-scorecard/case-scorecard-model";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
-import { PASS_WORDS } from "./pass-words";
 
 const steps: TestStep[] = [
   { id: "s1", kind: "prompt", prompt: "Who am I signed in as?" },
@@ -130,11 +129,14 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     renderCard({ chain });
-    // Chain order; a stage the chain measured but nothing grades still gets a
-    // cell, and the authored stages keep theirs.
+    // Chain order. Every stage the runner measures has its runner check, so
+    // each gets a cell and a row, whether or not anything authored grades it;
+    // `toolCalledAtLeastOnce` expects a call, which brings Tool call in.
     expect(railStages()).toEqual([
       "connection",
+      "discovery",
       "selection",
+      "call",
       "response",
       "userValue",
     ]);
@@ -155,9 +157,17 @@ describe("TrialScorecard", () => {
     openStage("connection");
     const connection = sectionFor("connection")!;
     expect(stateWordIn(connection)).toBe("passed");
-    expect(
-      within(connection).queryAllByTestId("trial-scorecard-row"),
-    ).toHaveLength(0);
+    // Nothing authored grades Connection; its runner check says what the
+    // chain decided there, instead of a bare heading.
+    const connectionRows = within(connection).queryAllByTestId(
+      "trial-scorecard-row",
+    );
+    expect(connectionRows).toHaveLength(1);
+    expect(connectionRows[0]).toHaveAttribute("data-state", "passed");
+    expect(connectionRows[0]).toHaveTextContent("Successful connection");
+    expect(connectionRows[0]).toHaveTextContent(
+      "Passed because a later stage's success implies it.",
+    );
     expect(sectionFor("selection")).toBeNull();
   });
 
@@ -201,15 +211,13 @@ describe("TrialScorecard", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("leads with the tally for a prompt-only case", () => {
+  it("does not invent an empty-state line for a prompt-only case", () => {
     renderCard({
       authored: { steps: [steps[0]], toolsChoice: "unset" },
       steps: [steps[0]],
     });
     expect(screen.queryByText("No extra assertions added.")).toBeNull();
-    expect(screen.getByTestId("trial-scorecard-summary")).toHaveTextContent(
-      "No evaluators ran",
-    );
+    expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
   });
 
   it("shows the judge's recorded passing rationale without expanding a row", () => {
@@ -227,7 +235,7 @@ describe("TrialScorecard", () => {
     );
   });
 
-  it("shows supporting stage evidence and makes missing evidence explicit", async () => {
+  it("shows supporting stage evidence and stays quiet when there is none", async () => {
     const chain = {
       status: "verified",
       stages: [
@@ -257,9 +265,12 @@ describe("TrialScorecard", () => {
         }
       />,
     );
-    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
-      "This run recorded a pass without supporting evidence.",
-    );
+    expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
+    expect(
+      screen.queryByText(
+        "This run recorded a pass without supporting evidence.",
+      ),
+    ).toBeNull();
   });
 
   it("does not reveal passing evidence during blind judge review", () => {
@@ -285,9 +296,6 @@ describe("TrialScorecard", () => {
     expect(rowFor("No tool errors so far")).toHaveAttribute(
       "data-state",
       "notMeasured",
-    );
-    expect(screen.getByTestId("trial-scorecard-summary").textContent).toBe(
-      "No evaluators ran",
     );
   });
 
@@ -348,24 +356,6 @@ describe("TrialScorecard", () => {
     expect(row).toHaveAttribute("data-state", "failed");
     expect(row).toHaveAttribute("data-role", "advisory");
     expect(within(row).getByText("Missed · advisory")).toBeInTheDocument();
-    const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
-    expect(summary).toContain("1 of 1 required passed");
-    expect(summary).toContain("1 advisory");
-  });
-
-  it("never claims a verdict of its own", () => {
-    // The trial header already says PASSED, from `trialVerdict`. A second word
-    // here is the bug the Steps tab shipped with.
-    renderCard({
-      iteration: iteration({
-        stepResults: [
-          { stepId: "a2", stepIndex: 2, kind: "assert", status: "ok" },
-        ],
-      }),
-    });
-    const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
-    expect(summary).not.toMatch(/^Passed|^Failed/);
-    expect(summary).toBe("1 of 1 required passed");
   });
 
   it("keeps the score-row view reachable but out of the way", () => {
@@ -396,40 +386,6 @@ describe("TrialScorecard", () => {
       expect(within(row).getByText("Not measured")).toBeInTheDocument();
     }
     expect(container.textContent).not.toMatch(/toolCalledAtLeastOnce/);
-  });
-});
-
-describe("summaryLine", () => {
-  const base = {
-    required: { passed: 0, counted: 0 },
-    advisory: 0,
-    errors: 0,
-    notMeasured: 0,
-    pending: 0,
-  };
-
-  it("counts required rows and names the rest without promoting it", () => {
-    expect(
-      summaryLine({ ...base, required: { passed: 2, counted: 2 }, advisory: 1 }),
-    ).toBe("2 of 2 required passed · 1 advisory");
-  });
-
-  it("says a case has no required rows rather than reporting 0 of 0", () => {
-    expect(summaryLine({ ...base, advisory: 1 })).toBe(
-      "No required assertions ran · 1 advisory",
-    );
-    expect(summaryLine(base)).toBe("No evaluators ran");
-  });
-
-  it("names an unevaluable scorer as such, not as a failure", () => {
-    expect(
-      summaryLine({ ...base, required: { passed: 0, counted: 1 }, errors: 1 }),
-    ).toBe("0 of 1 required passed · 1 could not be evaluated");
-  });
-
-  it("never uses a pass word for a state that is not a pass", () => {
-    expect(PASS_WORDS.test(summaryLine(base))).toBe(false);
-    expect(PASS_WORDS.test(summaryLine({ ...base, advisory: 2 }))).toBe(false);
   });
 });
 
@@ -652,6 +608,150 @@ describe("blind review keeps the chain and masks one card", () => {
   });
 });
 
+describe("built-in runner checks on the run page", () => {
+  const builtinRows = () =>
+    screen
+      .getAllByTestId("trial-scorecard-row")
+      .filter((row) =>
+        row.getAttribute("data-row-key")?.startsWith("builtin:"),
+      );
+
+  it("renders an old run with no chain: each runner check is not measured", () => {
+    renderCard({ chain: { status: "absent" } as never });
+    // No rail without a verified chain, so every section stacks.
+    const rows = builtinRows();
+    expect(rows.map((row) => row.getAttribute("data-row-key"))).toEqual([
+      "builtin:connection",
+      "builtin:discovery",
+      "builtin:call",
+      "builtin:response",
+    ]);
+    for (const row of rows) {
+      expect(row).toHaveAttribute("data-state", "notMeasured");
+      expect(row).toHaveTextContent("Not measured");
+    }
+  });
+
+  it("renders a setup_failed run: nothing measured reads as an error", () => {
+    renderCard({
+      iteration: { ...iteration(), status: "setup_failed" } as EvalIteration,
+      chain: {
+        status: "verified",
+        failureCategory: "setup",
+        analyzerVersion: 12,
+        stages: [
+          "connection",
+          "discovery",
+          "selection",
+          "call",
+          "response",
+          "userValue",
+        ].map((stage) => ({
+          stage,
+          state: "notMeasured",
+          reason: "setupAborted",
+        })),
+      } as never,
+    });
+    for (const stage of ["connection", "discovery", "call", "response"]) {
+      openStage(stage);
+      const row = within(sectionFor(stage)!).getAllByTestId(
+        "trial-scorecard-row",
+      )[0]!;
+      expect(row).toHaveAttribute("data-row-key", `builtin:${stage}`);
+      expect(row).toHaveAttribute("data-state", "error");
+      expect(row).toHaveTextContent("Could not be evaluated");
+      expect(row).toHaveTextContent(
+        "The environment was never prepared, so the test never began.",
+      );
+    }
+  });
+
+  it("badges a runner check Built-in and gives it no role", () => {
+    renderCard({
+      chain: {
+        status: "verified",
+        analyzerVersion: 12,
+        stages: [{ stage: "connection", state: "passed", reason: "observed" }],
+      } as never,
+    });
+    openStage("connection");
+    const row = within(sectionFor("connection")!).getByTestId(
+      "trial-scorecard-row",
+    );
+    expect(within(row).getByTestId("runner-check-badge")).toHaveTextContent(
+      "Built-in",
+    );
+    expect(row).toHaveTextContent("The run connects to its servers");
+    expect(row).toHaveTextContent(
+      "Passed because the evidence was inspected and the stage held.",
+    );
+    expect(row.textContent).not.toMatch(/required|advisory|assertion/i);
+  });
+
+  /** A verified chain: every stage passed unless `over` says otherwise. */
+  const chainWith = (over: Record<string, { state: string; reason: string }>) =>
+    ({
+      status: "verified",
+      analyzerVersion: 12,
+      stages: [
+        "connection",
+        "discovery",
+        "selection",
+        "call",
+        "response",
+        "userValue",
+      ].map((stage) => ({
+        stage,
+        state: "passed",
+        reason: "observed",
+        ...over[stage],
+      })),
+    }) as never;
+
+  const builtinRow = (stage: string) =>
+    document.querySelector(
+      `[data-testid="trial-scorecard-row"][data-row-key="builtin:${stage}"]`,
+    ) as HTMLElement | null;
+
+  it("leaves Tool call's runner check undecided when an evaluator failed the stage", () => {
+    renderCard({
+      chain: chainWith({
+        call: { state: "failed", reason: "argumentMismatch" },
+      }),
+    });
+    openStage("call");
+    const row = builtinRow("call")!;
+    // The call completed; the arguments are the evaluator's to fail, on its
+    // own row. Two red rows for one failure would read as two failures.
+    expect(row).toHaveAttribute("data-state", "notMeasured");
+    expect(row).toHaveTextContent(
+      "Decided by an evaluator: the call arguments did not match what the case expects.",
+    );
+    expect(row.textContent).not.toMatch(/Failed because/);
+  });
+
+  it("gives no runner check to a stage the chain calls not applicable", () => {
+    renderCard({
+      chain: chainWith({
+        call: { state: "notApplicable", reason: "notAuthored" },
+        response: { state: "notApplicable", reason: "notAuthored" },
+      }),
+    });
+    for (const stage of ["call", "response"]) {
+      // The rail keeps the link, and its heading says not applicable…
+      expect(railStages()).toContain(stage);
+      openStage(stage);
+      expect(stateWordIn(sectionFor(stage)!)).toBe("not applicable to this case");
+      // …so a runner check saying it again would be noise.
+      expect(builtinRow(stage)).toBeNull();
+    }
+    // A stage the chain measured keeps its runner check.
+    openStage("discovery");
+    expect(builtinRow("discovery")).toHaveAttribute("data-state", "passed");
+  });
+});
+
 describe("what the scorecard says about its AI explanations", () => {
   const verifiedChain = {
     status: "verified",
@@ -689,32 +789,7 @@ describe("what the scorecard says about its AI explanations", () => {
     ],
   };
 
-  it("offers Analyze on a settled iteration with no report", () => {
-    renderCard({ chain: verifiedChain });
-    expect(screen.getByTestId("report-availability")).toHaveTextContent(
-      "Analyze this run to add AI explanations to these rows.",
-    );
-  });
-
-  it("counts the read in progress instead of promising nothing", () => {
-    renderCard({
-      chain: verifiedChain,
-      report: {
-        schemaVersion: 1,
-        iterationId: "it1",
-        runRevision: "r",
-        builtAt: 0,
-        status: "pending",
-        progress: { done: 4, total: 40 },
-        rows: [],
-      } as never,
-    });
-    const line = screen.getByTestId("report-availability");
-    expect(line).toHaveTextContent("Reading iterations 4 of 40…");
-    expect(line).toHaveAttribute("aria-live", "polite");
-  });
-
-  it("names what stopped the analysis, and keeps the recorded page", () => {
+  it("keeps the recorded page when analysis fails", () => {
     renderCard({
       chain: verifiedChain,
       trace: toolErrorTrace,
@@ -728,9 +803,6 @@ describe("what the scorecard says about its AI explanations", () => {
         rows: [],
       } as never,
     });
-    expect(screen.getByTestId("report-availability")).toHaveTextContent(
-      "This iteration's trace was too large to analyze.",
-    );
     // The deterministic floor does not depend on the model having run.
     // The tool name renders as code, so assert on the words, not the marks.
     const floor = screen.getByTestId("stage-floor");
@@ -769,7 +841,6 @@ describe("what the scorecard says about its AI explanations", () => {
       } as never,
     });
     expect(screen.queryByTestId("stage-floor")).toBeNull();
-    expect(screen.queryByTestId("report-availability")).toBeNull();
     expect(
       screen.getByText("The journey call was rejected for having no host."),
     ).toBeVisible();
@@ -795,7 +866,6 @@ describe("what the scorecard says about its AI explanations", () => {
         rows: [],
       } as never,
     });
-    expect(screen.queryByTestId("report-availability")).toBeNull();
     expect(screen.queryByTestId("stage-floor")).toBeNull();
   });
 });

@@ -107,6 +107,42 @@ const isHttpServer = (server?: ServerWithName) =>
   Boolean(server && "url" in server.config);
 
 /**
+ * True after the AS rejected the token exchange (expired or already-used
+ * code): the machine clears the spent code but stays on token_request, where
+ * another Continue can only fail with "Missing authorization code". The fix
+ * lives here rather than in the SDK machines because the headless runners
+ * (oauth-login, conformance) rely on the machine NOT advancing on that failure
+ * so they stop and report it instead of re-authorizing in a loop.
+ */
+const needsReauthorization = (state: OAuthFlowState) =>
+  state.currentStep === "token_request" && !state.authorizationCode?.trim();
+
+// Info logs the PKCE and authorization-URL steps emit under fixed ids. The
+// machine appends without deduplicating, so a rewind must drop them or the
+// spent URL is shown beside the fresh one under a duplicate React key.
+const REGENERATED_INFO_LOG_IDS = new Set(["pkce-generation", "auth-url"]);
+
+// Rewind to just before PKCE generation, so the retry runs the machine's own
+// steps and gets a fresh code_verifier, `state` and authorization URL instead
+// of reopening the spent transaction. The stale URL is cleared so a failed
+// regeneration can never reopen it. The rejection was already toasted;
+// clearing it (and its lastResponse, which would otherwise be reported as the
+// cause of a regeneration failure) lets the same error toast again if the
+// retry fails the same way.
+const buildReauthorizeUpdate = (
+  state: OAuthFlowState,
+): Partial<OAuthFlowState> => ({
+  currentStep: "received_client_credentials",
+  authorizationUrl: undefined,
+  authorizationResponseIss: undefined,
+  error: undefined,
+  lastResponse: undefined,
+  infoLogs: state.infoLogs?.filter(
+    (log) => !REGENERATED_INFO_LOG_IDS.has(log.id),
+  ),
+});
+
+/**
  * Honest post-step result for the advanceOauthFlow command. Never echoes the
  * raw error string — only presence and an allowlisted OAuth error code.
  */
@@ -206,6 +242,8 @@ export const OAuthFlowTab = ({
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // Remount key for the auth modal, bumped per regenerated authorization request.
+  const [authModalAttempt, setAuthModalAttempt] = useState(0);
   // Continue is in flight. Purely presentational — the flow state machine
   // remains the source of truth for where the flow actually is.
   const [isAdvancing, setIsAdvancing] = useState(false);
@@ -280,7 +318,25 @@ export const OAuthFlowTab = ({
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
 
+  // Every applyOAuthFlowState caller REPLACES the flow (server switch, Reset,
+  // profile save) rather than merging into it, so each one starts a new
+  // generation and, with it, a new state machine. Each machine's writer is
+  // bound to the generation it was built for, so a step still in flight when
+  // the flow was reset can no longer land: `updateState` merges, so a step
+  // resolving after a reset would otherwise re-advance `currentStep` onto a
+  // flow whose discovery metadata and client id the reset just cleared, and
+  // the next click failed with "Missing authorization endpoint or client ID".
+  // The Reset button and the agent's ui_reset_oauth_flow already refuse while
+  // `isInitiatingAuth`; the profile-save reset cannot.
+  //
+  // The ref is what the guard reads (writes arrive between renders); the state
+  // is what rebuilds the machine. They are bumped together.
+  const flowGenerationRef = useRef(0);
+  const [flowGeneration, setFlowGeneration] = useState(0);
+
   const applyOAuthFlowState = useCallback((next: OAuthFlowState) => {
+    flowGenerationRef.current += 1;
+    setFlowGeneration(flowGenerationRef.current);
     oauthFlowStateRef.current = next;
     setOAuthFlowState(next);
   }, []);
@@ -331,6 +387,19 @@ export const OAuthFlowTab = ({
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
+  );
+
+  // The state machine's only writer, bound to the generation the machine was
+  // built for. Direct callers of updateOAuthFlowState (log clearing, the
+  // callback handler) act on the CURRENT flow and stay unguarded.
+  const machineUpdaterForGeneration = useCallback(
+    (generation: number) => (updates: Partial<OAuthFlowState>) => {
+      if (generation !== flowGenerationRef.current) {
+        return;
+      }
+      updateOAuthFlowState(updates);
+    },
+    [updateOAuthFlowState],
   );
 
   const processedCodeRef = useRef<string | null>(null);
@@ -389,7 +458,7 @@ export const OAuthFlowTab = ({
       protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
-      updateState: updateOAuthFlowState,
+      updateState: machineUpdaterForGeneration(flowGeneration),
       serverUrl: profile.serverUrl,
       serverName: serverIdentifier,
       customScopes: profile.scopes.trim() || undefined,
@@ -417,7 +486,8 @@ export const OAuthFlowTab = ({
     customHeaders,
     registrationStrategy,
     activeServer?.hasClientSecret,
-    updateOAuthFlowState,
+    flowGeneration,
+    machineUpdaterForGeneration,
   ]);
 
   const proceedToNextStep = useCallback(async () => {
@@ -425,6 +495,33 @@ export const OAuthFlowTab = ({
       await oauthStateMachine.proceedToNextStep();
     }
   }, [oauthStateMachine]);
+
+  // Recovery after the AS rejected the code: rewind, then run the machine's
+  // PKCE and authorization-URL steps. Resolves true only when a fresh URL is
+  // ready and neither step failed; on false the flow state carries the error.
+  const regenerateAuthorizationRequest = useCallback(async () => {
+    updateOAuthFlowState(buildReauthorizeUpdate(oauthFlowStateRef.current));
+    await proceedToNextStep();
+    if (
+      oauthFlowStateRef.current.currentStep !== "generate_pkce_parameters" ||
+      oauthFlowStateRef.current.error
+    ) {
+      return false;
+    }
+    await proceedToNextStep();
+    const after = oauthFlowStateRef.current;
+    const ready =
+      after.currentStep === "authorization_request" &&
+      Boolean(after.authorizationUrl) &&
+      !after.error;
+    if (ready) {
+      // The modal opens its popup only on an `open` false->true transition,
+      // and on the Electron fallback path it can still be open from the
+      // rejected attempt. A new key remounts it, so the popup opens either way.
+      setAuthModalAttempt((attempt) => attempt + 1);
+    }
+    return ready;
+  }, [proceedToNextStep, updateOAuthFlowState]);
 
   const handleAdvance = useCallback(async () => {
     setIsAdvancing(true);
@@ -438,7 +535,11 @@ export const OAuthFlowTab = ({
     });
 
     try {
-      if (
+      if (needsReauthorization(oauthFlowStateRef.current)) {
+        if (await regenerateAuthorizationRequest()) {
+          setIsAuthModalOpen(true);
+        }
+      } else if (
         oauthFlowState.currentStep === "authorization_request" ||
         oauthFlowState.currentStep === "generate_pkce_parameters"
       ) {
@@ -470,6 +571,7 @@ export const OAuthFlowTab = ({
     proceedToNextStep,
     profile.serverUrl,
     protocolVersion,
+    regenerateAuthorizationRequest,
     registrationStrategy,
   ]);
 
@@ -480,7 +582,8 @@ export const OAuthFlowTab = ({
       : oauthFlowState.isInitiatingAuth
         ? "Continue"
         : oauthFlowState.currentStep === "authorization_request" ||
-            oauthFlowState.currentStep === "generate_pkce_parameters"
+            oauthFlowState.currentStep === "generate_pkce_parameters" ||
+            needsReauthorization(oauthFlowState)
           ? "Authorize"
           : "Continue";
   const continueDisabled =
@@ -581,7 +684,11 @@ export const OAuthFlowTab = ({
         // Mirror handleAdvance exactly, including its order at the PKCE step:
         // advance FIRST (that generates the authorizationUrl the auth modal
         // needs to render), then hand off to the human popup.
-        if (
+        if (needsReauthorization(before)) {
+          if (!(await regenerateAuthorizationRequest())) {
+            return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
+          }
+        } else if (
           previousStep === "authorization_request" ||
           previousStep === "generate_pkce_parameters"
         ) {
@@ -592,17 +699,18 @@ export const OAuthFlowTab = ({
           if (!after.authorizationUrl || after.error) {
             return buildAdvanceResult(previousStep, after);
           }
-          setIsAuthModalOpen(true);
-          return {
-            status: "authorization_modal_opened",
-            currentStep: after.currentStep,
-            note: "A human must complete sign-in in the authorization popup — the agent cannot and must not do this. If no popup appeared, ask the user to check their popup blocker. The flow advances automatically after the callback; observe with ui_snapshot_app instead of calling this again.",
-          };
+        } else {
+          // Known race, accepted: the 500ms post-callback exchange timer can
+          // auto-advance concurrently — identical exposure to the human button.
+          await proceedToNextStep();
+          return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
         }
-        // Known race, accepted: the 500ms post-callback exchange timer can
-        // auto-advance concurrently — identical exposure to the human button.
-        await proceedToNextStep();
-        return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
+        setIsAuthModalOpen(true);
+        return {
+          status: "authorization_modal_opened",
+          currentStep: oauthFlowStateRef.current.currentStep,
+          note: "A human must complete sign-in in the authorization popup — the agent cannot and must not do this. If no popup appeared, ask the user to check their popup blocker. The flow advances automatically after the callback; observe with ui_snapshot_app instead of calling this again.",
+        };
       },
       resetOauthFlow: () => {
         if (!hasProfile) {
@@ -636,6 +744,7 @@ export const OAuthFlowTab = ({
           .length,
         hasAccessToken: Boolean(view.accessToken),
         hasRefreshToken: Boolean(view.refreshToken),
+        awaitingReauthorization: needsReauthorization(view),
         serverConnected: isServerConnected,
         readyToApplyTokens: Boolean(canApplyTokens),
         steps: hasProfile
@@ -989,6 +1098,7 @@ export const OAuthFlowTab = ({
 
       {oauthFlowState.authorizationUrl && (
         <OAuthAuthorizationModal
+          key={authModalAttempt}
           open={isAuthModalOpen}
           onOpenChange={setIsAuthModalOpen}
           authorizationUrl={oauthFlowState.authorizationUrl}

@@ -39,6 +39,7 @@ import {
   createProjectOperation,
   updateProjectOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
@@ -50,7 +51,7 @@ import {
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
-  getScenarioOperation,
+  getStudyOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -74,7 +75,7 @@ import {
   describePlatformRefusal,
   isPlatformApiError,
   platformRefusalHint,
-  listScenariosOperation,
+  listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
@@ -123,50 +124,49 @@ import {
   getSecretOperation,
   deleteSecretOperation,
   generatePersonasOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   listClientsOperation,
   getClientOperation,
   createClientOperation,
@@ -181,10 +181,12 @@ import {
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  sendFeedbackOperation,
   ALL_OPERATIONS,
   formatPermalinkLines,
   runOperationWithPermalinks,
   withPermalinkEnvelope,
+  type PlatformApiError,
   type PlatformOperation,
   type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
@@ -280,6 +282,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
   // The DENOMINATOR half of the chain story, beside the run read that is
   // the numerator half. `get_eval_run` says what one trial did and where it
@@ -343,8 +346,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // agent that cannot list them cannot use the tools that demand them.
   listProjectSkillsOperation,
   getProjectSkillOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
+  getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   // Agent Playground: drive a conversation against a project's MCP servers
@@ -394,50 +397,49 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getSecretOperation,
   deleteSecretOperation,
   generatePersonasOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   // Clients — the product's own primary noun, and until now the one thing an
   // MCP agent could read nowhere and write nowhere. The two reads plus the
   // four bounded writes; `delete_client` stays out (see the exclusion map).
@@ -455,6 +457,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  // Platform feedback: the agent's channel to the MCPJam team at the moment a
+  // tool fails or a capability is missing. SENDS TEXT OUTSIDE THE CALLER'S
+  // ORGANIZATION, which the description, the `openWorldHint` and the hint
+  // below all say.
+  sendFeedbackOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -532,7 +539,7 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
   // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
-  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // rotate is already `rotate_study_link`. The I5 operations span three
   // resource types and belong with the Share dialog / agent-op registry until
   // this catalog grows a dedicated share group — same decision as CLI
   // `op-bindings.ts`.
@@ -549,11 +556,11 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   revoke_eval_gate_waiver:
     "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
   get_share_settings:
-    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+    "Scenario share already appears on get_study. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
   set_share_mode:
-    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+    "Scenario exposure is already update_study. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
   rotate_share_link:
-    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
+    "Scenario rotation is already rotate_study_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
   // PROJECT SECRET WRITES. Excluded for a reason that has nothing to do with
   // how destructive they are, and everything to do with their INPUT: the
   // plaintext credential is an argument, so it would transit model context and
@@ -692,10 +699,10 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   // A HARD delete of a credential: the row and the ciphertext both go, and a
   // second call cannot find the row to report the same outcome.
   deleteSecretOperation.name,
-  archiveJourneyOperation.name,
+  archiveGoalOperation.name,
   archiveSwarmOperation.name,
-  removeUserTestingMemberOperation.name,
-  rotateUserTestingLinkOperation.name,
+  removeStudyMemberOperation.name,
+  rotateStudyLinkOperation.name,
 ]);
 
 /**
@@ -719,6 +726,33 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
  */
 const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
   cancelProjectServerConnectionOperation.name,
+  // A retry lands on the report the first call stored: a replayed key returns
+  // the stored key→receipt row, and identical content without a key dedupes
+  // onto the original (`duplicate: true`) for 24 hours. The same content sent
+  // after that is filed as a new report on purpose; it is not a retry.
+  sendFeedbackOperation.name,
+]);
+
+/**
+ * Writes whose effect reaches people OUTSIDE the caller's organization.
+ *
+ * `openWorldHint: true` is how MCP says a tool interacts with an open world
+ * rather than a closed domain, and sending text to the MCPJam team is exactly
+ * that: the report leaves the organization the caller is working in. Clients
+ * that gate or label such tools read this.
+ *
+ * Its own list, deliberately not derived from `risk: "exposure"`: the other
+ * exposure operations (the secret writes) move data WITHIN the organization's
+ * own project and have not been evaluated for this claim. Opt-in, one name at
+ * a time, like `IDEMPOTENT_WRITE_NAMES`.
+ *
+ * MCP defaults an absent `openWorldHint` to true, so leaving it off the other
+ * tools claims nothing about them either way. Marking any of them `false` needs
+ * its own review: several reach the caller's MCP servers, model providers or
+ * GitHub, which is open-world.
+ */
+const EXTERNAL_COMMUNICATION_NAMES: ReadonlySet<string> = new Set([
+  sendFeedbackOperation.name,
 ]);
 
 /**
@@ -737,8 +771,23 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listScenariosOperation.name]: "scenarios",
-  [getScenarioOperation.name]: "scenario",
+  [listStudiesOperation.name]: "scenarios",
+  [getStudyOperation.name]: "scenario",
+};
+
+/**
+ * Advice that belongs to the CALLER's situation, not the operation's contract.
+ *
+ * Kept off the SDK schema on purpose: a CLI user passes exact flags and reads
+ * the result themselves, so a hint would be noise in `--help`. A model calling
+ * the same operation has to be told what to do with a partial outcome, or it
+ * reaches for the only move it knows — send everything again.
+ */
+const OPERATION_HINTS: Readonly<Record<string, string>> = {
+  [sendFeedbackOperation.name]:
+    "Call once per distinct problem, tell the user you sent it and that it goes to the MCPJam team, then continue with the user's original task — nobody replies in this session. `duplicate: true` means it is already recorded. Anonymous sessions are refused; ask the user to sign in.",
+  [importEvalCasesOperation.name]:
+    "Send the whole document as `content` ONCE. If the reply lists `skipped` cases, do not re-send the document: import only that case's corrected text, or give the person `reviewUrl` to finish it in the app. Re-importing the document re-authors and re-bills every case in it, and a reworded case is not recognised as a duplicate.",
 };
 
 export function registerPlatformCatalogTools(
@@ -755,7 +804,11 @@ export function registerPlatformCatalogTools(
       operation.name,
       {
         title: operation.title,
-        description: operationDescription(operation),
+        description: OPERATION_HINTS[operation.name]
+          ? `${operationDescription(operation)} HINT: ${
+              OPERATION_HINTS[operation.name]
+            }`
+          : operationDescription(operation),
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
@@ -825,6 +878,9 @@ export function operationAnnotations(
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
+    ...(EXTERNAL_COMMUNICATION_NAMES.has(operation.name)
+      ? { openWorldHint: true }
+      : {}),
   };
 }
 
@@ -913,7 +969,10 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     );
   } catch (error) {
     return toolError(
-      describeOperationError(error),
+      describeOperationError(error, {
+        operationName: operation.name,
+        isGuestSession: context.isGuestSession === true,
+      }),
       errorStructuredContent(error)
     );
   }
@@ -937,6 +996,9 @@ function errorStructuredContent(
       error: {
         code: error.code,
         message: error.message,
+        // The failing request's id, so a report of this failure can be joined
+        // to the server's logs. Only responses carry one.
+        ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(refusal ? { refusal } : {}),
       },
     };
@@ -944,16 +1006,66 @@ function errorStructuredContent(
   return undefined;
 }
 
-function describeOperationError(error: unknown): string {
+/**
+ * Failures that may be MCPJam's own fault — a platform error, or a capability
+ * the tools do not have — and so worth the agent reporting.
+ */
+const REPORTABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  "INTERNAL_ERROR",
+  "FEATURE_NOT_SUPPORTED",
+]);
+
+/**
+ * The gateway in front of the platform, or the user's own MCP server behind
+ * it, failing. An envelope-less 502/504 still decodes as `INTERNAL_ERROR`, but
+ * it is not a platform bug the agent can usefully report.
+ */
+const GATEWAY_FAILURE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+/**
+ * The nudge toward `send_feedback`, or nothing.
+ *
+ * Never on `send_feedback` itself (a failing report must not suggest filing a
+ * report about the report), and never in an anonymous session, where the tool
+ * refuses and the suggestion would be a dead end.
+ */
+function feedbackHint(
+  error: PlatformApiError,
+  situation: { operationName: string; isGuestSession: boolean }
+): string | undefined {
+  if (situation.isGuestSession) return undefined;
+  if (situation.operationName === sendFeedbackOperation.name) return undefined;
+  if (!REPORTABLE_ERROR_CODES.has(error.code)) return undefined;
+  if (GATEWAY_FAILURE_STATUSES.has(error.status)) return undefined;
+  return error.requestId
+    ? `If this looks like an MCPJam bug, report it with send_feedback (requestId ${error.requestId}).`
+    : "If this looks like an MCPJam bug, report it with send_feedback.";
+}
+
+function describeOperationError(
+  error: unknown,
+  situation: { operationName: string; isGuestSession: boolean }
+): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
-    const base =
+    const message =
       error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    // In the text as well as `structuredContent`, for the same reason as the
+    // retry guidance below: the text is the channel every host shows a model.
+    const base = error.requestId
+      ? `${message} (request id: ${error.requestId})`
+      : message;
     // Hosts vary in whether the model sees `structuredContent`, so the retry
     // guidance is in the text too.
     const refusal = describePlatformRefusal(error);
-    return refusal ? `${base} ${platformRefusalHint(refusal)}` : base;
+    return [
+      base,
+      refusal ? platformRefusalHint(refusal) : undefined,
+      feedbackHint(error, situation),
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(" ");
   }
   return error instanceof Error ? error.message : String(error);
 }

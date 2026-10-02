@@ -576,6 +576,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const params = new URLSearchParams();
       if (route.view && route.view !== "runs") params.set("view", route.view);
       if (route.fromCommit) params.set("fromCommit", route.fromCommit);
+      if (route.importJob) params.set("importJob", route.importJob);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(route.suiteId)}${
         query ? `?${query}` : ""

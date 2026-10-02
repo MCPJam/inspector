@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -80,21 +80,13 @@ export function ConnectionAccountsSection({
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string>();
   const renameRef = useRef<HTMLInputElement>(null);
-  // Closing the menu hands focus back to the trigger, and that blur lands on
-  // the rename field before it has ever held focus — which would close the
-  // edit the instant it opened. The field takes focus a frame later, and a
-  // blur that arrives before it was focused commits nothing.
+  // A blur that arrives before the field ever held focus commits nothing.
   const renameHeldFocus = useRef(false);
-
-  useEffect(() => {
-    if (!renaming) return;
-    renameHeldFocus.current = false;
-    const frame = requestAnimationFrame(() => {
-      renameRef.current?.focus();
-      renameRef.current?.select();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [renaming]);
+  // Set when Rename is picked. The field takes focus only once the menu has
+  // closed: while it is open, the menu's focus trap pulls focus back out of
+  // the field, and on close it hands focus to its trigger — either blur would
+  // close the edit the instant it opened.
+  const renameOnMenuClose = useRef(false);
   const [removing, setRemoving] = useState<OAuthConnection>();
 
   if (!enabled || !projectId || !serverId) return null;
@@ -209,9 +201,22 @@ export function ConnectionAccountsSection({
                     <MoreHorizontal className="size-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent
+                  align="end"
+                  onCloseAutoFocus={(event) => {
+                    if (!renameOnMenuClose.current) return;
+                    renameOnMenuClose.current = false;
+                    event.preventDefault();
+                    renameRef.current?.focus();
+                    renameRef.current?.select();
+                  }}
+                >
                   <DropdownMenuItem
-                    onSelect={() => setRenaming(connection.connectionId)}
+                    onSelect={() => {
+                      renameHeldFocus.current = false;
+                      renameOnMenuClose.current = true;
+                      setRenaming(connection.connectionId);
+                    }}
                   >
                     Rename
                   </DropdownMenuItem>

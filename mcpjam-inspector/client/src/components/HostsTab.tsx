@@ -8,7 +8,11 @@ import { ConnectViewHeader } from "./hosts/ConnectViewHeader";
 import { SNAPPY_RAIL } from "./hosts/transition-tokens";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList, useHostMutations } from "@/hooks/useClients";
-import { useProjectServers } from "@/hooks/useProjects";
+import {
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+  useCanManageProjectClients,
+  useProjectServers,
+} from "@/hooks/useProjects";
 import {
   buildHostComparePath,
   routePaths,
@@ -167,6 +171,11 @@ export function HostsTab({
   // server names) from the payload against the live host list / project
   // servers and call the SAME useHostMutations callbacks the UI uses.
   const agentOperable = isAuthenticated && Boolean(projectId);
+  // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
+  const { canManage: canManageClients } = useCanManageProjectClients({
+    isAuthenticated,
+    projectId,
+  });
   const requireAgentOperable = () => {
     if (!agentOperable) {
       throw createInspectorCommandClientError(
@@ -233,6 +242,12 @@ export function HostsTab({
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
             "No project is selected.",
+          );
+        }
+        if (!canManageClients) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
           );
         }
         const { payload } = command as CreateHostInspectorCommand;
@@ -357,6 +372,12 @@ export function HostsTab({
       },
       duplicateHost: async (command) => {
         requireAgentOperable();
+        if (!canManageClients) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+          );
+        }
         const { payload } = command as DuplicateHostInspectorCommand;
         const host = resolveHost(payload?.host);
         if (payload?.name !== undefined && typeof payload.name !== "string") {

@@ -16,6 +16,7 @@
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import type { SandboxNoticeReason } from "@/shared/sandbox-notice";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -425,10 +426,12 @@ export async function fetchScenarioRuntimeConfig(args: {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Scenario runtime-config failed (${response.status})`,
+      error: backendFailureText({
+        source: "scenario-runtime-config",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: `Scenario runtime-config failed (${response.status})`,
+      }),
       ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }

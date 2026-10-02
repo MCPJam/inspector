@@ -3,6 +3,7 @@ import {
   mergeMcpToolOriginMetadata,
   readMcpToolOriginServerId,
 } from "@/shared/mcp-tool-origin-metadata";
+import { readHydratedToolOutput } from "@/shared/hydrated-tool-output";
 import { getMessageTimestampMs, withMessageTimestamp } from "@mcpjam/chat-ui";
 
 /**
@@ -154,63 +155,34 @@ function readToolOriginMetadata(
   return mergeMcpToolOriginMetadata(providerMetadata, serverId);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * A text UI part, keeping the provider options stored with the part as its
+ * provider metadata. The server's provenance signature rides there (MJ-009):
+ * it is what lets a reopened conversation's earlier replies verify as the
+ * server's own when they are sent back.
+ */
+function textPartWithProvenance(
+  part: TranscriptPart,
+  text: string,
+): UIMessage["parts"][number] {
+  const metadata = isPlainObject(part.providerOptions)
+    ? part.providerOptions
+    : isPlainObject(part.providerMetadata)
+    ? part.providerMetadata
+    : undefined;
+  return {
+    type: "text",
+    text,
+    ...(metadata ? { providerMetadata: metadata } : {}),
+  } as UIMessage["parts"][number];
+}
+
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type !== "json" || !hasOwn(record, "value")) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
-}
-
-function isModelVisibleImageOutput(value: unknown): boolean {
-  const output = unwrapJsonEnvelope(value);
-  if (!output || typeof output !== "object" || Array.isArray(output)) {
-    return false;
-  }
-  const record = output as Record<string, unknown>;
-  if (record.type !== "content" || !Array.isArray(record.value)) {
-    return false;
-  }
-  return record.value.some((part) => {
-    if (!part || typeof part !== "object" || Array.isArray(part)) {
-      return false;
-    }
-    const partRecord = part as Record<string, unknown>;
-    if (partRecord.type === "text" && typeof partRecord.text === "string") {
-      return (
-        partRecord.text.startsWith("[image omitted:") ||
-        partRecord.text.startsWith("[resource link omitted:") ||
-        partRecord.text.startsWith("[embedded image resource omitted:")
-      );
-    }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
-  });
-}
-
-function readHydratedToolOutput(part: TranscriptPart): unknown {
-  const hasResult = hasOwn(part, "result");
-  const hasOutput = hasOwn(part, "output");
-  if (hasResult && hasOutput && isModelVisibleImageOutput(part.output)) {
-    return part.result;
-  }
-  if (hasOutput) return part.output;
-  if (hasResult) return part.result;
-  return {};
 }
 
 function cloneTranscriptMessage(msg: TranscriptMessage): TranscriptMessage {
@@ -337,7 +309,7 @@ function convertParts(
 
     const partType = part?.type;
     if (partType === "text" && typeof part.text === "string") {
-      parts.push({ type: "text", text: part.text });
+      parts.push(textPartWithProvenance(part, part.text));
     } else if (partType === "tool-call") {
       const providerMetadata = readToolOriginMetadata(part);
       // A tool-call with no merged tool-result row is UNRESOLVED — a turn
@@ -370,7 +342,9 @@ function convertParts(
       // Tool results are typically already captured via tool-call results
       // in the AI SDK format, so we skip standalone tool-result parts.
     } else if (typeof part.text === "string") {
-      parts.push({ type: "text", text: part.text });
+      // A stored reasoning part lands here, and is signed as the text it
+      // becomes.
+      parts.push(textPartWithProvenance(part, part.text));
     } else if (typeof part.value === "string") {
       parts.push({ type: "text", text: part.value });
     }

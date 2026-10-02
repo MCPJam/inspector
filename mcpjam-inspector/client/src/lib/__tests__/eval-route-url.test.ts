@@ -28,7 +28,9 @@ describe("eval-route-url", () => {
     const url = buildEvalsPath(route);
     const [path, search] = url.split("?");
     expect(url).toContain("checks=1");
-    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(route);
+    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(
+      route,
+    );
   });
   it("parses eval list and create routes", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
@@ -93,6 +95,25 @@ describe("eval-route-url", () => {
         fromCommit: "manual-xyz",
       }),
     ).toBe("/evals/suite/s_abc?fromCommit=manual-xyz");
+  });
+
+  it("round-trips the import review link an API import hands back", () => {
+    // `reviewUrl` in an import reply is this link. It has to survive the trip
+    // through the URL, because the person opening it is often not the one who
+    // ran the import — and their browser holds none of those drafts.
+    const route = {
+      type: "suite-overview",
+      suiteId: "s_abc",
+      importJob: "job_77",
+    } as const;
+    expect(buildEvalsPath(route)).toBe("/evals/suite/s_abc?importJob=job_77");
+    expect(
+      parseEvalRouteFromUrl(
+        "/evals",
+        "/evals/suite/s_abc",
+        "?importJob=job_77",
+      ),
+    ).toEqual({ ...route, view: "runs" });
   });
 
   it("parses run detail query state", () => {

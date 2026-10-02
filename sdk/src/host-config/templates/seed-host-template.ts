@@ -281,6 +281,15 @@ export interface SeedHostTemplateOptions {
 
 const DEFAULT_SEED_THEME: HostThemeMode = "dark";
 
+/**
+ * Model pinned by the default ("mcpjam") template. A hosted catalog id in its
+ * dotted spelling (`anthropic/claude-haiku-4.5`, not `…-4-5`), so a seeded
+ * host is runnable on MCPJam-provided models without a picker round trip.
+ * Consumers that seed a default host re-export this rather than repeating the
+ * literal.
+ */
+export const DEFAULT_TEMPLATE_MODEL_ID = "anthropic/claude-haiku-4.5";
+
 export interface HostTemplate {
   id: HostTemplateId;
   label: string;
@@ -375,7 +384,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "mcpjam",
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: DEFAULT_TEMPLATE_MODEL_ID,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // MCPJam is the "out of the box" default the rest of the product
@@ -833,7 +842,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
         // The 2026-09-02 capture reports a uniform 12px inset on every edge;
@@ -975,6 +984,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
+            // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline"],
             // `toolInputPartial` is deliberately absent, not false: the
             // capture carried no `tool-input-partial`, but that notification
@@ -1098,10 +1109,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // followed `nextCursor` to page two of tools/list, and opened
         // `subscriptions/listen` — which is how a client listens on that lane,
         // so the absent standalone GET SSE stream is correct rather than a
-        // miss. `refetches` stays absent: probe-list-changed was never run
-        // against this client, so nothing was published for it to react to.
+        // miss. 2026-09-29: list_changed was delivered on that listen stream
+        // and Claude Code re-issued tools/list 136 ms later.
         paginationTraversal: "full",
-        toolListChanged: { listens: true },
+        toolListChanged: { listens: true, refetches: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Capability provenance above is from the v2.1.176 probe. The
@@ -1112,7 +1123,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.246",
+            version: "2.1.259",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1169,12 +1180,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { height: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
-        platform: "desktop",
+        platform: "web",
         deviceCapabilities: {
           touch: false,
           hover: true,
@@ -1195,7 +1206,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Same capture: ChatGPT never opened a `subscriptions/listen` stream,
         // so no server notification can reach it. `refetches` stays absent —
         // unprovable while nothing is ever delivered.
-        toolListChanged: { listens: false },
+        toolListChanged: { listens: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Stored in the established connection-profile envelope. The
@@ -1208,9 +1219,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // above — apps that branch on `hostInfo.name === "chatgpt"`
           // (e.g. OpenAI Apps SDK widgets) need this to take that path.
           uiInitialize: {
-            hostInfo: { name: "chatgpt", version: "0.0.1" },
+            hostInfo: { name: "chatgpt", version: "unknown" },
           },
           mcpAppsOverrides: {
+            // 2026-09-29 capture (ChatGPT web): insets sent (all 0), and
+            // only inline + fullscreen offered — no pip.
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
             cspFrameDomains: true,
             cspBaseUriDomains: true,
             // One directive, one answer: the declared wss endpoint connected
@@ -1290,13 +1305,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             permissions: {
               mode: "custom",
-              // Per ui/initialize hostCapabilities only `microphone` is
-              // advertised. Per the outer iframe `allow=` attribute,
-              // `clipboard-write` is ALSO emitted at runtime even though
-              // it's not in the advertised metadata. Include both so a
-              // widget testing in MCPJam-as-ChatGPT actually gets what
-              // the production iframe grants.
-              allow: { microphone: true, clipboardWrite: true },
+              // 2026-09-29: ChatGPT's OUTER frame may still carry
+              // `clipboard-write` (captured 2026-05-18), but the widget's own
+              // frame is `allow="fullscreen *; microphone *"` and its
+              // Permissions Policy blocks clipboard-write, so a widget cannot
+              // write. Microphone is delegated and reads `granted`.
+              allow: { microphone: true },
             },
             // The 2026-08-24 capture read and wrote all three browser
             // storage APIs from inside the widget sandbox — every one
@@ -1327,7 +1341,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // `clipboard-write *; local-network-access *; microphone *;
             // midi *`:
             //   - clipboard-write + microphone → spec features, modeled
-            //     in `permissions.allow` above.
+            //     in `permissions.allow` above (clipboard-write stops at the
+            //     outer frame; see there).
             //   - local-network-access + midi → ALREADY in MCPJam's
             //     renderer baseline (sandboxed-iframe.tsx's
             //     `outerAllowAttribute` memo), auto-granted to every
@@ -1848,10 +1863,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
-            // need this to take that path. The 3.14.27 version is identity
-            // metadata only; the capability notes above remain attributed to
-            // their named probes until a fresh probe updates both.
-            hostInfo: { name: "Cursor", version: "3.14.27" },
+            // need this to take that path. The version is identity metadata
+            // only; bumped with the 2026-09-29 re-probe (was 3.14.27), which
+            // re-confirmed every capability note above.
+            hostInfo: { name: "Cursor", version: "3.21.16" },
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
@@ -1943,6 +1958,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE, "text/html+skybridge"],
           },
         },
+        // 0.158 also advertises `openai/elicitation` and `openai/form`.
+        // Left out on purpose: they invite OpenAI's custom elicitation
+        // requests, which the inspector does not answer.
         elicitation: { form: {}, url: {} },
       };
       base.hostContext = {
@@ -1970,8 +1988,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            // Bumped with the 2026-09-02 re-probe, from 0.148.0-alpha.15.
-            version: "0.150.0-alpha.12.2",
+            // Bumped with the 2026-09-29 re-probe, from 0.150.0-alpha.12.2.
+            version: "0.158.0-alpha.2.1",
           },
         },
         apps: {
@@ -1994,6 +2012,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
                 "base-uri": ["'none'"],
               },
             },
+            // Paired run 2026-09-29: the widget declared microphone and
+            // clipboardWrite and Codex refused both; its iframe `allow` is a
+            // fixed `fullscreen *`. Camera and geolocation are denied on the
+            // strength of that fixed `allow`, not a declared measurement.
+            permissions: { mode: "custom", allow: {} },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2004,8 +2027,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
-            // The 2026-09-01 and 2026-09-02 captures both omit the key entirely.
-            safeAreaInsets: false,
+            // Correction: absent through 2026-09-02; the 2026-09-29 capture
+            // (Codex 0.158) sends `hostContext.safeAreaInsets`, all zeros.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -2241,14 +2265,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         // Probed 2026-08-26: followed `nextCursor` and fetched page two.
         paginationTraversal: "full",
-        // Same capture, and the odd one out: Copilot never opened the GET SSE
-        // stream, yet list_changed still reached it on the tools/call response
-        // stream and a tools/list followed. Hence listens:false + refetches:
-        // true — a real combination, see the note on the field itself.
-        // The re-fetch was 30,496 ms late (VS Code and Cursor: ~200 ms), close
-        // enough to a routine listing that the pairing rule cannot separate
-        // reaction from coincidence.
-        toolListChanged: { listens: false, refetches: true },
+        // Copilot never opens the GET SSE stream, so listens:false.
+        // `refetches` is deliberately absent (unknown): the 2026-08-26
+        // re-fetch came 30,496 ms late (likely routine listing; reacting hosts
+        // take ~250 ms) and the 2026-09-29 run saw none within ~6 s.
+        toolListChanged: { listens: false },
         // Parked: probed but not published (no field, no caniuse row).
         // 2026-08-26: no tools/call carried `_meta.progressToken` (0/3).
         // progressToken: "never",
@@ -2435,11 +2456,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         toolListChanged: { listens: true, refetches: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
+          clientInfo: { name: "Visual Studio Code", version: "1.136.1" },
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Visual Studio Code", version: "1.134.0" },
+            hostInfo: { name: "Visual Studio Code", version: "1.136.1" },
           },
           compatRuntime: { openaiApps: false },
           sandbox: {

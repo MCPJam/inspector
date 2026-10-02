@@ -40,7 +40,10 @@ describe('buildProposalBlocks', () => {
   });
 
   it('caps the rendered set and says how many were held back', () => {
-    const many = Array.from({ length: 9 }, (_, index) => ({ ...PROPOSAL, actionId: `act_${index}` }));
+    const many = Array.from({ length: 9 }, (_, index) => ({
+      ...PROPOSAL,
+      actionId: `act_${index}`,
+    }));
     const blocks = buildProposalBlocks(many);
     assert.strictEqual(blocks.length, 6);
     assert.match(/** @type {any} */ (blocks[5]).elements[0].text, /4 more/);
@@ -88,7 +91,11 @@ describe('buildProposalBlocks', () => {
 
   it('warns about RECURRING cost for a spend-severity action', () => {
     const blocks = buildProposalBlocks([
-      { ...PROPOSAL, operation: 'set_eval_suite_schedule', confirmSeverity: 'spend' },
+      {
+        ...PROPOSAL,
+        operation: 'set_eval_suite_schedule',
+        confirmSeverity: 'spend',
+      },
     ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.match(text, /RECURRING/);
@@ -112,7 +119,13 @@ describe('buildProposalBlocks', () => {
     // Capping before escaping bounds the wrong string: 215 ampersands pass a
     // 215-character cap and arrive as 1,075 characters, which fails the block
     // and takes the whole message down with it.
-    const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: 'external', description: '&'.repeat(500) }]);
+    const blocks = buildProposalBlocks([
+      {
+        ...PROPOSAL,
+        confirmSeverity: 'external',
+        description: '&'.repeat(500),
+      },
+    ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.ok(text.length <= 300, `confirm text was ${text.length} chars`);
     // Every ampersand present is a COMPLETE entity — the cut never lands
@@ -123,7 +136,11 @@ describe('buildProposalBlocks', () => {
 
   it('escapes a hostile description inside the confirm dialog too', () => {
     const blocks = buildProposalBlocks([
-      { ...PROPOSAL, confirmSeverity: 'external', description: 'Call <!channel> on x' },
+      {
+        ...PROPOSAL,
+        confirmSeverity: 'external',
+        description: 'Call <!channel> on x',
+      },
     ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.ok(!text.includes('<!channel>'));
@@ -158,7 +175,11 @@ describe('buildProposalBlocks', () => {
     // Disabling a schedule STOPS spending. The default copy asserts the
     // opposite, so `none` has to say so rather than be left absent.
     const blocks = buildProposalBlocks([
-      { ...PROPOSAL, operation: 'set_eval_suite_schedule', confirmSeverity: 'none' },
+      {
+        ...PROPOSAL,
+        operation: 'set_eval_suite_schedule',
+        confirmSeverity: 'none',
+      },
     ]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.match(text, /does not use any quota/);
@@ -189,9 +210,22 @@ describe('buildProposalBlocks', () => {
 });
 
 describe('rendersRunProposalFor', () => {
-  const suite = { type: 'eval_suite', id: 'ts_1', name: 'Smoke', url: 'https://app/x' };
-  const run = { actionId: 'run', operation: 'run_eval_suite', description: 'Run eval suite ts_1' };
-  const other = (index) => ({ actionId: `a${index}`, operation: 'cancel_eval_run', description: 'x' });
+  const suite = {
+    type: 'eval_suite',
+    id: 'ts_1',
+    name: 'Smoke',
+    url: 'https://app/x',
+  };
+  const run = {
+    actionId: 'run',
+    operation: 'run_eval_suite',
+    description: 'Run eval suite ts_1',
+  };
+  const other = (index) => ({
+    actionId: `a${index}`,
+    operation: 'cancel_eval_run',
+    description: 'x',
+  });
 
   it('suppresses on a TARGETLESS run proposal — the older-server fallback', () => {
     // Match-unknown must strip: two buttons for one billed run is the
@@ -204,7 +238,10 @@ describe('rendersRunProposalFor', () => {
     // "Make a suite for X and rerun smoke": smoke's proposal renders its own
     // button; X keeps the legacy accessory — stripping it would leave X with
     // NO run affordance at all.
-    const targeted = { ...run, target: { type: 'eval_suite', selector: 'ts_other' } };
+    const targeted = {
+      ...run,
+      target: { type: 'eval_suite', selector: 'ts_other' },
+    };
     assert.strictEqual(rendersRunProposalFor([targeted], suite), false);
     assert.strictEqual(
       rendersRunProposalFor([{ ...run, target: { type: 'eval_suite', selector: 'ts_1' } }], suite),
@@ -213,7 +250,10 @@ describe('rendersRunProposalFor', () => {
   });
 
   it('matches a name selector case-insensitively — models propose by name', () => {
-    const byName = { ...run, target: { type: 'eval_suite', selector: 'smoke' } };
+    const byName = {
+      ...run,
+      target: { type: 'eval_suite', selector: 'smoke' },
+    };
     assert.strictEqual(rendersRunProposalFor([byName], suite), true);
     assert.strictEqual(rendersRunProposalFor([byName], { ...suite, name: 'Checkout' }), false);
   });
@@ -257,7 +297,11 @@ describe('announcementFor', () => {
 
   it('prefers the SERVER-built resource link over anything assembled here', () => {
     const text = announcementFor(
-      { operation: 'run_eval_suite', kind: 'start', resource: { url: 'https://app/x' } },
+      {
+        operation: 'run_eval_suite',
+        kind: 'start',
+        resource: { url: 'https://app/x' },
+      },
       'U1',
     );
     assert.match(text, /<https:\/\/app\/x\|follow it here>/);
@@ -271,6 +315,44 @@ describe('announcementFor', () => {
   it('claims nothing for an operation and kind it has never seen', () => {
     const text = announcementFor({ operation: 'some_new_op', kind: 'teleport' }, 'U1');
     assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
+  });
+
+  it('still says Cancelled when a cancellation carries a resource', () => {
+    // The link shortcut speaks for approvals. A cancel that returns a resource
+    // would otherwise be announced as "Approved — follow it here", which tells
+    // the channel the opposite of what happened.
+    const text = announcementFor(
+      { operation: 'cancel_eval_run', kind: 'cancel', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/Approved/.test(text));
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('still says Cancelled when a cancellation carries a runUrl', () => {
+    const text = announcementFor({ operation: 'cancel_eval_run', kind: 'cancel', runUrl: 'https://app/run/1' }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('still says Cancelled for a pre-`kind` server that carries a resource', () => {
+    // The copy below recognises a cancellation two ways, by `kind` and by
+    // operation name. The link shortcut has to recognise both, or the wrong
+    // announcement stays reachable through the older one.
+    const text = announcementFor({ operation: 'cancel_eval_run', resource: { url: 'https://app/x' } }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('keeps the link for a NEWER server whose unknown kind carries a resource', () => {
+    // Only cancellations lose the shortcut. An unrecognised kind is still an
+    // approval, and the server-built link is the most useful thing to say.
+    const text = announcementFor(
+      { operation: 'some_new_op', kind: 'teleport', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /<https:\/\/app\/x\|follow it here>/);
   });
 
   it('does not let an UNKNOWN kind fall through to the operation-name table', () => {
@@ -311,7 +393,13 @@ describe('handleProposalButton', () => {
     globalThis.fetch = mock.fn(async (url, init) => {
       const path = String(url);
       if (path.endsWith('/slack/thread-bindings/get')) {
-        return json({ binding: { projectId: 'p1', organizationId: 'o1', initiatorSlackUserId: 'U_OTHER' } });
+        return json({
+          binding: {
+            projectId: 'p1',
+            organizationId: 'o1',
+            initiatorSlackUserId: 'U_OTHER',
+          },
+        });
       }
       if (path.includes('/proposed-actions/')) {
         state.executeCalls.push({
@@ -327,7 +415,10 @@ describe('handleProposalButton', () => {
   }
 
   function json(body, status = 200) {
-    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   function clickArgs(overrides = {}) {
@@ -379,7 +470,13 @@ describe('handleProposalButton', () => {
   });
 
   it('tells the loser of a double-click without implying a failure', async () => {
-    stub({ executeStatus: 409, executeBody: { code: 'CONFLICT', message: 'That action is already running.' } });
+    stub({
+      executeStatus: 409,
+      executeBody: {
+        code: 'CONFLICT',
+        message: 'That action is already running.',
+      },
+    });
     const { args, ephemeral, posted } = clickArgs();
     await handleProposalButton(/** @type {any} */ (args));
 
@@ -396,7 +493,11 @@ describe('handleProposalButton', () => {
         status: 'succeeded',
         operation: 'run_eval_suite',
         kind: 'start',
-        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        resource: {
+          type: 'eval_run',
+          id: 'run_1',
+          url: 'https://app/evals/x/runs/run_1',
+        },
         result: {},
       },
     });
@@ -408,31 +509,116 @@ describe('handleProposalButton', () => {
     assert.match(posted[0].text, /<@U_CLICKER>/);
   });
 
-  it('starts a LIVE swarm message when the approval produced a journey run', async () => {
-    // Same recognition rule as eval runs — the server-sent resource TYPE —
-    // but a different watcher: journey status vocabulary and verdicts differ,
-    // and routing them into the eval watcher misreports rate-limited fan-outs.
+  // Both permalink spellings, because this app deploys from its own workflow
+  // and cannot see which vocabulary the API is emitting. An unrecognised type
+  // falls through to the plain acknowledgement — the run still starts, but
+  // nobody gets the live surface, which is the failure this pins against.
+  for (const [label, type] of [
+    ['a goal run', 'goal_run'],
+    ['a pre-rename journey run', 'journey_run'],
+  ]) {
+    it(`starts a LIVE swarm message when the approval produced ${label}`, async () => {
+      // Same recognition rule as eval runs — the server-sent resource TYPE —
+      // but a different watcher: goal status vocabulary and verdicts differ,
+      // and routing them into the eval watcher misreports rate-limited fan-outs.
+      stub({
+        executeBody: {
+          status: 'succeeded',
+          operation: 'launch_goal_run',
+          kind: 'start',
+          resource: {
+            type,
+            id: 'jr_1',
+            url: 'https://app/swarms/jr_1?project=p1',
+          },
+          result: {},
+        },
+      });
+      const { args, posted } = clickArgs();
+      await handleProposalButton(/** @type {any} */ (args));
+      assert.strictEqual(posted.length, 1);
+      assert.match(posted[0].text, /swarm running…/);
+      assert.match(posted[0].text, /watch it here/);
+      assert.match(posted[0].text, /<@U_CLICKER>/);
+      assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
+    });
+  }
+
+  it('announces a CANCELLATION rather than routing it into the run watcher', async () => {
+    // The watcher branch posts its own "running…" copy and returns, so a
+    // cancellation that carries a typed run resource would be announced as a
+    // started run even with the wording fixed. Latent while nothing builds a
+    // resource for cancel, which is why it is pinned here rather than later.
     stub({
       executeBody: {
         status: 'succeeded',
-        operation: 'launch_journey_run',
-        kind: 'start',
-        resource: { type: 'journey_run', id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
+        operation: 'cancel_eval_run',
+        kind: 'cancel',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
         result: {},
       },
     });
     const { args, posted } = clickArgs();
     await handleProposalButton(/** @type {any} */ (args));
+
     assert.strictEqual(posted.length, 1);
-    assert.match(posted[0].text, /swarm running…/);
-    assert.match(posted[0].text, /watch it here/);
-    assert.match(posted[0].text, /<@U_CLICKER>/);
-    assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
+    assert.ok(!/watch it here/.test(posted[0].text));
+  });
+
+  // Both permalink spellings, for the same reason the start path reads both:
+  // a guard that only recognised one would leave the other routed as a start.
+  for (const [label, type] of [
+    ['a goal run', 'goal_run'],
+    ['a pre-rename journey run', 'journey_run'],
+  ]) {
+    it(`announces a CANCELLATION of ${label} rather than routing it into the goal watcher`, async () => {
+      stub({
+        executeBody: {
+          status: 'succeeded',
+          operation: 'cancel_goal_run',
+          kind: 'cancel',
+          resource: { type, id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
+          result: {},
+        },
+      });
+      const { args, posted } = clickArgs();
+      await handleProposalButton(/** @type {any} */ (args));
+
+      assert.strictEqual(posted.length, 1);
+      assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+      assert.ok(!/swarm running…/.test(posted[0].text));
+    });
+  }
+
+  it('announces a CANCELLATION from a server that predates `kind`', async () => {
+    // The routing has to recognise the same two spellings the copy does, or
+    // the wrong announcement stays reachable through the older one.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
   });
 
   it('posts a plain announcement when the approval produced no run', async () => {
     stub({
-      executeBody: { status: 'succeeded', operation: 'cancel_eval_run', kind: 'cancel', result: {} },
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        kind: 'cancel',
+        result: {},
+      },
     });
     const { args, posted } = clickArgs();
     await handleProposalButton(/** @type {any} */ (args));

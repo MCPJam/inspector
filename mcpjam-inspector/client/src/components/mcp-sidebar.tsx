@@ -19,7 +19,6 @@ import {
   Users,
   ShieldCheck,
   Loader2,
-  ExternalLink,
   Layers,
   Cable,
   MessagesSquare,
@@ -547,34 +546,39 @@ export function MCPSidebar({
   const {
     status: updateStatus,
     restartRequested,
-    downloadManually,
+    showUpdateError,
+    retryUpdate,
     restartAndInstall,
   } = useUpdateNotification();
-  const showUpdateButton =
+  const showUpdateButton = updateStatus.kind !== "idle";
+  const updateFailed = updateStatus.kind === "failed";
+  const updateRecovering = updateStatus.kind === "recovering";
+  const updateInstalling = updateRecovering || restartRequested;
+  const updateBusy =
+    updateInstalling ||
     updateStatus.kind === "pending" ||
-    updateStatus.kind === "downloaded" ||
-    updateStatus.kind === "manual";
-  // Auto-update announced a build it then failed to install. The pill has to
-  // stay — there IS a newer version — but it must stop offering an in-app
-  // install that has already proven it cannot happen, or the user is back to
-  // clicking a control that does nothing.
-  const updateIsManual = updateStatus.kind === "manual";
-  // Two ways to be mid-install, and both must disable the button: waiting on a
-  // download that was asked to install when it finishes, and waiting on the
-  // app to quit for one already downloaded. The second is the one a repeat
-  // click used to get through.
-  const updateInstalling =
-    !updateIsManual &&
-    (restartRequested ||
-      (updateStatus.kind === "pending" && updateStatus.installRequested));
+    updateStatus.kind === "retry-waiting";
+  const updateLabel = updateRecovering
+    ? "Restarting to retry update…"
+    : restartRequested
+      ? "Updating…"
+      : updateStatus.kind === "pending"
+        ? "Downloading…"
+        : updateStatus.kind === "retry-waiting"
+          ? "Retrying download…"
+          : updateStatus.kind === "failed"
+            ? updateStatus.action === "retry-download"
+              ? "Retry download"
+              : updateStatus.action === "relaunch-retry"
+                ? "Relaunch to retry"
+                : "Update failed"
+            : "Relaunch to update";
   const handleUpdateClick = () => {
-    if (updateIsManual) {
-      downloadManually();
-      return;
-    }
-    if (!updateInstalling) {
-      restartAndInstall();
-    }
+    if (updateBusy) return;
+    if (updateFailed) {
+      if (updateStatus.action === "instructions") showUpdateError();
+      else retryUpdate();
+    } else restartAndInstall();
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
@@ -801,23 +805,16 @@ export function MCPSidebar({
               <Button
                 size="sm"
                 onClick={handleUpdateClick}
-                aria-disabled={updateInstalling}
+                disabled={updateBusy}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary",
+                  updateBusy && "pointer-events-none hover:bg-primary",
                 )}
               >
-                {updateInstalling && (
+                {updateBusy && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateIsManual && (
-                  <ExternalLink className="size-2.5" aria-hidden />
-                )}
-                {updateIsManual
-                  ? "Download update"
-                  : updateInstalling
-                  ? "Updating…"
-                  : "Update"}
+                {updateLabel}
               </Button>
             </div>
           )}

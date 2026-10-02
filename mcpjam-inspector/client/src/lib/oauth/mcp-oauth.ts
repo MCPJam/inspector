@@ -1,3 +1,4 @@
+import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
 import { captureHostedOAuthConnection } from "@/lib/apis/web/oauth-connections";
 /**
  * Production OAuth implementation using the SDK state-machine runner with trace support.
@@ -1511,6 +1512,8 @@ export type OAuthProtocolResolutionSource =
   | "auth_gated_fallback";
 
 export interface OAuthResult {
+  requestId?: string;
+  failureStage?: string;
   credentialId?: string;
   vaultObjectId?: string;
   success: boolean;
@@ -1942,7 +1945,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     serverUrl: string,
     customClientId?: string,
     customClientSecret?: string,
-    convexBinding?: MCPOAuthProviderConvexBinding
+    convexBinding?: MCPOAuthProviderConvexBinding,
+    private assertProjectAccess?: () => void,
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
@@ -2239,6 +2243,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       },
       tokens: normalizedTokens,
     };
+    this.assertProjectAccess?.();
     await importHostedOAuthTokens(importPayload);
     localStorage.removeItem(`mcp-tokens-${this.serverName}`);
   }
@@ -2271,6 +2276,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    recordDesktopActivity({ kind: "oauth_authorize", phase: "start" });
     const authorizationUrlString = authorizationUrl.toString();
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
@@ -2481,6 +2487,7 @@ function buildConvexBindingForServer(input: {
  * adding a constructor argument doesn't require touching both call sites.
  */
 function createMCPOAuthProvider(input: {
+  assertProjectAccess?: () => void;
   serverName: string;
   serverUrl: string;
   clientId?: string;
@@ -2503,7 +2510,8 @@ function createMCPOAuthProvider(input: {
       hasClientSecret: input.clientSecret ? true : input.hasClientSecret,
       registryServerId: input.oauthConfig.registryServerId,
       useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
-    })
+    }),
+    input.assertProjectAccess
   );
 }
 
@@ -3012,6 +3020,7 @@ export async function completeHostedOAuthCallback(
   context: HostedOAuthCallbackContext,
   authorizationCode: string,
   options: {
+    assertProjectAccess?: () => void;
     callbackState?: string | null;
     callbackIss?: string | null;
     onTraceUpdate?: (trace: OAuthTrace) => void;
@@ -3191,6 +3200,7 @@ export async function completeHostedOAuthCallback(
     }
 
     const completionPromise = (async () => {
+      options.assertProjectAccess?.();
       const response = await authFetch(`${convexSiteUrl}/web/oauth/complete`, {
         method: "POST",
         headers: {
@@ -3240,6 +3250,7 @@ export async function completeHostedOAuthCallback(
             result?.error ||
             responseText ||
             `OAuth callback failed (${response.status})`,
+          requestId: response.headers.get("x-request-id") ?? undefined,
           oauthTrace: result?.oauthTrace,
         };
       }
@@ -3247,6 +3258,7 @@ export async function completeHostedOAuthCallback(
       if (!result?.success) {
         throw {
           message: result?.error || "OAuth callback failed",
+          requestId: response.headers.get("x-request-id") ?? undefined,
           oauthTrace: result?.oauthTrace,
         };
       }
@@ -3341,6 +3353,10 @@ export async function completeHostedOAuthCallback(
     return {
       success: false,
       error: callbackError,
+      requestId:
+        typeof error === "object" && error !== null &&
+        "requestId" in error && typeof error.requestId === "string"
+          ? error.requestId : undefined,
       oauthTrace: mergedTrace,
     };
   } finally {
@@ -3502,6 +3518,7 @@ export async function handleOAuthCallback(
     onTraceUpdate?: (trace: OAuthTrace) => void;
     // 2R-iss: CSRF `state` and RFC 9207 `iss` captured from the callback URL at
     // the callback boundary and validated here before code redemption.
+    assertProjectAccess?: () => void;
     callbackState?: string | null;
     callbackIss?: string | null;
   } = {}
@@ -3513,6 +3530,7 @@ export async function handleOAuthCallback(
   const oauthConfig = readStoredOAuthConfig(serverName);
   let serverUrl: string | undefined;
   let previousTrace: OAuthTrace | undefined;
+  let failureStage = "callback-validation";
 
   try {
     if (!serverName) {
@@ -3535,6 +3553,7 @@ export async function handleOAuthCallback(
       serverUrl,
       clientId: customClientId,
       oauthConfig,
+      assertProjectAccess: options.assertProjectAccess,
     });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
     const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
@@ -3616,6 +3635,8 @@ export async function handleOAuthCallback(
         })
       );
 
+      options.assertProjectAccess?.();
+      failureStage = "token-exchange";
       const flowResult = await runOAuthStateMachine({
         protocolVersion: storedSession.protocolVersion,
         registrationStrategy: storedSession.registrationStrategy,
@@ -3689,6 +3710,8 @@ export async function handleOAuthCallback(
         };
       }
 
+      options.assertProjectAccess?.();
+      failureStage = "token-import";
       await persistOAuthStateArtifacts(provider, flowResult.state);
       writeStoredOAuthConfig(serverName, {
         resourceUrl: oauthResourceUrl,
@@ -3786,6 +3809,11 @@ export async function handleOAuthCallback(
     return {
       success: false,
       error: callbackError,
+      failureStage,
+      requestId:
+        typeof error === "object" && error !== null &&
+        "requestId" in error && typeof error.requestId === "string"
+          ? error.requestId : undefined,
       oauthTrace: mergedTrace,
     };
   } finally {
@@ -4005,4 +4033,19 @@ export function createServerConfig(
       ? { mcpProtocolVersion: "2026-07-28" as const }
       : {}),
   };
+}
+
+/** Discard only the in-flight exchange, keeping the server and saved credentials. */
+export function clearPendingOAuthAttempt(
+  serverName: string,
+  expectedState?: string | null,
+): void {
+  const issuedState = localStorage.getItem(`mcp-oauth-issued-state-${serverName}`);
+  if (expectedState !== undefined && issuedState && issuedState !== expectedState) {
+    return;
+  }
+  localStorage.removeItem(`mcp-verifier-${serverName}`);
+  localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
+  clearOAuthFlowSession(serverName);
+  clearOAuthPendingMarkerFor(serverName);
 }

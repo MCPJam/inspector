@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { ConvexHttpClient } from "convex/browser";
 import type {
   RunnerBrowserInteractionStep,
   RunnerWidgetRenderObservation,
@@ -21,7 +20,8 @@ import {
   toObservationPayload,
 } from "../finalize-iteration-browser-artifacts.js";
 
-const client = {} as ConvexHttpClient;
+// Who the screenshots upload as, and for which chat.
+const client = { convexAuthToken: "user-bearer", chatSessionId: "eval_iter1" };
 
 const makeObs = (
   overrides: Partial<RunnerWidgetRenderObservation> = {},
@@ -91,6 +91,18 @@ describe("serializeRenderObservationsForBackend", () => {
     expect(uploadScreenshotBlob).not.toHaveBeenCalled();
     expect(out[0]).not.toHaveProperty("screenshotBlobId");
     expect(out[0]!.status).toBe("no_ui_resource");
+  });
+
+  test("keeps the rows, without blobs, when there is nothing to upload as", async () => {
+    const out = await serializeRenderObservationsForBackend(
+      [makeObs()],
+      undefined,
+    );
+
+    expect(uploadScreenshotBlob).not.toHaveBeenCalled();
+    expect(out).toHaveLength(1);
+    expect(out[0]).not.toHaveProperty("screenshotBlobId");
+    expect(out[0]).not.toHaveProperty("screenshotBase64");
   });
 
   test("drops screenshotBlobId but KEEPS the row when upload throws", async () => {

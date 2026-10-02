@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadLastOwnProviderModelId,
+  loadLeadModelProviderHint,
+  saveLeadModelProviderHint,
   loadSelectedModelId,
   loadSelectedModelIds,
   replaceLeadModelId,
@@ -14,6 +16,7 @@ import {
 const LEAD_KEY = "mcp-inspector-selected-model";
 const ARRAY_KEY = "mcp-inspector-selected-models";
 const OWN_PROVIDER_KEY = "mcp-inspector-last-own-provider-model";
+const PROVIDER_HINT_KEY = "mcp-inspector-selected-model-provider";
 
 describe("selected-model-storage", () => {
   beforeEach(() => {
@@ -249,5 +252,45 @@ describe("selected-model-storage", () => {
       replaceLeadModelId("b");
       expect(cb).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("lead model provider hint", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it("round-trips the pair it was picked as", () => {
+    saveLeadModelProviderHint({
+      modelId: "anthropic/claude-sonnet-5",
+      provider: "openrouter",
+    });
+    expect(loadLeadModelProviderHint()).toEqual({
+      modelId: "anthropic/claude-sonnet-5",
+      provider: "openrouter",
+    });
+  });
+
+  it("is empty until something is picked", () => {
+    expect(loadLeadModelProviderHint()).toBeNull();
+  });
+
+  it("clears on null", () => {
+    saveLeadModelProviderHint({ modelId: "a/b", provider: "openrouter" });
+    saveLeadModelProviderHint(null);
+    expect(localStorage.getItem(PROVIDER_HINT_KEY)).toBeNull();
+    expect(loadLeadModelProviderHint()).toBeNull();
+  });
+
+  // Whatever is in storage came from a browser we do not control; a bad value
+  // must read as "no hint", which means the id-only resolution of before.
+  it.each([
+    ["not JSON", "{oops"],
+    ["a bare string", JSON.stringify("openrouter")],
+    ["missing provider", JSON.stringify({ modelId: "a/b" })],
+    ["blank id", JSON.stringify({ modelId: " ", provider: "openrouter" })],
+    ["wrong types", JSON.stringify({ modelId: 1, provider: true })],
+  ])("reads %s as no hint", (_label, raw) => {
+    localStorage.setItem(PROVIDER_HINT_KEY, raw);
+    expect(loadLeadModelProviderHint()).toBeNull();
   });
 });

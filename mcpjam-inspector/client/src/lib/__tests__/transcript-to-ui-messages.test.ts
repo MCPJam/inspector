@@ -1,5 +1,6 @@
 import { convertToModelMessages } from "ai";
 import { describe, expect, it } from "vitest";
+import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
 import {
   mergeTranscriptToolResults,
   preserveHydratedMessageIds,
@@ -450,6 +451,76 @@ describe("transcriptToUIMessages", () => {
     expect(toolMessage.content[0].providerOptions).toEqual({
       mcpjam: { serverId: "srv-1" },
     });
+  });
+
+  it("keeps the provenance the server stored with a reply and a tool result (MJ-009)", async () => {
+    const toolResult = {
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "list_issues",
+      output: {
+        type: "content",
+        value: [{ type: "media", data: "AAAA", mediaType: "image/png" }],
+      },
+      result: { content: [{ type: "image", data: "AAAA" }] },
+      providerOptions: {
+        mcpjam: { serverId: "linear", resultSig: "mjpv1.result" },
+      },
+    };
+    const transcript = [
+      { role: "user", content: "What's open?" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Checking.",
+            providerOptions: { mcpjam: { textSig: "mjpv1.text" } },
+          },
+          {
+            type: "reasoning",
+            text: "Look it up.",
+            providerOptions: { mcpjam: { textSig: "mjpv1.reasoning" } },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "list_issues",
+            input: { state: "open" },
+          },
+        ],
+      },
+      { role: "tool", content: [toolResult] },
+    ];
+
+    const [, assistant] = transcriptToUIMessages(transcript);
+    const [text, reasoning, tool] = assistant.parts as any[];
+    expect(text).toEqual({
+      type: "text",
+      text: "Checking.",
+      providerMetadata: { mcpjam: { textSig: "mjpv1.text" } },
+    });
+    // Stored reasoning comes back as text, with its signature.
+    expect(reasoning).toEqual({
+      type: "text",
+      text: "Look it up.",
+      providerMetadata: { mcpjam: { textSig: "mjpv1.reasoning" } },
+    });
+    expect(tool.callProviderMetadata.mcpjam).toMatchObject({
+      serverId: "linear",
+      resultSig: "mjpv1.result",
+    });
+    // The server signs exactly the output the browser rebuilds.
+    expect(tool.output).toEqual(hydratedToolResultOutput(toolResult));
+
+    // And the signature reaches the model message the server receives.
+    const model = await convertToModelMessages(
+      transcriptToUIMessages(transcript),
+    );
+    const modelText = (model[1] as any).content.find(
+      (part: any) => part.type === "text",
+    );
+    expect(modelText.providerOptions.mcpjam.textSig).toBe("mjpv1.text");
   });
 
   it("generates IDs when not present", () => {

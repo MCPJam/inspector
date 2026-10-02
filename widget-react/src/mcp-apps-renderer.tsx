@@ -135,6 +135,19 @@ function normalizeCspApplicationIntent(
       candidate.cspDirectives && typeof candidate.cspDirectives === "object"
         ? candidate.cspDirectives
         : undefined,
+    cspSubtypePolicy:
+      candidate.cspSubtypePolicy &&
+      typeof candidate.cspSubtypePolicy === "object"
+        ? candidate.cspSubtypePolicy
+        : undefined,
+    clientContext:
+      candidate.clientContext &&
+      typeof candidate.clientContext === "object" &&
+      typeof candidate.clientContext.clientName === "string" &&
+      candidate.clientContext.capabilities &&
+      typeof candidate.clientContext.capabilities === "object"
+        ? candidate.clientContext
+        : undefined,
     permissive: candidate.permissive,
   };
 }
@@ -891,6 +904,19 @@ export function MCPAppsRendererSurface({
   const cachedReplayWidgetHtmlUrl = isCachedReplay
     ? cachedWidgetHtmlUrl
     : undefined;
+  // What the cached replay URL points at. A host whose artifact links expire
+  // re-mints them with a new expiry for the same object; keying replay
+  // identity on the object (not the URL) keeps that from reloading the widget.
+  // The URL itself still drives the fetch, so a fresh link is what gets read.
+  const artifactCacheKey = host.services.artifactCacheKey;
+  const cachedWidgetHtmlKey = cachedWidgetHtmlUrl
+    ? artifactCacheKey?.(cachedWidgetHtmlUrl) ?? cachedWidgetHtmlUrl
+    : undefined;
+  const cachedReplayWidgetHtmlKey = isCachedReplay
+    ? cachedWidgetHtmlKey
+    : undefined;
+  const fetchArtifactRef = useRef(host.services.fetchArtifact);
+  fetchArtifactRef.current = host.services.fetchArtifact;
   const widgetFetchModeKey = isCachedReplay ? "cached" : "live";
   const cachedReplayPrefersBorder = isCachedReplay
     ? initialPrefersBorder
@@ -1498,7 +1524,7 @@ export function MCPAppsRendererSurface({
     // longer describe what is on screen.
     setFirstCspBlock(null);
   }, [
-    cachedReplayWidgetHtmlUrl,
+    cachedReplayWidgetHtmlKey,
     cachedReplayPrefersBorder,
     hasRenderedLiveForCurrentIdentity,
     isCachedReplay,
@@ -1572,6 +1598,9 @@ export function MCPAppsRendererSurface({
   // current `widgetDisplayModeRequests` policy so flipping the Apps tab
   // tri-state on an already-mounted renderer takes effect on the next
   // identity change instead of waiting for an unmount.
+  // Keyed on the cached widget's identity, not its link: a re-minted link to
+  // the same widget keeps the iframe mounted, and nothing would restore the
+  // modes it declared or the user's inline dismissal.
   useEffect(() => {
     setAppSupportedDisplayModes(undefined);
     userPreferInlineRef.current =
@@ -1579,7 +1608,7 @@ export function MCPAppsRendererSurface({
       "user-initiated-only";
   }, [
     resourceUri,
-    cachedWidgetHtmlUrl,
+    cachedWidgetHtmlKey,
     earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests,
   ]);
 
@@ -1699,7 +1728,7 @@ export function MCPAppsRendererSurface({
     // stale and MUST NOT mutate state.
     const fetchSourceKey = [
       resourceUri ?? "",
-      cachedReplayWidgetHtmlUrl ?? "",
+      cachedReplayWidgetHtmlKey ?? "",
       cspMode,
       widgetFetchModeKey,
       // String() so `null` (cached-replay sentinel), `true`, and
@@ -1728,7 +1757,10 @@ export function MCPAppsRendererSurface({
 
     // Throws on failure. Caller is responsible for surfacing the error.
     const loadFromCachedUrl = async (cachedUrl: string) => {
-      const cachedResponse = await fetch(cachedUrl);
+      const fetchArtifact = fetchArtifactRef.current;
+      const cachedResponse = fetchArtifact
+        ? await fetchArtifact(cachedUrl)
+        : await fetch(cachedUrl);
       if (!cachedResponse.ok) {
         throw new Error(
           `Failed to fetch cached widget HTML: ${cachedResponse.statusText}`
@@ -1736,6 +1768,10 @@ export function MCPAppsRendererSurface({
       }
       const html = await cachedResponse.text();
       if (!isStillCurrent()) return;
+      // A retry that succeeded (e.g. a re-minted link after an expired one)
+      // replaces the failure it recovered from: the identity reset that used
+      // to clear it no longer runs when only the link changed.
+      setLoadError(null);
       // Reset readiness so the previous bridge's transport doesn't
       // get reused with the new HTML before its connect resolves.
       setBridgeTransportReady(false);
@@ -2039,6 +2075,7 @@ export function MCPAppsRendererSurface({
     isOffline,
     cachedWidgetHtmlUrl,
     cachedReplayWidgetHtmlUrl,
+    cachedReplayWidgetHtmlKey,
     liveFetchPreferred,
     widgetFetchModeKey,
     initialPrefersBorder,
@@ -3841,7 +3878,7 @@ export function MCPAppsRendererSurface({
   const handleCspViolation = useCallback(
     (event: MessageEvent) => {
       const data = event.data;
-      if (!data) return;
+      if (data?.type !== "mcp-apps:csp-violation") return;
 
       const {
         directive,
@@ -3919,6 +3956,30 @@ export function MCPAppsRendererSurface({
     ]
   );
 
+  // Record the policy for either surface without reporting a violation.
+  const handleCspApplied = (event: MessageEvent) => {
+    const data = event.data;
+    if (data?.type !== "mcpjam:csp-applied") return;
+    const mountId = normalizeCspMountId(data.mountId);
+    if (
+      mountId !== undefined &&
+      typeof data.csp === "string" &&
+      data.csp.length > 0
+    ) {
+      setWidgetAppliedCspStore(toolCallIdRef.current, {
+        mountId,
+        headerString: data.csp,
+        mode: data.mode === "permissive" ? "permissive" : "widget-declared",
+        intent: normalizeCspApplicationIntent(data.intent),
+      });
+      logWidgetDebug("ui-to-host", "debug/csp-applied", {
+        mountId,
+        mode: data.mode,
+        headerLength: data.csp.length,
+      });
+    }
+  };
+
   const handleSandboxMessage = (event: MessageEvent) => {
     const data = event.data;
     if (!data) return;
@@ -3929,29 +3990,8 @@ export function MCPAppsRendererSurface({
       return;
     }
 
-    // The CSP string the proxy injected for this mount. Arrives just before
-    // that mount's `mcpjam:view-mode`. This records what MCPJam applied;
-    // each violation's `originalPolicy` separately records the policy that
-    // caused that specific violation.
     if (data.type === "mcpjam:csp-applied") {
-      const mountId = normalizeCspMountId(data.mountId);
-      if (
-        mountId !== undefined &&
-        typeof data.csp === "string" &&
-        data.csp.length > 0
-      ) {
-        setWidgetAppliedCspStore(toolCallIdRef.current, {
-          mountId,
-          headerString: data.csp,
-          mode: data.mode === "permissive" ? "permissive" : "widget-declared",
-          intent: normalizeCspApplicationIntent(data.intent),
-        });
-        logWidgetDebug("ui-to-host", "debug/csp-applied", {
-          mountId,
-          mode: data.mode,
-          headerLength: data.csp.length,
-        });
-      }
+      handleCspApplied(event);
       return;
     }
 
@@ -4325,6 +4365,17 @@ export function MCPAppsRendererSurface({
         backgroundColor: mergedStyleVariables["--color-background-primary"],
       }
     : undefined;
+  const cspClientContext = {
+    surface: "inline" as const,
+    clientName: hostStyleDefinition.chatUi.label ?? "Selected client",
+    declaredCsp: widgetCsp,
+    capabilities: {
+      cspConnectDomains: earlyEffectiveMcpAppsCapabilities.cspConnectDomains,
+      cspResourceDomains: earlyEffectiveMcpAppsCapabilities.cspResourceDomains,
+      cspFrameDomains: earlyEffectiveMcpAppsCapabilities.cspFrameDomains,
+      cspBaseUriDomains: earlyEffectiveMcpAppsCapabilities.cspBaseUriDomains,
+    },
+  };
   const iframe = (
     <SandboxedIframe
       ref={sandboxRef}
@@ -4344,6 +4395,7 @@ export function MCPAppsRendererSurface({
       allowFeatures={effectiveSandbox.allowFeatures}
       cspDirectives={effectiveSandbox.cspDirectives}
       cspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+      clientContext={cspClientContext}
       browserStorage={effectiveSandbox.browserStorage}
       colorScheme={resolvedTheme}
       recordMode={recordMode}
@@ -4538,6 +4590,7 @@ export function MCPAppsRendererSurface({
         widgetAllowFeatures={effectiveSandbox.allowFeatures}
         widgetCspDirectives={effectiveSandbox.cspDirectives}
         widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+        widgetClientContext={cspClientContext}
         widgetBrowserStorage={effectiveSandbox.browserStorage}
         widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}
@@ -4568,6 +4621,7 @@ export function MCPAppsRendererSurface({
           })
         }
         onCspViolation={handleCspViolation}
+        onCspApplied={handleCspApplied}
       />
 
       {checkoutSession != null && Checkout && (

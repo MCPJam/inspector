@@ -149,6 +149,38 @@ describe("buildScorerTable groups", () => {
     ).toBe("none");
   });
 
+  it("adds the rubric-checks row after the other judges when graded", () => {
+    const table = (
+      judgeConfig?: Parameters<typeof buildScorerTable>[0]["judgeConfig"],
+    ) =>
+      buildScorerTable({
+        model: groupGradersByStage({
+          predicates: [],
+          judgeConfig,
+          rubricChecks: true,
+        }),
+        predicates: [],
+        judgeConfig,
+      }).groups.find((group) => group.stage === "userValue");
+    const userValue = table();
+    expect(
+      userValue?.rows
+        .filter((row) => row.kind === "judge")
+        .map((row) => row.judgeSlot),
+    ).toEqual(["goalCompletion", "groundedness", "rubricChecks"]);
+    const row = userValue?.rows.find((r) => r.judgeSlot === "rubricChecks");
+    expect(row).toMatchObject({
+      enabled: true,
+      role: "advisory",
+      thresholdKind: "none",
+    });
+    expect(
+      table({ rubricChecks: { enabled: false } })?.rows.find(
+        (r) => r.judgeSlot === "rubricChecks",
+      )?.enabled,
+    ).toBe(false);
+  });
+
   it("emits a group for every user-value stage", () => {
     const { groups } = buildScorerTable({
       model: groupGradersByStage({ predicates: [] }),
@@ -157,26 +189,54 @@ describe("buildScorerTable groups", () => {
     expect(groups.map((group) => group.stage)).toEqual([...USER_VALUE_STAGES]);
   });
 
-  it("puts a muted observed row on connection and discovery", () => {
+  it("leads every stage the runner measures with its runner check", () => {
     const { groups } = buildScorerTable({
       model: groupGradersByStage({ predicates: [] }),
       predicates: [],
     });
-    for (const stage of ["connection", "discovery"] as const) {
+    for (const stage of [
+      "connection",
+      "discovery",
+      "call",
+      "response",
+    ] as const) {
       const group = groups.find((entry) => entry.stage === stage);
       // First, ahead of any standard check the stage lists as off.
-      expect(group?.rows[0]).toEqual(
+      expect(group?.rows[0], stage).toEqual(
         expect.objectContaining({
           kind: "observed",
           muted: true,
           enabled: true,
           name: RUNNER_MEASUREMENT_LABELS[stage],
+          // Never a gate. It renders a Built-in badge rather than this role.
+          role: "advisory",
         }),
       );
       expect(
-        group?.rows.slice(1).every((row) => row.kind === "preset"),
+        group?.rows.filter((row) => row.kind === "observed"),
         stage,
-      ).toBe(true);
+      ).toHaveLength(1);
+    }
+    // Named from the SDK catalog, the same names the run page uses.
+    expect(RUNNER_MEASUREMENT_LABELS).toEqual({
+      connection: "Successful connection",
+      discovery: "Tools listed",
+      call: "Tool call completed",
+      response: "Result returned to the model",
+    });
+    // Tool call keeps its argument-matching row beside the runner check.
+    const call = groups.find((entry) => entry.stage === "call");
+    expect(call?.rows.map((row) => row.kind).slice(0, 2)).toEqual([
+      "observed",
+      "match",
+    ]);
+    // Selection and User value have no runner check.
+    for (const stage of ["selection", "userValue"] as const) {
+      const group = groups.find((entry) => entry.stage === stage);
+      expect(
+        group?.rows.some((row) => row.kind === "observed"),
+        stage,
+      ).toBe(false);
     }
   });
 
@@ -215,6 +275,26 @@ describe("buildScorerTable groups", () => {
     ).toEqual([]);
   });
 
+  it("keeps an enabled standard check in its catalog slot", () => {
+    const output = STANDARD_ASSERTION_CHECKS.find(
+      (check) => check.id === "response.schema",
+    )!;
+    const discovery = STANDARD_ASSERTION_CHECKS.filter(
+      (check) => check.stage === "discovery",
+    ).map((check) => check.id);
+    const { groups } = buildScorerTable({
+      model: groupGradersByStage({ predicates: [output.preset] }),
+      predicates: [output.preset],
+    });
+    const discoveryGroup = groups.find((group) => group.stage === "discovery")!;
+    expect(
+      discoveryGroup.rows.filter((row) => row.family).map((row) => row.family!.id),
+    ).toEqual(discovery);
+    expect(
+      discoveryGroup.rows.find((row) => row.family?.id === output.id),
+    ).toEqual(expect.objectContaining({ kind: "predicate", enabled: true }));
+  });
+
   it("drops the preset row once any rule of its kind is listed, suppressed or not", () => {
     const latency = STANDARD_ASSERTION_CHECKS.find(
       (check) => check.id === "response.performance",
@@ -241,9 +321,10 @@ describe("buildScorerTable groups", () => {
         family: expect.objectContaining({ id: latency.id, suiteRules: 1 }),
       }),
     ]);
-    // A suppressed rule is listed, not counted: the card reads as ungraded.
+    // A suppressed rule is listed, not counted: the card reads as covered by
+    // its runner check alone.
     expect(cards.find((card) => card.stage === "response")?.chip.label).toBe(
-      "No evaluator",
+      "Built-in runner check",
     );
   });
 
@@ -353,6 +434,12 @@ describe("roleOfJudgeSlot", () => {
   it("never lets groundedness gate", () => {
     expect(
       roleOfJudgeSlot("groundedness", { goalCompletion: { role: "gating" } }),
+    ).toBe("advisory");
+  });
+
+  it("never lets rubric checks gate", () => {
+    expect(
+      roleOfJudgeSlot("rubricChecks", { goalCompletion: { role: "gating" } }),
     ).toBe("advisory");
   });
 

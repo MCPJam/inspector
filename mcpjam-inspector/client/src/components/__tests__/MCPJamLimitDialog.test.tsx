@@ -158,6 +158,7 @@ beforeEach(() => {
     organizationId: null,
     surface: null,
     period: null,
+    shortfall: null,
     pendingInput: null,
   });
   useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
@@ -547,6 +548,43 @@ describe("MCPJamLimitDialog", () => {
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
     expect(recipientHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
+  });
+
+  it("says how many credits are left when the request needs more than that", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+    });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: "Not enough MCPJam credits" }),
+    ).toBeInTheDocument();
+    const description = screen.getByTestId("limit-dialog-description");
+    expect(description).toHaveTextContent(
+      /^You have 23 credits left, but this request needs about 30. Try a cheaper model or a shorter conversation. Get more monthly credits/,
+    );
+    expect(description).not.toHaveTextContent(/reset daily/i);
+    expect(
+      screen.getByRole("button", { name: /^Compare plans$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the out-of-credits copy when the refusal carries no numbers", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: "Out of MCPJam credits" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /^Your Free credits reset daily. /,
+    );
   });
 
   it("opens plans settings for Free users", async () => {
@@ -1083,6 +1121,7 @@ describe.each(["swarm", "credits"] as const)(
           ).toBeInTheDocument();
         }
         expect(impressions()).toHaveLength(1);
+        expect(impressions()[0][1].organization_id).toBe("org-1");
         expect(impressions()[0][1].primary_action).toBe(
           plan === "free" ? "explore_plans" : "buy_credits",
         );

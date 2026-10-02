@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Loader2, RotateCw } from "lucide-react";
+import { Copy, Loader2, LogIn, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ import {
   passRateSegmentColorClass,
 } from "./suite-overview-presentation";
 import type { EvalIteration, EvalSuiteRun } from "./types";
+import { useInsightSignIn } from "./use-insight-sign-in";
 
 export interface AiTriageCardProps {
   run: EvalSuiteRun;
@@ -27,6 +28,12 @@ export interface AiTriageCardProps {
   requested: boolean;
   failedGeneration: boolean;
   error: string | null;
+  /**
+   * The backend refused an anonymous caller (`SIGN_IN_REQUIRED`). `error` then
+   * holds the refusal's own copy, and the card offers Sign in, not Retry:
+   * pressing again asks the same way and is refused the same way.
+   */
+  signInRequired?: boolean;
   onRetry: () => void;
   source?: "ui" | "sdk";
   hostNamesById?: Map<string, string | null>;
@@ -97,6 +104,7 @@ export function AiTriageCard({
   requested,
   failedGeneration,
   error,
+  signInRequired = false,
   onRetry,
   source,
   hostNamesById,
@@ -162,6 +170,7 @@ export function AiTriageCard({
 
   const headerSubtitle = (() => {
     if (pending) return "Analyzing…";
+    if (signInRequired) return "Sign in to analyze";
     if (error || failedGeneration) return "Analysis failed";
     if (!serverQuality && requested) return "Requesting analysis…";
     if (!serverQuality) return "Waiting for analysis…";
@@ -215,6 +224,10 @@ export function AiTriageCard({
         <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Analyzing server quality…
+        </div>
+      ) : signInRequired ? (
+        <div className="px-3 py-3 text-sm text-muted-foreground">
+          {error ?? "Sign in to see server quality suggestions."}
         </div>
       ) : error ? (
         <div className="px-3 py-3 text-sm text-destructive">{error}</div>
@@ -293,7 +306,9 @@ export function AiTriageCard({
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {error || failedGeneration ? (
+            {signInRequired ? (
+              <TriageSignInButton />
+            ) : error || failedGeneration ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -378,5 +393,21 @@ export function AiTriageCard({
         </p>
       ) : null}
     </section>
+  );
+}
+
+function TriageSignInButton() {
+  const signIn = useInsightSignIn("server_quality_card");
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
+      onClick={signIn}
+    >
+      <LogIn className="h-3 w-3" />
+      Sign in
+    </Button>
   );
 }

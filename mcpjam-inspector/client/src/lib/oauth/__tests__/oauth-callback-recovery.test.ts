@@ -187,3 +187,22 @@ describe("callback with no stored flow session", () => {
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
 });
+
+
+describe("session recovery cleanup", () => {
+  it("discards the attempted exchange while retaining credentials and server settings", async () => {
+    const { clearPendingOAuthAttempt } = await import("../mcp-oauth");
+    for (const key of PER_SERVER_KEYS("server")) localStorage.setItem(key, "saved");
+    localStorage.setItem("mcp-oauth-pending", "server");
+    clearPendingOAuthAttempt("server");
+    for (const key of ["mcp-verifier-server", "mcp-oauth-issued-state-server", "mcp-oauth-flow-state-server", "mcp-oauth-pending"]) expect(localStorage.getItem(key)).toBeNull();
+    for (const key of ["mcp-tokens-server", "mcp-client-server", "mcp-serverUrl-server", "mcp-oauth-config-server", "mcp-oauth-binding-server"]) expect(localStorage.getItem(key)).toBe("saved");
+  });
+  it("does not discard a newer attempt for the same server", async () => {
+    const { clearPendingOAuthAttempt } = await import("../mcp-oauth");
+    localStorage.setItem("mcp-oauth-issued-state-server", "new");
+    localStorage.setItem("mcp-verifier-server", "new-verifier");
+    clearPendingOAuthAttempt("server", "old");
+    expect(localStorage.getItem("mcp-verifier-server")).toBe("new-verifier");
+  });
+});

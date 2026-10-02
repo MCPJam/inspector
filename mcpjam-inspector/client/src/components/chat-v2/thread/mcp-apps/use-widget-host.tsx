@@ -15,7 +15,9 @@
 // reads through `environment`/`resolvers` while keeping its derivation in place;
 // pre-resolving them into `WidgetHost.resolveEnvironment` is the Phase-3 target.
 
-import { useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { toast } from "sonner";
+import { ClientCspToastGroup } from "@/lib/client-csp-toast";
 import {
   HOSTED_MODE,
   SANDBOX_ORIGIN,
@@ -23,6 +25,7 @@ import {
   VIEW_SUBDOMAINS_ENABLED,
 } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
@@ -42,6 +45,7 @@ import { compareCspPolicies } from "../csp-workbench/csp-header";
 import {
   CspViolationTelemetryLimiter,
   reportCspViolationToSentry,
+  intentionalClientCspBlocks,
 } from "@/lib/csp-violation-telemetry";
 import {
   resolveEffectiveCompatRuntime,
@@ -194,6 +198,10 @@ export function useWidgetHost(): WidgetHostImpl {
         return listResourceTemplates(serverId);
       },
       authFetch,
+      // Cached widget HTML arrives as a short-lived artifact link; these let
+      // the renderer renew an expired one and ignore a re-minted one.
+      fetchArtifact: (url: string) => fetchArtifact(url),
+      artifactCacheKey: artifactStableKey,
     }),
     [],
   );
@@ -336,22 +344,76 @@ export function useWidgetHost(): WidgetHostImpl {
   const appendLifecycle = useWidgetDebugStore((s) => s.appendLifecycle);
   const addTrafficLog = useTrafficLogStore((s) => s.addLog);
   const cspTelemetryLimiterRef = useRef(new CspViolationTelemetryLimiter());
+  const cspToastGroupRef = useRef(
+    new ClientCspToastGroup(
+      (id, clientName, blocks) =>
+        toast.info(`This was blocked by ${clientName}’s CSP limits.`, {
+          id,
+          duration: 8000,
+          description: (
+            <ul>
+              {blocks.map((block) => (
+                <li key={block.capability}>
+                  {block.capability} is unsupported: {block.rule}.
+                </li>
+              ))}
+            </ul>
+          ),
+        }),
+      (id) => {
+        toast.dismiss(id);
+      },
+    ),
+  );
+  useEffect(() => {
+    const group = cspToastGroupRef.current;
+    return () => group.dispose();
+  }, []);
+  const recordAppliedCsp = useCallback<WidgetDebugSink["setWidgetAppliedCsp"]>(
+    (toolCallId, applied) => {
+      if (cspToastGroupRef.current.isStale(toolCallId, applied.mountId)) return;
+      cspToastGroupRef.current.activate(
+        toolCallId,
+        applied.mountId,
+        applied.intent?.clientContext?.surface,
+      );
+      setWidgetAppliedCsp(toolCallId, applied);
+    },
+    [setWidgetAppliedCsp],
+  );
   const reportCspViolation = useCallback(
     (toolCallId: string, serverId: string, violation: CspViolation) => {
+      const applied =
+        violation.mountId === undefined
+          ? undefined
+          : useWidgetDebugStore.getState().widgets.get(toolCallId)?.csp
+              ?.appliedPoliciesByMount?.[String(violation.mountId)];
+      if (
+        violation.mountId !== undefined &&
+        cspToastGroupRef.current.isStale(toolCallId, violation.mountId)
+      )
+        return;
+      const blocks = intentionalClientCspBlocks({
+        violation,
+        appliedPolicy: applied?.headerString,
+        intent: applied?.intent,
+      });
+      if (violation.mountId !== undefined && applied?.intent?.clientContext) {
+        cspToastGroupRef.current.report(
+          toolCallId,
+          violation.mountId,
+          applied.intent.clientContext.clientName,
+          blocks,
+        );
+      }
       if (
         !cspTelemetryLimiterRef.current.shouldReport(
           toolCallId,
           serverId,
           violation,
         )
-      ) {
+      )
         return;
-      }
-      const applied =
-        violation.mountId === undefined
-          ? undefined
-          : useWidgetDebugStore.getState().widgets.get(toolCallId)?.csp
-              ?.appliedPoliciesByMount?.[String(violation.mountId)];
       reportCspViolationToSentry({
         toolCallId,
         serverId,
@@ -369,10 +431,18 @@ export function useWidgetHost(): WidgetHostImpl {
   );
   const clearCspViolationsAndTelemetry = useCallback(
     (toolCallId: string) => {
+      cspToastGroupRef.current.clearToolCall(toolCallId);
       cspTelemetryLimiterRef.current.clearToolCall(toolCallId);
       clearCspViolations(toolCallId);
     },
     [clearCspViolations],
+  );
+
+  const clearCspMount = useCallback(
+    (toolCallId: string, mountId: string | number) => {
+      cspToastGroupRef.current.clearMount(toolCallId, mountId);
+    },
+    [],
   );
 
   const debug = useMemo<WidgetDebugSink>(
@@ -382,10 +452,11 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
-      setWidgetAppliedCsp,
+      setWidgetAppliedCsp: recordAppliedCsp,
       addCspViolation,
       reportCspViolation,
       clearCspViolations: clearCspViolationsAndTelemetry,
+      clearCspMount,
       setWidgetModelContext,
       setWidgetHtml,
       setSandboxApplied,
@@ -398,10 +469,11 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
-      setWidgetAppliedCsp,
+      recordAppliedCsp,
       addCspViolation,
       reportCspViolation,
       clearCspViolationsAndTelemetry,
+      clearCspMount,
       setWidgetModelContext,
       setWidgetHtml,
       setSandboxApplied,

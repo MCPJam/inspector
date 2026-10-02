@@ -60,6 +60,12 @@ export interface PinnedHostExecutionSpec {
   modelId: string;
   /** Optional routing provenance from the immutable host snapshot. Omitted keeps legacy lookup. */
   hosted?: boolean;
+  /**
+   * The saved selection behind `modelId`, frozen into the swarm snapshot at
+   * launch (`resolvedSelection`). Untrusted until read with
+   * `readStoredModelSelection`; absent ⇒ `modelId` reads as legacy.
+   */
+  resolvedSelection?: unknown;
   systemPrompt: string;
   temperature?: number;
   requireToolApproval: boolean;
@@ -439,6 +445,7 @@ export async function createJourneyRun(
   convexHttpUrl: string,
   bearer: string,
   args: {
+    runtimeVenue?: "hosted" | "local";
     projectId: string;
     journeyRefId: string;
     launchKey: string;
@@ -471,6 +478,7 @@ export async function createJourneyRun(
     {
       // `projectId` is REQUIRED by the backend route (it reads `body.projectId`
       // and 400s without it); it scopes the LAUNCHER + project-member gate.
+      runtimeVenue: args.runtimeVenue ?? "hosted",
       projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,

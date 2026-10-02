@@ -41,6 +41,8 @@ vi.mock("convex/react", () => ({
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -87,6 +89,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 

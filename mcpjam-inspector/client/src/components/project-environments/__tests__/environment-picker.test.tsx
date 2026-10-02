@@ -363,3 +363,61 @@ describe("EnvironmentPicker — Manage link", () => {
     expect(screen.queryByText("Manage environments \u2192")).toBeNull();
   });
 });
+
+describe("EnvironmentPicker \u2014 two environments with the same name", () => {
+  beforeEach(() => {
+    // The real collision: one project, two live environments both named
+    // MCPJam, pointing at different server groups. Undisambiguated, choosing
+    // between them is a coin flip \u2014 and the swarm that picked wrong ran 15
+    // goals against a server whose tools they were never written for.
+    mockEnvironments.value = [
+      env("env_terac", "MCPJam", { serverAttachmentId: "att_terac" }),
+      env("env_excalidraw", "MCPJam", { serverAttachmentId: "att_excalidraw" }),
+      env("env_solo", "Staging"),
+    ];
+  });
+
+  it("suffixes the colliding rows and leaves the unique one alone", () => {
+    render(
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />,
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByLabelText("MCPJam #1")).toBeInTheDocument();
+    expect(screen.getByLabelText("MCPJam #2")).toBeInTheDocument();
+    expect(screen.getByLabelText("Staging")).toBeInTheDocument();
+    expect(screen.queryByLabelText("MCPJam")).not.toBeInTheDocument();
+  });
+
+  it("names the selected row by the same suffix on the trigger", () => {
+    render(
+      <EnvironmentPicker
+        projectId="p_1"
+        value={["env_excalidraw"]}
+        onChange={vi.fn()}
+        multi
+      />,
+    );
+
+    // The trigger is what the user reads on the way to Confirm; a bare
+    // "MCPJam" there would undo the disambiguation one step later.
+    expect(screen.getByRole("button")).toHaveTextContent("MCPJam #2");
+  });
+
+  it("numbers by the project's row order, not by what is selected", () => {
+    // The suffix has to be a property of the row. Numbering the selection
+    // would make one environment "MCPJam #1" here and "MCPJam #2" elsewhere.
+    render(
+      <EnvironmentPicker
+        projectId="p_1"
+        value={["env_excalidraw"]}
+        onChange={vi.fn()}
+        multi
+      />,
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByLabelText("MCPJam #2")).toBeChecked();
+    expect(screen.getByLabelText("MCPJam #1")).not.toBeChecked();
+  });
+});

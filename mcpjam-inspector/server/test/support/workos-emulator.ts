@@ -160,13 +160,23 @@ export async function emulatorRest(
 
 export async function mintUserApiKey(
   h: WorkosEmulatorHandle,
-  args: { userId: string; organizationId: string; name?: string },
+  args: {
+    userId: string;
+    organizationId: string;
+    name?: string;
+    /** ISO-8601; must be in the future. Omitted = the key never expires. */
+    expiresAt?: string;
+  },
 ): Promise<{ id: string; value: string }> {
   const { status, body } = await emulatorRest(
     h,
     "POST",
     `/user_management/users/${encodeURIComponent(args.userId)}/api_keys`,
-    { name: args.name ?? "test key", organization_id: args.organizationId },
+    {
+      name: args.name ?? "test key",
+      organization_id: args.organizationId,
+      ...(args.expiresAt ? { expires_at: args.expiresAt } : {}),
+    },
   );
   if (status >= 300) {
     throw new Error(
@@ -179,7 +189,7 @@ export async function mintUserApiKey(
 export async function listUserApiKeys(
   h: WorkosEmulatorHandle,
   userId: string,
-): Promise<Array<{ id: string }>> {
+): Promise<Array<{ id: string; expires_at?: string | null }>> {
   const { body } = await emulatorRest(
     h,
     "GET",

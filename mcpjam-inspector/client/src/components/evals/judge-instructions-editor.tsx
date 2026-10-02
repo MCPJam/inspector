@@ -1,16 +1,23 @@
 import { useId } from "react";
-import { Button } from "@mcpjam/design-system/button";
 import { MAX_JUDGE_INSTRUCTIONS_LENGTH } from "@mcpjam/sdk/contract";
 import type { EvalJudgeRubric } from "./types";
+import { JudgeRubricEditor } from "./judge-rubric-editor";
 
+/**
+ * The suite's grading instructions and criteria: the prose the goal judge
+ * reads, and — one question per criterion — what rubric checks ask.
+ */
 export function JudgeInstructionsEditor({
   value,
   onChange,
   disabled = false,
+  rowIdentityHint,
 }: {
   value: EvalJudgeRubric | undefined;
   onChange: (value: EvalJudgeRubric | undefined) => void;
   disabled?: boolean;
+  /** Passed through to the criteria list; see `RUBRIC_CHECK_ROW_IDENTITY_HINT`. */
+  rowIdentityHint?: string;
 }) {
   const id = useId();
   const instructions = value?.instructions ?? "";
@@ -64,44 +71,19 @@ export function JudgeInstructionsEditor({
           {instructions.length}/{MAX_JUDGE_INSTRUCTIONS_LENGTH}
         </p>
       </div>
-      {criteria.length > 0 && (
-        <div className="space-y-2 rounded-md border border-border p-3">
-          <p className="text-xs text-muted-foreground">
-            Additional grading criteria configured through the API.
-          </p>
-          <ul className="space-y-2 text-xs">
-            {criteria.map((criterion, index) => (
-              <li key={`${criterion.id}-${index}`}>
-                <span className="font-medium">{criterion.label}</span>
-                {criterion.required && <span> (required)</span>}
-                <span className="ml-1 font-mono text-muted-foreground">
-                  {criterion.id}
-                </span>
-                {criterion.description && (
-                  <p className="text-muted-foreground">
-                    {criterion.description}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={disabled}
-            onClick={() =>
-              onChange(
-                instructions.trim()
-                  ? { instructions: instructions.trim() }
-                  : undefined,
-              )
-            }
-          >
-            Clear criteria
-          </Button>
-        </div>
-      )}
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium">
+          Grading criteria{" "}
+          <span className="font-normal text-muted-foreground">(optional)</span>
+        </p>
+        <JudgeRubricEditor
+          criteriaOnly
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          rowIdentityHint={rowIdentityHint}
+        />
+      </div>
     </div>
   );
 }

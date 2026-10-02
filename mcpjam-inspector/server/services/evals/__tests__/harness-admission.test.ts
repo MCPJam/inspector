@@ -1,4 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+vi.mock("../../../config.js", async () => ({ ...(await vi.importActual("../../../config.js")), HOSTED_MODE: true }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const nativeVenue = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  isLocalHarnessVenue: (harness: string) => nativeVenue.enabled && harness === "claude-code",
+}));
 
 import {
   checkEvalExecutionAdmission,
@@ -29,6 +34,7 @@ const ENV_KEYS = [
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
+  nativeVenue.enabled = false;
   for (const key of ENV_KEYS) saved[key] = process.env[key];
   // A server on which the harness runtime IS available, so every refusal below
   // is attributable to the configuration under test rather than the fixture.
@@ -164,6 +170,81 @@ describe("checkEvalHarnessAdmission", () => {
         cases: [{ title: "a", ...HOSTED_MODEL }],
       })
     ).toEqual({ ok: true, harness: "claude-code" });
+  });
+
+  it("refuses a saved effort the harness has not verified (host selection)", () => {
+    const hostConfig = harnessHost({
+      modelSelection: {
+        modelId: "anthropic/claude-haiku-4.5",
+        source: "hosted",
+        settings: { reasoningEffort: "high" },
+        fallback: { provider: "none", model: "none" },
+      },
+    });
+    const staticVerdict = checkEvalHarnessStaticAdmission({
+      hostConfig,
+      serverIds: ["s1"],
+    });
+    expect(staticVerdict.ok).toBe(false);
+    if (staticVerdict.ok) throw new Error("unreachable");
+    expect(staticVerdict.reason).toContain("reasoning effort");
+    const full = checkEvalHarnessAdmission({
+      hostConfig,
+      serverIds: ["s1"],
+      cases: [{ title: "a", ...HOSTED_MODEL }],
+    });
+    expect(full.ok).toBe(false);
+  });
+
+  it("refuses a case whose own model entry saved an effort", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        { title: "plain", ...HOSTED_MODEL },
+        { title: "effortful", ...HOSTED_MODEL, reasoningEffort: "low" },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("reads the effort off a case's persisted selection (what the recorder emits)", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          selection: { settings: { reasoningEffort: "medium" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("an explicit case effort wins over its persisted selection's", () => {
+    // Both are unsupported here, so the point is only that admission reads the
+    // explicit one first: it is the one the reason names.
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          reasoningEffort: "high",
+          selection: { settings: { reasoningEffort: "low" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain('"high"');
   });
 
   it("refuses when broker delivery is switched off, with the gate's own reason", () => {
@@ -716,5 +797,89 @@ describe("external-account hosts: the host's model is what an eval case runs", (
     if (!verdict.ok) {
       expect(verdict.reason).toContain("anthropic/claude-sonnet-4.5");
     }
+  });
+});
+
+describe("checkEvalHarnessAdmission — version-keyed model support", () => {
+  it("refuses a case whose model the pinned runtime runs without tools", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: { harness: "codex" },
+      serverIds: ["s1"],
+      cases: [
+        { title: "luna", model: "openai/gpt-5.6-luna", provider: "openai" },
+        { title: "fine", model: "openai/gpt-5.5", provider: "openai" },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("Codex harness can't run this host's model");
+    expect(verdict.reason).toContain("Ineligible cases: luna");
+    expect(verdict.reason).not.toContain("fine");
+  });
+
+  it("refuses an UNVERIFIED pair for evals, naming harness and version", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "fable",
+          model: "anthropic/claude-fable-5",
+          provider: "anthropic",
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(
+      /^not verified for claude-code \d+\.\d+\.\d+\. Ineligible cases: fable$/
+    );
+  });
+
+  it("static admission refuses a host-pinned unverified model too", () => {
+    const verdict = checkEvalHarnessStaticAdmission({
+      hostConfig: harnessHost({ modelId: "anthropic/claude-fable-5" }),
+      serverIds: ["s1"],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(/^not verified for claude-code /);
+  });
+
+  it("refuses a non-Anthropic model on Claude Code instead of letting the CLI default", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [{ title: "gpt", model: "openai/gpt-5.5", provider: "openai" }],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain(
+      "Claude Code harness can't run this host's model"
+    );
+  });
+});
+
+
+describe("local harness admission", () => {
+  it("admits a local single-case run without cloud service credentials", () => {
+    nativeVenue.enabled = true;
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.E2B_API_KEY;
+    delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
+    expect(checkEvalExecutionAdmission({
+      hostConfig: harnessHost(), localExecution: true, surface: "single-case",
+    })).toEqual({ ok: true });
+    expect(checkEvalHarnessAdmission({
+      hostConfig: harnessHost(), localExecution: true, serverIds: ["s1"],
+      cases: [{ title: "local", ...HOSTED_MODEL }],
+    })).toEqual({ ok: true, harness: "claude-code" });
+  });
+
+  it("does not admit cloud single-case execution just because a local pack exists", () => {
+    nativeVenue.enabled = true;
+    expect(checkEvalExecutionAdmission({
+      hostConfig: harnessHost(), localExecution: false, surface: "single-case",
+    }).ok).toBe(false);
   });
 });

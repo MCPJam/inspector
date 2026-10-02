@@ -34,6 +34,13 @@
  *    interactive fallback, so an unattended turn must never spend on the
  *    model's own initiative. Destructive ops stay excluded entirely — a
  *    proposal makes spend deliberate, not a deletion recoverable.
+ *  - The direct tier's WRITES additionally require a human surface
+ *    (MJ-008). A caller with no chat surface — an `sk_` key or a plain JWT —
+ *    gets the read-only catalog and nothing else: its model must not mutate
+ *    the workspace unattended, whatever the request body says. The surface is
+ *    resolved from the AUTH METHOD (`approval-surface.ts`), never the body,
+ *    and the flag is the operation's own catalog `readOnly`, so neither half
+ *    of the decision is caller-supplied.
  *  - Every operation is HARD-CLAMPED to the route's `projectId`. The op
  *    catalog's `project` selector allows cross-project roaming for other
  *    surfaces; prompt instructions are not an authorization boundary, so
@@ -92,6 +99,8 @@ import {
   hasUnresolvedApprovalResponses,
 } from "@/shared/http-tool-calls";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   deriveOperationIdempotencyKey,
@@ -102,6 +111,11 @@ import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import {
+  AGENT_MAX_STEPS,
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL_DEFINITION,
+} from "../../../shared/mcpjam-agent-model.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
@@ -771,10 +785,25 @@ export function buildAgentApiToolSet(opts: {
    * and there is nothing about a read that makes it exempt.
    */
   disabledOperations?: ReadonlySet<string>;
+  /**
+   * Whether this turn renders into a chat surface where a person sees what
+   * ran and approvals are collected (`resolveProposalSurface` — Slack/Discord
+   * service auth plus a conversation). Resolved from the AUTH METHOD, never
+   * from the request body. Absent or false, every operation that is not
+   * read-only is OMITTED, same rule as the gated tier (MJ-008): a
+   * headless caller's model must not mutate the workspace unattended, and the
+   * caller can always issue the write itself through the plain /api/v1
+   * operation under its own name.
+   */
+  hasHumanSurface?: boolean;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
     if (opts.disabledOperations?.has(operation.name)) continue;
+    // Read off the operation's own catalog flag — a missing flag counts as a
+    // write — so nothing caller-supplied can widen what a headless turn may
+    // execute (MJ-008).
+    if (operation.readOnly !== true && opts.hasHumanSurface !== true) continue;
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
       inputSchema: relaxProjectRequirement(
@@ -883,23 +912,26 @@ export function buildAgentApiToolSet(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Pinned hosted model. There is no "hosted default" lookup in the catalog —
- * this is an explicit product choice, validated against the live catalog per
- * request so a catalog outage/self-hosted install fails loudly instead of
- * mis-billing.
+ * Pinned hosted model, shared with the in-app agent panel.
+ *
+ * It used to be Sonnet 5, chosen here alone. It is now the ONE model the
+ * backend will accept a platform-billing claim for
+ * (`shared/mcpjam-agent-model.ts`), so this surface and the web panel cannot
+ * diverge without one of them losing its billing — which is the point: Slack,
+ * Discord and the panel are the same agent, and MCPJam pays for all three.
+ *
+ * Still validated against the live catalog per request, so a catalog outage or
+ * a self-hosted install fails loudly instead of mis-billing.
  */
-const AGENT_API_MODEL: ModelDefinition = {
-  id: "anthropic/claude-sonnet-5",
-  name: "Claude Sonnet 5",
-  provider: "anthropic",
-  hosted: true,
-};
+const AGENT_API_MODEL: ModelDefinition = MCPJAM_AGENT_MODEL_DEFINITION;
 
 /**
- * Default model for AUTHORED SUITES — deliberately not the agent's own
- * model. Suites run every case × iteration on a schedule, so the default
- * is the cheap eval workhorse (same one the public-API docs examples
- * use); the user can always name a bigger model.
+ * Default model for AUTHORED SUITES. The same id as the agent's own model
+ * today, but for an unrelated reason and pinned separately: suites run every
+ * case × iteration on a schedule against the CUSTOMER's credits, so the
+ * default is the cheap eval workhorse (the one the public-API docs examples
+ * use). The user can always name a bigger model; moving the agent's pin must
+ * not move this one.
  */
 const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
 
@@ -921,7 +953,11 @@ const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
   "- For new AI-authored cases, use generate_eval_cases and its spend approval flow. Use create/update case tools only for explicit user payloads or already reviewed drafts. Keep each full workflow as ordered steps.",
   `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
-  "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
+  // Names the marker `buildGatedProposalTools` puts on every gated tool's
+  // description instead of enumerating the gated operations. The tier follows
+  // each operation's `risk`, so a list here went stale with every new gated
+  // op; the examples are illustrative, not the definition.
+  "- Tools whose description says REQUIRES HUMAN APPROVAL do NOT perform the action when you call them (for example running a suite, a case, or a goal run, generating cases, cancelling a run, setting a schedule, or calling a tool on the user's own server). Calling one PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
   "- When a tool result carries a `permalinks` array, hand the user that `url` EXACTLY as written. NEVER invent, shorten, or rewrite an MCPJam app URL, and never build one from an id: a hand-made link opens whichever project the reader last selected, which is usually not the one you are talking about. If a result has no permalink, give the id and say where to find it.",
@@ -959,7 +995,6 @@ const MAX_MESSAGE_BYTES = 8_192;
  * smaller envelope since every byte is resent each turn and billed.
  */
 const MAX_TOTAL_MESSAGE_BYTES = 98_304; // 96 KB
-const MAX_STEPS = 16;
 const TURN_WALL_CLOCK_MS = 90_000;
 /** In-process per-org concurrent-turn cap (same shape as evals' run cap). */
 const MAX_CONCURRENT_TURNS_PER_ORG = 4;
@@ -1113,6 +1148,30 @@ agent.get("/agent-ops", async (c) => {
   return v1Resource(c, { operations: listAgentOpCatalog() });
 });
 
+/**
+ * The scoping read behind the job routes. A structured refusal keeps the
+ * backend's own mapping; a plain membership refusal — masked to "Server
+ * Error" in production — answers the same 404 an unknown job id does instead
+ * of escaping to the boundary's 500 (MJ-021).
+ */
+async function readAgentJobStatus(
+  convex: ReturnType<typeof createConvexClient>,
+  jobId: string,
+): Promise<{ projectId?: string } | null> {
+  try {
+    return await convex.query("agentTurnState:status" as any, { jobId });
+  } catch (error) {
+    throw (
+      translateStructuredConvexRefusal(error) ??
+      translateConvexReadError(error, {
+        scope: "v1.agent",
+        notFoundMessage: "Agent job not found.",
+        redactedIsRefusal: true,
+      })
+    );
+  }
+}
+
 agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
   if (!process.env.CONVEX_URL)
     return v1Error(
@@ -1121,9 +1180,7 @@ agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
       "The agent endpoint requires a hosted MCPJam deployment.",
     );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
-  const result = await convex.query("agentTurnState:status" as any, {
-    jobId: c.req.param("jobId"),
-  });
+  const result = await readAgentJobStatus(convex, c.req.param("jobId"));
   if (!result || result.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   return v1Resource(c, result);
@@ -1136,9 +1193,7 @@ agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
       "The agent endpoint requires a hosted MCPJam deployment.",
     );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
-  const status = await convex.query("agentTurnState:status" as any, {
-    jobId: c.req.param("jobId"),
-  });
+  const status = await readAgentJobStatus(convex, c.req.param("jobId"));
   if (!status || status.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   await convex.mutation("agentTurnState:cancel" as any, {
@@ -1336,7 +1391,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Proposals need a surface to render the control on AND an org to
     // attribute the spend to. Both come from the auth context, resolved by a
     // single helper so no route re-implements "which chat product is this".
-    // Callers with neither get the read/write tiers only — the gated tools are
+    // Callers without a surface get only read-only direct tools; gated tools are
     // omitted entirely rather than offered and then refused, so the model
     // never plans around an action it cannot take.
     const proposalSurface = durable?.surface ?? resolveProposalSurface(c, body);
@@ -1360,6 +1415,9 @@ agent.post("/projects/:projectId/agent", async (c) => {
           : {}),
         clientWithHeaders: makeClient,
         disabledOperations,
+        // The same presence test that decides whether the gated tools exist
+        // at all: without it the direct tier's writes are omitted too.
+        hasHumanSurface: proposalSurface !== undefined,
       }),
       ...(proposalSurface
         ? buildGatedProposalTools({
@@ -1462,8 +1520,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     }
 
     let lastEngineError:
-      | { message: string; code?: string; httpStatus?: number }
-      | undefined;
+      { message: string; code?: string; httpStatus?: number } | undefined;
 
     let turnMessages = durable?.messages ?? body.messages;
     if (durable) {
@@ -1528,10 +1585,24 @@ agent.post("/projects/:projectId/agent", async (c) => {
     }
 
     const result = await runUnifiedAssistantTurn({
-      runtime: rt.runtime,
+      runtime: {
+        ...rt.runtime,
+        // MCPJam pays for agent turns on every surface, not just the in-app
+        // panel. This rail already requires the Inspector service token at its
+        // boundary and only accepts signed-in delegated org JWTs, which is
+        // exactly what the backend re-checks before honouring the claim.
+        extraBodyFields: {
+          ...(rt.runtime.extraBodyFields ?? {}),
+          billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+        },
+      },
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
+      // A durable job's history is the server's own checkpoint; otherwise it
+      // is the request body's, and an unresolved tool call in it is a claim
+      // the engine answers rather than runs (MJ-008).
+      ...(durable ? {} : { clientSuppliedHistory: true }),
       messages: turnMessages,
       modelDefinition: AGENT_API_MODEL,
       systemPrompt: prepared.enhancedSystemPrompt,
@@ -1540,7 +1611,12 @@ agent.post("/projects/:projectId/agent", async (c) => {
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "mcpjam_agent",
-      maxSteps: MAX_STEPS,
+      // The SHARED ceiling, not a local 16. Now that this route sends the
+      // billing claim, the backend refuses any step at or past
+      // `AGENT_MAX_STEPS` — so a local copy that drifted upward would not buy
+      // a longer answer, it would earn `agent_billing_rejected` in the middle
+      // of one.
+      maxSteps: AGENT_MAX_STEPS,
       ...(durable
         ? {
             yieldAfterStep: true,

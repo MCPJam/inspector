@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: MCPJam/mcpjam-backend
-          ref: fa65e60d241941e3e176ceeec77067ef1c0f6864
+          ref: 60729a6c15a8d278e88107004cfa66ea1a8ab6cb
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false
@@ -75,6 +75,14 @@ jobs:
     container: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -164,6 +172,14 @@ jobs:
     container: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -224,11 +240,21 @@ jobs:
       # more shards are cheap when the expensive part is no longer the install.
       # All four of the places that carry the denominator — this list, the job
       # name, the step name and --shard — must move together, or the job
-      # silently runs the wrong fraction of the suite.
+      # silently runs the wrong fraction of the suite. dependabot-auto-merge.yml
+      # names these jobs too ("Inspector Tests N/6"); it fails safe (holds)
+      # when they drift, but update it with them.
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
 
     steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -275,8 +301,22 @@ jobs:
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
     container: mcr.microsoft.com/playwright:v1.62.1-noble
+    # This job builds the PR's code and runs it against prod Convex. Keep its
+    # errors out of prod Sentry, which pages us: the build flag turns off the
+    # browser SDK, DO_NOT_TRACK turns off the server's.
+    env:
+      VITE_DISABLE_SENTRY: "true"
+      DO_NOT_TRACK: "1"
 
     steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -311,6 +351,11 @@ jobs:
 
       - name: Run Playwright smoke
         run: npm run test:e2e -w @mcpjam/inspector
+
+      - name: Run local access e2e
+        # Its own config: the smoke config seeds every page with the access key,
+        # and this spec proves what a browser without one sees.
+        run: npm run test:e2e:local-access -w @mcpjam/inspector
 
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector

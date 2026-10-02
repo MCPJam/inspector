@@ -130,10 +130,17 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
   },
   // Deliberately NOT "API Keys": the personal entry above owns that label,
   // and the two pages do different jobs — personal creates and revokes your
-  // own keys, this one is a read-only admin review of every member's. Two
+  // own keys, this one is the admin review of every member's, where owners
+  // and admins revoke any of them and decide who may create keys. Two
   // identical labels read as the same page shown twice. "API keys" stays in
   // the search terms so the old wording still finds it.
-  org("api-keys", "Organization keys", "/api-keys", ["API keys", "key owners"]),
+  org("api-keys", "Organization keys", "/api-keys", [
+    "API keys",
+    "key owners",
+    "revoke key",
+    "key expiry",
+    "who can create keys",
+  ]),
   {
     ...org("byok", "AI providers", "/models", [
       "BYOK",

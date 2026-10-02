@@ -2,6 +2,18 @@ import { sanitizeForConvexTransport } from "./convex-sanitize";
 import type { EvalTraceWidgetSnapshot } from "./eval-trace";
 
 /**
+ * The content type every writer uploads widget HTML with.
+ *
+ * Plain text, never `text/html`: storage serves an object back with the type
+ * it was uploaded with, so HTML stored as HTML renders — and runs its
+ * scripts — when the storage URL is opened directly. Every reader fetches the
+ * bytes and uses them as text (replay renders them in its own sandboxed
+ * frame), so the stored type changes nothing for them. The backend re-stores
+ * uploads from older clients the same way.
+ */
+export const WIDGET_HTML_STORAGE_CONTENT_TYPE = "text/plain; charset=utf-8";
+
+/**
  * Wire shape of a `sharedChatWidgetSnapshots` row, less the
  * session/scope context that varies by writer (the playground threads
  * `scenarioId`/`accessVersion`/`chatSessionId`; the eval per-turn fanout

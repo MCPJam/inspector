@@ -402,6 +402,11 @@ function RunLiveBridge({
   return null;
 }
 
+/** A value-comparable key for an attempt's raw execution record. */
+function executionFingerprint(execution: unknown): string {
+  return execution === undefined ? "" : JSON.stringify(execution);
+}
+
 /**
  * Goal result owns the chip fill. Execution stays on the headline
  * (`Running:` / `Broke:`) so a broken-but-passed session reads green and a
@@ -775,7 +780,11 @@ export function NewSwarmRunningStep({
               attempt.status === next?.status &&
               attempt.errorCode === next?.errorCode &&
               attempt.errorMessage === next?.errorMessage &&
-              attempt.chatSessionId === next?.chatSessionId
+              attempt.chatSessionId === next?.chatSessionId &&
+              // The record lands (and gains attempts) after the status does;
+              // compared by value so a fresh query object alone is no change.
+              executionFingerprint(attempt.execution) ===
+                executionFingerprint(next?.execution)
             );
           }) &&
           prev.sessionsPerTarget === snapshot.sessionsPerTarget &&

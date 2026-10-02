@@ -4133,6 +4133,7 @@ var NetworkRing = class {
   constructor(size = NETWORK_RING_SIZE) {
     this.size = size;
   }
+  size;
   order = [];
   byId = /* @__PURE__ */ new Map();
   total = 0;
@@ -5201,6 +5202,7 @@ var SessionBarrier = class {
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   }
+  apply;
   inFlight = 0;
   /**
    * Is a person's pointer down on the page right now?
@@ -5863,6 +5865,8 @@ var WebMcpBridgeError = class extends Error {
     this.cancelReason = cancelReason;
     this.name = "WebMcpBridgeError";
   }
+  failure;
+  cancelReason;
 };
 var MAIN_SESSION_KEY = "\0main";
 var MAX_EARLY_RESPONSES = 16;
@@ -5893,6 +5897,7 @@ var WebMcpBridge = class {
     this.onChange = options.onChange;
     this.onExternalInvocation = options.onExternalInvocation;
   }
+  cdp;
   externalSubscribers = /* @__PURE__ */ new Set();
   subscribeExternalInvocation(listener) {
     this.externalSubscribers.add(listener);
@@ -7339,6 +7344,7 @@ var ActError2 = class extends Error {
     this.code = code;
     this.name = "ActError";
   }
+  code;
 };
 var LeaseTakenMidAct = class extends Error {
 };
@@ -9696,7 +9702,7 @@ var LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
 var HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 var LOCAL_BROWSER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false";
 var LOCAL_COMPUTER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
-var LOCAL_HARNESS_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+var LOCAL_HARNESS_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED !== "false";
 var SCHEDULED_EVALS_WRITE_ENABLED = process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
 var WEBMCP_INSPECTOR_ENABLED = process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
 var EVAL_WIDGET_MODEL_CONTEXT = process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
@@ -9725,6 +9731,7 @@ var MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
 var MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
 var MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
 var MCPJAM_HOSTED_ORIGIN = process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") || "https://app.mcpjam.com";
+var MCPJAM_PUBLIC_ORIGIN = process.env.MCPJAM_PUBLIC_ORIGIN?.replace(/\/+$/, "") || null;
 function parseAllowedHosts(raw) {
   return raw ? raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0) : [];
 }

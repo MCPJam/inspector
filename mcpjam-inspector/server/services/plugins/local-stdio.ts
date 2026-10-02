@@ -1,3 +1,4 @@
+import { withLocalCheckSignal } from "../../utils/local-server-check-queue.js";
 /**
  * Local stdio plugin components: identity → materialized bundle → spawnable
  * config (INS-6).
@@ -135,7 +136,7 @@ async function downloadBundleSource(
     return null;
   }
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: withLocalCheckSignal() });
     if (!response.ok) return null;
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength > MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES) return null;
@@ -403,7 +404,7 @@ export function releasePluginLease(serverName: string): void {
   release();
 }
 
-function retainPluginLease(serverName: string, release: () => void): void {
+export function retainPluginLease(serverName: string, release: () => void): void {
   releasePluginLease(serverName);
   leasesByServerName.set(serverName, release);
 }

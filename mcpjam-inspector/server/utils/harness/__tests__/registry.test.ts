@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import { PINNED_CODEX_VERSION } from "../codex-appserver/bridge/app-server-protocol";
 import {
   buildBrokerDummyAuth,
   getHarnessAdapter,
@@ -10,6 +15,12 @@ import {
   patchClaudeCodeHarnessBootstrap,
   registeredHarnessIds,
 } from "../registry";
+
+vi.mock("../claude-code-bootstrap.js", async (original) => {
+  const actual = await original<typeof import("../claude-code-bootstrap.js")>();
+  return { ...actual, createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness) };
+});
+import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
 
 describe("harness registry", () => {
   it("returns the claude-code adapter", () => {
@@ -141,11 +152,25 @@ describe("harness registry", () => {
   // raw-key credential path (COMP-23) — the broker's proxyBaseUrl arrives
   // already protocol-correct from the backend.
 
-  it("supportsModel: Claude Code runs anything, Codex only gpt-5", () => {
+  it("supportsModel reads the evidence table: Claude Code runs its families, Codex only gpt-5", () => {
     const cc = getHarnessAdapter("claude-code");
     const codex = getHarnessAdapter("codex");
     expect(cc.supportsModel("anthropic/claude-haiku-4.5")).toBe(true);
-    expect(cc.supportsModel("openai/gpt-5-nano")).toBe(true);
+    expect(cc.supportsModel("anthropic/claude-sonnet-4.5")).toBe(true);
+    // Claude Code only runs Anthropic models; it used to accept anything and
+    // let the CLI silently run its own default instead.
+    expect(cc.supportsModel("openai/gpt-5-nano")).toBe(false);
+    expect(cc.modelSupport("openai/gpt-5.6-luna").status).toBe("unsupported");
+    // An Anthropic model outside haiku/sonnet/opus has no verified native id:
+    // unknown, which only Playground chat may run.
+    expect(cc.modelSupport("anthropic/claude-fable-5")).toMatchObject({
+      status: "unknown",
+      reason: `not verified for claude-code ${HARNESS_PINNED_VERSIONS["claude-code"]}`,
+    });
+    expect(cc.supportsModel("anthropic/claude-fable-5")).toBe(false);
+    expect(
+      cc.supportsModel("anthropic/claude-fable-5", { allowUnknown: true }),
+    ).toBe(true);
     expect(codex.supportsModel("openai/gpt-5-nano")).toBe(true);
     // MCPJam-provided but not Codex-mappable ⇒ unsupported (rejected in preflight).
     expect(codex.supportsModel("anthropic/claude-haiku-4.5")).toBe(false);
@@ -172,9 +197,16 @@ describe("harness registry", () => {
     ["openai/gpt-5.6"],
     ["openai/GPT-5.6-Terra"],
   ])("refuses the tool-less %s rather than running it chat-only", (modelId) => {
+    // Refused by the evidence table at the pinned 0.149.x CLI, not by the id
+    // mapping: `toNativeModel` still maps the gpt-5 family, and an unverified
+    // newer CLI reads the pair as `unknown` rather than inheriting the refusal.
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel(modelId)).toBe(false);
-    expect(codex.toNativeModel?.(modelId)).toBeUndefined();
+    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(false);
+    expect(codex.modelSupport(modelId).status).toBe("unsupported");
+    expect(codex.toNativeModel?.(modelId)).toBe(
+      modelId.slice("openai/".length),
+    );
   });
 
   it.each([
@@ -216,6 +248,87 @@ describe("harness registry", () => {
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel("openai/gpt-5.60")).toBe(true);
     expect(codex.supportsModel("openai/gpt-5.61-mini")).toBe(true);
+  });
+
+  it("the installed bridge overrides an unverified Anthropic id to its own Gateway id", async () => {
+    // Playground chat may run an `unknown` Anthropic id with a warning. The
+    // CLI gets the model's own slug (`toClaudeCodeModel`), and the patched
+    // bridge must map that slug to the provider-qualified Gateway id — if it
+    // omitted the override the wire id would not be the model asked for.
+    const harness = patchClaudeCodeHarnessBootstrap(
+      createClaudeCode({
+        model: "claude-fable-5",
+        auth: {
+          AI_GATEWAY_API_KEY: "test",
+          AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+        },
+      }) as any,
+    );
+    const bootstrap = await harness.getBootstrap?.();
+    const content =
+      bootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
+        ?.content ?? "";
+    const start = content.indexOf("function gatewayModelOverrideSettingsFor(");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const endMarker = "return { modelOverrides: overrides };";
+    const end = content.indexOf(endMarker, start);
+    const closing = content.indexOf("}", end + endMarker.length);
+    const source = content.slice(start, closing + 1);
+    const overridesFor = new Function(
+      `${source}; return gatewayModelOverrideSettingsFor;`,
+    )() as (model: unknown) => { modelOverrides: Record<string, string> } | undefined;
+
+    expect(overridesFor("claude-fable-5")).toEqual({
+      modelOverrides: { "claude-fable-5": "anthropic/claude-fable-5" },
+    });
+    // Unchanged for the verified families…
+    expect(overridesFor("claude-sonnet-4-5")).toEqual({
+      modelOverrides: { "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5" },
+    });
+    // …and still nothing for a non-Anthropic or malformed id.
+    expect(overridesFor("gpt-5")).toBeUndefined();
+    expect(overridesFor("claude-$(id)")).toBeUndefined();
+  });
+
+  it("claude-code maps an unverified Anthropic id to itself, never to the CLI default", () => {
+    // Playground chat may run an `unknown` pair with a warning; passing no
+    // model would silently run the CLI's default under this model's name.
+    const { toNativeModel } = getHarnessAdapter("claude-code");
+    expect(toNativeModel?.("anthropic/claude-fable-5")).toBe("claude-fable-5");
+  });
+
+  it("every adapter reports the shared pinned runtime version", () => {
+    for (const id of registeredHarnessIds()) {
+      expect(getHarnessAdapter(id).pinnedRuntimeVersion).toBe(
+        HARNESS_PINNED_VERSIONS[id] ?? undefined,
+      );
+    }
+  });
+
+  it("HARNESS_PINNED_VERSIONS matches the CLIs the installed adapters pin", () => {
+    // The evidence table is keyed by these versions, so a package bump that
+    // leaves them behind would evaluate the table at the wrong CLI.
+    const require = createRequire(import.meta.url);
+    const bridgePkg = (adapter: string) =>
+      JSON.parse(
+        readFileSync(
+          join(
+            dirname(require.resolve(`${adapter}/package.json`)),
+            "dist/bridge/package.json",
+          ),
+          "utf8",
+        ),
+      ) as { dependencies: Record<string, string> };
+    expect(
+      bridgePkg("@ai-sdk/harness-claude-code").dependencies[
+        "@anthropic-ai/claude-code"
+      ],
+    ).toBe(HARNESS_PINNED_VERSIONS["claude-code"]);
+    expect(
+      bridgePkg("@ai-sdk/harness-codex").dependencies["@openai/codex-sdk"],
+    ).toBe(HARNESS_PINNED_VERSIONS.codex);
+    // The app-server transport pins the same CLI.
+    expect(PINNED_CODEX_VERSION).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 
   it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {
@@ -325,13 +438,14 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("anthropic/claude-");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     // The overrides MERGE over `permissionOptions.settings` (the adapter's own
     // settings, spread last into the query options): injecting a bare
     // `settings` key earlier in the literal would be silently clobbered.
     expect(bridge?.content).toContain(
-      "settings: { ...(permissionOptions.settings ?? {})",
+      "...(permissionOptions.settings ?? {})",
     );
     // Fallback dedup only suppresses an EXACT repeat of the immediately prior
     // fallback (e.g. msg.result echoing the last text block) — never a full
@@ -401,14 +515,50 @@ const toUserMessage = (options) => ({
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
+    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     expect(bridge?.content).toContain(
-      "settings: { ...(permissionOptions.settings ?? {})",
+      "...(permissionOptions.settings ?? {})",
     );
     // The effort-level compat knob is createClaudeCode `env` configuration
     // now, not a bridge-source rewrite (the installed bridge has no reference
     // at all, so a reappearing one means the patch regressed to the old form).
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+  });
+
+  it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
+    const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
+      model: "haiku",
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }) as any);
+    const bootstrap = (await original.getBootstrap?.())!;
+    const legacy = {
+      ...bootstrap,
+      files: bootstrap.files.map((file) => ({
+        ...file,
+        content: file.content.replace("      strictMcpConfig: true,\n", ""),
+      })),
+    };
+    for (const recipe of [legacy, bootstrap]) {
+      const patched = patchClaudeCodeHarnessBootstrap({
+        ...original,
+        getBootstrap: async () => recipe,
+      });
+      const result = await patched.getBootstrap?.();
+      const bridge = result?.files.find((file) => file.path.endsWith("/bridge.mjs"));
+      expect(bridge?.content.match(/strictMcpConfig: true/g)).toHaveLength(1);
+    }
+    const malformed = patchClaudeCodeHarnessBootstrap({
+      ...original,
+      getBootstrap: async () => ({
+        ...legacy,
+        files: legacy.files.map((file) => ({
+          ...file,
+          content: file.content.replace("      mcpServers,\n      cwd: workdir,", "      cwd: workdir,"),
+        })),
+      }),
+    });
+    await expect(malformed.getBootstrap?.()).rejects.toThrow("MCP query options shape changed");
   });
 
   it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
@@ -524,27 +674,24 @@ const toUserMessage = (options) => ({
     expect(() => getHarnessAdapter("pi")).toThrow(/Unsupported harness/);
   });
 
-  describe("deliverMcpServers (refactor guard — Claude .mcp.json unchanged)", () => {
+  describe("native MCP delivery", () => {
     const mcpJson = {
       mcpServers: {
         weather: { type: "http" as const, url: "https://example.com/mcp" },
       },
     };
 
-    it("Claude Code writes the same path + content the inline write did", async () => {
+    it("Claude Code uses session configuration without writing workspace files", () => {
       const adapter = getHarnessAdapter("claude-code");
-      const writes: { path: string; content: string }[] = [];
-      await adapter.deliverMcpServers?.({
-        writeTextFile: async (a) => {
-          writes.push(a);
-        },
-        sessionWorkDir: "/home/user/work",
-        mcpJson,
+      expect(adapter.mcpNativeDelivery).toBe("session-config");
+      expect(adapter.deliverMcpServers).toBeUndefined();
+      const runtime = adapter.createHarness({
+        modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson,
       });
-      expect(writes).toHaveLength(1);
-      expect(writes[0]!.path).toBe("/home/user/work/.mcp.json");
-      // Content is the canonical serialization (same helper as before the refactor).
-      expect(JSON.parse(writes[0]!.content)).toEqual(mcpJson);
+      expect(runtime.harnessId).toBe("claude-code");
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        mcpServers: mcpJson.mcpServers,
+      }));
     });
 
     it("Codex writes no sandbox MCP config — its servers are host-executed", () => {

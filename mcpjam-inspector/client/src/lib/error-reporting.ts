@@ -1,16 +1,24 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
+import {
+  createQueryRequestCache,
+  queryFailureTags,
+  queryPageLocation,
+  safeQueryError,
+} from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
-import { isAuthorizationRefusal } from "./authorization-refusal";
+import {
+  isAuthorizationRefusal,
+  isSessionRevokedError,
+  isUnauthenticatedError,
+} from "./authorization-refusal";
 import {
   describeError,
   isNormalizedError,
   originOf,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
-import {
-  isCredentialBearingPath,
-  isErrorCaptureSurface,
-} from "./PosthogUtils";
+import { isCredentialBearingPath, isErrorCaptureSurface } from "./PosthogUtils";
 
 export type ReportLevel = "fatal" | "error" | "warning" | "info";
 
@@ -22,6 +30,8 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+  /** Captured from the observed Convex client, never query arguments. */
+  queryBackend?: string;
 }
 
 /**
@@ -78,7 +88,12 @@ export function reportPossiblyOurFailure(
     // Checked here as well as in `reportCaught`, so the documented return value
     // stays honest: without this a refusal would be dropped downstream and
     // still reported as sent.
-    if (isAuthorizationRefusal(error)) return false;
+    if (
+      isAuthorizationRefusal(error) ||
+      isSessionRevokedError(error) ||
+      isUnauthenticatedError(error)
+    )
+      return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
     // the real failure with the error object in hand and puts the verdict on
@@ -113,6 +128,8 @@ export function reportPossiblyOurFailure(
   }
 }
 
+const duplicateQueryReport = createQueryRequestCache();
+
 function toError(error: unknown): Error {
   if (error instanceof Error) return error;
   try {
@@ -135,15 +152,47 @@ function toError(error: unknown): Error {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
-  if (isAuthorizationRefusal(error)) return;
+  if (
+    isAuthorizationRefusal(error) ||
+    isSessionRevokedError(error) ||
+    isUnauthenticatedError(error)
+  )
+    return;
 
-  const normalized = toError(error);
+  const normalized = safeQueryError(toError(error));
+  const queryTags = queryFailureTags(normalized.message);
+  if (queryTags && options.queryBackend)
+    queryTags.convex_backend = options.queryBackend;
+  if (
+    queryTags &&
+    duplicateQueryReport(queryTags.convex_backend, queryTags.request_id)
+  )
+    return;
+  const page =
+    queryTags && typeof window !== "undefined"
+      ? queryPageLocation(window.location.href)
+      : undefined;
 
+  const recovery = useSessionRefreshStore.getState();
+  const recoveryTags =
+    recovery.recoveryId && Date.now() - recovery.recoveryAt < 300_000
+      ? { auth_recovery_id: recovery.recoveryId }
+      : {};
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source },
-      ...(options.extra ? { extra: options.extra } : {}),
+      tags: { source: options.source, ...queryTags, ...recoveryTags },
+      ...(queryTags
+        ? {
+            extra: {
+              boundary: options.extra?.boundary,
+              componentStack: options.extra?.componentStack,
+              page_location: page,
+            },
+          }
+        : options.extra
+          ? { extra: options.extra }
+          : {}),
     });
   } catch {
     // ignore — see doc comment
@@ -165,7 +214,9 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       posthog.captureException(normalized, {
         source: options.source,
         level: options.level ?? "error",
-        ...(options.extra ?? {}),
+        ...(queryTags
+          ? { ...queryTags, page_location: page }
+          : (options.extra ?? {})),
       });
     }
   } catch {

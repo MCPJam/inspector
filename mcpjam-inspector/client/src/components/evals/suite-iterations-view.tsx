@@ -1,7 +1,5 @@
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
-import { AssertionBacktestPanel } from "./assertion-backtest-panel";
-import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
 import {
@@ -13,6 +11,7 @@ import {
   useRef,
 } from "react";
 import { useMutation, useConvexAuth, useQuery } from "convex/react";
+import { Loader2 } from "lucide-react";
 import {
   EVAL_GRADING_VALIDITY_HINTS,
   EVAL_GRADING_VALIDITY_LABELS,
@@ -44,6 +43,7 @@ import {
   EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
 } from "@/components/computer/CloudUnreachableNotice";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
@@ -51,6 +51,8 @@ import {
   buildHostNamesById,
   compareRunsBySequence,
   evalSuitePinsSandboxImage,
+  generationEnvironmentChoices,
+  generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -68,7 +70,11 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
-import { isRubricValid } from "./judge-rubric-editor";
+import {
+  isRubricValid,
+  RUBRIC_CHECK_ROW_IDENTITY_HINT,
+} from "./judge-rubric-editor";
+import { areRubricChecksValid } from "./rubric-checks-model";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
@@ -86,6 +92,9 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { launchRuns } from "../evaluate/run-results-matrix-model";
+import { runPageRunIds, useRunsIterations } from "./use-runs-iterations";
+import { isDraftTestCaseId } from "./draft-test-case";
+import type { RunMetricsByRun } from "./run-metrics";
 import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
@@ -100,8 +109,15 @@ import { buildEvalSharePath } from "@/lib/app-navigation";
 // page; hidden there in the judge-config rework (see comment at the
 // removed render site). Import kept dropped to avoid an unused-symbol
 // lint and to make the removal obvious if someone reaches for it later.
-import { useSuiteData, useRunDetailData } from "./use-suite-data";
-import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  useSuiteData,
+  useSuiteDataFromMetrics,
+  useRunDetailData,
+} from "./use-suite-data";
+import {
+  hasRubricChecksCapability,
+  useSuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   CAPABILITY_REASON_COPY,
@@ -123,8 +139,10 @@ import {
   committedSuiteSettingsValues,
   describeDraft,
   dirtyKeys,
+  environmentImageSaveBlock,
   initSuiteSettingsDraft,
   readSuiteSettingsValues,
+  suiteImageSetting,
   suiteSettingsReducer,
   type SuiteSettingsKey,
 } from "./suite-settings-draft";
@@ -300,13 +318,35 @@ function SuiteCiOwnedNotice({ onDuplicate }: { onDuplicate?: () => void }) {
   );
 }
 
+/** A run or case page whose own rows are still loading. */
+function RowsLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-h-0 flex-1 items-center justify-center"
+      data-testid="suite-rows-loading"
+    >
+      <div className="text-center">
+        <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
+        <p className="mt-3 text-sm text-muted-foreground">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+const NO_ITERATIONS: EvalIteration[] = [];
+const NO_METRICS: RunMetricsByRun = new Map();
+/** Newest trials of one case, as the case editor reads them. */
+const CASE_HISTORY_LIMIT = 200;
+
 export function SuiteIterationsView({
   suite,
   runReviewRequested = false,
   onRunReviewClose,
   cases,
-  iterations,
-  allIterations,
+  iterations: legacyIterations = NO_ITERATIONS,
+  allIterations: legacyAllIterations = NO_ITERATIONS,
+  metricsByRun,
+  metricsLoading = false,
   runs,
   runsLoading,
   aggregate,
@@ -369,8 +409,16 @@ export function SuiteIterationsView({
   runReviewRequested?: boolean;
   onRunReviewClose?: () => void;
   cases: EvalCase[];
-  iterations: EvalIteration[];
-  allIterations: EvalIteration[];
+  /**
+   * The legacy Evals surfaces pass the whole suite's iterations. Evaluate
+   * passes `metricsByRun` instead and omits these: history reads per-run
+   * metrics, and a run or case view loads its own rows here.
+   */
+  iterations?: EvalIteration[];
+  allIterations?: EvalIteration[];
+  /** One metrics object per run — see `run-metrics.ts`. Evaluate only. */
+  metricsByRun?: RunMetricsByRun;
+  metricsLoading?: boolean;
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
@@ -791,7 +839,8 @@ export function SuiteIterationsView({
     // a rubric the platform rejects takes the settings beside it down with it.
     () =>
       canCommit(draft, areAllChecksValid) &&
-      isRubricValid(draft.current.judgeRubric),
+      isRubricValid(draft.current.judgeRubric) &&
+      areRubricChecksValid(draft.current.judgeConfig?.rubricChecks),
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
@@ -821,7 +870,9 @@ export function SuiteIterationsView({
     ? { message: "A criterion is missing a label" }
     : !areAllChecksValid(draftDefaultPredicates)
       ? { message: "An assertion is incomplete" }
-      : undefined;
+      : !areRubricChecksValid(draft.current.judgeConfig?.rubricChecks)
+        ? { message: "A rubric-check question is incomplete" }
+        : undefined;
   // Which criterion SCOPE the sheet is editing, and therefore which field and
   // which units each grading row shows. Read from the DRAFT rather than the
   // suite so the rows follow a scope change the moment it is drafted; this
@@ -831,6 +882,9 @@ export function SuiteIterationsView({
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
   const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const { capable: composeCapable } = useEvalComposeCapable(projectId);
+  // Whether the backend carries an environment suite's settings onto its
+  // environments (`environmentSettings`) instead of a legacy suite field.
+  const environmentCapabilities = useEnvironmentCapabilities(projectId);
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   // Discarding is what the person just agreed to when they confirmed the
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
@@ -862,6 +916,16 @@ export function SuiteIterationsView({
 
   const handleCommitSettings = useCallback(async () => {
     if (!draftCanCommit || isCommitting || editingDisabled) return;
+    const runsEnvironments = Boolean(suite.environmentIds?.length);
+    const imageBlock = environmentImageSaveBlock({
+      runsEnvironments,
+      dirtyKeys: dirtySettingKeys,
+      capabilities: environmentCapabilities,
+    });
+    if (imageBlock) {
+      toast.error(imageBlock);
+      return;
+    }
     const outcome = await commit({
       draft,
       suiteId: suite._id,
@@ -873,6 +937,9 @@ export function SuiteIterationsView({
         : undefined,
       expectedRevisionNumber: suite.revisionNumber,
       liveEnvironment: suite.environment,
+      environmentSuite:
+        runsEnvironments &&
+        environmentCapabilities?.environmentSuiteSettings === true,
     });
     if (outcome.status === "saved") {
       // What the save actually WROTE: the normalized form of the keys it
@@ -912,6 +979,7 @@ export function SuiteIterationsView({
     isCommitting,
     dirtySettingKeys,
     draftChanges,
+    environmentCapabilities,
   ]);
 
   // Save the same validated draft from the button or keyboard shortcut.
@@ -936,6 +1004,81 @@ export function SuiteIterationsView({
   const [shareOpen, setShareOpen] = useState(false);
   const unifiedShareEvals =
     useFeatureFlagEnabled("unified-share-evals") === true;
+
+  // Selected run details
+  const selectedRunDetails = useMemo(() => {
+    if (!selectedRunId) return null;
+    const run = runs.find((r) => r._id === selectedRunId);
+    return run ?? null;
+  }, [selectedRunId, runs]);
+
+  const previousCompletedRunForSelectedRun = useMemo(() => {
+    if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
+      return null;
+    }
+    const earlierCompletedRuns = runs
+      .filter(
+        (run) =>
+          run._id !== selectedRunDetails._id &&
+          run.status === "completed" &&
+          (!suiteDetailOverview ||
+            (run.namedHostId === selectedRunDetails.namedHostId &&
+              run.effectiveModelId === selectedRunDetails.effectiveModelId &&
+              (!selectedRunDetails.runGroupId ||
+                run.runGroupId !== selectedRunDetails.runGroupId))) &&
+          compareRunsBySequence(run, selectedRunDetails) < 0,
+      )
+      .sort((a, b) => compareRunsBySequence(b, a));
+    return earlierCompletedRuns[0] ?? null;
+  }, [runs, selectedRunDetails, suiteDetailOverview]);
+
+  // Evaluate (`metricsByRun` given) never holds the whole suite's rows. The
+  // open run's launch, the launch before it (hero deltas), an explicit compare
+  // base, and the open case are each read on their own, one run or one case at
+  // a time. The legacy surfaces keep reading the suite-wide list they pass in.
+  const perRunMode = metricsByRun !== undefined;
+  const detailRunIds = useMemo(
+    () =>
+      perRunMode && selectedRunDetails
+        ? runPageRunIds(
+            selectedRunDetails,
+            runs,
+            previousCompletedRunForSelectedRun?._id ?? null,
+          )
+        : [],
+    [perRunMode, selectedRunDetails, runs, previousCompletedRunForSelectedRun],
+  );
+  const detailRows = useRunsIterations(detailRunIds, perRunMode);
+  // A draft case has no row yet, so it has no history to read — and its
+  // `draft:` id would fail the query's `v.id("testCase")` check.
+  const historyTestCaseId =
+    perRunMode && selectedTestId && !isDraftTestCaseId(selectedTestId)
+      ? selectedTestId
+      : null;
+  const caseRows = useQuery(
+    "testSuites:listTestIterations" as any,
+    historyTestCaseId
+      ? ({ testCaseId: historyTestCaseId, limit: CASE_HISTORY_LIMIT } as any)
+      : "skip",
+  ) as EvalIteration[] | undefined;
+  // Everything below reads these two names. In per-run mode they hold only
+  // the rows this view has loaded, which is all a run page needs.
+  const iterations = perRunMode ? NO_ITERATIONS : legacyIterations;
+  const allIterations = perRunMode
+    ? detailRows.iterations
+    : legacyAllIterations;
+  const caseIterations = perRunMode
+    ? (caseRows ?? NO_ITERATIONS)
+    : legacyAllIterations;
+  // A page whose rows are still on their way shows a loader, never an empty
+  // result: "no trials" and "not loaded yet" are different answers.
+  const runRowsPending =
+    perRunMode &&
+    selectedRunDetails != null &&
+    !detailRows.byRun.has(selectedRunDetails._id) &&
+    !detailRows.failedRunIds.has(selectedRunDetails._id);
+  const caseRowsPending = historyTestCaseId !== null && caseRows === undefined;
+
   // chatSessionIds for the currently-selected run (unified-trace iterations
   // only; legacy `blob`-only iterations have no chatSessions row to export).
   const runChatSessionIds = useMemo(() => {
@@ -1010,7 +1153,7 @@ export function SuiteIterationsView({
   });
 
   // Use custom hooks for data calculations
-  const { runTrendData, modelStats } = useSuiteData(
+  const legacySuiteData = useSuiteData(
     suite,
     cases,
     iterations,
@@ -1018,19 +1161,19 @@ export function SuiteIterationsView({
     runs,
     aggregate,
   );
+  const metricsSuiteData = useSuiteDataFromMetrics(
+    runs,
+    metricsByRun ?? NO_METRICS,
+  );
+  const { runTrendData, modelStats } = perRunMode
+    ? metricsSuiteData
+    : legacySuiteData;
 
   const { caseGroupsForSelectedRun } = useRunDetailData(
     selectedRunId,
     allIterations,
     effectiveRunDetailSortBy,
   );
-
-  // Selected run details
-  const selectedRunDetails = useMemo(() => {
-    if (!selectedRunId) return null;
-    const run = runs.find((r) => r._id === selectedRunId);
-    return run ?? null;
-  }, [selectedRunId, runs]);
 
   const latestCompletedRun = useMemo(
     () =>
@@ -1056,26 +1199,6 @@ export function SuiteIterationsView({
 
   const selectedCompareBaseRunId =
     route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
-
-  const previousCompletedRunForSelectedRun = useMemo(() => {
-    if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
-      return null;
-    }
-    const earlierCompletedRuns = runs
-      .filter(
-        (run) =>
-          run._id !== selectedRunDetails._id &&
-          run.status === "completed" &&
-          (!suiteDetailOverview ||
-            (run.namedHostId === selectedRunDetails.namedHostId &&
-              run.effectiveModelId === selectedRunDetails.effectiveModelId &&
-              (!selectedRunDetails.runGroupId ||
-                run.runGroupId !== selectedRunDetails.runGroupId))) &&
-          compareRunsBySequence(run, selectedRunDetails) < 0,
-      )
-      .sort((a, b) => compareRunsBySequence(b, a));
-    return earlierCompletedRuns[0] ?? null;
-  }, [runs, selectedRunDetails, suiteDetailOverview]);
 
   // Resolve namedHostId → display name for any run-detail / list views
   // that want to surface which host a run was triggered against. The project
@@ -1373,7 +1496,10 @@ export function SuiteIterationsView({
       : (featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined)));
+          : undefined))) ??
+    (suiteImageSetting(suite).mixed
+      ? "These environments pin different images. Change each one's image on the Environments page."
+      : undefined);
   const subsectionOptions = useMemo(
     () => ({
       isVerdictPolicyV2,
@@ -1748,6 +1874,8 @@ export function SuiteIterationsView({
           onOpenChange={setImportOpen}
           projectId={projectId}
           suiteId={suite._id}
+          environmentChoices={generationEnvironmentChoices(suite)}
+          environmentId={generationEnvironmentId(suite)}
         />
       )}
       {/* Header */}
@@ -1854,7 +1982,11 @@ export function SuiteIterationsView({
       {!isEditMode && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
-            {viewMode === "test-edit" && selectedTestId ? (
+            {(viewMode === "test-edit" || viewMode === "test-detail") &&
+            selectedTestId &&
+            caseRowsPending ? (
+              <RowsLoading key={contentKey} label="Loading case history..." />
+            ) : viewMode === "test-edit" && selectedTestId ? (
               <motion.div
                 key={contentKey}
                 initial={shouldReduceMotion ? false : { opacity: 0 }}
@@ -1880,7 +2012,7 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
-                  suiteIterations={allIterations}
+                  suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
                   // it rides. With this false the trace pane issues no chain
@@ -1947,7 +2079,7 @@ export function SuiteIterationsView({
                 );
                 if (!selectedCase) return null;
 
-                const caseIterations = allIterations.filter(
+                const selectedCaseIterations = caseIterations.filter(
                   (iter) => iter.testCaseId === selectedTestId,
                 );
 
@@ -1965,7 +2097,7 @@ export function SuiteIterationsView({
                     <TestCaseDetailView
                       testCase={selectedCase}
                       runs={runs}
-                      iterations={caseIterations}
+                      iterations={selectedCaseIterations}
                       onOpenExportCase={() =>
                         handleOpenTestCaseExport(selectedCase)
                       }
@@ -1994,7 +2126,7 @@ export function SuiteIterationsView({
                 key={selectedRunDetails._id}
                 currentRun={selectedRunDetails}
                 runs={runs}
-                iterations={allIterations}
+                metricsByRun={metricsByRun ?? NO_METRICS}
                 suiteName={suite.name}
                 hostNamesById={hostNamesById}
                 passThreshold={resolveSuitePassThreshold(suite)}
@@ -2003,6 +2135,8 @@ export function SuiteIterationsView({
                 }
                 onOpenRun={(runId) => navigation.toRunDetail(suite._id, runId)}
               />
+            ) : showEvaluateRunPage && selectedRunDetails && runRowsPending ? (
+              <RowsLoading key={contentKey} label="Loading run..." />
             ) : showEvaluateRunPage && selectedRunDetails ? (
               <motion.div
                 key={contentKey}
@@ -2125,10 +2259,18 @@ export function SuiteIterationsView({
                   suite={suite}
                   cases={cases}
                   runs={runs}
-                  runsLoading={runsLoading}
-                  allIterations={allIterations}
+                  runsLoading={runsLoading || metricsLoading}
+                  metricsByRun={metricsByRun ?? NO_METRICS}
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
+                  importJobId={
+                    route.type === "suite-overview"
+                      ? (route.importJob ?? null)
+                      : null
+                  }
+                  onClearImportJob={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
@@ -2145,6 +2287,11 @@ export function SuiteIterationsView({
                   }
                   isGeneratingTestCases={isGeneratingTestCases}
                   onRunClick={handleRunClick}
+                  // Not gated on `hideRunActions`: Evaluate always sets it
+                  // (it hides the legacy rail's controls), and this table is
+                  // Evaluate's own.
+                  onDeleteRun={canDeleteRuns ? onDirectDeleteRun : undefined}
+                  canDeleteRun={canDeleteRun}
                   onTestCaseClick={(testCaseId) =>
                     navigation.toTestEdit(suite._id, testCaseId)
                   }
@@ -2346,6 +2493,11 @@ export function SuiteIterationsView({
                   )}
                 </motion.div>
               )
+            ) : viewMode === "run-detail" &&
+              selectedRunDetails &&
+              runRowsPending &&
+              !selectedCompareBaseRunId ? (
+              <RowsLoading key={contentKey} label="Loading run..." />
             ) : viewMode === "run-detail" && selectedRunDetails ? (
               <motion.div
                 key={contentKey}
@@ -2775,8 +2927,14 @@ export function SuiteIterationsView({
                           value: next,
                         })
                       }
+                      rowIdentityHint={
+                        hasRubricChecksCapability(capabilities)
+                          ? RUBRIC_CHECK_ROW_IDENTITY_HINT
+                          : undefined
+                      }
                     />
                   }
+                  judgeRubric={draft.current.judgeRubric}
                   groundednessEvidence={{
                     result: groundedness.result ?? null,
                     pending: groundedness.pending,
@@ -2791,31 +2949,6 @@ export function SuiteIterationsView({
                     ) : null
                   }
                 />
-                <details className="space-y-4">
-                  <summary className="cursor-pointer text-sm text-muted-foreground">
-                    Preview against the latest run
-                  </summary>
-                  <AssertionBacktestPanel
-                    projectId={projectId ?? undefined}
-                    runId={
-                      sortRunsNewestFirst(runs).find((run) =>
-                        TERMINAL_RUN_STATUSES.has(run.status ?? ""),
-                      )?._id
-                    }
-                    assertions={draftDefaultPredicates}
-                  />
-                  {pickBacktestableRun(runs) && draft.current.judgeRubric ? (
-                    <JudgeBacktestPanel
-                      key={`${suite._id}:${JSON.stringify(
-                        draft.current.judgeRubric,
-                      )}`}
-                      suiteId={suite._id}
-                      runId={pickBacktestableRun(runs)!._id}
-                      runNumber={pickBacktestableRun(runs)!.runNumber}
-                      draftRubric={draft.current.judgeRubric}
-                    />
-                  ) : null}
-                </details>
               </div>
             </fieldset>
           </div>

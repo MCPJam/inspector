@@ -95,10 +95,15 @@ export const createLlmModel = (
         /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i,
       );
       const resourceName = azureResourceMatch?.[1];
+      // The deployment: the row's explicit `nativeModelId` when it has one
+      // (an org Azure deployment row), else the row id as before. Never the
+      // row id with its `azure/` prefix stripped.
+      const deployment =
+        modelDefinition.nativeModelId?.trim() || String(modelDefinition.id);
       return createAzure({
         apiKey,
         ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
-      })(modelDefinition.id);
+      })(deployment);
     }
     case "custom": {
       const providerName = modelDefinition.customProviderName;

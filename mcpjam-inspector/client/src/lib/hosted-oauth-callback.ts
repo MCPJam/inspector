@@ -16,6 +16,7 @@ import {
 
 export interface HostedOAuthPendingMarker {
   connectionIntent?: ConnectionIntent;
+  initiatingUserId?: string | null;
   surface: HostedOAuthSurface;
   organizationId?: string | null;
   projectId?: string | null;
@@ -174,6 +175,8 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
 
     return {
       surface: parsed.surface,
+      ...(parsed.initiatingUserId === null || typeof parsed.initiatingUserId === "string"
+        ? { initiatingUserId: parsed.initiatingUserId } : {}),
       ...(parsed.connectionIntent?.kind === "add"
         ? { connectionIntent: { kind: "add" as const } }
         : parsed.connectionIntent?.kind === "replace" &&

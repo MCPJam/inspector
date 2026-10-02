@@ -197,6 +197,7 @@ export function MCPJamLimitDialog() {
   );
   const limitSurface = useMCPJamLimitDialogStore((s) => s.surface);
   const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
+  const limitShortfall = useMCPJamLimitDialogStore((s) => s.shortfall);
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
   const { user, isLoading, signIn } = useAuth();
@@ -314,12 +315,24 @@ export function MCPJamLimitDialog() {
   const memberDescription = isFreeEffectivePlan
     ? `${upgradeBenefit} Ask an owner to upgrade.`
     : "Ask an owner to add shared credits and keep your team testing.";
-  const creditDescription =
+  const planCreditDescription =
     isKnownNonManager || showCreditsUpgradeRequest
       ? memberDescription
       : isFreeEffectivePlan
       ? `Your Free credits reset daily. ${upgradeBenefit}`
       : "Add shared credits to keep your team testing.";
+  // The bucket still has credits, just fewer than this request could cost, so
+  // the reset line would imply they are gone.
+  const creditDescription = limitShortfall
+    ? `You have ${
+        limitShortfall.creditsRemaining
+      } credits left, but this request needs about ${
+        limitShortfall.creditsRequired
+      }. Try a cheaper model or a shorter conversation. ${planCreditDescription.replace(
+        "Your Free credits reset daily. ",
+        "",
+      )}`
+    : planCreditDescription;
   const swarmDescription = `${
     limitPeriod
       ? creditDescription.replace("Your Free credits reset daily. ", "")
@@ -472,6 +485,7 @@ export function MCPJamLimitDialog() {
         <CreditsLimitDialogView
           engagementContext={engagementContext}
           isFreePlan={isFreeEffectivePlan}
+          title={limitShortfall ? "Not enough MCPJam credits" : undefined}
           description={isSwarmWall ? swarmDescription : creditDescription}
           isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}

@@ -379,10 +379,16 @@ export function deriveSwarmFindingsModelFromWire({
         diagnosisStage,
         diagnosis: {
           title: SWARM_FINDING_DISPOSITION_LABELS[disposition],
+          // A goal that never ran has no evidence to be missing: "No session
+          // evidence available" read as an analysis gap on a goal whose
+          // sessions were refused before they started (#5188). Same sentence
+          // the legacy derivation uses.
           detail:
             lead?.mechanismPhrase ??
             lead?.reportExcerpt?.actual ??
-            "No session evidence available.",
+            (disposition === "notRun"
+              ? "No session launched for this goal, so nothing about the server was tested."
+              : "No session evidence available."),
         },
         defaultStage: diagnosisStage ?? "value",
       };

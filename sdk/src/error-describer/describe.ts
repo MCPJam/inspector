@@ -180,6 +180,12 @@ function maybePromoteRawMessage(
   slug: string,
   rawMessage: string,
 ): ErrorCatalogEntry {
+  // The backend's sentence carries the two numbers that make this refusal
+  // make sense; the catalog copy cannot know them.
+  if (slug === "provider/mcpjam_limit_insufficient") {
+    const sentence = mcpjamShortfallSentence(rawMessage);
+    return sentence ? { ...entry, oneLine: sentence } : entry;
+  }
   if (slug !== "internal/unknown") return entry;
   if (!rawMessage) return entry;
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
@@ -575,6 +581,11 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  // Composed copy can put "Out of MCPJam credits" beside the backend's
+  // shortfall sentence; the balance is not empty, so the shortfall wins.
+  if (mcpjamShortfallSentence(message)) {
+    return { slug: "provider/mcpjam_limit_insufficient" };
+  }
   if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
 
   // Same shape of problem as the bearer gate above, and the same surface: the
@@ -958,13 +969,43 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
   };
 }
 
+/**
+ * The backend's refusal when the bucket is not empty but is below the
+ * request's worst-case estimate. Checked before the period phrase: the balance
+ * is not used up, so "daily credits are used up" would be false.
+ */
+const MCPJAM_INSUFFICIENT_CREDITS_PATTERN =
+  /\bThis request needs about (\d+) MCPJam credits; your organization has (\d+) left[^.]{0,40}\./i;
+
+/**
+ * The shortfall sentence, but only when its numbers describe one: an empty
+ * balance is exhaustion, and a request that fits was not refused for size.
+ * Same check the client applies to the structured fields.
+ */
+function mcpjamShortfallSentence(message: string): string | undefined {
+  const match = MCPJAM_INSUFFICIENT_CREDITS_PATTERN.exec(message);
+  if (!match) return undefined;
+  const required = Number(match[1]);
+  const remaining = Number(match[2]);
+  return Number.isSafeInteger(required) &&
+    Number.isSafeInteger(remaining) &&
+    remaining > 0 &&
+    required > remaining
+    ? match[0]
+    : undefined;
+}
+
 export function mcpjamLimitSlugForMessage(
   message: string
 ):
   | "provider/mcpjam_limit"
   | "provider/mcpjam_limit_daily"
   | "provider/mcpjam_limit_monthly"
+  | "provider/mcpjam_limit_insufficient"
   | undefined {
+  if (mcpjamShortfallSentence(message)) {
+    return "provider/mcpjam_limit_insufficient";
+  }
   const limitPeriod =
     /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
   if (limitPeriod) {

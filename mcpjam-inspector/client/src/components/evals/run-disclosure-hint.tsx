@@ -213,6 +213,29 @@ export function describeRunDisclosureDetail(
         ? ""
         : ` — not a DLP system (${disclosure.capture.redaction.limitation})`),
   );
+  // A separate question from at-rest redaction. Older backends omit it, and
+  // then no line is shown rather than a guess.
+  const providerRetention = disclosure.capture.redaction.providerRetention;
+  if (providerRetention) {
+    // Read off the flags themselves, never inferred from the field existing:
+    // a backend that relaxed either one must not still show "required".
+    const noTraining =
+      providerRetention.openrouter.data_collection === "deny" &&
+      providerRetention.gateway.disallowPromptTraining;
+    const policy = providerRetention.zeroDataRetention
+      ? noTraining
+        ? "zero data retention and no training required"
+        : "zero data retention required, training not restricted"
+      : noTraining
+        ? "no training required, zero data retention not required"
+        : "zero data retention and training not restricted";
+    lines.push(
+      `Analysis providers: ${policy} on platform-key analysis calls` +
+        (providerRetention.notAppliedTo.length > 0
+          ? `. Not applied to: ${providerRetention.notAppliedTo.join("; ")}`
+          : ""),
+    );
+  }
   lines.push(
     `Export defaults: ${
       disclosure.capture.exportDefaults.includeContent

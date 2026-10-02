@@ -14,6 +14,7 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 const BASE = "/api/web/bench";
 
@@ -738,7 +739,7 @@ export async function fetchBenchResult(secret: string): Promise<BenchResult> {
   const reportUrl = envelope.scorecard?.reportUrl;
   if (reportUrl) {
     try {
-      const reportResponse = await fetch(reportUrl);
+      const reportResponse = await fetchArtifact(reportUrl);
       if (reportResponse.ok) {
         const parsed = await reportResponse.json();
         if (parsed && typeof parsed === "object") report = parsed;

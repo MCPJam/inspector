@@ -42,6 +42,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 |---|---|---|
 | `http.request.completed` | middleware | `statusCode` |
 | `http.request.failed` | middleware | `statusCode`, `errorCode` |
+| `eval.import.environment_selection.failed` | `routes/shared/eval-authoring.ts` | `projectId`, `suiteId`, `reason`; hosted imports missing an environment also report to Sentry |
 | `mcp.oauth.proxy.failed` | `routes/mcp/oauth.ts`, `routes/web/oauth.ts` | `targetUrlHost`, `oauthPhase`, `errorCode`, `statusCode?` |
 | `mcp.tool.execution.failed` | `routes/web/tools.ts` | `toolName`, `serverId?`, `errorCode` |
 | `tunnel.created` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain`, `existed`, `credentialIdPresent?` |
@@ -49,9 +50,17 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `tunnel.record_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain?`, `errorCode` |
 | `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
 | `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
+| `chat.builtin_tools.withheld` | `routes/web/chat-v2.ts` | `toolIds`, `unknownCount`, `reasons`, `targetKind` |
+| `chat.harness_model_unverified` | `routes/web/chat-v2.ts`, `routes/mcp/chat-v2.ts` | `harness`, `modelId`, `reason` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
+| `browser_profile.download.failed` | `routes/web/browser-profile-download.ts` | `stage`, `statusCode?`, `errorMessage?` |
+| `apikey.expiry.workos_refused` | `routes/web/api-keys.ts` | `statusCode` |
+| `apikey.inventory.truncated` | `routes/web/api-keys.ts` | `listed` |
+| `apikey.admin_revoke.completed` | `routes/web/api-keys.ts` | `workosKeyId`, `alreadyRevoked`, `bindingCleanupFailed`, `bindingCleanupAttempts`, `bindingStatus?` |
+| `apikey.admin_revoke.unavailable` | `routes/web/api-keys.ts` | `workosKeyId`, `errorMessage` |
+| `auth.session.revoke_incomplete` | `routes/web/auth-session.ts` | `reason`, `status` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
 | `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
 

@@ -1,3 +1,4 @@
+import posthogSourcemaps from "@posthog/rollup-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
@@ -7,6 +8,7 @@ import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
+import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
@@ -157,6 +159,26 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       lexerSafeMinify(),
+      // PostHog has no other way to get maps: Sentry deletes them from
+      // `dist/client` before deploy, so PostHog followed `sourceMappingURL` and
+      // got the SPA's index.html back (`bad json at line 1 column 1`). It must
+      // stay BEFORE `sentryVitePlugin`: its `writeBundle` is sequential, so
+      // Rollup finishes this upload before Sentry's parallel `writeBundle`
+      // (which deletes the maps) starts. It deletes nothing itself, so Sentry
+      // still sees every map and remains the only thing that removes them.
+      // A failed PostHog call warns instead of failing the build, like Sentry.
+      warnOnPosthogFailure(
+        posthogSourcemaps({
+          personalApiKey: env.POSTHOG_PERSONAL_API_KEY,
+          projectId: "212744",
+          sourcemaps: {
+            enabled: Boolean(env.POSTHOG_PERSONAL_API_KEY),
+            releaseName: "inspector-client",
+            releaseVersion: `${appVersion}+${buildSurface}`,
+            deleteAfterUpload: false,
+          },
+        }),
+      ),
       sentryVitePlugin({
         org: "mcpjam-gh",
         project: "inspector-client",

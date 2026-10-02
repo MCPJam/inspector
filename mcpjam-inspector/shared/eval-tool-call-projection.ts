@@ -3,7 +3,7 @@
  *
  * One implementation, two callers that had drifted into being two: the live
  * eval runner (`server/services/evals-runner.ts`) and the persisted-transcript
- * predicate path (`server/services/checks/run-predicates-on-chat-session.ts`),
+ * predicate path (`server/services/checks/chat-session-envelope.ts`),
  * whose copy carried a NOTE calling itself a mirror and a back-reference to a
  * line number that had since moved. A mirror nobody can find is a mirror that
  * stops being one.

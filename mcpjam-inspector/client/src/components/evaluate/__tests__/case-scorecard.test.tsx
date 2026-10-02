@@ -57,7 +57,7 @@ function renderCard(
   const result = render(
     <CaseScorecard input={baseInput} {...handlers} {...overrides} />,
   );
-  return { ...handlers, ...result };
+  return { ...handlers, ...result, handlers };
 }
 
 const rows = () => screen.getAllByTestId("case-scorecard-row");
@@ -72,7 +72,16 @@ describe("CaseScorecard", () => {
     ).map((node) => node.getAttribute("data-stage-group"));
     // Response sits between them under analyzer 11: `noToolErrors` grades the
     // answer coming back, not whether the person got what they asked for.
-    expect(groups).toEqual(["selection", "response", "userValue"]);
+    // Every other stage the runner measures leads with its built-in runner
+    // check; `firstToolWas` expects a call, so Tool call is among them.
+    expect(groups).toEqual([
+      "connection",
+      "discovery",
+      "selection",
+      "call",
+      "response",
+      "userValue",
+    ]);
     expect(screen.getByText("Selection")).toBeInTheDocument();
     expect(
       screen.getByText("Did the model choose the right tool for the request?"),
@@ -93,6 +102,58 @@ describe("CaseScorecard", () => {
       "data-provenance",
       "suite",
     );
+  });
+
+  it("shows each runner check as a locked Built-in row, not an evaluator", () => {
+    renderCard();
+    const builtins = rows().filter(
+      (row) => row.getAttribute("data-provenance") === "builtin",
+    );
+    expect(builtins.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Successful connection"),
+      expect.stringContaining("Tools listed"),
+      expect.stringContaining("Tool call completed"),
+      expect.stringContaining("Result returned to the model"),
+    ]);
+    for (const row of builtins) {
+      expect(within(row).getByText("Built-in")).toBeInTheDocument();
+      // No role to author, nothing to edit or remove.
+      expect(within(row).queryByText("Required")).not.toBeInTheDocument();
+      expect(within(row).queryByText("Advisory")).not.toBeInTheDocument();
+      expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+      expect(row.textContent).not.toMatch(/assertion/i);
+    }
+  });
+
+  it("shows the route's arguments as their own locked row at Tool call", () => {
+    const { container } = renderCard({
+      input: {
+        ...baseInput,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "Who am I signed in as?" },
+          {
+            id: "t1",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "get_me",
+              args: { args: {} },
+            },
+          },
+        ],
+        toolsChoice: "tools",
+      },
+    });
+    const call = container.querySelector(
+      '[data-stage-group="call"]',
+    ) as HTMLElement;
+    const row = within(call)
+      .getAllByTestId("case-scorecard-row")
+      .find((r) => r.textContent?.includes("Arguments match"));
+    expect(row).toHaveAttribute("data-provenance", "route");
+    expect(within(row!).queryByRole("button")).not.toBeInTheDocument();
+    // One route question on the page, at Selection.
+    expect(screen.getAllByTestId("case-route-row")).toHaveLength(1);
   });
 
   it("never shows a wire enum", () => {
@@ -369,5 +430,99 @@ describe("CaseScorecard — read-only", () => {
     expect(
       rows().some((row) => row.getAttribute("data-provenance") === "suite"),
     ).toBe(false);
+  });
+});
+
+describe("CaseScorecard — the route's tool picker", () => {
+  it("says tools are loading instead of leaving a bare text box unexplained", () => {
+    renderCard({ availableTools: [], toolsStatus: "loading" });
+    expect(screen.getByTestId("simple-case-tools-loading")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Add a tool" })).toBeEnabled();
+  });
+
+  it("says a catalogue failed, retries it, and still accepts a typed name", async () => {
+    const user = userEvent.setup();
+    const onRetryTools = vi.fn();
+    const { onAddTool } = renderCard({
+      availableTools: [],
+      toolsStatus: "error",
+      onRetryTools,
+    });
+    const error = screen.getByTestId("simple-case-tools-error");
+    await user.click(within(error).getByRole("button", { name: "Retry" }));
+    expect(onRetryTools).toHaveBeenCalledTimes(1);
+    await user.type(
+      screen.getByRole("textbox", { name: "Add a tool" }),
+      "search_EBSCOhost",
+    );
+    await user.click(screen.getByRole("button", { name: "Add tool" }));
+    expect(onAddTool).toHaveBeenCalledWith("search_EBSCOhost");
+  });
+
+  it("names a failed server and keeps its tools typeable beside the picker", async () => {
+    const user = userEvent.setup();
+    const { onAddTool } = renderCard({
+      availableTools: ["search_EBSCOhost"],
+      toolsStatus: "error",
+    });
+    expect(
+      screen.getByText("+ Add tool to this assertion").closest("button"),
+    ).toHaveAttribute("role", "combobox");
+    expect(screen.getByTestId("simple-case-tools-error")).toBeVisible();
+    await user.type(
+      screen.getByRole("textbox", { name: "Add a tool" }),
+      "other_server_tool",
+    );
+    await user.click(screen.getByRole("button", { name: "Add tool" }));
+    expect(onAddTool).toHaveBeenCalledWith("other_server_tool");
+  });
+
+  it("warns while a typed name is a wildcard pattern", async () => {
+    const user = userEvent.setup();
+    renderCard({ availableTools: [] });
+    const input = screen.getByRole("textbox", { name: "Add a tool" });
+    await user.type(input, "EBSCO");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    await user.type(input, "*");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Tool names match exactly. Wildcards such as * are not supported.",
+    );
+  });
+
+  it("drops the typed-name warning with the text box once tools load", async () => {
+    const user = userEvent.setup();
+    const { rerender, handlers } = renderCard({
+      availableTools: ["search_EBSCOhost"],
+      toolsStatus: "error",
+    });
+    await user.type(
+      screen.getByRole("textbox", { name: "Add a tool" }),
+      "EBSCO*",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Wildcards");
+    rerender(
+      <CaseScorecard
+        input={baseInput}
+        {...handlers}
+        availableTools={["search_EBSCOhost"]}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/Wildcards/)).toBeNull();
+  });
+
+  it("offers only the picker once every server has loaded", () => {
+    renderCard({ availableTools: ["search_EBSCOhost"] });
+    expect(
+      screen.queryByRole("textbox", { name: "Add a tool" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the free-text fallback for a server that advertises no tools", () => {
+    renderCard({ availableTools: [] });
+    expect(screen.getByRole("textbox", { name: "Add a tool" })).toBeVisible();
+    expect(
+      screen.queryByTestId("simple-case-tools-error"),
+    ).not.toBeInTheDocument();
   });
 });

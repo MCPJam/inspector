@@ -1,12 +1,13 @@
 /**
  * For the v1 routes that DON'T forward the bearer to Convex.
  *
- * `bearerAuthMiddleware` deliberately lets an unrecognized bearer through
- * unverified: almost every v1 route hands the token to Convex, which verifies
- * it against AuthKit's JWKS before doing anything, so verifying here too would
- * add a JWKS round trip to reach the same answer. The fallthrough is labelled
- * `authMethod: "unverified_passthrough"` precisely because it is an assertion,
- * not a fact.
+ * `bearerAuthMiddleware` verifies an AuthKit access token issued for this
+ * environment's client id (`authMethod: "authkit_jwt"`), and refuses one that
+ * claims an AuthKit issuer and fails. Everything it could NOT verify — an
+ * AuthKit token for another audience, any bearer while AuthKit's signing keys
+ * are unreachable, a non-AuthKit JWT — still goes through labelled
+ * `authMethod: "unverified_passthrough"`, because almost every route hands the
+ * token to Convex, which verifies it. That label is an assertion, not a fact.
  *
  * Two v1 routes serve a response WITHOUT ever calling Convex:
  *
@@ -22,6 +23,14 @@
  * THE RULE: a v1 route that does not forward the bearer to Convex must mount
  * this middleware. It is also recorded in `bearer-auth.ts`, next to the
  * fallthrough that makes it necessary.
+ *
+ * SESSION REVOCATION (MJ-011). These routes answer without a Convex call, so
+ * the session behind a verified token is checked here, against the in-process
+ * revoked-session list (`services/revoked-session-cache.ts`): a session known
+ * to be revoked is a 401 `SESSION_REVOKED`, a token that names no session is a
+ * 401, and while the list is still loading or has gone stale, a session it
+ * cannot vouch for is a 503 the caller may retry. Where the list does not run
+ * (no service token: local and desktop), nothing changes.
  *
  * What passes:
  *  - anything `bearerAuthMiddleware` genuinely established — a validated `sk_`
@@ -44,6 +53,7 @@ import {
 } from "../services/authkit-jwt.js";
 import { isGuestAllowedV1Request } from "../routes/v1/guest-allowed-paths.js";
 import { logger } from "../utils/logger.js";
+import { refuseUnservableSession } from "./session-revocation.js";
 
 /** Injectable for tests; production uses the env-derived AuthKit issuers. */
 export type RequireVerifiedAuthDeps = {
@@ -89,6 +99,16 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
         : unauthorized(c);
     }
 
+    // A gateway-verified `authkit_jwt`: its session must also be servable,
+    // which here includes the revoked-session list being current.
+    if (authMethod === "authkit_jwt") {
+      return (
+        refuseUnservableSession(c, c.get("workosSessionId"), {
+          requireFresh: true,
+        }) ?? next()
+      );
+    }
+
     // Any other established method. `unverified_passthrough` is excluded
     // deliberately — see the header: it is an assertion, not a verification.
     if (authMethod && authMethod !== "unverified_passthrough") {
@@ -104,10 +124,9 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
       return unauthorized(c);
     }
 
+    let session: Awaited<ReturnType<RequireVerifiedAuthDeps["verify"]>>;
     try {
-      const session = await deps.verify(token);
-      c.set("workosUserId", session.sub);
-      return next();
+      session = await deps.verify(token);
     } catch (error) {
       if (error instanceof AuthKitConfigError) {
         // No WorkOS on this deployment (OSS / self-hosted). See the header.
@@ -127,5 +146,11 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
       });
       return unauthorized(c);
     }
+    const refusal = refuseUnservableSession(c, session.sid, {
+      requireFresh: true,
+    });
+    if (refusal) return refusal;
+    c.set("workosUserId", session.sub);
+    return next();
   };
 }

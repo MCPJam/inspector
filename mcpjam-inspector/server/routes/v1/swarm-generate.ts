@@ -1,10 +1,10 @@
 /**
- * Public v1 GENERATION surface — drafting personas and journeys with an LLM.
+ * Public v1 GENERATION surface — drafting personas and goals with an LLM.
  *
  * DRAFT-ONLY. Nothing here persists anything. The backend grounds a model in
  * the project's stored server inspections and returns candidate personas and
- * journeys; the caller decides what to keep and creates it through
- * `./personas.ts` / `./journeys.ts`. That separation is deliberate and worth
+ * goals; the caller decides what to keep and creates it through
+ * `./personas.ts` / `./goals.ts`. That separation is deliberate and worth
  * keeping: generation is the step most likely to produce something nobody
  * wanted, and a route that both invented and saved would make "let me see what
  * you'd suggest" indistinguishable from "fill my project with these".
@@ -25,7 +25,9 @@
  * `/personas/:personaId` or Hono matches "generate" as a persona id and the
  * request 404s. Mount order in `./index.ts` handles it; this file existing
  * separately from `./personas.ts` is what makes that ordering visible rather
- * than an accident of where someone pasted a route.
+ * than an accident of where someone pasted a route. The same holds for
+ * `/goals/generate` against `/goals/:goalId`, and for the deprecated
+ * `/journeys/generate` against `/journeys/:journeyId`.
  *
  * SPENDS. Generation runs a model on the org's account and the backend
  * enforces its own quota, arriving here as a 429 with the backend's own copy.
@@ -33,8 +35,10 @@
  * Convex deployment URL.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { markDeprecated } from "./deprecation.js";
 import { v1Resource } from "./envelope.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
@@ -70,12 +74,19 @@ const generatePersonasSchema = v1GenerateBase
   })
   .refine(exactlyOneGroundingSource.check, exactlyOneGroundingSource.params);
 
-const generateJourneysSchema = v1GenerateBase
+/**
+ * `goalCount` is the public name for how many drafts to ask for.
+ * `journeyCount` is the pre-rename spelling, which `v1GenerateBase` still
+ * declares because `/personas/generate` shares that base and did NOT rename
+ * — so the goal schema adds the new name here rather than moving it there.
+ * Exactly one of the two, on either path.
+ */
+const generateGoalsSchema = v1GenerateBase
   .extend({
     /**
-     * The persona to draft journeys FOR, passed by value rather than by id.
+     * The persona to draft goals FOR, passed by value rather than by id.
      * That is not an oversight: the create flow drafts a persona and its
-     * journeys before either exists, so requiring a persisted persona here
+     * goals before either exists, so requiring a persisted persona here
      * would force a caller to save a draft it may discard.
      */
     persona: z.object({
@@ -83,6 +94,7 @@ const generateJourneysSchema = v1GenerateBase
       role: z.string().min(1),
       notes: z.string().optional(),
     }),
+    goalCount: z.number().int().min(1).max(5).optional(),
   })
   .refine(exactlyOneGroundingSource.check, exactlyOneGroundingSource.params);
 
@@ -92,7 +104,7 @@ function requireConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
   return url;
@@ -100,7 +112,7 @@ function requireConvexHttpUrl(): string {
 
 async function parseBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -109,7 +121,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -117,7 +129,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;
@@ -163,13 +175,14 @@ swarmGenerateV1.post("/projects/:projectId/personas/generate", async (c) => {
   }
 });
 
-// POST /v1/projects/:projectId/journeys/generate
+// POST /v1/projects/:projectId/goals/generate
+//   (alias: /journeys/generate)
 //
-// Registered before `/journeys/:journeyId` — see the header.
-swarmGenerateV1.post("/projects/:projectId/journeys/generate", async (c) => {
+// Registered before `/goals/:goalId` — see the header.
+async function generateGoals(c: Context): Promise<Response> {
   const projectId = c.req.param("projectId");
   const bearerToken = await getConvexBearerForRequest(c);
-  const body = await parseBody(c, generateJourneysSchema);
+  const body = await parseBody(c, generateGoalsSchema);
   const convexHttpUrl = requireConvexHttpUrl();
 
   try {
@@ -179,7 +192,9 @@ swarmGenerateV1.post("/projects/:projectId/journeys/generate", async (c) => {
         ? { serverAttachmentId: body.serverAttachmentId }
         : {}),
       ...(body.environmentId ? { environmentId: body.environmentId } : {}),
-      journeyCount: body.journeyCount,
+      // `journeyCount` is the name the service takes; only the public spelling
+      // moved. `v1GenerateBase` defaults it, so `goalCount` wins when sent.
+      journeyCount: body.goalCount ?? body.journeyCount,
       persona: body.persona,
       ...(body.description ? { description: body.description } : {}),
       signal: c.req.raw.signal,
@@ -188,6 +203,12 @@ swarmGenerateV1.post("/projects/:projectId/journeys/generate", async (c) => {
   } catch (err) {
     rethrowAsRouteError(c, err);
   }
+}
+
+swarmGenerateV1.post("/projects/:projectId/goals/generate", generateGoals);
+swarmGenerateV1.post("/projects/:projectId/journeys/generate", (c) => {
+  markDeprecated(c, "/api/v1/projects/{projectId}/goals/generate");
+  return generateGoals(c);
 });
 
 export default swarmGenerateV1;

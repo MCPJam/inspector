@@ -91,7 +91,7 @@ describe("ScenarioShareSection", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Testers must sign in or create an account to preview and test this scenario.",
+        "Testers must sign in or create an account to preview and test this study.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Guest usage runs/)).not.toBeInTheDocument();
@@ -207,7 +207,7 @@ describe("ScenarioShareSection", () => {
     // The withheld copy, not just the absence of the link: asserting a path is
     // missing would stay green if the path shape ever changed under it.
     expect(screen.getByLabelText("Tester link")).toHaveTextContent(
-      "Withheld: this scenario can't run.",
+      "Withheld: this study can't run.",
     );
     expect(screen.getByTestId("scenario-copy-tester-link")).toBeDisabled();
     // Inviting mails the same link out, so it is gated too.

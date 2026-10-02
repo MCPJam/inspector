@@ -14,6 +14,22 @@
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
+import { harnessPinnedVersion } from "@/shared/harness-model-support";
+
+/**
+ * The harness runtime CLI version the lease is for — the adapter's pinned
+ * version (`HARNESS_PINNED_VERSIONS`, the same constant the registry evaluates
+ * the harness × model evidence table at). The backend's lease rule reads the
+ * same evidence table, keyed by this version; absent (Cursor, whose CLI is not
+ * pinned) it evaluates as an unknown version. Pairs with
+ * MCPJam/mcpjam-backend#1614, which accepts the optional field.
+ */
+function harnessRuntimeVersionField(
+  harnessId: HarnessId,
+): { harnessRuntimeVersion?: string } {
+  const version = harnessPinnedVersion(harnessId);
+  return version ? { harnessRuntimeVersion: version } : {};
+}
 /**
  * Every registered harness id — reserve/renew/release are taken by EVERY
  * harness, brokered or not: an external-account harness still runs its CLI in
@@ -162,6 +178,7 @@ export async function startHarnessModelBroker(args: {
       body: JSON.stringify({
         ...boxRequestFields(args.box),
         harnessId: args.harnessId,
+        ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.maxOutputTokens !== undefined
@@ -308,6 +325,11 @@ export async function startLoopbackModelBroker(args: {
   machineId: string;
   keyId: string;
   runId?: string;
+  evalIterationId?: string;
+  journeyRunId?: string;
+  targetId?: string;
+  sessionIdx?: number;
+  hostId?: string;
   maxOutputTokens?: number;
   bearer: string;
   signal?: AbortSignal;
@@ -343,7 +365,10 @@ export async function startLoopbackModelBroker(args: {
         delivery: "inspector-loopback-gateway",
         projectId: args.projectId,
         harnessId: args.harnessId,
+        ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
+        ...(args.evalIterationId ? { evalIterationId: args.evalIterationId } : {}),
+        ...(args.journeyRunId ? { journeyRunId: args.journeyRunId, hostId: args.hostId, targetId: args.targetId, sessionIdx: args.sessionIdx } : {}),
         machineId: args.machineId,
         keyId: args.keyId,
         ...(args.runId ? { runId: args.runId } : {}),
@@ -444,7 +469,7 @@ export async function revokeHarnessModelBroker(args: {
         ...(args.computerId ? { computerId: args.computerId } : {}),
         runId: args.runId,
       }),
-      signal: args.signal,
+      signal: args.signal ? AbortSignal.any([args.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     });
     const payload: any = await response.json().catch(() => null);
     if (!response.ok || payload?.ok !== true) {
@@ -518,6 +543,7 @@ export async function reserveHarnessBox(args: {
         // reservation exactly as it authorizes a lease, which for an ephemeral
         // box means checking both against what the run actually pinned.
         harnessId: args.harnessId,
+        ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         runId: args.runId,
       }),

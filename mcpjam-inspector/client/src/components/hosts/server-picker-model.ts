@@ -12,6 +12,8 @@ export type PickerGroup = {
   serverIds: string[];
   /** Optional: rows written before the field existed arrive without it. */
   resolvedServerNames?: string[];
+  /** Delete would be refused; absent from rows the client minted itself. */
+  inUse?: boolean;
 };
 
 /** `dangling` is not `null`: a deleted row differs from a choice never made. */

@@ -467,6 +467,48 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
+  it("refuses the host's saved effort a harness has not verified — never drops it", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: {
+          modelId: MODEL,
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("setting-unsupported");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a saved effort that belongs to a different model than the turn's", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: {
+          modelId: "openai/gpt-5",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    );
+
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, toolMode: "auto" }),
+    );
+    const body = await response.json();
+    expect(body.details?.kind).not.toBe("setting-unsupported");
+  });
+
   it("refuses a read_only harness turn rather than dropping the narrowing", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code" }),
@@ -1085,7 +1127,7 @@ describe("browser turn integration", () => {
   afterEach(() => vi.restoreAllMocks());
   function browserFixture() {
     mutationMock.mockImplementation(async (name: string) => name === "chatSessions:claimTurnLease" ? { status: "claimed", turnId: "turn_1", executionOwnerToken: "owner" } : null);
-    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://storage.test/shot" }] } : null);
+    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://convex.test/web/artifact?t=shot.sig" }] } : null);
     resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ builtInToolIds: ["browser"], browserToolPolicy: { mode: "allow_all" }, modelId: MODEL }));
     vi.spyOn(BrowserSessionService.prototype, "agentRequest").mockImplementation(async op => op === "create_shell" ? { sessionId: "cs_1", chatSessionId: "wire" } : { ok: true });
     vi.spyOn(sessionBrowser, "getConversationBrowser").mockResolvedValue(null);
@@ -1115,7 +1157,7 @@ describe("browser turn integration", () => {
     const response = await turn(input);
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://storage.test/shot" }] });
+    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://convex.test/web/artifact?t=shot.sig" }] });
     expect(body.chatSessionId).toBe("wire");
     const pixels = Buffer.from([137,80,78,71,13,10,26,10]).toString("base64");
     expect(JSON.stringify(body)).not.toContain(pixels);

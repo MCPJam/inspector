@@ -1,3 +1,5 @@
+import { writeInspectorRuntime } from "./services/inspector-runtime.js";
+import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -7,6 +9,7 @@ import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
+import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { reportRouteFailure } from "./utils/route-error-report.js";
@@ -29,15 +32,9 @@ import { cacheEventLogger } from "./utils/cache-events";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
-import {
-  generateSessionToken,
-  getSessionToken,
-} from "./services/session-token";
+import { generateSessionToken, validateToken } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import {
-  mayServeSessionToken,
-  mayServeGuestBootstrap,
-} from "./utils/localhost-check";
+import { isAllowedHost, mayServeGuestBootstrap } from "./utils/localhost-check";
 import { getActiveTunnelDomains } from "./services/tunnel-registry";
 import {
   appendGuestSessionSetCookie,
@@ -49,11 +46,21 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
-import { securityHeadersMiddleware } from "./middleware/security-headers";
+import {
+  documentScriptNonce,
+  securityHeadersMiddleware,
+  withScriptNonce,
+} from "./middleware/security-headers";
+import { indexingHeadersMiddleware } from "./middleware/indexing-headers";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
+import {
+  startRevokedSessionCache,
+  stopRevokedSessionCache,
+} from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
@@ -183,6 +190,7 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
@@ -337,6 +345,10 @@ initXAAIdpKeyPair();
 // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
 // dispatch classifies newly-added hosted models correctly. Memoized.
 startHostedModelCatalogRefresh();
+// The revoked-session list (MJ-011). Loads in the background; the routes that
+// depend on it answer 503 until the first scan completes, and nothing else
+// waits for it. A no-op without the service token. Mirror of server/app.ts.
+startRevokedSessionCache();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
@@ -345,6 +357,7 @@ startLocalBrowserRenderingSetupInBackground();
 // kill switch and a consent grant is installed when the user asks, never
 // at startup and never during a session start.
 reportLocalHarnessRuntimeStatusInBackground();
+if (!HOSTED_MODE) void startLocalHarnessJanitor();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -451,6 +464,10 @@ app.use("*", async (c, next) => {
 // 1. Security headers (always applied)
 app.use("*", securityHeadersMiddleware);
 
+// 1b. Indexing directive. Host-scoped, so it is its own middleware rather
+// than another line in the security headers — see indexing-headers.ts.
+app.use("*", indexingHeadersMiddleware);
+
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
@@ -496,6 +513,13 @@ if (enableHttpLogs) {
     }),
   );
 }
+// Load-bearing for the header middleware above, not only for CORS. A handler
+// returning a bare `new Response(...)` (relay passthrough, the SSE streams,
+// /guest/jwks) assigns `c.res` directly, and Hono merges the headers prepared
+// by `c.header()` only when `c.res` was already materialized. `cors()` is what
+// materializes it: CORS_OPTIONS has a non-`*` origin, so it always sets
+// `Vary: Origin`. Measured on hono 4.13.7 — unmount it and those routes return
+// null for every security header and for X-Robots-Tag.
 app.use("*", cors(CORS_OPTIONS));
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
@@ -619,23 +643,11 @@ app.post(
   createComputerUploadHandler(),
 );
 
-// Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
-// core helpers and emit the canonical v1 envelope. Mirror of the mount in
+// Hosted public API (v1). Same 1MB JSON cap as /api/web (with the eval
+// artifact upload carved out; see `v1BodyLimit`); routes wrap the same core
+// helpers and emit the canonical v1 envelope. Mirror of the mount in
 // server/app.ts::createHonoApp — both production entries must wire this up.
-app.use(
-  "/api/v1/*",
-  bodyLimit({
-    maxSize: 1024 * 1024,
-    onError: (c) =>
-      c.json(
-        {
-          code: "VALIDATION_ERROR",
-          message: "Request body exceeds 1MB limit",
-        },
-        400,
-      ),
-  }),
-);
+app.use("/api/v1/*", v1BodyLimit());
 app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
 app.route("/api/slack/link", slackLinkRoutes);
@@ -692,6 +704,10 @@ app.route("/tlm", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
+// PR previews only (no-op unless PREVIEW_EDGE_SECRET is set): lets the
+// *.mcpjam.dev preview router verify it's talking to one of our previews.
+// Not mirrored in server/app.ts: Electron is never a PR preview.
+registerPreviewIdentityRoute(app);
 
 // Health check
 app.get("/health", (c) => {
@@ -704,39 +720,27 @@ app.get("/health", (c) => {
   });
 });
 
-// Session token endpoint (for dev mode where HTML isn't served by this server)
-// Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
-// in BOTH hosted and self-hosted mode) to prevent leakage; tunnels always vetoed
+// Validate a credential delivered by the launcher. Never disclose one over HTTP.
 app.get("/api/session-token", (c) => {
-  if (HOSTED_MODE) {
-    return strictModeResponse(c, "/api/session-token");
-  }
-
-  const host = c.req.header("Host");
-  const forwardedHost = c.req.header("X-Forwarded-Host");
-
-  // SECURITY INVARIANT: tunnel hosts never receive the session token, even
-  // if a tunnel domain is ever allowlisted — see mayServeSessionToken.
+  c.header("Cache-Control", "no-store");
+  if (HOSTED_MODE) return strictModeResponse(c, "/api/session-token");
+  const authorization = c.req.header("X-MCP-Session-Auth");
   if (
-    !mayServeSessionToken({
-      host,
-      forwardedHost,
-      allowedHosts: ALLOWED_HOSTS,
-      activeTunnelDomains: getActiveTunnelDomains(),
-    })
+    authorization?.startsWith("Bearer ") &&
+    validateToken(authorization.slice(7))
   ) {
-    appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${
-        forwardedHost || host
-      }`,
-    );
-    return c.json(
-      { error: "Token only available via localhost or allowed hosts" },
-      403,
-    );
+    return c.json({ ok: true });
   }
-
-  return c.json({ token: getSessionToken() });
+  if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS)) {
+    return c.json({ code: "HOST_NOT_ALLOWED" }, 403);
+  }
+  return c.json(
+    {
+      code: "ACCESS_LINK_REQUIRED",
+      hint: "Open the link printed in your terminal. If you use @mcpjam/cli, update it.",
+    },
+    401,
+  );
 });
 
 // Protected by sessionAuthMiddleware mounted above; the CLI supplies the session token.
@@ -796,7 +800,7 @@ if (process.env.NODE_ENV === "production") {
     return clientStaticFiles(c, next);
   });
 
-  // SPA fallback - serve index.html with token injection for non-API routes
+  // SPA fallback - serve credential-free index.html for non-API routes
   app.get("*", async (c) => {
     const reqPath = c.req.path;
     // Don't intercept API routes
@@ -827,48 +831,29 @@ if (process.env.NODE_ENV === "production") {
         );
       }
 
-      // SECURITY: Only inject token for localhost or hosts in
-      // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
-      // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
-      // NEVER receive the token, even if a tunnel domain is ever
-      // allowlisted — see mayServeSessionToken.
       const host = c.req.header("Host");
       const forwardedHost = c.req.header("X-Forwarded-Host");
-
-      if (
-        mayServeSessionToken({
-          host,
-          forwardedHost,
-          allowedHosts: ALLOWED_HOSTS,
-          activeTunnelDomains: getActiveTunnelDomains(),
-        })
-      ) {
-        const token = getSessionToken();
-        const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
-        htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
-      } else {
-        // Non-allowed host access - no token (security measure)
-        appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`,
-        );
-        const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
-        htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
-      }
+      // Every inline script written into the document carries this
+      // response's nonce (see middleware/security-headers.ts).
+      const scriptNonce = documentScriptNonce(c);
 
       const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`,
+          `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
         );
       }
 
       // Inject MCP server config if provided via CLI
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
-        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig,
-        )};</script>`;
+        const configScript = withScriptNonce(
+          `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
+            mcpConfig,
+          )};</script>`,
+          scriptNonce,
+        );
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
 
@@ -894,7 +879,10 @@ if (process.env.NODE_ENV === "production") {
         try {
           const { session, setCookies } = await mintGuestSessionForDocument(c);
           if (session && session.expiresAt > Date.now()) {
-            const bootstrapScript = buildGuestBootstrapScript(session);
+            const bootstrapScript = withScriptNonce(
+              buildGuestBootstrapScript(session),
+              scriptNonce,
+            );
             htmlContent = htmlContent.replace(
               "</head>",
               `${bootstrapScript}</head>`,
@@ -956,11 +944,20 @@ appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
 await computersStartup;
 
 // Start the Hono server
-const server = serve({
-  fetch: app.fetch,
-  port: SERVER_PORT,
-  hostname,
-});
+const server = serve(
+  {
+    fetch: app.fetch,
+    port: SERVER_PORT,
+    hostname,
+  },
+  (info) => {
+    const cleanup = writeInspectorRuntime(info.port, {
+      hosted: HOSTED_MODE,
+      warn: (message) => appLogger.warn(message),
+    });
+    server.once("close", cleanup);
+  },
+);
 registerBrowserController(`http://127.0.0.1:${SERVER_PORT}`);
 // Count socket-level failures. These die before Node parses a request line,
 // so they emit no `http.request.*` event and are otherwise invisible — the
@@ -1057,10 +1054,12 @@ async function shutdown() {
   try {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
+    await localServerCheckQueue.shutdown();
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
     await benchWorker?.stop();
     await productionChecksWorker.stop();
+    stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.

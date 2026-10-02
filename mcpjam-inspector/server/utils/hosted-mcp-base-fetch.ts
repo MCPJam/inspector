@@ -5,18 +5,14 @@
  * `config.baseFetch ?? this.defaultBaseFetch` and falls back to the global when
  * both are absent, so a manager built without either dials `globalThis.fetch`:
  * no address classification, and redirects followed by the HTTP client with
- * nothing checking where they land. The conformance and readiness lanes have
- * passed a pinned fetch in since the seam existed; the hosted connection
- * factories never did, and every `/api/web/*` MCP operation went out that way.
- * That is pentest finding MJ-001 — a caller stores a server URL, asks us to
- * connect, and reads the answer back out of the response.
+ * nothing checking where they land. Every hosted connection factory passes
+ * this transport in, as the conformance and readiness lanes pass theirs (MJ-001).
  *
- * The guard itself is not new and is not written here. `createStreamingPinnedFetch`
- * resolves once, refuses the disallowed answers, pins the surviving address into
- * the socket, and re-runs all of it on every redirect hop. This module exists so
+ * The guard itself is not written here. `createStreamingPinnedFetch` resolves
+ * once, refuses the disallowed answers, pins the surviving address into the
+ * socket, and re-runs all of it on every redirect hop. This module exists so
  * there is ONE place that decides what a hosted MCP connection dials through,
- * rather than six construction sites each deciding it independently — which is
- * how five of them came to decide nothing at all.
+ * rather than each construction site deciding it independently.
  *
  * STREAMING, NOT BUFFERING. `createPinnedFetch` (the sibling) reads the whole
  * body before returning; an MCP session is `text/event-stream` and would break
@@ -32,6 +28,7 @@
  * cannot be broken by a caller that forgets to ask.
  */
 
+import { withServerCheckSignal } from "./server-check-scope.js";
 import { isBlockedEgressHost } from "./hosted-egress-guard.js";
 import { HOSTED_MODE } from "../config.js";
 import { createStreamingPinnedFetch } from "./pinned-fetch.js";
@@ -42,8 +39,8 @@ import { resolvePlatformMcpUrl } from "./platform-mcp-url.js";
  *
  * Matched to `createConformanceFetch`, which matched it to undici's
  * `headersTimeout` — the bound these connections already had from the global
- * `fetch`. Closing an SSRF hole is not a reason to start failing servers that
- * connected fine yesterday.
+ * `fetch`, so a server that connected under the global fetch still connects
+ * under this one.
  */
 const MCP_CHAIN_TIMEOUT_MS = 300_000;
 /**
@@ -67,12 +64,94 @@ const MCP_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * wins where one is set deliberately (the conformance runners set their own).
  */
 export function hostedMcpBaseFetch(): typeof fetch {
-  return createStreamingPinnedFetch({
-    targetLabel: "MCP server",
-    chainTimeoutMs: MCP_CHAIN_TIMEOUT_MS,
-    bodyIdleTimeoutMs: MCP_BODY_IDLE_TIMEOUT_MS,
-    maxResponseBytes: MCP_MAX_RESPONSE_BYTES,
+  return withServerCheckSignal(
+    withHostedMcpAnswerBodies(
+      createStreamingPinnedFetch({
+        targetLabel: "MCP server",
+        chainTimeoutMs: MCP_CHAIN_TIMEOUT_MS,
+        bodyIdleTimeoutMs: MCP_BODY_IDLE_TIMEOUT_MS,
+        maxResponseBytes: MCP_MAX_RESPONSE_BYTES,
+      }),
+    ),
+  );
+}
+
+/** A JSON media type: `application/json` or a `+json` suffix. */
+function isJsonContentType(contentType: string | null): boolean {
+  const type = contentType?.split(";")[0]?.trim().toLowerCase();
+  return !!type && (type === "application/json" || type.endsWith("+json"));
+}
+
+/** A JSON-RPC 2.0 message, or a batch of them. */
+function isJsonRpcPayload(value: unknown): boolean {
+  const messages = Array.isArray(value) ? value : [value];
+  return (
+    messages.length > 0 &&
+    messages.every(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        (message as { jsonrpc?: unknown }).jsonrpc === "2.0",
+    )
+  );
+}
+
+function parseJson(text: string): { value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(text) as unknown };
+  } catch {
+    return undefined;
+  }
+}
+
+/** `response` with `body` in place of its own, and the same status line. */
+function withBody(response: Response, body: string): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  // Statuses that cannot carry a body (204, 205, 304) take `null`.
+  const replaced = new Response(body === "" ? null : body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
   });
+  Object.defineProperty(replaced, "url", { value: response.url });
+  Object.defineProperty(replaced, "redirected", { value: response.redirected });
+  return replaced;
+}
+
+/**
+ * Hosted MCP transports read an answer as MCP, and nothing else (MJ-001).
+ *
+ * The MCP SDK quotes a response body it cannot use in the error it raises —
+ * an unsuccessful answer's text, or the opening characters of a JSON body
+ * that does not parse — and those errors reach tool results, chat turns,
+ * eval runs and conformance reports. Under this wrapper:
+ *
+ * - an unsuccessful answer keeps its body only when that body is a JSON-RPC
+ *   message, which is how an MCP server reports an error;
+ * - a successful JSON answer keeps its body only when it parses as JSON.
+ *
+ * Any other body is replaced with an empty one. Status, headers and event
+ * streams are untouched. Outside hosted mode this returns `fetchFn` as is.
+ */
+export function withHostedMcpAnswerBodies(fetchFn: typeof fetch): typeof fetch {
+  if (!HOSTED_MODE) return fetchFn;
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await fetchFn(input, init);
+    const json = isJsonContentType(response.headers.get("content-type"));
+    if (response.ok && !json) return response;
+    if (!json) {
+      await response.body?.cancel().catch(() => undefined);
+      return withBody(response, "");
+    }
+    const text = await response.text();
+    const parsed = parseJson(text);
+    const keep = response.ok
+      ? parsed !== undefined
+      : parsed !== undefined && isJsonRpcPayload(parsed.value);
+    return withBody(response, keep ? text : "");
+  }) as typeof fetch;
 }
 
 /**

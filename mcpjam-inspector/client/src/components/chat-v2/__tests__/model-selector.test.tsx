@@ -814,3 +814,264 @@ describe("model routing selection", () => {
     },
   );
 });
+
+describe("catalog observations", () => {
+  const OBSERVED_AT = 1_790_000_000_000;
+  const toolLess: ModelDefinition = {
+    id: "openai/gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    provider: "openai",
+    hosted: true,
+    releasedAt: 3_000,
+    catalogObservedAt: OBSERVED_AT,
+    observations: { tools: { status: "unsupported", source: "gateway-catalog" } },
+  };
+  const unverified: ModelDefinition = {
+    id: "openai/gpt-new",
+    name: "GPT New",
+    provider: "openai",
+    hosted: true,
+    releasedAt: 2_000,
+    catalogObservedAt: OBSERVED_AT,
+  };
+  const verified: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "GPT-4o",
+    provider: "openai",
+    hosted: true,
+    releasedAt: 1_000,
+    deprecatedAt: Date.UTC(2027, 2, 3),
+    catalogObservedAt: OBSERVED_AT,
+    observations: { tools: { status: "supported", source: "gateway-catalog" } },
+  };
+  const legacy: ModelDefinition = {
+    id: "openai/gpt-legacy",
+    name: "GPT Legacy",
+    provider: "openai",
+    hosted: true,
+  };
+  const catalog = [legacy, verified, unverified, toolLess];
+
+  const option = (name: RegExp) => screen.getByRole("option", { name });
+
+  it("lists a provider's models newest first, undated last, and tags retiring ones", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={vi.fn()}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    const names = screen
+      .getAllByRole("option")
+      .map((row) => row.textContent ?? "");
+    expect(names.map((text) => text.replace(/^openai/, ""))).toEqual([
+      "GPT-5.6 Luna",
+      "GPT New",
+      "GPT-4oRetiring Mar 3, 2027",
+      "GPT Legacy",
+    ]);
+    // No workload: nothing is locked or tagged as unverified.
+    expect(screen.queryByText("Not verified")).not.toBeInTheDocument();
+    expect(option(/gpt-5\.6 luna/i)).not.toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
+  });
+
+  it("disables tool-less and unverified models for eval targets", async () => {
+    const user = userEvent.setup();
+    const onModelChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={onModelChange}
+        workload="evalTarget"
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(option(/gpt-5\.6 luna/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).toHaveTextContent("Not verified");
+    // A row from a catalog without observations stays selectable.
+    expect(option(/gpt legacy/i)).not.toHaveAttribute("aria-disabled", "true");
+
+    await user.click(option(/gpt new/i));
+    expect(onModelChange).not.toHaveBeenCalled();
+    await user.click(option(/gpt legacy/i));
+    expect(onModelChange).toHaveBeenCalledWith(legacy, { userInitiated: true });
+  });
+
+  it("allows an unverified model in MCP chat, tagged not verified", async () => {
+    const user = userEvent.setup();
+    const onModelChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={onModelChange}
+        workload="mcpChat"
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(option(/gpt-5\.6 luna/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).not.toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).toHaveTextContent("Not verified");
+
+    await user.click(option(/gpt new/i));
+    expect(onModelChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "openai/gpt-new" }),
+      { userInitiated: true }
+    );
+  });
+
+  it("shows when the hosted catalog was last updated", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={vi.fn()}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      screen.getByTestId("model-selector-catalog-freshness")
+    ).toHaveTextContent("Catalog updated Sep 21, 2026");
+  });
+
+  it("shows no freshness line for a catalog without observation times", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        currentModel={legacy}
+        availableModels={[legacy]}
+        onModelChange={vi.fn()}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(screen.getByRole("option", { name: /gpt legacy/i })).toBeVisible();
+    expect(
+      screen.queryByTestId("model-selector-catalog-freshness")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/catalog updated/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("multi-select rows are keyed by source and connection", () => {
+  const hosted: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "Hosted GPT-4o",
+    provider: "openai",
+    hosted: true,
+  };
+  const orgTwin: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "Org GPT-4o",
+    provider: "openrouter",
+    hosted: false,
+    orgProvider: { providerKey: "openrouter", id: "orgprov_1" },
+  };
+
+  it("checks only the selected row of two with the same id, and adds the other", async () => {
+    const user = userEvent.setup();
+    const onSelectedModelsChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={orgTwin}
+        availableModels={[hosted, orgTwin]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[orgTwin]}
+        onSelectedModelsChange={onSelectedModelsChange}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      screen.getByRole("option", { name: /Org GPT-4o/ })
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByText("Free models"));
+    const hostedRow = screen.getByRole("option", { name: /Hosted GPT-4o/ });
+    expect(hostedRow).toHaveAttribute("aria-checked", "false");
+    await user.click(hostedRow);
+    expect(onSelectedModelsChange).toHaveBeenCalledWith([orgTwin, hosted]);
+  });
+
+  it("empties the selection only when the surface allows it", async () => {
+    const user = userEvent.setup();
+    const onSelectedModelsChange = vi.fn();
+    const { rerender } = render(
+      <ModelSelector
+        currentModel={hosted}
+        availableModels={[hosted]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[hosted]}
+        onSelectedModelsChange={onSelectedModelsChange}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.click(screen.getByRole("option", { name: /Hosted GPT-4o/ }));
+    expect(onSelectedModelsChange).not.toHaveBeenCalled();
+
+    rerender(
+      <ModelSelector
+        currentModel={hosted}
+        availableModels={[hosted]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[hosted]}
+        onSelectedModelsChange={onSelectedModelsChange}
+        allowEmptySelection
+      />
+    );
+    await user.click(screen.getByRole("option", { name: /Hosted GPT-4o/ }));
+    expect(onSelectedModelsChange).toHaveBeenCalledWith([]);
+  });
+
+  it("lists extra options above the models and applies a surface lock and tag", async () => {
+    const user = userEvent.setup();
+    const onDefaults = vi.fn();
+    const onSelectedModelsChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={hosted}
+        availableModels={[hosted]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[]}
+        allowEmptySelection
+        onSelectedModelsChange={onSelectedModelsChange}
+        extraOptions={[
+          {
+            id: "defaults",
+            label: "Client defaults",
+            checked: true,
+            onSelect: onDefaults,
+          },
+        ]}
+        rowDisabledReason={() => "Over the run budget"}
+        rowTag={() => "Custom tag"}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveTextContent("Client defaults");
+    expect(options[0]).toHaveAttribute("aria-checked", "true");
+    await user.click(options[0]!);
+    expect(onDefaults).toHaveBeenCalledTimes(1);
+    expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
+
+    const row = screen.getByRole("option", { name: /Hosted GPT-4o/ });
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(row).toHaveTextContent("Custom tag");
+  });
+});

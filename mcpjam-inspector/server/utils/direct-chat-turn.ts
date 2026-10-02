@@ -7,7 +7,7 @@ import {
   type ToolChoice,
   type Tool as AiTool,
 } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import type { createLlmModel } from "./chat-helpers";
 import {
   appendDedupedModelMessages,
@@ -316,6 +316,12 @@ export interface RunDirectChatTurnOptions {
    * every attempt shares the same composed `abortSignal`.
    */
   maxRetries?: number;
+  /**
+   * Provider options for the model call, e.g. the reasoning effort a saved
+   * selection asks for (`reasoningEffortProviderOptions`). Absent ⇒ none, so
+   * callers that do not set it are byte-identical to before.
+   */
+  providerOptions?: ProviderOptions;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
   /**
@@ -391,6 +397,12 @@ export interface RunDirectChatTurnOptions {
   shouldPauseAfterStep?: () => boolean;
   /** Identifies the temporary tool-error result to omit from trace/history. */
   suspendedToolCallId?: () => string | undefined;
+  /**
+   * What each step SENDS, derived from the messages the step would send — the
+   * history-provenance presentation on browser-facing chat (MJ-009). The
+   * conversation `streamText` accumulates, and the transcript, are unchanged.
+   */
+  transformStepMessages?: (messages: ModelMessage[]) => ModelMessage[];
   /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
@@ -572,6 +584,7 @@ export function runDirectChatTurn(
     prepareAdvertisedTools,
     abortSignal,
     maxRetries,
+    providerOptions,
     traceEvents,
     onLiveTextDelta,
     onStepFinish,
@@ -584,6 +597,7 @@ export function runDirectChatTurn(
     maxSteps,
     shouldPauseAfterStep,
     suspendedToolCallId,
+    transformStepMessages,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -736,6 +750,7 @@ export function runDirectChatTurn(
     ],
     ...(abortSignal ? { abortSignal } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
@@ -772,12 +787,17 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
+      // What the model is shown this step, when the caller shapes it.
+      const presentedMessages =
+        transformStepMessages && stepMessages
+          ? transformStepMessages(stepMessages)
+          : undefined;
       const request = {
         turnId: traceTurn.turnId,
         promptIndex: traceTurn.promptIndex,
         stepIndex: stepNumber,
         systemPrompt,
-        messages: stepMessages ?? traceHistory,
+        messages: presentedMessages ?? stepMessages ?? traceHistory,
         tools: activeToolNames
           ? Object.fromEntries(
               activeToolNames.map((name) => [name, tools[name]]),
@@ -794,7 +814,11 @@ export function runDirectChatTurn(
       const stepOptions: {
         activeTools?: string[];
         toolChoice?: ToolChoice<Record<string, AiTool>>;
+        messages?: ModelMessage[];
       } = {};
+      if (presentedMessages) {
+        stepOptions.messages = presentedMessages;
+      }
       if (activeToolNames !== undefined) {
         stepOptions.activeTools = activeToolNames;
       }

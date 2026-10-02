@@ -13,12 +13,12 @@ import {
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
-import type { RebuildResult } from "@/hooks/useUsageInsights";
+import type { RebuildOptions, RebuildResult } from "@/hooks/useUsageInsights";
 import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
 
 export type InsightsView = "flow" | "clusters";
 
-type RebuildFn = (args?: { force?: boolean }) => Promise<RebuildResult>;
+type RebuildFn = (args?: RebuildOptions) => Promise<RebuildResult>;
 
 /**
  * Shared Session-flow / Clusters orchestration for User Testing and Swarm
@@ -206,7 +206,7 @@ export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
   }, [cohortKey]);
 
   const handleRebuild = useCallback(
-    async (args?: { force?: boolean }) => {
+    async (args?: RebuildOptions) => {
       if (rebuildInFlightRef.current) return;
       rebuildNonceRef.current += 1;
       const myNonce = rebuildNonceRef.current;

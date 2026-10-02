@@ -106,6 +106,17 @@ export function buildAvailableModels(params: {
 }
 
 /**
+ * Org providers whose picker rows are the model ids the org configured
+ * (`modelIds`), because no static list covers them.
+ */
+const ORG_LISTED_MODEL_PROVIDERS: ReadonlySet<string> = new Set([
+  "moonshotai",
+  "z-ai",
+  "qwen",
+  "minimax",
+]);
+
+/**
  * OrgVisibleConfig shape as returned by the org model config query.
  */
 export type OrgVisibleConfig = {
@@ -166,11 +177,35 @@ export function buildAvailableModelsFromOrgConfig(
   // Explicit `hosted: false` for the same reason as the local BYOK rows in
   // `buildAvailableModels`: the bare id + provider would otherwise be read as
   // the hosted twin server-side and billed to MCPJam instead of the org's key.
+  // Every org-derived row names the connection that serves it, so a picker
+  // can save WHICH org connection was chosen (see `ModelDefinition.orgProvider`).
+  const orgStamp = (p: OrgModelProvider): ModelDefinition["orgProvider"] => ({
+    providerKey: p.providerKey,
+    ...(p.id ? { id: p.id } : {}),
+  });
+  const orgProviderByKey = new Map<string, OrgModelProvider>();
+  for (const p of orgConfig.providers) {
+    if (p.enabled && !orgProviderByKey.has(p.providerKey)) {
+      orgProviderByKey.set(p.providerKey, p);
+    }
+  }
+  // Azure OpenAI runs on deployments the admin named. When the org lists its
+  // deployment names, those replace the static `azure/…` rows, which name no
+  // deployment (see `azureDeploymentModels`).
+  const azureConfig = orgProviderByKey.get("azure");
+  const azureDeployments =
+    azureConfig && availableProviderKeys.has("azure")
+      ? azureDeploymentModels(azureConfig, orgStamp(azureConfig))
+      : [];
   const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
+    if (m.provider === "azure" && azureDeployments.length > 0) return false;
     return availableProviderKeys.has(m.provider);
+  }).map((m) => {
+    const provider = orgProviderByKey.get(m.provider);
+    return provider ? { ...m, orgProvider: orgStamp(provider) } : m;
   });
-  const models: ModelDefinition[] = [...orgKeyModels];
+  const models: ModelDefinition[] = [...orgKeyModels, ...azureDeployments];
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
@@ -185,6 +220,7 @@ export function buildAvailableModelsFromOrgConfig(
         id,
         name: id,
         provider: "openrouter" as const,
+        orgProvider: orgStamp(openRouterConfig),
       }));
     models.push(...openRouterModels);
   }
@@ -204,6 +240,7 @@ export function buildAvailableModelsFromOrgConfig(
         id,
         name: id,
         provider: "bedrock" as const,
+        orgProvider: orgStamp(bedrockConfig),
       })
     );
     models.push(...bedrockModels);
@@ -221,6 +258,27 @@ export function buildAvailableModelsFromOrgConfig(
         id: modelId,
         name: modelId,
         provider: "ollama" as const,
+        orgProvider: orgStamp(p),
+      });
+    }
+  }
+
+  // OpenAI-compatible providers the backend reaches at a fixed base URL
+  // (Moonshot, Z.ai, Qwen, MiniMax): no static list covers them, so the org
+  // lists the model ids to offer, in the provider's own spelling.
+  for (const p of orgConfig.providers) {
+    if (!ORG_LISTED_MODEL_PROVIDERS.has(p.providerKey)) continue;
+    if (!p.enabled || !p.hasSecret) continue;
+    const seen = new Set<string>();
+    for (const raw of p.modelIds ?? []) {
+      const modelId = raw.trim();
+      if (!modelId || seen.has(modelId)) continue;
+      seen.add(modelId);
+      models.push({
+        id: modelId,
+        name: modelId,
+        provider: p.providerKey,
+        orgProvider: orgStamp(p),
       });
     }
   }
@@ -242,11 +300,42 @@ export function buildAvailableModelsFromOrgConfig(
         name: `${displayLabel} / ${modelId}`,
         provider: "custom" as const,
         customProviderName: customSlug,
+        orgProvider: orgStamp(p),
       });
     }
   }
 
   return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
+}
+
+/**
+ * Picker rows for an org Azure OpenAI provider's deployments (its `modelIds`).
+ *
+ * A deployment is named by the admin, so the name is the only id Azure
+ * accepts. The row id is `azure/<deployment>` (the selection's canonical id)
+ * and the deployment rides EXPLICITLY on `nativeModelId`, which the selection
+ * builder saves and the request sends. It is never recovered by stripping the
+ * `azure/` prefix.
+ */
+export function azureDeploymentModels(
+  provider: OrgModelProvider,
+  orgProvider?: ModelDefinition["orgProvider"]
+): ModelDefinition[] {
+  const seen = new Set<string>();
+  const rows: ModelDefinition[] = [];
+  for (const raw of provider.modelIds ?? []) {
+    const deployment = raw.trim();
+    if (!deployment || seen.has(deployment)) continue;
+    seen.add(deployment);
+    rows.push({
+      id: `azure/${deployment}`,
+      name: `${deployment} (Azure)`,
+      provider: "azure",
+      nativeModelId: deployment,
+      ...(orgProvider ? { orgProvider } : {}),
+    });
+  }
+  return rows;
 }
 
 /** Strip the redundant "(Free)" tier suffix for denser labels. */
@@ -297,77 +386,6 @@ export function isMCPJamProvidedModelMenuItem(model: ModelMenuItem): boolean {
   }
   // Back-compat for static-derived items that carry no `hosted` flag.
   return isMCPJamProvidedModel(String(model.id));
-}
-
-export interface ModelMenuGroup<T extends ModelMenuItem> {
-  /** Group key — provider name, or `custom:<slug>` for custom providers. */
-  provider: string;
-  title: string;
-  /** "provided" = MCPJam-hosted free models; "configured" = user/org BYOK models. */
-  providerType: "provided" | "configured";
-  models: T[];
-}
-
-/**
- * Group models by their provider key, splitting MCPJam-provided "free" tier
- * out from user/org-configured models so the menu can label each section
- * clearly. Custom providers are keyed as `custom:<slug>`.
- */
-export function buildModelMenuGroups<T extends ModelMenuItem>(
-  models: T[],
-  options: { hideProvidedModels?: boolean } = {}
-): ModelMenuGroup<T>[] {
-  const { hideProvidedModels = false } = options;
-
-  const byProvider = new Map<string, T[]>();
-  for (const model of models) {
-    const key =
-      model.provider === "custom" && model.customProviderName
-        ? `custom:${model.customProviderName}`
-        : model.provider;
-    const existing = byProvider.get(key);
-    if (existing) {
-      existing.push(model);
-    } else {
-      byProvider.set(key, [model]);
-    }
-  }
-
-  const sortedKeys = Array.from(byProvider.keys()).sort();
-  const groups: ModelMenuGroup<T>[] = [];
-
-  for (const provider of sortedKeys) {
-    const list = byProvider.get(provider) ?? [];
-    const filtered = hideProvidedModels
-      ? list.filter((m) => !isMCPJamProvidedModelMenuItem(m))
-      : list;
-    if (filtered.length === 0) continue;
-
-    const provided = filtered.filter((m) => isMCPJamProvidedModelMenuItem(m));
-    const configured = filtered.filter(
-      (m) => !isMCPJamProvidedModelMenuItem(m)
-    );
-    const title = getProviderDisplayName(provider);
-
-    if (provided.length > 0) {
-      groups.push({
-        provider,
-        title,
-        providerType: "provided",
-        models: provided,
-      });
-    }
-    if (configured.length > 0) {
-      groups.push({
-        provider,
-        title,
-        providerType: "configured",
-        models: configured,
-      });
-    }
-  }
-
-  return groups;
 }
 
 export const getDefaultModel = (

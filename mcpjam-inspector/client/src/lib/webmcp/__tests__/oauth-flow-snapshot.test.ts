@@ -99,6 +99,7 @@ function poisonedInput(): OAuthFlowSnapshotInput {
     customHeaderCount: 2,
     hasAccessToken: true,
     hasRefreshToken: true,
+    awaitingReauthorization: false,
     serverConnected: false,
     readyToApplyTokens: false,
     steps: [
@@ -172,6 +173,18 @@ describe("buildOAuthFlowSnapshot", () => {
     expect(
       buildOAuthFlowSnapshot(input).flow.awaitingHumanAuthorization,
     ).toBe(true);
+  });
+
+  it("flags a token_request whose code the AS rejected as a human hand-off", () => {
+    const input = poisonedInput();
+    expect(
+      buildOAuthFlowSnapshot(input).flow.awaitingHumanAuthorization,
+    ).toBe(false);
+
+    input.awaitingReauthorization = true;
+    const snapshot = buildOAuthFlowSnapshot(input);
+    expect(snapshot.flow.currentStep).toBe("token_request");
+    expect(snapshot.flow.awaitingHumanAuthorization).toBe(true);
   });
 
   it("reports an unconfigured tab as configured:false with a null target", () => {

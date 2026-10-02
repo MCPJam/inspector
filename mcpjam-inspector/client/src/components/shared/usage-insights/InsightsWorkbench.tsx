@@ -199,6 +199,15 @@ export function InsightsWorkbench({
 
   const { rebuildBusy, handleRebuild } = useInsightsRebuild(rebuild, cohortKey);
 
+  // Analyze now settles a User Testing study's sessions. Only there:
+  // swarm sessions settle when their run ends, and a benchmark's flow is the
+  // paid opt-in. The status panel shows it to members only.
+  const handleAnalyzeNow = useCallback(
+    () => void handleRebuild({ settled: true }),
+    [handleRebuild],
+  );
+  const analyzeNow = scope?.kind === "scenario" ? handleAnalyzeNow : undefined;
+
   const { setView } = flow;
   const handleViewChange = useCallback(
     (next: InsightsView) => {
@@ -411,6 +420,7 @@ export function InsightsWorkbench({
               onSelectLink={flow.handleSelectFlow}
               onRebuild={handleRebuild}
               rebuildBusy={rebuildBusy}
+              onAnalyzeNow={analyzeNow}
               fillHeight={fillBody}
               scrollLayout={!fillBody}
               headerActions={viewChrome}
@@ -427,6 +437,7 @@ export function InsightsWorkbench({
               onSelectLink={flow.handleSelectFlow}
               onRebuild={handleRebuild}
               rebuildBusy={rebuildBusy}
+              onAnalyzeNow={analyzeNow}
               fillHeight={fillBody}
               scrollLayout={!fillBody}
               headerActions={viewChrome}
@@ -443,6 +454,7 @@ export function InsightsWorkbench({
               onSelectLink={flow.handleSelectFlow}
               onRebuild={handleRebuild}
               rebuildBusy={rebuildBusy}
+              onAnalyzeNow={analyzeNow}
               fillHeight={fillBody}
               scrollLayout={!fillBody}
               headerActions={viewChrome}

@@ -3,6 +3,7 @@ import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
 import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { useOrganizationDeletionStore } from "@/stores/organization-deletion-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -20,6 +21,7 @@ import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import { HomeTab } from "./components/HomeTab";
@@ -41,7 +43,9 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
   shouldQueryProjectId,
+  useCanManageProjectClients,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -138,6 +142,7 @@ import {
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
 import { useIsMemberActor } from "./hooks/use-is-member-actor";
+import { FeedbackReporterProvider } from "./components/support/FeedbackReporterContext";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -544,6 +549,8 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
   );
 }
 
+const GUEST_ROW_RELOAD_KEY = "mcpjam:guest-row-reload";
+
 function UserSetupError() {
   return (
     <div
@@ -743,6 +750,7 @@ function ActiveBillingUpsellGate() {
 
   return (
     <BillingUpsellGate
+      organizationId={billingOrganizationId}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1123,6 +1131,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const { canManage: canCreateHost, isLoading: roleLoading } =
+    useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
   const cursorCliEnabled = useCursorHostEnabledState();
@@ -1209,6 +1219,16 @@ function useTemplateVerifyDeepLink({
       toast.error(`${template.label} is not available yet.`);
       return;
     }
+    // Creating a client is project-admin only. A member or guest following a
+    // caniuse link to a client the project doesn't have yet is told so,
+    // instead of firing a create the backend refuses.
+    if (roleLoading) return;
+    if (!canCreateHost) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE);
+      return;
+    }
 
     handledRef.current = true;
 
@@ -1248,6 +1268,8 @@ function useTemplateVerifyDeepLink({
     codexEnabled,
     cursorCliEnabled,
     flagWaitExpired,
+    roleLoading,
+    canCreateHost,
     themeMode,
     createHost,
     navigate,
@@ -1956,7 +1978,7 @@ function SwarmsRouteContent() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, goals, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }
@@ -2643,7 +2665,6 @@ export function OrganizationsRoute({
     routeOrganizationSection,
     checkoutIntentForBilling,
     consumeCheckoutIntent,
-    handleCheckoutIntentNavigationStarted,
     handleOrganizationDeleted,
   } = useAppRouteContext();
 
@@ -2659,7 +2680,6 @@ export function OrganizationsRoute({
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
-      onCheckoutIntentNavigationStarted={handleCheckoutIntentNavigationStarted}
       onOrganizationDeleted={handleOrganizationDeleted}
     />
   );
@@ -2810,6 +2830,9 @@ export default function App() {
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
+  // Gates the error card's "Report this": reports need an account, and the
+  // identity Convex holds (not WorkOS's) is the one the write would run as.
+  const isFeedbackMember = useIsMemberActor();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip",
@@ -2908,13 +2931,21 @@ export default function App() {
         : nextIds;
     });
   }, [isLoadingOrganizations, sortedOrganizations]);
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
+  );
   const effectiveOrganizations = useMemo(
     () =>
       sortedOrganizations.filter(
         (organization) =>
+          !deletingOrganizationIds.includes(organization._id) &&
           !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+    [
+      deletingOrganizationIds,
+      optimisticallyDeletedOrganizationIds,
+      sortedOrganizations,
+    ],
   );
   // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
   // whose membership hasn't linked yet, so every org-scoped query for it is
@@ -2931,6 +2962,7 @@ export default function App() {
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
+  const hostedOAuthAttempts = useRef(new Set<string>());
   useEffect(() => {
     // Wait for Convex/WorkOS auth to settle before deciding signed-in vs guest
     // bearer. On post-redirect mount the first render sees
@@ -2939,7 +2971,7 @@ export default function App() {
     // anonymous user with no scenarioAccess row and 403s on
     // /web/oauth/complete + /web/oauth/session/progress, then clears the
     // pending marker so the post-settle re-run can't recover.
-    if (isAuthLoading) {
+    if (isAuthLoading || isWorkOsLoading) {
       return;
     }
     const callbackContext = getHostedOAuthCallbackContext();
@@ -2955,11 +2987,15 @@ export default function App() {
     // 2R-iss: RFC 9207 issuer identification from the callback URL.
     const iss = urlParams.get("iss");
 
-    let cancelled = false;
+    const attempt = `${state}:${code ?? error}`;
+    if (hostedOAuthAttempts.current.has(attempt)) return;
+    hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
+    const callbackSearch = window.location.search;
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
-      if (cancelled) return;
+      // Ignore a completion after the user has left or started another attempt.
+      if (window.location.pathname !== "/oauth/callback" || window.location.search !== callbackSearch) return;
       if (errorMessage && callbackContext.serverName) {
         markPendingChatScopeStepUpCancelled(
           callbackContext.serverName,
@@ -3094,13 +3130,18 @@ export default function App() {
         );
       })
       .finally(() => {
-        if (!cancelled) setHostedOAuthHandling(false);
+        setHostedOAuthHandling(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
+  }, [
+    isAuthLoading,
+    isWorkOsLoading,
+    isAuthenticated,
+    workOsUser,
+    getAccessToken,
+    billingLocation.pathname,
+    billingLocation.search,
+  ]);
 
   // Retire any in-memory guest bearer the moment WorkOS auth lands. Without
   // this, a guest token minted before sign-in (or during a brief apiContext
@@ -3157,6 +3198,52 @@ export default function App() {
     isMcpOAuthCallback &&
     getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
+  // A guest whose row vanished was most likely promoted in another tab; a
+  // reload picks up the shared AuthKit session. The sessionStorage flag allows
+  // one reload per tab until a user row is back, and never on a one-shot
+  // callback URL or the hosted chat route.
+  const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
+    try {
+      return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
+    } catch {
+      return true;
+    }
+  });
+  const shouldReloadForMissingGuest =
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    !isMcpOAuthCallback &&
+    isAuthenticated &&
+    !workOsUser &&
+    !isWorkOsLoading &&
+    currentUser === null &&
+    isUserReady &&
+    !guestReloadUsed;
+  const hasCurrentUser = currentUser != null;
+  useEffect(() => {
+    if (!shouldReloadForMissingGuest) {
+      if (hasCurrentUser && guestReloadUsed) {
+        try {
+          sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
+        } catch {
+          // Re-arm in memory anyway; setItem below falls back to the setup error.
+        }
+        setGuestReloadUsed(false);
+      }
+      return;
+    }
+    try {
+      sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
+    } catch {
+      // Without storage there is no loop guard: show the setup error instead.
+      setGuestReloadUsed(true);
+      return;
+    }
+    window.location.reload();
+    // A cancelled unload leaves the page alive: fall back to the setup error.
+    const fallback = window.setTimeout(() => setGuestReloadUsed(true), 10_000);
+    return () => window.clearTimeout(fallback);
+  }, [shouldReloadForMissingGuest, hasCurrentUser, guestReloadUsed]);
 
   useEffect(() => {
     if (!isOAuthCallback) {
@@ -3348,16 +3435,18 @@ export default function App() {
     setActiveHostId,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    isWorkOsLoading,
     currentActorKey: actorKey,
     hasOrganizations: selectableOrganizations.length > 0,
     isLoadingOrganizations,
     validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
-    requestSignIn: () => {
+    requestSignIn: (returnPath) => {
       // Ordinary app sign-in: remember the whole current URL — project
       // segment, query and hash included — so the round trip through WorkOS
       // returns to the exact page, not to the app's front door.
-      captureAppSignInReturnPath();
+      if (returnPath) writeAppSignInReturnPath(returnPath);
+      else captureAppSignInReturnPath();
       void signIn();
     },
   });
@@ -4046,7 +4135,8 @@ export default function App() {
     activeProject?.clientConfig,
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig
@@ -4056,7 +4146,8 @@ export default function App() {
   // A skipped query reads as `undefined`, so this already covers the window
   // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
-    Boolean(convexProjectId) && projectServerConfigDto === undefined;
+    shouldQueryProjectId(convexProjectId) &&
+    projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
@@ -4194,12 +4285,22 @@ export default function App() {
     shellBillingStatus?.isOwner === false;
 
   useEffect(() => {
+    // A pending delete hides the org, which nulls billingProjectId; keep the
+    // project so a failed delete gives it back.
+    const activeProjectOrganizationId = activeProject?.organizationId;
+    const isActiveProjectDeletionPending =
+      !!activeProjectOrganizationId &&
+      deletingOrganizationIds.includes(activeProjectOrganizationId) &&
+      !optimisticallyDeletedOrganizationIds.includes(
+        activeProjectOrganizationId,
+      );
     const hasStaleCloudProjectSelection =
       isCloudSyncActive &&
       !isLoadingOrganizations &&
       !isLoadingRemoteProjects &&
       activeProjectId !== "none" &&
       (!!convexProjectId || !activeProject) &&
+      !isActiveProjectDeletionPending &&
       !billingProjectId;
 
     if (!hasStaleCloudProjectSelection) {
@@ -4213,9 +4314,11 @@ export default function App() {
     billingProjectId,
     clearConvexActiveProjectSelection,
     convexProjectId,
+    deletingOrganizationIds,
     isCloudSyncActive,
     isLoadingOrganizations,
     isLoadingRemoteProjects,
+    optimisticallyDeletedOrganizationIds,
   ]);
 
   // Fetch project servers to map server IDs to names
@@ -4810,11 +4913,7 @@ export default function App() {
     billingSignInStartedRef.current = false;
   }, []);
 
-  const handleCheckoutIntentNavigationStarted = useCallback(() => {
-    consumeCheckoutIntent();
-  }, [consumeCheckoutIntent]);
-
-  // `/billing?plan=&interval=` → auth (if needed) → org billing path → auto-checkout when intent is valid.
+  // `/billing?plan=&interval=` → auth (if needed) → org plans path → plan confirmation when intent is valid.
   useEffect(() => {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
@@ -4922,7 +5021,7 @@ export default function App() {
 
     if (
       routeOrganizationId === orgId &&
-      routeOrganizationSection === "billing"
+      routeOrganizationSection === "plans"
     ) {
       return;
     }
@@ -4930,7 +5029,7 @@ export default function App() {
     // The current route is the retry guard. If another redirect wins after
     // this navigation, the changed route reruns the effect and resumes the
     // handoff instead of leaving a lifetime ref latched until reload.
-    navigate(buildOrganizationPath(orgId, "billing"), { replace: true });
+    navigate(buildOrganizationPath(orgId, "plans"), { replace: true });
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
@@ -5056,9 +5155,13 @@ export default function App() {
       return;
     }
 
+    // A pending delete holds the route only while the org is still listed, so
+    // Back to an org that is already gone still redirects.
     if (
       routeOrganizationId &&
-      optimisticallyDeletedOrganizationIds.includes(routeOrganizationId)
+      ((deletingOrganizationIds.includes(routeOrganizationId) &&
+        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
+        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
     }
@@ -5081,6 +5184,7 @@ export default function App() {
     }
   }, [
     activeTab,
+    deletingOrganizationIds,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
@@ -5089,6 +5193,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
     setActiveOrganizationId,
+    sortedOrganizations,
   ]);
 
   const handleOrganizationDeleted = useCallback(
@@ -5191,6 +5296,9 @@ export default function App() {
     (projectRouteState.status === "ready" &&
       projectRouteState.projectId === requestedFirstRunProjectId);
   const shouldRouteToFirstRunOnboarding =
+    !isMcpOAuthCallback &&
+    !isOAuthCallback &&
+    !isDebugCallback &&
     !isHostedChatRoute &&
     pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
@@ -5402,7 +5510,7 @@ export default function App() {
         !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
-        routeOrganizationSection !== "billing" ||
+        routeOrganizationSection !== "plans" ||
         !pendingCheckoutIntent
       ) {
         return null;
@@ -5529,7 +5637,13 @@ export default function App() {
   if (
     !isHostedChatRoute &&
     isAuthenticated &&
-    (currentUser === undefined || (currentUser === null && isEnsuringUser))
+    (currentUser === undefined ||
+      // Session revocation can return a null user before Convex's auth state
+      // changes or WorkOS finishes navigating away. That is expected at logout.
+      (currentUser === null &&
+        (isEnsuringUser ||
+          isSignOutInProgress() ||
+          shouldReloadForMissingGuest)))
   ) {
     return <LoadingScreen />;
   }
@@ -5719,7 +5833,6 @@ export default function App() {
     evalChatHandoff,
     firstRunPlaygroundPrompt,
     suspendRouteAutoConnect: shouldShowFirstRunOverlay,
-    handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
     handleContinueEvalInChat,
@@ -6037,7 +6150,13 @@ export default function App() {
                 ) : isBareCaniuseRoute ? (
                   bareCompareContent
                 ) : (
-                  appContent
+                  // The app shell's error cards may offer "Report this" to a
+                  // signed-in member on the hosted app, and to nobody else.
+                  <FeedbackReporterProvider
+                    enabled={HOSTED_MODE && isFeedbackMember === true}
+                  >
+                    {appContent}
+                  </FeedbackReporterProvider>
                 )}
               </HostedShellGate>
               <FirstRunOnboardingOverlay

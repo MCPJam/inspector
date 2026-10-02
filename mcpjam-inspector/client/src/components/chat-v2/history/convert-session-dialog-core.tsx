@@ -346,26 +346,6 @@ function ConvertSessionDialogCoreInner({
     projectServerAttachmentsLoading ||
     projectHostsLoading;
 
-  const missingServers = useMemo(() => {
-    if (!selectedSuiteEntry || serverComparisonPending) {
-      return [];
-    }
-
-    const suiteServerLabels = new Set(
-      (selectedSuiteServerDisplay?.items ?? []).map((item) =>
-        item.label.toLowerCase(),
-      ),
-    );
-
-    return sessionServerDisplay.items
-      .filter((item) => !suiteServerLabels.has(item.label.toLowerCase()))
-      .map((item) => item.label);
-  }, [
-    selectedSuiteEntry,
-    selectedSuiteServerDisplay,
-    sessionServerDisplay.items,
-    serverComparisonPending,
-  ]);
   /**
    * The standalone server group the suite pins, if any. When one is pinned,
    * the suite's runs resolve their servers from the GROUP: `startTestSuiteRun`
@@ -384,6 +364,34 @@ function ConvertSessionDialogCoreInner({
    * and offered the environment opt-in as though it could help.
    */
   const hasPinnedGroup = Boolean(selectedSuiteEntry?.suite.serverAttachment);
+
+  const missingServers = useMemo(() => {
+    if (!selectedSuiteEntry || serverComparisonPending) {
+      return [];
+    }
+
+    // `environment.servers` AND the pinned group — the same union the
+    // backend's import gate reads (mcpjam-backend#1635). A suite created
+    // against a server group leaves `environment.servers` empty and runs on
+    // the group, so reading the environment alone called every server that
+    // group carries "missing", beside a summary that listed it.
+    const suiteServerLabels = new Set(
+      [
+        ...(selectedSuiteServerDisplay?.items ?? []).map((item) => item.label),
+        ...pinnedGroupServers,
+      ].map((label) => label.trim().toLowerCase()),
+    );
+
+    return sessionServerDisplay.items
+      .filter((item) => !suiteServerLabels.has(item.label.toLowerCase()))
+      .map((item) => item.label);
+  }, [
+    pinnedGroupServers,
+    selectedSuiteEntry,
+    selectedSuiteServerDisplay,
+    sessionServerDisplay.items,
+    serverComparisonPending,
+  ]);
 
   /**
    * The selected suite's client · server, read-only — they belong to the
@@ -404,11 +412,9 @@ function ConvertSessionDialogCoreInner({
     // `args.environment?.servers ?? []`). Reading only the environment showed
     // "Claude" alone for every modern suite.
     //
-    // DELIBERATELY a different source from `missingServers` below, which must
-    // keep mirroring `environment.servers`: that is the list the backend gates
-    // the import on and the one the opt-in patches. Pointing the check at the
-    // group instead would have the client pass a suite the server then rejects
-    // outright, replacing a fixable opt-in with a bare submit failure.
+    // Not the same list as `missingServers`, which reads `environment.servers`
+    // AND the group, because that union is what the backend gates the import
+    // on.
     const servers = hasPinnedGroup
       ? pinnedGroupServers
       : (selectedSuiteServerDisplay?.items ?? []).map((item) => item.label);
@@ -428,10 +434,10 @@ function ConvertSessionDialogCoreInner({
   /**
    * Session servers the promoted case will not actually reach. Separate from
    * `missingServers` because they mirror different lists: that one mirrors
-   * `environment.servers`, which `importChatSessionToTestCase` gates on and
-   * the opt-in patches, while this one mirrors the pinned group, which
-   * `startTestSuiteRun` actually runs against. Conflating them let the opt-in
-   * satisfy the gate and still import a case that runs without the server.
+   * the import gate (`environment.servers` ∪ the group), while this one
+   * mirrors the pinned group alone, which `startTestSuiteRun` actually runs
+   * against. A server recorded only in `environment.servers` passes the gate
+   * and still is not reached at run time.
    */
   const unreachableServers = useMemo(() => {
     if (!selectedSuiteEntry || !hasPinnedGroup || serverComparisonPending) {

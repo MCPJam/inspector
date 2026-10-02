@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "../config.js";
 /**
  * Convex bearer resolution for the public /api/v1 surface.
  *
@@ -32,6 +33,7 @@ import {
   volatileAgentAttribution,
   type AgentAttribution,
 } from "./agent-attribution.js";
+import { assertSessionServable } from "../middleware/session-revocation.js";
 
 const MINT_TIMEOUT_MS = 10_000;
 // Re-mint when the cached token is within this window of expiry. Generous
@@ -309,6 +311,20 @@ export async function getBackgroundRunBearerForRequest(
     }
     throw error;
   });
+  // A session known to be revoked is refused before anything is delegated
+  // (MJ-011). Freshness is not required here: the project lookup below runs
+  // under the caller's own bearer, and Convex checks the session itself.
+  assertSessionServable(session.sid, {
+    requireFresh: false,
+    path: c.req.path,
+  });
+  // Native installs have no service credential. Keep the verified member
+  // bearer; expiration/revocation stops work rather than elevating it.
+  if (!HOSTED_MODE) return async () => {
+    await verifyAuthKitToken(bearer);
+    assertSessionServable(session.sid, { requireFresh: false, path: c.req.path });
+    return bearer;
+  };
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new WebRouteError(

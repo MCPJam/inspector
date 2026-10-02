@@ -42,8 +42,9 @@ import { requireGithubToolSelection } from "../../services/github-checks/credent
  *     them. Skipped for guest actors AND scenario sessions — mirrors the
  *     /api/v1 boundary ("Guests cannot access /api/v1"): the workspace
  *     surface is for project members, and the operations authorize via
- *     project membership, not scenario tokens. Connection-opening ops
- *     inherit `requireToolApproval` like bash does.
+ *     project membership, not scenario tokens. Their approval comes from
+ *     `ctx.workspaceToolApproval`, which the route resolves on the server
+ *     (MJ-008).
  *
  * Deliberately thin: this module merges tool sets, it does not absorb
  * per-surface policy. The eval engines simply never pass `computer` (a
@@ -74,7 +75,11 @@ import {
   type ComputerEngine,
 } from "../computers/engine.js";
 import { buildSandboxBashTool } from "./sandbox-bash.js";
-import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
+import {
+  buildMcpjamTool,
+  isMcpjamToolId,
+  WORKSPACE_APPROVAL_UNAVAILABLE_REASON,
+} from "./mcpjam.js";
 import {
   buildBrowserTools,
   type BrowserPageToolsSnapshot,
@@ -185,6 +190,17 @@ export interface BuiltInToolContext {
    */
   scenarioId?: string;
   /**
+   * Ask MCPJam only: the turn is platform-paid, so its web search should be
+   * too. Forwarded to Convex alongside the Inspector service token, which is
+   * what makes the claim credible; Convex refuses rather than falling back to
+   * the customer's credits when it does not hold.
+   *
+   * Only `web_search` reads it. The other built-ins here either cost nothing
+   * (workspace reads) or are already bounded by their own rails (bash, the
+   * browser), so there is nothing to re-fund.
+   */
+  billingFeature?: string;
+  /**
    * True when this turn belongs to a Journey (swarm) simulated session.
    * Computer-backed tools are suppressed for those UNLESS the turn holds a
    * {@link sandboxBinding} — see the `bash` gate below.
@@ -237,6 +253,15 @@ export interface BuiltInToolContext {
   onSecretEnvDelivered?: () => void;
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
+  /**
+   * The workspace approval setting for this turn (MJ-008), resolved on the
+   * server from the saved client or project configuration — on when nothing
+   * is saved, and raised but never lowered by the request (see
+   * `built-in-tool-policy.ts`). The workspace reads that open a connection to
+   * a saved server follow it; workspace writes always ask and pure reads never
+   * do. Absent ⇒ on.
+   */
+  workspaceToolApproval?: boolean;
   /**
    * Fired when a requested built-in is deliberately NOT advertised for a reason
    * the RUN should surface (today: `bash` in a Journey session). A silently
@@ -457,6 +482,8 @@ export function resolveHostTools(
         // session — so without this it is offered to the model and then
         // fails at execution for every link visitor.
         ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
+        // Ask MCPJam's search follows its turn onto MCPJam's budget.
+        ...(ctx.billingFeature ? { billingFeature: ctx.billingFeature } : {}),
         requireToolApproval: ctx.requireToolApproval,
       });
       continue;
@@ -895,11 +922,18 @@ export function resolveHostTools(
       const built = buildMcpjamTool(id, {
         client: ctx.mcpjamPlatformClient,
         projectId: ctx.projectId,
-        requireToolApproval: ctx.requireToolApproval,
+        requireToolApproval: ctx.workspaceToolApproval ?? true,
       });
       if (!built) {
-        logger.warn("[built-in-tools] unknown workspace tool id; skipping", {
+        // A known id, so the builder declined it: it would pause for an
+        // approval this deployment cannot verify. Left out, never offered.
+        logger.warn(
+          "[built-in-tools] workspace tool not offered: its approval cannot be verified on this deployment",
+          { id },
+        );
+        ctx.onToolSuppressed?.({
           id,
+          reason: WORKSPACE_APPROVAL_UNAVAILABLE_REASON,
         });
         continue;
       }

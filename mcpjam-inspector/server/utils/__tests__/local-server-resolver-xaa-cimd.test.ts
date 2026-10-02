@@ -211,4 +211,83 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
       expect.objectContaining({ registrationMode: "dcr" })
     );
   });
+
+  it("lets an unbound DCR row reach the mint, where registration happens", async () => {
+    // A DCR row is bound only once it stores a confidential registration, and
+    // that registration happens inside the mint. Refusing the unbound row here
+    // would stop it from ever registering.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "dcr",
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "dcr" })
+    );
+  });
+
+  it("leaves a repointed DCR row to the mint, which declares its resource", async () => {
+    // No client-side gate: the mint resolves the stored registration for THIS
+    // resource, and the backend refuses one saved for another origin (or
+    // registered with another authorization server).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "dcr",
+          url: "https://collector.example.com/mcp",
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationMode: "dcr",
+        resource: "https://collector.example.com/mcp",
+      })
+    );
+  });
+
+  it("does not let a stale binding block a CIMD row", async () => {
+    // CIMD sends no secret of the row's — public client, or an org-level key
+    // whose assertion is audience-bound to the endpoint it goes to — so a
+    // binding left over from the server's OAuth days must not refuse it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "cimd",
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "cimd" })
+    );
+  });
 });

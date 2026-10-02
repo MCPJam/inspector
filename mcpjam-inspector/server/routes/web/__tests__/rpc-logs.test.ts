@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { projectHostedConnectFailureLogs } from "../../../utils/hosted-connect-failure.js";
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
     "@mcpjam/sdk"
   );
+  const { BlockedEgressTargetError } =
+    await import("../../../utils/hosted-egress-guard.js");
 
   class MockMCPClientManager {
     private readonly rpcLogger?: (event: {
@@ -27,6 +30,16 @@ vi.mock("@mcpjam/sdk", async () => {
     }
 
     async listTools(serverId: string) {
+      if (serverId === "srv-down") throw new Error("connect ECONNREFUSED");
+      // The manager dials lazily, so the egress guard's refusal surfaces
+      // here, wrapped the way the transport wraps it.
+      if (serverId === "srv-blocked") {
+        throw new Error("fetch failed", {
+          cause: new BlockedEgressTargetError(
+            'Target "server.internal" is not allowed',
+          ),
+        });
+      }
       this.rpcLogger?.({
         direction: "send",
         serverId,
@@ -104,6 +117,14 @@ function createRpcLogsTestApp(): Hono {
       { rpcLogs: false }
     )
   );
+  app.post("/api/web/testing/tools/list-redacted-success-logs", async (c) =>
+    withEphemeralConnection(
+      c,
+      toolsListSchema,
+      (manager, body) => listTools(manager, body),
+      { redactSuccessLogs: projectHostedConnectFailureLogs }
+    )
+  );
   return app;
 }
 
@@ -124,18 +145,25 @@ describe("web hosted rpc logs", () => {
             results: Object.fromEntries(
               serverIds.map((serverId: string) => [
                 serverId,
-                {
-                  ok: true,
-                  role: "member",
-                  accessLevel: "project_member",
-                  permissions: { chatOnly: false },
-                  serverConfig: {
-                    transportType: "http",
-                    url: "https://server.example.com/mcp",
-                    headers: {},
-                    useOAuth: false,
-                  },
-                },
+                serverId === "srv-denied"
+                  ? {
+                      ok: false,
+                      status: 403,
+                      code: "FORBIDDEN",
+                      message: "Access denied",
+                    }
+                  : {
+                      ok: true,
+                      role: "member",
+                      accessLevel: "project_member",
+                      permissions: { chatOnly: false },
+                      serverConfig: {
+                        transportType: "http",
+                        url: "https://server.example.com/mcp",
+                        headers: {},
+                        useOAuth: false,
+                      },
+                    },
               ])
             ),
           }),
@@ -238,6 +266,131 @@ describe("web hosted rpc logs", () => {
     );
   });
 
+  it("attaches rpc logs with aligned server names to the tools batch", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-2"],
+        serverNames: ["Notion", "GitHub"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, { tools: Array<{ name: string }> }>;
+      _rpcLogs: Array<{ serverId: string; serverName: string }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(data.results).toEqual({
+      "srv-1": { tools: [{ name: "tool-srv-1" }], toolsMetadata: {} },
+      "srv-2": { tools: [{ name: "tool-srv-2" }], toolsMetadata: {} },
+    });
+    expect(data._rpcLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ serverId: "srv-1", serverName: "Notion" }),
+        expect.objectContaining({ serverId: "srv-2", serverName: "GitHub" }),
+      ]),
+    );
+  });
+
+  it("reports a server that fails inside the tools batch without failing the batch", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-down"],
+        serverNames: ["Notion", "Down"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, { tools: Array<{ name: string }> }>;
+      errors: Record<string, { status: number; code: string; message: string }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(Object.keys(data.results)).toEqual(["srv-1"]);
+    // Mapped as a single-server call's failure would be (`mapTargetServerError`:
+    // a connection failure to the caller's own server is a 502 with the
+    // described message), so the client can rebuild the same error.
+    expect(data.errors).toEqual({
+      "srv-down": {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: expect.stringContaining("connect ECONNREFUSED"),
+      },
+    });
+  });
+
+  it("answers an egress-refused server inside the tools batch as its own request would", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-blocked"],
+        serverNames: ["Notion", "Internal"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, unknown>;
+      errors: Record<string, { status: number; code: string; message: string }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(Object.keys(data.results)).toEqual(["srv-1"]);
+    // The guard's verdict is the caller's to change, so it is a 400 with the
+    // guard's own message, as `/list` answers it, not a 502.
+    expect(data.errors).toEqual({
+      "srv-blocked": {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: 'Target "server.internal" is not allowed',
+      },
+    });
+  });
+
+  it("names the server whose authorization refused the tools batch", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-denied"],
+        serverNames: ["Notion", "Denied"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      details?: Record<string, unknown>;
+    }>(response);
+
+    // The batch is authorized as a whole, so one refusal answers the request.
+    // It names its server, which is what lets the client keep the refusal
+    // for that server and ask again for the rest.
+    expect(status).toBe(403);
+    expect(data.details).toEqual({
+      serverId: "srv-denied",
+      serverName: "Denied",
+    });
+  });
+
   it("keeps hosted rpc logs request-scoped with no cross-request carryover", async () => {
     const app = createRpcLogsTestApp();
 
@@ -302,6 +455,43 @@ describe("web hosted rpc logs", () => {
     expect(status).toBe(200);
     expect(data.tools).toEqual([{ name: "tool-srv-1" }]);
     expect(data._rpcLogs).toBeUndefined();
+  });
+
+  it("projects the success envelope when a route redacts success logs (MJ-001)", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/testing/tools/list-redacted-success-logs",
+      {
+        projectId: "project-1",
+        serverId: "srv-1",
+        serverName: "Notion",
+      },
+      "test-token"
+    );
+
+    const { status, data } = await expectJson<{
+      tools: Array<{ name: string }>;
+      _rpcLogs: Array<{
+        direction: string;
+        message: Record<string, unknown>;
+      }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    // The route's own answer is untouched.
+    expect(data.tools).toEqual([{ name: "tool-srv-1" }]);
+    const received = data._rpcLogs.filter((e) => e.direction === "receive");
+    expect(received.length).toBeGreaterThan(0);
+    for (const event of received) {
+      // The target's answer is not reflected: envelope only, content omitted.
+      expect(event.message.result).toBeUndefined();
+      expect(event.message.contentOmitted).toBe(true);
+    }
+    // Frames this server sent are kept.
+    const sent = data._rpcLogs.find((e) => e.direction === "send");
+    expect(sent?.message).toMatchObject({ method: "tools/list" });
   });
 });
 

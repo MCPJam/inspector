@@ -20,11 +20,15 @@ const MOVED_CLOUD_GROUPS = [
   "sessions",
   "clients",
   "environments",
-  "journeys",
-  "scenarios",
+  // `journeys` survives as an ALIAS of this row — see the note on `studies`.
+  "goals",
   "personas",
   "swarms",
-  "user-testing",
+  // The merged group. `scenarios` and `user-testing` survive as ALIASES, which
+  // Commander renders on the same help row rather than as rows of their own —
+  // so the frozen list names what the row is called, and the alias coverage
+  // lives in studies-cli.test.ts.
+  "studies",
   "images",
   "tunnel",
 ] as const;

@@ -5,8 +5,9 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
-  listScenariosOperation,
+  listStudiesOperation,
   runEvalSuiteOperation,
+  sendFeedbackOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
 import {
@@ -44,6 +45,7 @@ type CapturedRegistration = {
       readOnlyHint?: boolean;
       destructiveHint?: boolean;
       idempotentHint?: boolean;
+      openWorldHint?: boolean;
     };
   };
   callback: (input: unknown) => Promise<unknown>;
@@ -95,6 +97,7 @@ function fakeToolContext(
     platformApiUrl?: string;
     appOrigin?: string;
     callerUserAgent?: string;
+    isGuestSession?: boolean;
   } = {}
 ): PlatformToolContext {
   return {
@@ -109,6 +112,9 @@ function fakeToolContext(
     ...(overrides.callerUserAgent
       ? { callerUserAgent: overrides.callerUserAgent }
       : {}),
+    ...(overrides.isGuestSession !== undefined
+      ? { isGuestSession: overrides.isGuestSession }
+      : {}),
   };
 }
 
@@ -118,8 +124,8 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
     list_eval_suite_runs: "eval_suite_runs",
     get_eval_run: "eval_run",
     list_eval_run_iterations: "eval_run_iterations",
-    list_scenarios: "scenarios",
-    get_scenario: "scenario",
+    list_studies: "scenarios",
+    get_study: "scenario",
   };
 
 const PLAIN_TOOLS = [
@@ -186,6 +192,7 @@ const PLAIN_TOOLS = [
   "update_eval_case",
   "delete_eval_case",
   "generate_eval_cases",
+  "import_eval_cases",
   // Stage analytics: a measured description with slice arrays and exclusion
   // tallies. The app renders it as a funnel; a tool result is the numbers.
   "get_eval_run_stage_analytics",
@@ -250,50 +257,50 @@ const PLAIN_TOOLS = [
   "get_secret",
   "delete_secret",
   "generate_personas",
-  "list_journeys",
-  "get_journey",
-  "create_journey",
-  "update_journey",
-  "archive_journey",
-  "generate_journeys",
-  "list_journey_runs",
-  "get_journey_run",
-  "list_journey_run_sessions",
-  "launch_journey_run",
-  "cancel_journey_run",
+  "list_goals",
+  "get_goal",
+  "create_goal",
+  "update_goal",
+  "archive_goal",
+  "generate_goals",
+  "list_goal_runs",
+  "get_goal_run",
+  "list_goal_run_sessions",
+  "launch_goal_run",
+  "cancel_goal_run",
   "list_swarms",
   "get_swarm",
   "create_swarm",
   "update_swarm",
   "archive_swarm",
   "get_swarms_overview",
-  "get_journey_run_scorecard",
+  "get_goal_run_scorecard",
   "list_swarm_findings",
   "dismiss_swarm_finding",
   "undismiss_swarm_finding",
-  "get_wave_insights",
-  "request_wave_insights",
-  "cancel_wave_insights",
-  "publish_scenario",
-  "unpublish_scenario",
-  "get_user_testing_scenario",
-  "list_user_testing_sessions",
-  "get_user_testing_session",
-  "get_user_testing_metrics",
-  "get_user_testing_usage",
-  "list_user_testing_findings",
-  "get_user_testing_signals",
-  "get_user_testing_insights",
-  "update_user_testing_scenario",
-  "request_user_testing_insights",
-  "cancel_user_testing_insights",
-  "dismiss_user_testing_finding",
-  "undismiss_user_testing_finding",
-  "set_user_testing_guest_execution",
-  "rotate_user_testing_link",
-  "upsert_user_testing_member",
-  "remove_user_testing_member",
-  "rebind_user_testing_scenario",
+  "get_swarm_run_insights",
+  "request_swarm_run_insights",
+  "cancel_swarm_run_insights",
+  "publish_study",
+  "unpublish_study",
+  "get_study",
+  "list_study_sessions",
+  "get_study_session",
+  "get_study_metrics",
+  "get_study_usage",
+  "list_study_findings",
+  "get_study_signals",
+  "get_study_insights",
+  "update_study",
+  "request_study_insights",
+  "cancel_study_insights",
+  "dismiss_study_finding",
+  "undismiss_study_finding",
+  "set_study_guest_execution",
+  "rotate_study_link",
+  "upsert_study_member",
+  "remove_study_member",
+  "rebind_study",
   "list_clients",
   "get_client",
   "create_client",
@@ -308,6 +315,7 @@ const PLAIN_TOOLS = [
   "install_registry_directory_server",
   "install_registry_server",
   "uninstall_registry_server",
+  "send_feedback",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -474,6 +482,7 @@ describe("platform tool registration", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
+      "import_eval_cases",
       "get_eval_run",
       "get_eval_run_stage_analytics",
       "get_eval_run_gate",
@@ -506,8 +515,8 @@ describe("platform tool registration", () => {
       "get_plugin_version",
       "list_project_skills",
       "get_project_skill",
-      "list_scenarios",
-      "get_scenario",
+      "list_studies",
+      "get_study",
       "list_chat_sessions",
       "search_sessions",
       "send_chat_message",
@@ -525,50 +534,49 @@ describe("platform tool registration", () => {
       "get_secret",
       "delete_secret",
       "generate_personas",
-      "list_journeys",
-      "get_journey",
-      "create_journey",
-      "update_journey",
-      "archive_journey",
-      "generate_journeys",
-      "list_journey_runs",
-      "get_journey_run",
-      "list_journey_run_sessions",
-      "launch_journey_run",
-      "cancel_journey_run",
+      "list_goals",
+      "get_goal",
+      "create_goal",
+      "update_goal",
+      "archive_goal",
+      "generate_goals",
+      "list_goal_runs",
+      "get_goal_run",
+      "list_goal_run_sessions",
+      "launch_goal_run",
+      "cancel_goal_run",
       "list_swarms",
       "get_swarm",
       "create_swarm",
       "update_swarm",
       "archive_swarm",
       "get_swarms_overview",
-      "get_journey_run_scorecard",
+      "get_goal_run_scorecard",
       "list_swarm_findings",
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
-      "get_wave_insights",
-      "request_wave_insights",
-      "cancel_wave_insights",
-      "publish_scenario",
-      "unpublish_scenario",
-      "get_user_testing_scenario",
-      "list_user_testing_sessions",
-      "get_user_testing_session",
-      "get_user_testing_metrics",
-      "get_user_testing_usage",
-      "list_user_testing_findings",
-      "get_user_testing_signals",
-      "get_user_testing_insights",
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "rotate_user_testing_link",
-      "upsert_user_testing_member",
-      "remove_user_testing_member",
-      "rebind_user_testing_scenario",
+      "get_swarm_run_insights",
+      "request_swarm_run_insights",
+      "cancel_swarm_run_insights",
+      "publish_study",
+      "unpublish_study",
+      "list_study_sessions",
+      "get_study_session",
+      "get_study_metrics",
+      "get_study_usage",
+      "list_study_findings",
+      "get_study_signals",
+      "get_study_insights",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "rotate_study_link",
+      "upsert_study_member",
+      "remove_study_member",
+      "rebind_study",
       "list_clients",
       "get_client",
       "create_client",
@@ -583,6 +591,7 @@ describe("platform tool registration", () => {
       "install_registry_directory_server",
       "install_registry_server",
       "uninstall_registry_server",
+      "send_feedback",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -633,7 +642,13 @@ describe("platform tool registration", () => {
 
     // Writes whose handler is a no-op when the work is already done, so a
     // client may safely repeat one after a dropped response.
-    const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
+    const IDEMPOTENT_WRITES = new Set([
+      "cancel_project_server_connection",
+      // A repeat replays the stored receipt or dedupes onto the original.
+      "send_feedback",
+    ]);
+    // Writes whose effect leaves the caller's organization.
+    const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
 
     const NON_DESTRUCTIVE_WRITES = new Set([
       "observe_chat_session_browser",
@@ -653,6 +668,7 @@ describe("platform tool registration", () => {
       "create_eval_cases",
       "update_eval_case",
       "generate_eval_cases",
+      "import_eval_cases",
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
       "backtest_eval_run",
@@ -690,36 +706,36 @@ describe("platform tool registration", () => {
       // anything, and creating a journey starts nothing.
       "create_persona",
       "update_persona",
-      "create_journey",
-      "update_journey",
+      "create_goal",
+      "update_goal",
       "create_swarm",
       "update_swarm",
       // Generation writes NOTHING — it returns drafts — but it spends, so it
       // cannot claim to be a read.
       "generate_personas",
-      "generate_journeys",
+      "generate_goals",
       // Insight lifecycle. Requesting spends; dismissing records a judgement;
       // cancelling stops a generation nobody is waiting for.
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
-      "request_wave_insights",
-      "cancel_wave_insights",
+      "request_swarm_run_insights",
+      "cancel_swarm_run_insights",
       // Launching spends across a fan-out, but it does not destroy anything.
-      "launch_journey_run",
+      "launch_goal_run",
       // Publishing exposes an environment. Additive: it creates a scenario.
-      "publish_scenario",
+      "publish_study",
       // User testing writes that change state without removing anything.
-      // `rotate_user_testing_link` and `remove_user_testing_member` are below,
+      // `rotate_study_link` and `remove_study_member` are below,
       // with the destructive set: both take access away from people who have
       // it, immediately.
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "upsert_user_testing_member",
-      "rebind_user_testing_scenario",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "upsert_study_member",
+      "rebind_study",
       // Client authoring, the ADDITIVE half. Both mint a new client and change
       // nothing that exists — which is exactly what separates them from
       // `update_client` / `set_client_servers` below.
@@ -736,10 +752,10 @@ describe("platform tool registration", () => {
       // A HARD credential revoke: the row and the ciphertext both go, so a
       // second call cannot find the row to report the same outcome.
       "delete_secret",
-      "archive_journey",
+      "archive_goal",
       "archive_swarm",
-      "remove_user_testing_member",
-      "rotate_user_testing_link",
+      "remove_study_member",
+      "rotate_study_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       // `risk: "destructive"` is the CONSERVATIVE reading of an unknowable
@@ -759,14 +775,14 @@ describe("platform tool registration", () => {
       // Revoking a credential. Unlike the soft deletes around it, this one is
       // genuinely irreversible — the encrypted value is gone.
       "delete_secret",
-      "archive_journey",
+      "archive_goal",
       "archive_swarm",
-      "cancel_journey_run",
+      "cancel_goal_run",
       // Unpublishing kills every live guest session on the scenario.
-      "unpublish_scenario",
+      "unpublish_study",
       // Rotating invalidates every copy of the share link that anyone holds.
-      "rotate_user_testing_link",
-      "remove_user_testing_member",
+      "rotate_study_link",
+      "remove_study_member",
       "uninstall_registry_server",
       // Client edits: DETERMINISTIC OVERWRITES. `destructiveHint: true` here is
       // not "this is a deletion" — the taxonomy is "removes or invalidates
@@ -781,8 +797,26 @@ describe("platform tool registration", () => {
       "set_client_servers",
     ]);
 
+    // `openWorldHint` is claimed by exactly the tools that talk to people
+    // outside the organization — never inherited from `risk: "exposure"`.
+    expect(
+      registrations
+        .filter(
+          (registration) =>
+            registration.config.annotations?.openWorldHint !== undefined
+        )
+        .map((registration) => registration.name)
+    ).toEqual([...EXTERNAL_COMMUNICATION]);
+
     for (const registration of registrations) {
-      if (IDEMPOTENT_WRITES.has(registration.name)) {
+      if (EXTERNAL_COMMUNICATION.has(registration.name)) {
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
+          openWorldHint: true,
+        });
+      } else if (IDEMPOTENT_WRITES.has(registration.name)) {
         // A write that can be repeated. Cancelling an already-cancelled request
         // is a no-op on the backend, so a client that retries a dropped
         // response lands on the state the first call produced — and NOT saying
@@ -835,10 +869,10 @@ describe("widget payload tagging", () => {
   it("tags the widget callback's payload in both channels and leaves the plain callback untagged", async () => {
     stubPlatformFetch({
       "/projects": PROJECTS_PAGE,
-      "/scenarios": {
+      "/studies": {
         items: [
           {
-            id: "scenario-1",
+            id: "study-1",
             name: "Support bot",
             serverCount: 0,
             serverNames: [],
@@ -850,7 +884,7 @@ describe("widget payload tagging", () => {
     // tagging contract is the same whether or not PLATFORM_WIDGETS_ENABLED is
     // currently attaching it to the tool.
     const context = fakeToolContext({ bearerToken: "jwt" });
-    const ui = platformWidgetUi(context, listScenariosOperation, "scenarios");
+    const ui = platformWidgetUi(context, listStudiesOperation, "scenarios");
 
     const tagged = (await ui.callback({})) as ToolResult;
     expect(tagged.isError).toBeUndefined();
@@ -859,7 +893,7 @@ describe("widget payload tagging", () => {
 
     const plain = (await runPlatformOperation(
       context,
-      listScenariosOperation,
+      listStudiesOperation,
       {}
     )) as ToolResult;
     expect(plain.isError).toBeUndefined();
@@ -1046,6 +1080,75 @@ describe("runPlatformOperation", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+    // No x-request-id on the response, so nothing to quote.
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Denied",
+    });
+  });
+
+  it("quotes the failing request's id in both channels", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "INTERNAL_ERROR", message: "Something broke" },
+          {
+            status: 500,
+            headers: { "x-request-id": "req_0123456789abcdef" },
+          }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    // Prefix only: an internal error also earns the send_feedback nudge,
+    // asserted in full in its own describe block below.
+    expect(result.content[0]?.text).toMatch(
+      /^INTERNAL_ERROR: Something broke \(request id: req_0123456789abcdef\)/
+    );
+    expect(result.structuredContent?.error).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Something broke",
+      requestId: "req_0123456789abcdef",
+    });
+  });
+
+  it("keeps the request id beside a refusal's retry guidance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { code: "RATE_LIMITED", message: "Slow down." },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": "30",
+              "x-request-id": "req_0123456789abcdef",
+            },
+          }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.content[0]?.text).toBe(
+      "RATE_LIMITED: Slow down. (request id: req_0123456789abcdef) Retry after 30s, not sooner."
+    );
+    expect(
+      (result.structuredContent?.error as { requestId?: string }).requestId
+    ).toBe("req_0123456789abcdef");
   });
 
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {
@@ -1304,5 +1407,120 @@ describe("the worker's declared launcher", () => {
     ).shape;
     expect(shape).toBeDefined();
     expect(Object.keys(shape!)).not.toContain("launcher");
+  });
+});
+
+describe("the send_feedback nudge on tool errors", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function failWith(
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = {}
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        body === undefined
+          ? new Response("upstream exploded", { status, headers })
+          : Response.json(body, { status, headers })
+      )
+    );
+  }
+
+  async function listProjectsText(
+    context = fakeToolContext({ bearerToken: "user-jwt" })
+  ): Promise<string> {
+    const result = (await runPlatformOperation(
+      context,
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+    expect(result.isError).toBe(true);
+    return result.content[0]!.text;
+  }
+
+  const NUDGE = "If this looks like an MCPJam bug, report it with send_feedback";
+
+  it("suggests reporting an internal error, quoting its request id", async () => {
+    failWith(
+      500,
+      { code: "INTERNAL_ERROR", message: "Something broke" },
+      { "x-request-id": "req_0123456789abcdef" }
+    );
+    expect(await listProjectsText()).toBe(
+      "INTERNAL_ERROR: Something broke (request id: req_0123456789abcdef) " +
+        "If this looks like an MCPJam bug, report it with send_feedback (requestId req_0123456789abcdef)."
+    );
+  });
+
+  it("suggests reporting a missing capability", async () => {
+    failWith(422, {
+      code: "FEATURE_NOT_SUPPORTED",
+      message: "This server does not support tasks.",
+    });
+    expect(await listProjectsText()).toBe(
+      "FEATURE_NOT_SUPPORTED: This server does not support tasks. " +
+        "If this looks like an MCPJam bug, report it with send_feedback."
+    );
+  });
+
+  it.each([502, 503, 504])(
+    "stays quiet on a %i: the gateway or the user's own server failed",
+    async (status) => {
+      failWith(status, undefined);
+      const text = await listProjectsText();
+      expect(text).toContain("INTERNAL_ERROR");
+      expect(text).not.toContain(NUDGE);
+    }
+  );
+
+  it.each([
+    [404, { code: "NOT_FOUND", message: "No such project." }],
+    [400, { code: "VALIDATION_ERROR", message: "Bad input." }],
+    [403, { code: "FORBIDDEN", message: "Denied." }],
+    [429, { code: "RATE_LIMITED", message: "Slow down." }],
+  ])("stays quiet on a %i: the caller's to fix", async (status, body) => {
+    failWith(status, body);
+    expect(await listProjectsText()).not.toContain(NUDGE);
+  });
+
+  it("stays quiet in an anonymous session, where send_feedback refuses", async () => {
+    failWith(500, { code: "INTERNAL_ERROR", message: "Something broke" });
+    expect(
+      await listProjectsText(
+        fakeToolContext({ bearerToken: "guest-jwt", isGuestSession: true })
+      )
+    ).not.toContain(NUDGE);
+  });
+
+  it("never suggests reporting a failed report", async () => {
+    failWith(500, { code: "INTERNAL_ERROR", message: "Something broke" });
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      sendFeedbackOperation,
+      { kind: "bug", summary: "the run page crashes" }
+    )) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toBe("INTERNAL_ERROR: Something broke");
+  });
+
+  it("tells the agent where the text goes and to carry on", () => {
+    const { registrar, registrations } = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+    const tool = registrations.find(
+      (registration) => registration.name === "send_feedback"
+    );
+    expect(tool?.config.description).toContain(
+      "SENDS YOUR TEXT TO THE MCPJAM TEAM"
+    );
+    expect(tool?.config.description).toContain(
+      "then continue with the user's original task"
+    );
   });
 });

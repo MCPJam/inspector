@@ -167,7 +167,7 @@ export type ResolvedMcpAppsCapabilities = {
 /**
  * getHostStyleOrDefault / DEFAULT_HOST_STYLE result — typed to the renderer's
  * AUDITED reads only: `.mcp.{resolveStyleVariables,fontCss,platform}` and
- * `.chatUi.resolveChatBackground` (+ `.id`). The real `HostStyleDefinition` has
+ * `.chatUi.{label,resolveChatBackground}` (+ `.id`). The real `HostStyleDefinition` has
  * more (the full profile/chat-ui graph); the adapter assigns it (assignable to
  * this minimal surface), so the package never replicates that graph.
  */
@@ -179,6 +179,7 @@ export interface ResolvedHostStyle {
     platform: "web" | "desktop" | "mobile";
   };
   chatUi: {
+    label?: string;
     resolveChatBackground: (theme: "light" | "dark") => string;
   };
 }
@@ -246,8 +247,25 @@ export interface WidgetMount {
 /** New mounts use an opaque string; numbers remain valid for saved data. */
 export type CspMountId = string | number;
 
+/** Selected client and declared domains captured with the mount recipe. */
+export interface CspClientContext {
+  surface?: "inline" | "modal";
+  clientName: string;
+  declaredCsp?: McpUiResourceCsp;
+  capabilities: Pick<
+    ResolvedMcpAppsCapabilities,
+    | "cspConnectDomains"
+    | "cspResourceDomains"
+    | "cspFrameDomains"
+    | "cspBaseUriDomains"
+  >;
+}
+
 /** What MCPJam meant to install before the sandbox proxy serialized it. */
 export interface CspApplicationIntent {
+  /** Actual restrictions used to serialize this mount, not the live profile. */
+  cspSubtypePolicy?: CspSubtypePolicy;
+  clientContext?: CspClientContext;
   csp?: McpUiResourceCsp;
   cspDirectives?: Record<string, string[]>;
   permissive: boolean;
@@ -424,6 +442,8 @@ export interface UiLogEvent {
 
 /** Diagnostics sink — 1:1 with widget-debug-store + traffic-log addLog. */
 export interface WidgetDebugSink {
+  /** Release notifications for one surface without clearing other live views. */
+  clearCspMount?: (toolCallId: string, mountId: CspMountId) => void;
   recordMount: (toolCallId: string, reason: string) => void;
   setWidgetDebugInfo: (
     toolCallId: string,
@@ -738,6 +758,19 @@ export interface WidgetHostServices {
     input: RequestInfo | URL,
     init?: RequestInit
   ) => Promise<Response>;
+  /**
+   * Fetch a persisted artifact (cached widget HTML) by URL. Hosts that serve
+   * artifacts through short-lived links bind this to a fetch that renews an
+   * expired link. Optional: the renderer falls back to the global `fetch`.
+   */
+  fetchArtifact?: (url: string) => Promise<Response>;
+  /**
+   * What a cached artifact URL points at. A host whose artifact links are
+   * re-minted over time (a new expiry, the same object) returns a key that
+   * ignores the expiry, so a re-minted link does not reload a widget whose
+   * bytes did not change. Optional: the URL itself is the key.
+   */
+  artifactCacheKey?: (url: string) => string;
 }
 
 // --- The seam ----------------------------------------------------------------

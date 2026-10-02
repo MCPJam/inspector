@@ -16,15 +16,13 @@ import { Hono } from "hono";
 import { sessionAuthMiddleware } from "../middleware/session-auth.js";
 import { originValidationMiddleware } from "../middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "../middleware/security-headers.js";
+import { indexingHeadersMiddleware } from "../middleware/indexing-headers.js";
 import {
   applyHostedPartition,
   mountHostedOpenRoutes,
 } from "../middleware/hosted-partition.js";
 import { __resetModelsCacheForTests } from "../routes/mcp/models.js";
-import {
-  generateSessionToken,
-  getSessionToken,
-} from "../services/session-token.js";
+import { generateSessionToken } from "../services/session-token.js";
 import { isLocalhostRequest } from "../utils/localhost-check.js";
 
 /**
@@ -36,6 +34,7 @@ function createSecureTestApp(): Hono {
 
   // Apply security middleware in the same order as app.ts
   app.use("*", securityHeadersMiddleware);
+  app.use("*", indexingHeadersMiddleware);
   app.use("*", originValidationMiddleware);
   app.use("*", sessionAuthMiddleware);
 
@@ -61,7 +60,7 @@ function createSecureTestApp(): Hono {
     if (!isLocalhostRequest(host)) {
       return c.json({ error: "Token only available via localhost" }, 403);
     }
-    return c.json({ token: getSessionToken() });
+    return c.json({ code: "ACCESS_LINK_REQUIRED" }, 401);
   });
   app.get("/api/apps/mcp-apps/widget", (c) => c.json({ widget: true }));
 
@@ -136,24 +135,24 @@ describe("Auth Integration", () => {
   });
 
   describe("session token endpoint", () => {
-    it("returns token for localhost requests", async () => {
+    it("refuses credential acquisition for localhost requests", async () => {
       const res = await app.request("/api/session-token", {
         headers: { Host: "localhost:6274" },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
       const data = await res.json();
-      expect(data.token).toBe(validToken);
+      expect(data.code).toBe("ACCESS_LINK_REQUIRED");
     });
 
-    it("returns token for 127.0.0.1 requests", async () => {
+    it("refuses credential acquisition for 127.0.0.1 requests", async () => {
       const res = await app.request("/api/session-token", {
         headers: { Host: "127.0.0.1:6274" },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
       const data = await res.json();
-      expect(data.token).toBe(validToken);
+      expect(data.code).toBe("ACCESS_LINK_REQUIRED");
     });
 
     it("rejects token request from non-localhost", async () => {
@@ -232,6 +231,34 @@ describe("Auth Integration", () => {
       });
 
       expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    });
+
+    it("sets X-Robots-Tag header", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+    });
+
+    // A request the stack short-circuits never reaches a handler, and the
+    // headers are prepared before the rejection. Crawlers see these responses
+    // too, so the directive has to survive one.
+    it("keeps the headers on a request session auth rejects", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+      expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     });
   });
 

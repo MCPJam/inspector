@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkHarnessRuntimeAvailable,
   harnessModelEligibleForRuntime,
+  harnessReasoningEffortRefusalReason,
   harnessToolApprovalRefusalReason,
+  readReasoningEffort,
+  selectionReasoningEffort,
 } from "../harness-availability";
+import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
 import { registeredHarnessIds } from "../registry";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
@@ -675,5 +679,175 @@ describe("harnessToolApprovalRefusalReason", () => {
         hasSelectedMcpServers: true,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("version-keyed model support (evidence table)", () => {
+  it("refuses gpt-5.6-luna on Claude Code as model-unsupported", () => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({ model: { id: "openai/gpt-5.6-luna", provider: "openai" } }),
+    );
+    expect(r).toEqual({
+      ok: false,
+      kind: "model-unsupported",
+      reason:
+        "the Claude Code harness can't run this host's model — pick a " +
+        "Claude Code-compatible model to run the real runtime",
+    });
+  });
+
+  it("refuses an unverified pair for evals and swarms, naming the version", () => {
+    setFullyAvailable();
+    for (const purpose of [undefined, "eval", "swarm"] as const) {
+      const r = checkHarnessRuntimeAvailable(
+        args({
+          model: { id: "anthropic/claude-fable-5", provider: "anthropic" },
+          ...(purpose ? { purpose } : {}),
+        }),
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.kind).toBe("model-unverified");
+        expect(r.reason).toMatch(/^not verified for claude-code \d+\.\d+\.\d+$/);
+      }
+    }
+  });
+
+  it("admits an unverified pair in Playground chat with the reason as a warning", () => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({
+        model: { id: "anthropic/claude-fable-5", provider: "anthropic" },
+        purpose: "chat",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.warning).toMatch(/^not verified for claude-code /);
+    }
+  });
+
+  it("never admits an unsupported pair, even in chat", () => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({
+        harnessId: "codex",
+        model: { id: "openai/gpt-5.6-luna", provider: "openai" },
+        purpose: "chat",
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.kind).toBe("model-unsupported");
+  });
+
+  it("dispatch eligibility follows the same purpose rule", () => {
+    setFullyAvailable();
+    const adapter = getHarnessAdapter("claude-code");
+    const model = { modelId: "anthropic/claude-fable-5", provider: "anthropic" };
+    expect(harnessModelEligibleForRuntime({ adapter, ...model })).toBe(false);
+    expect(
+      harnessModelEligibleForRuntime({ adapter, ...model, purpose: "chat" }),
+    ).toBe(true);
+  });
+});
+
+describe("reasoning effort on a harness (refuse, never drop)", () => {
+  it("no effort is never a refusal", () => {
+    setFullyAvailable();
+    expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["claude-code", "anthropic/claude-haiku-4.5"],
+    ["codex", "openai/gpt-5-nano"],
+  ] as const)(
+    "refuses an effort %s has not verified, before any model rule",
+    (harnessId, modelId) => {
+      setFullyAvailable();
+      const verdict = checkHarnessRuntimeAvailable(
+        args({
+          harnessId,
+          model: { id: modelId },
+          reasoningEffort: "high",
+        }),
+      );
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) throw new Error("unreachable");
+      expect(verdict.kind).toBe("setting-unsupported");
+      expect(verdict.reason).toContain(getHarnessAdapter(harnessId).displayName);
+      expect(verdict.reason).toContain('"high"');
+    },
+  );
+
+  it("refuses an effort on Cursor (external account) too", () => {
+    setFullyAvailable();
+    const verdict = checkHarnessRuntimeAvailable(
+      args({
+        harnessId: "cursor",
+        model: { id: "cursor/auto" },
+        hostModelId: "cursor/auto",
+        reasoningEffort: "low",
+      }),
+    );
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.kind).toBe("setting-unsupported");
+  });
+
+  it("the helper allows an effort the adapter lists and refuses the rest", () => {
+    const adapter = {
+      ...getHarnessAdapter("codex"),
+      supportedReasoningEfforts: ["low", "medium"],
+    } as ReturnType<typeof getHarnessAdapter>;
+    expect(
+      harnessReasoningEffortRefusalReason({ adapter, reasoningEffort: "low" }),
+    ).toBeUndefined();
+    const reason = harnessReasoningEffortRefusalReason({
+      adapter,
+      reasoningEffort: "high",
+    });
+    expect(reason).toContain('"low", "medium"');
+  });
+});
+
+describe("reading an effort off untyped input", () => {
+  it("accepts only the SDK's levels", () => {
+    expect(readReasoningEffort("xhigh")).toBe("xhigh");
+    expect(readReasoningEffort("ultra")).toBeUndefined();
+    expect(readReasoningEffort(3)).toBeUndefined();
+  });
+
+  it("reads settings.reasoningEffort off a selection", () => {
+    expect(
+      selectionReasoningEffort({ settings: { reasoningEffort: "low" } }),
+    ).toBe("low");
+    expect(selectionReasoningEffort({ settings: {} })).toBeUndefined();
+    expect(selectionReasoningEffort(undefined)).toBeUndefined();
+    expect(selectionReasoningEffort("nope")).toBeUndefined();
+  });
+});
+
+describe("every harness adapter either applies an effort or declares none", () => {
+  it.each(registeredHarnessIds())("%s", (id) => {
+    const adapter = getHarnessAdapter(id);
+    // The declaration is the SDK table the pickers read, so the UI never
+    // offers what the gate would refuse.
+    expect(adapter.supportedReasoningEfforts).toEqual(
+      HARNESS_REASONING_EFFORTS[id],
+    );
+    // An adapter that lists an effort must accept it through createHarness
+    // (its own runtime option). Today every adapter lists none, so this proves
+    // itself the day one starts to.
+    for (const reasoningEffort of adapter.supportedReasoningEfforts) {
+      expect(() =>
+        adapter.createHarness({
+          modelId: "openai/gpt-5-nano",
+          auth: {},
+          mcpJson: { mcpServers: {} },
+          reasoningEffort,
+        } as never),
+      ).not.toThrow();
+    }
   });
 });

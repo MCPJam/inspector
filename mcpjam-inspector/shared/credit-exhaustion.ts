@@ -11,7 +11,13 @@ export function isCreditExhaustion(value: unknown): boolean {
       if (strings.has(item)) return;
       strings.add(item);
       if (
-        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked)\b/i.test(
+        // `platform_capacity`, `agent_turn_limit` and `agent_billing_rejected`
+        // are Ask MCPJam's refusals: MCPJam's own budget, a per-user COUNT,
+        // and a billing claim that did not hold. Like the others here, none is
+        // a wallet anyone can top up — and they arrive on a surface the
+        // product calls free, so selling credits against one would be wrong
+        // twice over.
+        /\b(?:platform_free_budget_exhausted|account_suspended|spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED|wallet_locked|platform_capacity|agent_turn_limit|agent_billing_rejected)\b/i.test(
           item,
         )
       ) {
@@ -23,6 +29,7 @@ export function isCreditExhaustion(value: unknown): boolean {
         ) ||
         /mcpjam[\w\s-]{0,40}model limit/i.test(item) ||
         /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i.test(item) ||
+        /\bThis request needs about \d+ MCPJam credits\b/i.test(item) ||
         /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i.test(
           item,
         )
@@ -53,6 +60,10 @@ export function isCreditExhaustion(value: unknown): boolean {
         excluded = true;
     }
     if ("limitKind" in item && item.limitKind === "concurrency")
+      excluded = true;
+    // Other in-flight requests hold the last credits; the backend says retry
+    // in seconds. Treating it as exhaustion stopped runs and locked models.
+    if ("refusalReason" in item && item.refusalReason === "holds_committed")
       excluded = true;
     if (item instanceof Error) visit(item.message);
     for (const nested of Object.values(item)) visit(nested);

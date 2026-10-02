@@ -185,18 +185,13 @@ it("bounds a real HTTP response stalled after headers", async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
-it("bounds presigned artifact response bodies", async () => {
+it("bounds artifact upload response bodies", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const fetch = vi
-    .fn()
-    .mockResolvedValueOnce(
-      response({ uploadUrl: "https://storage.example/upload" })
-    )
-    .mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: () => new Promise(() => {}),
-    });
+  const fetch = vi.fn().mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    json: () => new Promise(() => {}),
+  });
   vi.stubGlobal("fetch", fetch);
   const before = Date.now();
   const result = await uploadWidgetSnapshots(config, [
@@ -210,7 +205,11 @@ it("bounds presigned artifact response bodies", async () => {
   ]);
   expect(Date.now() - before).toBeLessThan(250);
   expect(result[0].widgetSnapshots?.[0].widgetHtml).toBe("<html></html>");
-  expect(fetch.mock.calls[1][1].signal.aborted).toBe(true);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0][0]).toBe(
+    "http://localhost/api/v1/projects/default/eval-ingest/artifacts"
+  );
+  expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
   warn.mockRestore();
 });
 it("does not start transport for an already cancelled operation", async () => {

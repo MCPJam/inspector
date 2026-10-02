@@ -11,10 +11,14 @@ import { cn } from "@/lib/utils";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
-import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
+import {
+  environmentLabel,
+  environmentLabelsById,
+  isNamedEnvironment,
+} from "@/lib/environment-label";
 
-/** Backend cap on `suite.environmentIds` (and the journey fan-out list). */
-export const MAX_SUITE_ENVIRONMENTS = 10;
+/** Suite matrices retain every target; execution budgets are checked at launch. */
+export const MAX_SUITE_ENVIRONMENTS = Number.POSITIVE_INFINITY;
 
 /**
  * Controlled project-environment selector, shared by every surface that picks
@@ -112,16 +116,21 @@ export function EnvironmentPicker({
 
   const selected = useMemo(
     () =>
-      multi
-        ? ((value as string[] | null) ?? [])
-        : value
-          ? [value as string]
-          : [],
+      multi ? (value as string[] | null) ?? [] : value ? [value as string] : [],
     [multi, value],
   );
 
   const environmentsById = useMemo(
     () => new Map((environments ?? []).map((e) => [e.environmentId, e])),
+    [environments],
+  );
+  // ONE numbering for the whole project, keyed by id. Two live rows can carry
+  // the same name, and without this both render identically — picking between
+  // them is a coin flip. Built from the full fetched list rather than the
+  // offerable slice so the `#n` here matches the one every other surface
+  // derives for the same project; see `environmentLabelsById`.
+  const labelsById = useMemo(
+    () => environmentLabelsById(environments ?? []),
     [environments],
   );
   const liveEnvironments = useMemo(
@@ -182,7 +191,7 @@ export function EnvironmentPicker({
             // "…" is for an id no row resolves at all (the orphan case). A row
             // that merely has no name — an ad-hoc one a journey points at —
             // labels by its client instead.
-            return env ? environmentLabel(env) : "…";
+            return env ? labelsById.get(id) ?? environmentLabel(env) : "…";
           })
           .join(", ");
 
@@ -261,13 +270,16 @@ export function EnvironmentPicker({
                       toggle(env.environmentId, next === true)
                     }
                     disabled={capBlocked || inert}
-                    aria-label={environmentLabel(env)}
+                    aria-label={
+                      labelsById.get(env.environmentId) ?? environmentLabel(env)
+                    }
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
                     {/* Offerable rows are named-only, so this IS the name —
-                        routed through the helper so the type stays honest and
-                        the vocabulary stays in one place. */}
-                    {environmentLabel(env)}
+                        routed through the helper so the type stays honest, the
+                        vocabulary stays in one place, and two rows sharing a
+                        name are told apart by a `#n`. */}
+                    {labelsById.get(env.environmentId) ?? environmentLabel(env)}
                   </span>
                   {multi && checked ? (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
@@ -293,10 +305,12 @@ export function EnvironmentPicker({
                     checked
                     onCheckedChange={() => toggle(env.environmentId, false)}
                     disabled={inert}
-                    aria-label={`${environmentLabel(env)} (archived)`}
+                    aria-label={`${
+                      labelsById.get(env.environmentId) ?? environmentLabel(env)
+                    } (archived)`}
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {environmentLabel(env)}
+                    {labelsById.get(env.environmentId) ?? environmentLabel(env)}
                     <span className="ml-1 text-[10px] text-muted-foreground">
                       (archived)
                     </span>

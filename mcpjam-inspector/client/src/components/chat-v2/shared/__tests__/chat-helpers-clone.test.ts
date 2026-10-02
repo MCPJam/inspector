@@ -207,6 +207,25 @@ describe("formatErrorMessage", () => {
     expect(result).not.toHaveProperty("walletLocked");
   });
 
+  it("routes a holds_committed refusal to the retry banner", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+        limitKind: "total",
+        refusalReason: "holds_committed",
+        isRetryable: true,
+        retryAfter: 15000,
+        outstandingHolds: 2,
+        error:
+          "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+      }),
+    );
+
+    expect(result?.code).toBe("user_rate_limit");
+    expect(result?.limitKind).toBe("concurrency");
+    expect(result?.retryAfterMs).toBe(15000);
+  });
+
   it("does not crash on a legacy 429 without walletLocked or limitKind", () => {
     const result = formatErrorMessage(
       JSON.stringify({

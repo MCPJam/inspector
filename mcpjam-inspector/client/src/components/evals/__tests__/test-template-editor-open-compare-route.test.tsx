@@ -64,6 +64,12 @@ const projectServersMock = vi.hoisted(() => ({
   isLoading: false,
 }));
 
+// The harness × model picker locks read each host's config; these tests have
+// no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
 }));
@@ -668,6 +674,56 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it("stops a streaming run without crashing the finished-model count", async () => {
+    const user = userEvent.setup();
+    const messageToast = vi.spyOn(toast, "message");
+    streamEvalTestCaseMock.mockImplementation(
+      (
+        _request: unknown,
+        onEvent: (event: { type: "text_delta"; content: string }) => void,
+        signal: AbortSignal,
+      ) =>
+        new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            // A chunk lands right as the stream aborts (outside the click's
+            // act), so React still has a queued update when the cancelled
+            // record is built and defers that updater.
+            queueMicrotask(() => {
+              onEvent({ type: "text_delta", content: "late chunk" });
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          });
+        }),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    await waitFor(() => {
+      expect(messageToast).toHaveBeenCalledWith("Compare run stopped.");
+    });
+  });
+
   it("shows a loading spinner instead of config UI while route-open compare data is unresolved", async () => {
     // Iterations are now a prop, not a query — the remaining loading gates
     // are `testCases === undefined`, the init ref mismatch, and the route
@@ -1012,35 +1068,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(
       await screen.findByDisplayValue("Unsaved current prompt"),
     ).not.toHaveAttribute("readonly");
-  });
-
-  it("offers failure evidence after the first trial and opens Steps", async () => {
-    activeCaseDoc = goldenCaseDoc;
-    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
-    const trial = {
-      ...baseIteration,
-      _id: "failed-first",
-      blob: "failed-blob",
-      suiteRunId: undefined,
-      result: "failed" as const,
-      testCaseSnapshot: {
-        ...baseIteration.testCaseSnapshot,
-        steps: goldenCaseDoc.steps,
-      },
-    };
-    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    const button = await screen.findByRole("button", {
-      name: "Open the failed step",
-    });
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(screen.queryByTestId("trial-scorecard")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
-      "data-view-mode",
-      "steps",
-    );
   });
 
   it("automatically saves judge overrides from the dedicated UVC page", async () => {

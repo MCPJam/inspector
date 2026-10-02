@@ -172,6 +172,37 @@ describe("chat-history routes", () => {
       expect(body.session.chatSessionId).toBe("s1");
     });
 
+    it("never lets a detail carrying short-lived artifact links be cached", async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            session: {
+              chatSessionId: "s1",
+              messagesBlobUrl:
+                "https://deployment.convex.site/web/artifact?t=body.sig",
+            },
+            widgetSnapshots: [],
+            turnTraces: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const res = await app.request("/chat-history/detail?chatSessionId=s1", {
+        method: "GET",
+        headers: { Authorization: "Bearer test-token" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      const body = await res.json();
+      // The links pass through untouched; the client renews them.
+      expect(body.session.messagesBlobUrl).toBe(
+        "https://deployment.convex.site/web/artifact?t=body.sig",
+      );
+    });
+
     it("passes sessionId through when provided", async () => {
       fetchMock.mockResolvedValueOnce(
         new Response(

@@ -7,22 +7,12 @@ on:
         description: "Release version label"
         required: true
         type: string
-      apply_release_patch:
-        description: "Apply the shared release patch artifact before building"
-        required: false
-        default: true
-        type: boolean
   workflow_dispatch:
     inputs:
       version:
         description: "Artifact version label"
         required: false
         type: string
-      apply_release_patch:
-        description: "Apply release patch artifact from the current run"
-        required: false
-        default: false
-        type: boolean
 
 env:
   NODE_VERSION: "24.14.0"
@@ -38,17 +28,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Download release patch
-        if: inputs.apply_release_patch == true
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        if: inputs.apply_release_patch == true
-        run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

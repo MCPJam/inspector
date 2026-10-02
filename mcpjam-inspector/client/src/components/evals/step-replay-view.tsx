@@ -38,6 +38,7 @@ import type {
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { RenderObservationCard } from "./browser-artifacts-view";
 import { EVAL_WARN_BADGE_STRONG_CLASS } from "./constants";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 
 /** Settled (or in-flight) iteration verdict shown atop the step list. */
 export type StepVerdict = "passed" | "failed" | "pending" | "cancelled";
@@ -624,7 +625,7 @@ function InteractionRow({
       ) : null}
 
       {step.screenshotUrl ? (
-        <img
+        <ArtifactImage
           src={step.screenshotUrl}
           alt={`${step.action} step`}
           className="w-full rounded border border-border/60"

@@ -51,8 +51,8 @@ function GuestSharingSignUpDialog({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>Sign up to share</DialogTitle>
           <DialogDescription>
-            Create an account to share this scenario. Your scenarios and history
-            stay with you. After signing in, try sharing again.
+            Create an account to share this. Your shares and history stay with
+            you. After signing in, try sharing again.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

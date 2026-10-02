@@ -3,14 +3,20 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   listApiKeys: vi.fn(),
+  listOrganizationApiKeys: vi.fn(),
   createApiKey: vi.fn(),
   revokeApiKey: vi.fn(),
+  revokeOrganizationApiKey: vi.fn(),
 }));
 
 vi.mock("@/lib/apis/web/api-keys", () => ({
   listApiKeys: (...args: unknown[]) => mocks.listApiKeys(...args),
+  listOrganizationApiKeys: (...args: unknown[]) =>
+    mocks.listOrganizationApiKeys(...args),
   createApiKey: (...args: unknown[]) => mocks.createApiKey(...args),
   revokeApiKey: (...args: unknown[]) => mocks.revokeApiKey(...args),
+  revokeOrganizationApiKey: (...args: unknown[]) =>
+    mocks.revokeOrganizationApiKey(...args),
 }));
 
 import { useApiKeys } from "../useApiKeys";
@@ -19,8 +25,14 @@ const KEY = { id: "key-1", name: "ci", obfuscated_value: "sk_...abcd" };
 
 beforeEach(() => {
   mocks.listApiKeys.mockReset().mockResolvedValue([KEY]);
+  mocks.listOrganizationApiKeys
+    .mockReset()
+    .mockResolvedValue({ items: [KEY], truncated: false });
   mocks.createApiKey.mockReset();
   mocks.revokeApiKey.mockReset().mockResolvedValue(undefined);
+  mocks.revokeOrganizationApiKey
+    .mockReset()
+    .mockResolvedValue({ alreadyRevoked: false });
 });
 
 describe("useApiKeys", () => {
@@ -30,12 +42,72 @@ describe("useApiKeys", () => {
       { initialProps: { organizationId: "org-a" } },
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(mocks.listApiKeys).toHaveBeenLastCalledWith("org-a");
+    expect(mocks.listOrganizationApiKeys).toHaveBeenLastCalledWith("org-a");
     rerender({ organizationId: "org-b" });
     await waitFor(() =>
-      expect(mocks.listApiKeys).toHaveBeenLastCalledWith("org-b"),
+      expect(mocks.listOrganizationApiKeys).toHaveBeenLastCalledWith("org-b"),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
+    // The personal list is a different endpoint and is never asked here.
+    expect(mocks.listApiKeys).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a truncated organization inventory, and never for the personal list", async () => {
+    mocks.listOrganizationApiKeys.mockResolvedValue({
+      items: [KEY],
+      truncated: true,
+    });
+    const org = renderHook(() =>
+      useApiKeys({ enabled: true, organizationId: "org-a" }),
+    );
+    await waitFor(() => expect(org.result.current.truncated).toBe(true));
+
+    const personal = renderHook(() => useApiKeys({ enabled: true }));
+    await waitFor(() => expect(personal.result.current.loading).toBe(false));
+    expect(personal.result.current.truncated).toBe(false);
+  });
+
+  it("revokes through the organization endpoint in the organization inventory", async () => {
+    const { result } = renderHook(() =>
+      useApiKeys({ enabled: true, organizationId: "org-a" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    mocks.listOrganizationApiKeys.mockResolvedValue({
+      items: [],
+      truncated: false,
+    });
+    await act(async () => {
+      await result.current.revoke("key-1");
+    });
+
+    expect(mocks.revokeOrganizationApiKey).toHaveBeenCalledWith(
+      "org-a",
+      "key-1",
+    );
+    // Not the owner-only endpoint, which 404s a key the caller did not mint.
+    expect(mocks.revokeApiKey).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.keys).toEqual([]));
+  });
+
+  it("passes the chosen lifetime through when creating a key", async () => {
+    mocks.createApiKey.mockResolvedValue({ ...KEY, value: "plaintext" });
+    const { result } = renderHook(() => useApiKeys({ enabled: true }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.create({
+        name: "ci",
+        organizationId: "org-1",
+        expiresInDays: 30,
+      });
+    });
+
+    expect(mocks.createApiKey).toHaveBeenCalledWith({
+      name: "ci",
+      organizationId: "org-1",
+      expiresInDays: 30,
+    });
   });
 
   it("lists keys when enabled", async () => {
@@ -128,6 +200,7 @@ describe("useApiKeys", () => {
     });
 
     expect(mocks.revokeApiKey).toHaveBeenCalledWith("key-1");
+    expect(mocks.revokeOrganizationApiKey).not.toHaveBeenCalled();
     await waitFor(() => expect(result.current.keys).toEqual([]));
   });
 

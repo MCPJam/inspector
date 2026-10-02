@@ -41,6 +41,7 @@ import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   checkHarnessRuntimeAvailable,
+  selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
@@ -140,7 +141,13 @@ export type ChatSessionEngineRefusal = {
 };
 
 export type ChatSessionEngineResult =
-  | { ok: true; engine: ChatSessionEngine }
+  | {
+      ok: true;
+      engine: ChatSessionEngine;
+      /** Set when the turn may run but the evidence table has not verified
+       *  this harness × model pair ("not verified for <harness> <version>"). */
+      warning?: string;
+    }
   | ({ ok: false } & ChatSessionEngineRefusal);
 
 /**
@@ -227,6 +234,14 @@ export function resolveChatSessionEngine(args: {
   // The host's own approval gate, read server-side like everything else here.
   const requireToolApproval = hostConfig.requireToolApproval === true;
 
+  const hostSelection = hostConfig.modelSelection as
+    | { modelId?: unknown }
+    | undefined;
+  const hostEffort =
+    hostSelection?.modelId === args.model.id
+      ? selectionReasoningEffort(hostSelection)
+      : undefined;
+
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
     requireToolApproval,
@@ -237,6 +252,13 @@ export function resolveChatSessionEngine(args: {
     // never be MORE permissive than a valid one.
     xaaEnterprisePolicyOn:
       readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off",
+    // An API chat turn is chat: an unverified harness × model pair runs, and
+    // the verdict's reason comes back as `warning`.
+    purpose: "chat",
+    // The host's saved effort, when its selection names the model this turn
+    // runs. A harness that cannot apply it refuses the turn instead of running
+    // without it.
+    ...(hostEffort !== undefined ? { reasoningEffort: hostEffort } : {}),
   });
   if (!availability.ok) {
     return {
@@ -311,6 +333,7 @@ export function resolveChatSessionEngine(args: {
   return {
     ok: true,
     engine: { kind: "harness", harness, hostId: args.hostTarget.hostId },
+    ...(availability.warning ? { warning: availability.warning } : {}),
   };
 }
 
@@ -318,13 +341,10 @@ export function resolveChatSessionEngine(args: {
  * The LAST line of defence: a harness that reached dispatch must be on an
  * engine that can actually run it.
  *
- * `runAssistantTurn` deliberately does NOT hard-fail an ineligible harness —
- * it logs and runs the emulated engine, because eval/synthetic batches forward
- * `harness` unconditionally and must not lose a whole run to one bad case. On
- * an interactive surface that leniency is the bug: the turn would answer 200
- * and be attributed to a runtime it never touched. `resolveTurnRuntime` can
- * also hand back a DIRECT (local-BYOK) runtime, which drops `harness` on the
- * floor entirely.
+ * `runAssistantTurn` throws on an ineligible harness model rather than run the
+ * emulated engine, but `resolveTurnRuntime` can also hand back a DIRECT
+ * (local-BYOK) runtime, which drops `harness` on the floor entirely — the turn
+ * would answer 200 and be attributed to a runtime it never touched.
  *
  * The preflight above should have caught both (a BYOK model is not an
  * MCPJam-hosted one, and the shared gate refuses it), so reaching this is a

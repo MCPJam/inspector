@@ -1,3 +1,5 @@
+import { serverCheckQueue, useServerCheckQueueState } from "@/lib/server-check-queue";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useState,
@@ -155,6 +157,8 @@ export function ServerConnectionCard({
   onShareToOrgRegistry,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
+  const checkProjectId = (HOSTED_MODE ? tryResolveProjectServer(server.name)?.projectId : undefined) ?? projectId ?? "";
+  const checkQueueState = useServerCheckQueueState(checkProjectId, server.name);
   const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
 
   // A pinned protocol version the server doesn't offer is the one connect
@@ -220,12 +224,16 @@ export function ServerConnectionCard({
    */
   const known = isConnectionStatus(server.connectionStatus);
   const meta = getConnectionStatusMeta(
-    known ? server.connectionStatus : "disconnected",
+    checkQueueState
+      ? "connecting"
+      : known
+        ? server.connectionStatus
+        : "disconnected",
   );
   const {
     label: connectionStatusLabel,
     indicatorClassName,
-  } = known ? meta : { ...meta, ...UNKNOWN_CONNECTION_STATUS };
+  } = known || checkQueueState ? meta : { ...meta, ...UNKNOWN_CONNECTION_STATUS };
   const { Icon: ConnectionStatusIcon, iconClassName } = meta;
   const commandDisplay = getServerCommandDisplay(server.config);
 
@@ -245,6 +253,7 @@ export function ServerConnectionCard({
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
+    Boolean(checkQueueState) ||
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
   const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
@@ -380,6 +389,7 @@ export function ServerConnectionCard({
     connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
+    serverCheckQueue.markManual(checkProjectId, server.name);
     setIsReconnecting(true);
     try {
       await onReconnect(server.name, options);
@@ -649,7 +659,8 @@ export function ServerConnectionCard({
                   <span>
                     {/* "(0)" is not information. The count is only worth the
                         parentheses once something has actually been retried. */}
-                    {server.connectionStatus === "failed" &&
+                    {!checkQueueState &&
+                    server.connectionStatus === "failed" &&
                     server.retryCount > 0
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
@@ -658,7 +669,7 @@ export function ServerConnectionCard({
 
                 <Switch
                   data-server-card-context-menu-exempt
-                  checked={server.connectionStatus === "connected"}
+                  checked={Boolean(checkQueueState) || server.connectionStatus === "connected"}
                   onCheckedChange={(checked) => {
                     track("connection_switch_toggled", {
                       location: "server_connection_card",
@@ -670,8 +681,10 @@ export function ServerConnectionCard({
                       return;
                     }
                     if (!checked) {
+                      serverCheckQueue.cancelServer(checkProjectId, server.name);
                       onDisconnect(server.name);
                     } else {
+                      serverCheckQueue.markManual(checkProjectId, server.name);
                       void handleReconnect(getSwitchReconnectOptions());
                     }
                   }}
@@ -1050,7 +1063,7 @@ export function ServerConnectionCard({
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
                 // Same height as the support pill. The diagnostic rows
-                // sit behind the info glyph so a failed card does not
+                // sit behind the error title so a failed card does not
                 // grow a second status report under Failed.
                 density="row"
                 // Controlled — the status row above toggles

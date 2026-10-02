@@ -93,7 +93,7 @@ describe("BehaviorTab consumes labels from the shared schema", () => {
 
     const renderLabel = hostConfigField("mcpToolResultImageRendering").label;
     expect(
-      screen.getByRole("group", { name: renderLabel })
+      screen.getByRole("radiogroup", { name: renderLabel })
     ).toBeInTheDocument();
   });
 

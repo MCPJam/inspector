@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
 import { withTechnicalDetails } from "@/lib/error-technical-details";
+import { useFeedbackReporter } from "@/components/support/FeedbackReporterContext";
 
 const DOCS_BASE_URL = "https://docs.mcpjam.com";
 
@@ -51,7 +52,7 @@ export type ErrorCardProps = {
   variant?: "inline" | "banner" | "toast";
   /**
    * `row` is the server-card density: one line the height of the support
-   * pill, with the diagnostic rows behind an info glyph. `card` is the
+   * pill, with the diagnostic rows behind the clickable title. `card` is the
    * diagnostic report. A primary `action` also selects `row` — the action
    * is the thing to do, and the rest is secondary.
    */
@@ -78,6 +79,19 @@ export type ErrorCardProps = {
    */
   className?: string;
 };
+
+/**
+ * The code a report quotes: the source's own code when it sent a string one
+ * (`INTERNAL_ERROR`), else the catalog slug. Capped to the report's field
+ * limit.
+ */
+function reportErrorCode(normalized: NormalizedError): string {
+  const code =
+    typeof normalized.rawCode === "string" && normalized.rawCode.trim()
+      ? normalized.rawCode.trim()
+      : normalized.slug;
+  return code.slice(0, 64);
+}
 
 function resolveNormalized(input: unknown): NormalizedError {
   // A caller that already holds a normalized block is passing the server's
@@ -352,6 +366,16 @@ export function ErrorCard({
   className,
 }: ErrorCardProps) {
   const normalized = useMemo(() => resolveNormalized(error), [error]);
+  // Present only inside the signed-in hosted shell. Everywhere else the card
+  // offers no report link, and never needs a Convex client to render.
+  const feedbackReporter = useFeedbackReporter();
+  // Only OUR failures, and only with the request id that joins the report to
+  // the server's logs. A user's own server or config failing is not a report
+  // for the MCPJam team.
+  const reportable =
+    feedbackReporter !== null &&
+    originOf(normalized) === "mcpjam" &&
+    Boolean(normalized.requestId);
   // Support both controlled (`open` provided) and uncontrolled (`defaultOpen`)
   // modes. `useState` only reads `defaultOpen` once at mount, so callers that
   // need the toggle to react to outside state must use the controlled form.
@@ -416,8 +440,8 @@ export function ErrorCard({
     hasTechnical;
   /**
    * `row` (or a primary `action`) is one line the height of the server
-   * card's support pill: title, the click, and an info glyph. Badge,
-   * one-liner, Copy, and evidence wait behind the glyph. `card` stays a
+   * card's support pill: a clickable title and the click. Badge,
+   * one-liner, Copy, and evidence wait behind the title. `card` stays a
    * diagnostic report.
    */
   const compact = density === "row" || Boolean(action);
@@ -524,6 +548,22 @@ export function ErrorCard({
                 <div>
                   <SectionLabel>Request ID</SectionLabel>
                   <MonoBlock>{normalized.requestId}</MonoBlock>
+                  {reportable ? (
+                    <button
+                      type="button"
+                      data-testid="error-card-report"
+                      onClick={() =>
+                        feedbackReporter?.openFeedback({
+                          kind: "bug",
+                          requestId: normalized.requestId,
+                          errorCode: reportErrorCode(normalized),
+                        })
+                      }
+                      className="mt-1 text-[11px] font-medium text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+                    >
+                      Report this
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {normalized.stack ? (
@@ -591,12 +631,22 @@ export function ErrorCard({
         className={cn("text-xs select-text nodrag nopan", className)}
       >
         <div className="flex h-6.5 items-center gap-2">
-          <Icon
-            className={cn("h-3.5 w-3.5 shrink-0", styles.iconClass)}
-          />
-          <span className="min-w-0 flex-1 truncate font-medium leading-none text-foreground">
-            {displayTitle(normalized)}
-          </span>
+          {/* The title is the disclosure: no separate glyph to hunt for at
+              the far edge of the card. */}
+          <button
+            type="button"
+            onClick={handleToggle}
+            aria-expanded={isOpen}
+            data-testid="error-card-details"
+            className="-mx-1.5 flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-chrome-hover"
+          >
+            <Icon
+              className={cn("h-3.5 w-3.5 shrink-0", styles.iconClass)}
+            />
+            <span className="min-w-0 truncate font-medium leading-none text-foreground">
+              {displayTitle(normalized)}
+            </span>
+          </button>
           {action ? (
             <Button
               type="button"
@@ -620,16 +670,6 @@ export function ErrorCard({
               Retry
             </Button>
           ) : null}
-          <button
-            type="button"
-            onClick={handleToggle}
-            aria-expanded={isOpen}
-            aria-label={isOpen ? "Hide details" : "Show details"}
-            data-testid="error-card-details"
-            className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-chrome-hover hover:text-foreground"
-          >
-            <Info className="size-3" aria-hidden />
-          </button>
           {onDismiss ? (
             <button
               type="button"

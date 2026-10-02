@@ -109,6 +109,16 @@ export const toolOutputDeniedChunk = (a: {
 }): UIMessageChunk =>
   asChunk({ type: "tool-output-denied", toolCallId: a.toolCallId });
 
+export const toolOutputErrorChunk = (a: {
+  toolCallId: string;
+  errorText: string;
+}): UIMessageChunk =>
+  asChunk({
+    type: "tool-output-error",
+    toolCallId: a.toolCallId,
+    errorText: a.errorText,
+  });
+
 // ── finish / error ───────────────────────────────────────────────────────────
 // Takes a READY messageMetadata (no aggregation here). The emulated engine's
 // `createClientFinishChunk` keeps its turn-level usage aggregation and delegates
@@ -196,6 +206,14 @@ export const emitToolOutputDenied = (
   a: Parameters<typeof toolOutputDeniedChunk>[0],
 ): UIMessageChunk => {
   const c = toolOutputDeniedChunk(a);
+  w.write(c);
+  return c;
+};
+export const emitToolOutputError = (
+  w: ChunkWriter,
+  a: Parameters<typeof toolOutputErrorChunk>[0],
+): UIMessageChunk => {
+  const c = toolOutputErrorChunk(a);
   w.write(c);
   return c;
 };

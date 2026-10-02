@@ -15,10 +15,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockHydrate, mockTraces, STABLE_THREAD } = vi.hoisted(() => ({
   mockHydrate: vi.fn(),
   mockTraces: { traces: [] as unknown[] },
-  // Stable identity, because the transcript effect depends on the thread
-  // OBJECT. The real Convex hook holds a reference across renders; a fresh
-  // literal per render would re-run the effect forever and the loop would be
-  // the mock's, not the hook's.
+  // Stable identity: the real Convex hook holds a reference across renders,
+  // and a fresh literal per render would exercise the mock, not the hook.
   STABLE_THREAD: {
     messagesBlobUrl: "https://storage.example.com/t.json",
     recordedContext: {

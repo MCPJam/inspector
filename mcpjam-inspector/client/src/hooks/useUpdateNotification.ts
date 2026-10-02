@@ -1,10 +1,27 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "@/lib/toast";
-import type { UpdateStatus } from "@/types/electron";
+import type { UpdateStatus, FailedUpdateStatus } from "@/types/electron";
 
-// Public releases page — repo is github.com/MCPJam/inspector (verified from
-// mcpjam-inspector/package.json `repository.url`).
-const RELEASES_URL = "https://github.com/MCPJam/inspector/releases";
+function showFailure(status: FailedUpdateStatus, retry: () => void) {
+  const label =
+    status.action === "retry-download" ? "Retry download" : "Relaunch to retry";
+  const actionable = status.action !== "instructions";
+  toast.error(
+    actionable
+      ? status.action === "retry-download"
+        ? "Update download failed. Try downloading again."
+        : "Update download is stuck. Relaunch MCPJam to retry."
+      : status.reason === "shutdown_stuck"
+        ? "Update failed. Force quit MCPJam and reopen it."
+        : "Update failed. Quit MCPJam completely, then open it again.",
+    {
+      id: `desktop-update-${status.attemptId}`,
+      duration: Infinity,
+      closeButton: true,
+      ...(actionable ? { action: { label, onClick: retry } } : {}),
+    },
+  );
+}
 
 export function useUpdateNotification() {
   const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
@@ -26,25 +43,47 @@ export function useUpdateNotification() {
    */
   const statusRef = useRef<UpdateStatus>({ kind: "idle" });
 
-  const applyStatus = useCallback((next: UpdateStatus) => {
-    statusRef.current = next;
-    // A click that raced a collapse leaves `restartRequested` set with nothing
-    // installing behind it. Only `update-error` used to clear it, and a first
-    // collapse is silent — so the pill would come back stuck on "Updating…"
-    // at the next download. Neither `idle` nor `manual` has an install in
-    // flight; only `downloaded` does, because the main process hands off to
-    // Electron's teardown without a further status.
-    if (next.kind === "idle" || next.kind === "manual") {
-      setRestartRequested(false);
-    }
-    setStatus(next);
+  const shownFailure = useRef<string | undefined>(undefined);
+  const failureToast = useRef<string | undefined>(undefined);
+  const actionPending = useRef(false);
+  const retryUpdate = useCallback(() => {
+    const current = statusRef.current;
+    if (current.kind !== "failed" || actionPending.current) return;
+    if (current.action === "instructions") return;
+    actionPending.current = true;
+    setRestartRequested(true);
+    if (current.action === "retry-download")
+      window.electronAPI?.update?.retryDownload();
+    else window.electronAPI?.update?.relaunchToRetry();
   }, []);
 
-  const downloadManually = useCallback(() => {
-    window.electronAPI?.app?.openExternal(RELEASES_URL)?.catch((error) => {
-      console.warn("Failed to open releases page", error);
-    });
-  }, []);
+  const applyStatus = useCallback(
+    (next: UpdateStatus) => {
+      statusRef.current = next;
+      actionPending.current = false;
+      setRestartRequested(false);
+      if (next.kind === "failed") {
+        const key = `${next.attemptId}:${next.reason}:${next.action}`;
+        if (shownFailure.current !== key) {
+          if (failureToast.current) toast.dismiss(failureToast.current);
+          shownFailure.current = key;
+          failureToast.current = `desktop-update-${next.attemptId}`;
+          showFailure(next, retryUpdate);
+        }
+      } else if (failureToast.current) {
+        toast.dismiss(failureToast.current);
+        failureToast.current = undefined;
+        shownFailure.current = undefined;
+      }
+      setStatus(next);
+    },
+    [retryUpdate],
+  );
+
+  const showUpdateError = useCallback(() => {
+    if (statusRef.current.kind === "failed")
+      showFailure(statusRef.current, retryUpdate);
+  }, [retryUpdate]);
 
   useEffect(() => {
     if (!window.isElectron || !window.electronAPI?.update) {
@@ -60,27 +99,9 @@ export function useUpdateNotification() {
       liveEventReceived = true;
       applyStatus(next);
     });
-    api.onUpdateError(() => {
-      // The install did not happen, so let the user ask again. Its own toast
-      // offers the manual download; this re-arms the button behind it.
-      setRestartRequested(false);
-      // Surface a fallback path — auto-update can stall silently on macOS
-      // (Squirrel staging / signing issues), so always offer a manual
-      // download as an escape hatch. Once the main process has given up on
-      // this install there is no later in-app retry to promise, so the copy
-      // says so rather than "try again later".
-      const autoUpdateGaveUp = statusRef.current.kind === "manual";
-      toast.error(
-        autoUpdateGaveUp
-          ? "Automatic update isn't working on this install. Download the new version instead."
-          : "Update failed. Try again later.",
-        {
-          action: {
-            label: "Download manually",
-            onClick: downloadManually,
-          },
-        },
-      );
+    api.onUpdateError((failure) => {
+      liveEventReceived = true;
+      applyStatus(failure);
     });
 
     // Initial snapshot — apply only if a live event hasn't already overtaken it.
@@ -101,9 +122,12 @@ export function useUpdateNotification() {
       window.electronAPI?.update?.removeUpdateErrorListener();
     };
     // Both callbacks are stable, so this stays a mount-once effect.
-  }, [applyStatus, downloadManually]);
+  }, [applyStatus]);
 
   const restartAndInstall = useCallback(() => {
+    if (statusRef.current.kind !== "downloaded" || actionPending.current)
+      return;
+    actionPending.current = true;
     setRestartRequested(true);
     window.electronAPI?.update?.restartAndInstall();
   }, []);
@@ -123,7 +147,8 @@ export function useUpdateNotification() {
   return {
     status,
     restartRequested,
-    downloadManually,
+    showUpdateError,
+    retryUpdate,
     restartAndInstall,
     simulateUpdate,
     simulateUpdateDownloaded,

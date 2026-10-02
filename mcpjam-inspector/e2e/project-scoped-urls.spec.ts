@@ -1,19 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-/**
- * Canonical project URLs, from the two angles a browser can check without an
- * account.
- *
- * The scoped half of the contract (`/p/<projectId>/servers` selecting that
- * project, two tabs holding two projects) needs a signed-in Convex project, so
- * it lives in the unit suite — `use-project-route-coordinator.test.tsx` and
- * `project-route.test.ts`. What only a real browser can answer is the other
- * half: that the LOCAL inspector, which has no Convex project at all, still
- * opens its screens on plain unscoped paths, and that an unknown URL now says
- * so instead of quietly rendering Connect.
- *
- * Local build only: hosted deployments gate everything here behind WorkOS.
- */
+// Non-hosted builds may provision a guest Convex project, which canonicalizes
+// project routes. Without one, the local fallback keeps the same screen unscoped.
+// Cross-project selection and offline fallback are covered by routing unit tests.
 test.describe("canonical project URLs", () => {
   test.skip(
     !!process.env.PLAYWRIGHT_BASE_URL,
@@ -34,23 +23,20 @@ test.describe("canonical project URLs", () => {
     });
   });
 
-  // A local project id is a UUID, not a Convex id, so it is never canonical —
-  // the legacy normalizer must render the screen rather than hold a spinner
-  // waiting for a project that will never resolve.
-  //
-  // One test per screen: a cold load of this app is ~13s here, and two of them
-  // in one test leaves nothing between passing and a timeout.
   for (const path of ["/servers", "/playground"]) {
-    test(`the local inspector opens ${path} unscoped`, async ({ page }) => {
+    test(`the local inspector preserves the ${path} destination`, async ({
+      page,
+    }) => {
       await page.goto(path);
       await expect(page.getByTestId("app-shell")).toBeVisible({
         timeout: 30_000,
       });
-      // The shell alone would also mount for a URL that fell through to the
-      // catch-all, so the routing claim is these two together: a real screen
-      // matched, and the path was not rewritten.
       await expect(page.getByTestId("route-not-found")).toHaveCount(0);
-      expect(new URL(page.url()).pathname).toBe(path);
+      // Both supported modes must retain the requested screen. A guest
+      // project's asynchronous provisioning must not make this assertion race.
+      await expect(page).toHaveURL(
+        new RegExp(`^https?://[^/]+(?:/p/[a-z0-9]{16,64})?${path}$`),
+      );
     });
   }
 

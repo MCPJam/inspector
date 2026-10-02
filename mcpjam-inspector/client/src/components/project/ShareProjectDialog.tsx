@@ -73,7 +73,7 @@ import {
 } from "@/lib/billing-upsell";
 import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import type { Project, ProjectVisibility } from "@/state/app-types";
-import type { User } from "@workos-inc/authkit-js";
+import type { User } from "@workos-inc/authkit-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 
 interface ShareProjectDialogProps {

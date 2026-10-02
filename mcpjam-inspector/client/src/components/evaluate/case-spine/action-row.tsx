@@ -6,13 +6,14 @@
  * check written after that click grades what the click did — numbering it
  * under the prompt would name the wrong thing.
  *
- * Bodies differ by kind on purpose. A prompt is the case, so it is always
- * visible and always editable. A pinned tool call and a recorded interaction
- * are three-field forms that are read far more often than edited, so they
- * collapse to one line and open on click.
+ * Bodies differ by kind on purpose. A prompt stays on screen and stays
+ * editable; the last one cannot be removed, because a case has to ask
+ * something. A pinned tool call and a recorded interaction are three-field
+ * forms that are read far more often than edited, so they collapse to one
+ * line and open on click.
  */
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
@@ -47,6 +48,7 @@ export function ActionRow({
   onUpdate,
   onMove,
   onRemove,
+  canRemove,
   onHover,
   onSelect,
   defaultOpen = false,
@@ -66,6 +68,8 @@ export function ActionRow({
   onUpdate: (next: TestStep) => void;
   onMove: (dir: -1 | 1) => void;
   onRemove: () => void;
+  /** False for the case's last prompt. Every other action can leave. */
+  canRemove: boolean;
   onHover?: (stepId: string | null) => void;
   onSelect?: () => void;
   defaultOpen?: boolean;
@@ -76,6 +80,19 @@ export function ActionRow({
   const Icon = meta.Icon;
   const expandable = step.kind !== "prompt";
   const [open, setOpen] = useState(defaultOpen);
+  // An authored tool call names its server by ID, so the row would otherwise
+  // read "search-products on p570g76zwcpz1…".
+  const serverNamesById = useMemo(
+    () =>
+      new Map(
+        (projectServers ?? []).flatMap((server) =>
+          server._id && server.name
+            ? [[server._id, server.name] as const]
+            : [],
+        ),
+      ),
+    [projectServers],
+  );
 
   return (
     <li
@@ -114,7 +131,7 @@ export function ActionRow({
               )}
             />
             <span className="min-w-0 truncate text-xs text-foreground">
-              {summarizeStep(step)}
+              {summarizeStep(step, serverNamesById)}
             </span>
           </button>
         ) : (
@@ -151,7 +168,7 @@ export function ActionRow({
             >
               ↓
             </Button>
-            {step.kind !== "prompt" ? (
+            {canRemove ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -181,7 +198,7 @@ export function ActionRow({
             aria-label={promptAriaLabel}
             readOnly={readOnly}
             className={cn(
-              "resize-none bg-background font-mono text-sm leading-relaxed hover:border-foreground/30 focus-visible:border-foreground/50 focus-visible:ring-foreground/15",
+              "resize-none bg-background text-foreground",
               !step.prompt.trim() && evalValidationBorderClass,
             )}
           />
