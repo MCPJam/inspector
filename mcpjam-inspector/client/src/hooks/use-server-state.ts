@@ -3490,7 +3490,7 @@ export function useServerState({
 
   const handleConnect = useCallback(
     async (
-      formData: ServerFormData,
+      inputFormData: ServerFormData,
       options?: {
         suppressErrorToast?: boolean;
         suppressSuccessToast?: boolean;
@@ -3506,11 +3506,13 @@ export function useServerState({
               | "oauthScopes"
               | "clientId"
               | "clientSecret"
+              | "clearClientSecret"
               | "oauthAllowPathScopedIssuer"
             >
         >;
       },
     ) => {
+      let formData: ServerFormData = { ...inputFormData };
       const showConnectionError = (
         message: string,
         data?: Parameters<typeof toast.error>[1],
@@ -3801,7 +3803,7 @@ export function useServerState({
               return;
             }
             if (typeof proceed === "object") {
-              Object.assign(formData, proceed);
+              formData = { ...formData, ...proceed };
               const updatedEntry: ServerWithName = {
                 ...serverEntryForSave,
                 oauthFlowProfile: buildOAuthProfileFromFormData(
@@ -3934,7 +3936,7 @@ export function useServerState({
             oauthOptions = buildOAuthRequest(
               {
                 serverName: formData.name,
-                serverUrl: formData.url,
+                serverUrl: formData.url!,
                 scopes: oauthInputs.scopes,
                 // Previously omitted here while every other entry point sent it,
                 // so a server with a configured resource indicator authorized
@@ -3942,7 +3944,7 @@ export function useServerState({
                 // reconnect. Both candidates are gated on still belonging to
                 // THIS url — editing a server's endpoint must not carry the old
                 // endpoint's audience forward.
-                resourceUrl: selectStoredResourceUrl(formData.url, [
+                resourceUrl: selectStoredResourceUrl(formData.url!, [
                   {
                     resourceUrl: existingOAuthProfile?.resourceUrl,
                     capturedForServerUrl: existingOAuthProfile?.serverUrl,
