@@ -16,6 +16,7 @@ const { hostsRef, serversRef, attachmentsRef } = vi.hoisted(() => ({
       hostId: string;
       name: string;
       serverCount?: number;
+      harness?: string;
     }>,
   },
   serversRef: {
@@ -30,6 +31,8 @@ const { hostsRef, serversRef, attachmentsRef } = vi.hoisted(() => ({
     current: [] as Array<{ _id: string; name: string; serverIds: string[] }>,
   },
 }));
+
+vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -172,4 +175,15 @@ describe("useCloudServerReadiness", () => {
 
     expect(assess(composeState())).toEqual({ status: "ok" });
   });
+});
+
+it("allows a local Claude client with local servers but checks mixed clients", () => {
+  hostsRef.current = [
+    { hostId: "host-1", name: "Claude Code", serverCount: 1, harness: "claude-code" },
+    { hostId: "host-2", name: "Cloud client", serverCount: 1 },
+  ];
+  serversRef.current = [STDIO];
+  attachmentsRef.current = [{ _id: "local-group", name: "Local", serverIds: [STDIO._id] }];
+  expect(assess(composeState({ serverAttachmentId: "local-group" }))).toEqual({ status: "ok" });
+  expect(assess(composeState({ hostIds: ["host-1", "host-2"], serverAttachmentId: "local-group" }))).toMatchObject({ status: "unrunnable_servers" });
 });

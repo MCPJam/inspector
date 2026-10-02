@@ -53,7 +53,7 @@ const detailState = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/use-eval-run-iteration-chains", () => ({
-  useEvalRunIterationChains: () => ({ chains: [], status: "ready" }),
+  useEvalRunIterationChains: () => ({ chains: new Map(), status: "ready" }),
 }));
 
 vi.mock("@/hooks/use-eval-run-decision-summary", () => ({

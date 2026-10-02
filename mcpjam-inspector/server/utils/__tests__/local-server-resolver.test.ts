@@ -819,6 +819,55 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("sends a plugin-declared non-secret header when no encrypted credential exists", async () => {
+    const sent: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return authorizeBatchLocalResponse({
+            serverId: "srv-plugin-header",
+            serverConfig: {
+              transportType: "http",
+              url: "https://declared.example.com/mcp",
+              authMethod: "none",
+              headers: {},
+              hasHeaders: true,
+            },
+            oauthAccessToken: null,
+          });
+        }
+        if (url.endsWith("/web/server/reveal-secrets")) {
+          // The real backend response for an HTTP plugin with only a declared
+          // non-secret header, and no headersSecretId.
+          return Response.json({
+            success: true,
+            env: null,
+            headers: { "X-Api-Version": "2" },
+            credentialHeaderNames: [],
+            secretsBoundOrigin: null,
+            bound: null,
+            boundOrigins: [],
+          });
+        }
+        sent.push(new Headers(init?.headers).get("x-api-version"));
+        return new Response("ok");
+      }),
+    );
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-plugin-header",
+    );
+    await config.baseFetch(
+      "https://declared.example.com/mcp",
+      config.requestInit,
+    );
+    expect(sent).toEqual(["2"]);
+  });
+
   it("reveals runtime stdio env without a service token", async () => {
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = String(input);
