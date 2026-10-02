@@ -506,6 +506,8 @@ export function swarmRunnerCapabilities(): string[] {
 /** One planned run in a funding preview; mirrors the launch parameters. */
 export interface SwarmFundingPreviewRunInput {
   journeyRefId: string;
+  /** What the launch will create the run as (see the client's twin type). */
+  kind?: "swarm" | "user_testing";
   environmentIds?: string[];
   sessionsPerTarget?: number;
 }

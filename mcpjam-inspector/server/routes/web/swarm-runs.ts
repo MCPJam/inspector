@@ -25,6 +25,7 @@ import {
   previewSwarmFunding,
   SwarmAgentError,
 } from "../../services/swarm-agent.js";
+import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
 import { assertBearerToken } from "./errors.js";
@@ -185,6 +186,9 @@ const fundingPreviewSchema = z.object({
     .array(
       z.object({
         journeyRefId: z.string().min(1),
+        // Forwarded, never stripped: the backend resolves an omitted kind from
+        // the session count, which is not how the wizard's launch resolves it.
+        kind: z.enum(["swarm", "user_testing"]).optional(),
         environmentIds: z.array(z.string().min(1)).optional(),
         sessionsPerTarget: z.number().int().optional(),
       }),
@@ -219,16 +223,26 @@ swarmRuns.post("/funding-preview", async (c) =>
       return await previewSwarmFunding(convexHttpUrl, bearerToken, body);
     } catch (err) {
       // The backend answers a preview it cannot make (iterations out of range,
-      // a run it cannot read) with a 400 and the reason as a plain `error`
-      // string. That is the caller's request to fix, so it stays a 400 with the
-      // reason; rethrown as is it surfaced as a 500. The Inspector does not
-      // repeat the backend's bounds, which would drift from them.
-      if (err instanceof SwarmAgentError && err.status === 400) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          previewRejectionReason(err),
-        );
+      // a run it cannot read, a caller it does not know, a conflict) with a 4xx
+      // and the reason as a plain `error` string. That is the request's to
+      // fix, so it stays at the status it was refused with, carrying the
+      // reason; rethrown as is, a 400 or a 409 surfaced as a 500, and a 403 as
+      // an upstream-auth failure whose message names the deployment. The
+      // Inspector does not repeat the backend's bounds, which would drift from
+      // them.
+      //
+      // The reason is the whole of what is forwarded: no body is handed over,
+      // so the backend's envelope (and whatever it carries) never rides along.
+      // A 5xx is left to the default mapping, as before.
+      if (err instanceof SwarmAgentError) {
+        const reason = previewRejectionReason(err);
+        const refusal = upstreamRefusalRouteError({
+          status: err.status,
+          bodyText: "",
+          message: reason,
+          fallbackMessage: reason,
+        });
+        if (refusal) throw refusal;
       }
       throw err;
     }

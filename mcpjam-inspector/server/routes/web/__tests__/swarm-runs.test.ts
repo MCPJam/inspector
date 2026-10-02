@@ -561,6 +561,59 @@ describe("web routes — swarm funding preview", () => {
     expect(sent.runs).toEqual(BODY.runs);
   });
 
+  // The wizard launches every run as part of a swarm wave, which the launch
+  // turns into `kind: "swarm"`. A preview that leaves the kind out is resolved by
+  // the backend from the session count, so a one-conversation goal previews as
+  // user testing (never sponsored) and then launches as a swarm (sponsored): the
+  // split the person was shown is refused at launch, every time.
+  it("forwards the kind a launch will use instead of stripping it", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(async () =>
+      Response.json({
+        supported: true,
+        remaining: 500,
+        granted: 500,
+        runs: [{ sponsored: 1, credits: 0, total: 1, targets: [] }],
+      })
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      {
+        projectId: "proj-1",
+        runs: [
+          { journeyRefId: "journey-1", kind: "swarm" },
+          { journeyRefId: "journey-2", kind: "user_testing" },
+        ],
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).runs).toEqual([
+      { journeyRefId: "journey-1", kind: "swarm" },
+      { journeyRefId: "journey-2", kind: "user_testing" },
+    ]);
+  });
+
+  it("refuses a kind a launch does not take, without asking the backend", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      {
+        projectId: "proj-1",
+        runs: [{ journeyRefId: "journey-1", kind: "sponsored" }],
+      },
+      token
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("ignores a capability the caller tries to supply", async () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
 
@@ -646,6 +699,62 @@ describe("web routes — swarm funding preview", () => {
     );
     // Never the deployment URL the upstream error message carries.
     expect(JSON.stringify(data)).not.toContain("convex.site");
+  });
+
+  // Every 4xx is the backend refusing the REQUEST. Rethrown as is, a 403
+  // surfaced as an upstream-auth failure whose message names the deployment, and
+  // a 409 as a 500 that pages the on-call for a conflict the caller can read.
+  it.each([
+    [403, "forbidden", "You are not a member of this project's organization."],
+    [409, "conflict", "The preview conflicts with this project's state."],
+    [422, "unprocessable", "These runs cannot be previewed together."],
+  ])(
+    "keeps a backend %s at that status with its plain sentence, never the deployment URL",
+    async (status, code, error) => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+      fetchMock.mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: false,
+              code,
+              error,
+              internalNote: "backend-only-detail",
+            }),
+            { status, headers: { "content-type": "application/json" } },
+          ),
+      );
+
+      const response = await postJson(
+        app,
+        "/api/web/swarm/funding-preview",
+        BODY,
+        token,
+      );
+      const { status: got, data } = await expectJson<any>(response);
+
+      expect(got).toBe(status);
+      expect(JSON.stringify(data)).toContain(error);
+      expect(JSON.stringify(data)).not.toContain("convex.site");
+      // Only the sentence is forwarded, never the envelope the backend sent.
+      expect(JSON.stringify(data)).not.toContain("backend-only-detail");
+    },
+  );
+
+  it("still fails a backend 5xx as a server error", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(
+      async () => new Response("upstream exploded", { status: 503 }),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      BODY,
+      token,
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(500);
   });
 
   // A backend body is not trusted to be a sentence. The reason passes only when

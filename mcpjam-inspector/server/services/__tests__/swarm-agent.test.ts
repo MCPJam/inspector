@@ -470,7 +470,7 @@ describe("swarm-agent sponsored swarm allowance — capability negotiation", () 
 
     const preview = await previewSwarmFunding(CONVEX_HTTP_URL, "token", {
       projectId: "proj-1",
-      runs: [{ journeyRefId: "j1", sessionsPerTarget: 3 }],
+      runs: [{ journeyRefId: "j1", sessionsPerTarget: 3, kind: "swarm" }],
     });
 
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -487,7 +487,11 @@ describe("swarm-agent sponsored swarm allowance — capability negotiation", () 
         "x-inspector-service-token"
       ],
     ).toBe("svc-token");
-    expect(body.runs).toEqual([{ journeyRefId: "j1", sessionsPerTarget: 3 }]);
+    // The kind rides to the backend: it resolves an omitted one from the
+    // session count, which is not how the wizard's launch resolves it.
+    expect(body.runs).toEqual([
+      { journeyRefId: "j1", sessionsPerTarget: 3, kind: "swarm" },
+    ]);
     expect(preview).toEqual({
       supported: true,
       remaining: 12,

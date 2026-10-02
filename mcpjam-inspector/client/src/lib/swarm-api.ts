@@ -1106,6 +1106,11 @@ export function fundingChangeOf(
 
 export interface SwarmFundingPreviewRunInput {
   journeyRefId: string;
+  /**
+   * What the launch will create the run as. The wizard launches swarms; asked
+   * without it the backend resolves the kind from the session count.
+   */
+  kind?: "swarm" | "user_testing";
   environmentIds?: string[];
   sessionsPerTarget?: number;
 }
