@@ -5,6 +5,7 @@ import { reportCaught } from "./error-reporting";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
+  isUnauthenticatedError,
 } from "./authorization-refusal";
 import { notifySessionRevoked } from "./auth/session-revoked";
 import {
@@ -46,7 +47,11 @@ export function traceConvexQueries(
     let lastReportedMessage: string | undefined;
     const report = (error: unknown) => {
       try {
-        if (isAuthorizationRefusal(error) || isParentDeletedRefusal(error))
+        if (
+          isAuthorizationRefusal(error) ||
+          isParentDeletedRefusal(error) ||
+          isUnauthenticatedError(error)
+        )
           return;
         // Signed out elsewhere: not a fault, and this tab should follow.
         // `notifySessionRevoked` acts once per page load.
