@@ -578,9 +578,9 @@ export function mapTargetServerError(error: unknown): WebRouteError {
   // Mutated rather than rebuilt: `mapRuntimeError` has already stamped
   // `origin`, backfilled `normalized`, and attached the cause link the capture
   // dedupe walks. A fresh `WebRouteError` would drop all three.
-  if (isTargetDependencyFailure(routeError)) {
-    routeError.status = 424;
-  } else if (isUpstreamHttpErrorAnswer(routeError, error)) {
+  // The server's HTTP answer first: a named-server connect failure that
+  // carries one was answered, not unreachable.
+  if (isUpstreamHttpErrorAnswer(routeError, error)) {
     if (routeError.code === ErrorCode.SERVER_UNREACHABLE) {
       // The server answered, so "couldn't reach" framing is wrong.
       routeError.message =
@@ -588,6 +588,8 @@ export function mapTargetServerError(error: unknown): WebRouteError {
     }
     routeError.status = 424;
     routeError.code = ErrorCode.UPSTREAM_HTTP_ERROR;
+  } else if (isTargetDependencyFailure(routeError)) {
+    routeError.status = 424;
   }
   return routeError;
 }

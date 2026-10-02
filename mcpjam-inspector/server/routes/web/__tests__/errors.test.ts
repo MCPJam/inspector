@@ -567,6 +567,29 @@ describe("mapTargetServerError", () => {
       },
     );
 
+    it.each([
+      [502, "Bad Gateway: fetch failed"],
+      [504, "Gateway Timeout: upstream timed out"],
+    ])(
+      "serves a named-server wrapper around a transport %s as UPSTREAM_HTTP_ERROR",
+      (status, body) => {
+        const mapped = mapTargetServerError(
+          new Error(
+            `Failed to connect to MCP server "srv-1" using Streamable HTTP. Streamable HTTP error: ${body}`,
+            {
+              cause: new SdkHttpError(
+                SdkErrorCode.ClientHttpNotImplemented,
+                `Error POSTing to endpoint (HTTP ${status}): ${body}`,
+                { status, statusText: "", text: body },
+              ),
+            },
+          ),
+        );
+        expect(mapped.status).toBe(424);
+        expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
+      },
+    );
+
     it("keeps an unclassified throw a 500, server named or not", () => {
       const mapped = mapTargetServerError(
         new Error('MCP server "srv-1" broke us: kaboom'),
