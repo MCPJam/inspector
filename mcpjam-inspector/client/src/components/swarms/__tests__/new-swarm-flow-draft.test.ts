@@ -50,6 +50,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
     launchedRuns: [],
     runLabels: [],
     generatingSince: null,
+    attachingFile: null,
     launch: {
       flowId: "flow-1",
       swarmId: null,
@@ -155,6 +156,15 @@ describe("new swarm flow draft", () => {
   it("round-trips the resumable flow for the same project", () => {
     saveNewSwarmFlowDraft("proj-1", draft());
 
+    expect(readNewSwarmFlowDraft("proj-1")).toEqual(draft());
+  });
+
+  it("keeps an in-flight attachment's name, and restores older drafts without it", () => {
+    saveNewSwarmFlowDraft("proj-1", draft({ attachingFile: "research.md" }));
+    expect(readNewSwarmFlowDraft("proj-1")?.attachingFile).toBe("research.md");
+
+    const { attachingFile: _omitted, ...legacy } = draft();
+    saveNewSwarmFlowDraft("proj-1", legacy);
     expect(readNewSwarmFlowDraft("proj-1")).toEqual(draft());
   });
 

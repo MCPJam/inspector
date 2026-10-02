@@ -530,6 +530,45 @@ describe("buildCaseScorecard — the route question", () => {
     expect(card.negativeContradiction).toBe(true);
   });
 
+  it.each([
+    { type: "toolCalledWith", toolName: "get_me", args: { args: {} } },
+    { type: "toolCalledAtLeastOnce", toolName: "get_me" },
+    { type: "firstToolWas", toolName: "get_me" },
+  ])("does not warn on an advisory $type check", (check) => {
+    const withCheck = (over: object) =>
+      buildCaseScorecard({
+        ...base,
+        toolsChoice: "noTool",
+        suiteDefaultPredicates: [{ ...check, ...over } as Predicate],
+      }).negativeContradiction;
+    // An advisory check only warns, so it never contradicts a negative case.
+    expect(withCheck({ role: "advisory", severity: "warn" })).toBe(false);
+    expect(withCheck({ role: "required" })).toBe(true);
+    expect(withCheck({})).toBe(true);
+  });
+
+  it.each([
+    { type: "toolInputMatches", toolName: "create_view" },
+    { type: "toolResultMatches" },
+  ])("warns on a $type check only when it needs a match", (kind) => {
+    const withCheck = (over: object) =>
+      buildCaseScorecard({
+        ...base,
+        toolsChoice: "noTool",
+        suiteDefaultPredicates: [
+          { ...kind, patterns: ["secret"], ...over } as Predicate,
+        ],
+      }).negativeContradiction;
+    // `min` defaults to 1: a matching call (or result) is required.
+    expect(withCheck({})).toBe(true);
+    expect(withCheck({ min: 2 })).toBe(true);
+    // "None matches" holds on a transcript with no calls at all.
+    expect(withCheck({ min: 0, max: 0 })).toBe(false);
+    // An advisory check only warns, so it never contradicts.
+    expect(withCheck({ role: "advisory", severity: "warn" })).toBe(false);
+    expect(withCheck({ role: "required" })).toBe(true);
+  });
+
   it("locks the route on a case with no model turn to route", () => {
     const card = buildCaseScorecard({
       ...base,
