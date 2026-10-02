@@ -124,8 +124,10 @@ export function rewriteHarnessPackTables(source, harnessId, version, digests) {
 }
 
 /**
- * The two release-relevant fields of every harness's compatibility manifest:
- * `{ [harnessId]: { conformance, nativePlatforms } }`.
+ * The release-relevant fields of every harness's compatibility manifest:
+ * `{ [harnessId]: { conformance, nativePlatforms, nativeTargets? } }`, where
+ * `nativeTargets` (D8) is present only when the manifest narrows to exact
+ * pack targets.
  */
 export function parseManifestFacts(compatSource) {
   const start = compatSource.indexOf("export const LOCAL_HARNESS_MANIFEST");
@@ -135,12 +137,19 @@ export function parseManifestFacts(compatSource) {
   const body = `${compatSource.slice(open + 4, close)}\n`;
   const facts = {};
   for (const [id, block] of harnessEntries(body)) {
-    facts[id] = {
-      conformance: block.match(/lifecycleConformanceVersion: "([^"]*)"/)?.[1] ?? "",
-      nativePlatforms: (block.match(/nativePlatforms: \[([^\]]*)\]/)?.[1] ?? "")
+    const list = (name) => {
+      const match = block.match(new RegExp(`\\n {4}${name}: \\[([^\\]]*)\\]`));
+      if (!match) return undefined;
+      return match[1]
         .split(",")
         .map((token) => token.trim().replace(/^"|"$/g, ""))
-        .filter((token) => token.length > 0),
+        .filter((token) => token.length > 0);
+    };
+    const nativeTargets = list("nativeTargets");
+    facts[id] = {
+      conformance: block.match(/lifecycleConformanceVersion: "([^"]*)"/)?.[1] ?? "",
+      nativePlatforms: list("nativePlatforms") ?? [],
+      ...(nativeTargets !== undefined ? { nativeTargets } : {}),
     };
   }
   return facts;

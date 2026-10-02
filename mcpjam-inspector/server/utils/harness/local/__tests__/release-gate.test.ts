@@ -368,6 +368,10 @@ describe("the release script and this module read the same committed facts", () 
       expect(harness.nativePlatforms).toEqual([
         ...LOCAL_HARNESS_MANIFEST[harnessId].nativePlatforms,
       ]);
+      const certified = LOCAL_HARNESS_MANIFEST[harnessId].nativeTargets;
+      expect(harness.nativeTargets).toEqual(
+        certified === undefined ? undefined : [...certified],
+      );
       expect(Object.keys(harness.records).sort()).toEqual(
         Object.keys(PACK_RECORDS[harnessId]).sort(),
       );
@@ -379,3 +383,51 @@ describe("the release script and this module read the same committed facts", () 
     }
   });
 });
+
+describe("per-target certification (D8)", () => {
+  const codexManifest = (nativeTargets: LocalPackTarget[]) => ({
+    codex: {
+      ...LOCAL_HARNESS_MANIFEST.codex,
+      lifecycleConformanceVersion: "codex-conformance",
+      nativePlatforms: ["darwin", "linux"] as const,
+      nativeTargets,
+    },
+  });
+  const codexRecords = (targets: LocalPackTarget[]) =>
+    ({
+      "claude-code": {},
+      codex: Object.fromEntries(
+        targets.map((t) => [t, { packVersion: "1.0.0", treeDigest: DIGEST }]),
+      ),
+    }) as typeof PACK_RECORDS;
+
+  it("ships a certified target while an uncertified one stays unavailable", () => {
+    const manifests = codexManifest(["darwin-arm64"]);
+    const records = codexRecords(["darwin-arm64", "darwin-x64", "linux-x64"]);
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "codex", platform: "darwin", arch: "arm64",
+        manifests, records, expectedVersion: "1.0.0",
+      }),
+    ).toBe(true);
+    // Same OS, built pack, but not certified: unavailable.
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "codex", platform: "darwin", arch: "x64",
+        manifests, records, expectedVersion: "1.0.0",
+      }),
+    ).toBe(false);
+    expect(advertisedLocalPlatforms("codex", manifests, records, "1.0.0")).toEqual(["darwin"]);
+  });
+
+  it("blocks only on certified targets with no pack, never on uncertified ones", () => {
+    const blockers = localHarnessReleaseBlockers({
+      harnessId: "codex",
+      manifests: codexManifest(["darwin-arm64", "linux-x64"]),
+      records: codexRecords(["darwin-arm64"]),
+      expectedVersion: "1.0.0",
+    }).filter((b) => b.blocking);
+    expect(blockers.map((b) => b.target)).toEqual(["linux-x64"]);
+  });
+});
+

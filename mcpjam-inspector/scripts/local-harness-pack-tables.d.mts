@@ -14,4 +14,7 @@ export declare function rewriteHarnessPackTables(
 ): string;
 export declare function parseManifestFacts(
   compatSource: string,
-): Record<string, { conformance: string; nativePlatforms: string[] }>;
+): Record<
+  string,
+  { conformance: string; nativePlatforms: string[]; nativeTargets?: string[] }
+>;

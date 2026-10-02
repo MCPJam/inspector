@@ -80,6 +80,9 @@ async function readCommittedFacts() {
       records: tables[harnessId]?.records ?? {},
       conformance: manifests[harnessId]?.conformance ?? "",
       nativePlatforms: manifests[harnessId]?.nativePlatforms ?? [],
+      ...(manifests[harnessId]?.nativeTargets
+        ? { nativeTargets: manifests[harnessId].nativeTargets }
+        : {}),
     };
   }
   return facts;
@@ -174,7 +177,9 @@ async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notS
       );
       continue;
     }
-    for (const target of targets) {
+    // D8: only the targets the manifest certifies are advertised; an
+    // uncertified architecture is unavailable, not a blocker.
+    for (const target of targets.filter((t) => !facts.nativeTargets || facts.nativeTargets.includes(t))) {
       const record = facts.records[target];
       if (record === undefined) {
         (wouldOffer ? blockers : notShipped).push(

@@ -54,6 +54,23 @@ const TARGETS_BY_PLATFORM: Readonly<
   win32: ["win32-x64"],
 };
 
+/**
+ * The pack targets a manifest actually offers on one platform: every
+ * architecture of it, narrowed to `nativeTargets` when the manifest certifies
+ * exact targets (D8). An uncertified architecture is neither advertised nor a
+ * release blocker — it is explicitly unavailable.
+ */
+export function certifiedTargetsFor(
+  manifest: Pick<LocalHarnessCompatibility, "nativeTargets">,
+  platform: LocalPlatform,
+): LocalPackTarget[] {
+  return TARGETS_BY_PLATFORM[platform].filter(
+    (target) =>
+      manifest.nativeTargets === undefined ||
+      manifest.nativeTargets.includes(target),
+  );
+}
+
 export type ReleaseBlockerKind =
   /** No reviewed compatibility manifest for the harness at all. */
   | "no-manifest"
@@ -141,7 +158,9 @@ export function advertisedLocalPlatforms(
     packTargetsWithDigests(harnessId, records, expectedVersion),
   );
   return manifest.nativePlatforms.filter((platform) =>
-    TARGETS_BY_PLATFORM[platform].some((target) => withDigests.has(target)),
+    certifiedTargetsFor(manifest, platform).some((target) =>
+      withDigests.has(target),
+    ),
   );
 }
 
@@ -183,12 +202,22 @@ export function localExecutionReleasedForThisMachine(args: {
     args.expectedVersion,
   ).includes(target);
   if (!hasPackForThisTarget) return false;
+  const manifests = args.manifests ?? LOCAL_HARNESS_MANIFEST;
+  const manifest = Object.prototype.hasOwnProperty.call(
+    manifests,
+    args.harnessId,
+  )
+    ? manifests[args.harnessId]
+    : undefined;
+  if (manifest === undefined) return false;
   return advertisedLocalPlatforms(
     args.harnessId,
     args.manifests,
     args.records,
     args.expectedVersion,
-  ).some((platform) => TARGETS_BY_PLATFORM[platform].includes(target));
+  ).some((platform) =>
+    certifiedTargetsFor(manifest, platform).includes(target),
+  );
 }
 
 /**
@@ -269,7 +298,7 @@ export function localHarnessReleaseBlockers(args: {
     packTargetsWithDigests(harnessId, records, expectedVersion),
   );
   for (const platform of manifest.nativePlatforms) {
-    for (const target of TARGETS_BY_PLATFORM[platform]) {
+    for (const target of certifiedTargetsFor(manifest, platform)) {
       if (withDigests.has(target)) continue;
       blockers.push({
         kind: "pack-digest-missing",

@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodex } from "@ai-sdk/harness-codex";
 import claudeAdapterPkg from "@ai-sdk/harness-claude-code/package.json" with { type: "json" };
-import codexAdapterPkg from "@ai-sdk/harness-codex/package.json" with { type: "json" };
+import { createCodexAppServer } from "../../codex-appserver/index.js";
+import {
+  CODEX_BRIDGE_BUNDLE_DIGEST,
+  CODEX_LOCAL_ADAPTER_IDENTITY,
+} from "../../codex-appserver/local-identity.js";
 import {
   LOCAL_HARNESS_MANIFEST,
   resolveLocalCompatibility,
@@ -60,8 +64,17 @@ describe("the shipped manifest", () => {
     // digest present is a real one. An absent target answers `bundle-absent` —
     // the same honest answer a missing directory gets — instead of launching
     // an unverified runtime.
+    // Claude Code's bridge is the adapter's own (byte-compared at session
+    // start); Codex's is MCPJam's bundle, whose digest the release gate
+    // compares against the published pack's manifest.
+    expect(LOCAL_HARNESS_MANIFEST["claude-code"].bridgeBundleDigest).toBe(
+      `sha256:${"0".repeat(64)}`,
+    );
+    expect(LOCAL_HARNESS_MANIFEST.codex.bridgeBundleDigest).toBe(
+      CODEX_BRIDGE_BUNDLE_DIGEST,
+    );
+    expect(CODEX_BRIDGE_BUNDLE_DIGEST).toMatch(/^sha256:[0-9a-f]{64}$/);
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
-      expect(manifest.bridgeBundleDigest).toBe(`sha256:${"0".repeat(64)}`);
       expect(manifest.runtime).toMatchObject({ source: "managed-bundle" });
       if (manifest.runtime.source !== "managed-bundle") continue;
       for (const [target, digest] of Object.entries(
@@ -95,9 +108,12 @@ describe("the shipped manifest", () => {
     expect(
       LOCAL_HARNESS_MANIFEST["claude-code"].supportsBuiltinToolApprovals,
     ).toBe(createClaudeCode().supportsBuiltinToolApprovals);
+    // LOCAL Codex is MCPJam's app-server adapter, never the published exec
+    // one — which still cannot surface approvals at all.
     expect(LOCAL_HARNESS_MANIFEST.codex.supportsBuiltinToolApprovals).toBe(
-      createCodex().supportsBuiltinToolApprovals,
+      createCodexAppServer().supportsBuiltinToolApprovals,
     );
+    expect(createCodexAppServer().supportsBuiltinToolApprovals).toBe(true);
     expect(createCodex().supportsBuiltinToolApprovals).toBe(false);
   });
 
@@ -108,8 +124,13 @@ describe("the shipped manifest", () => {
     expect(LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion).toBe(
       claudeAdapterPkg.version,
     );
+    // Codex's local adapter is the app-server bridge bundle plus the exact
+    // CLI; the pack byte-compare is what enforces it.
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterVersion).toBe(
-      codexAdapterPkg.version,
+      CODEX_LOCAL_ADAPTER_IDENTITY,
+    );
+    expect(CODEX_LOCAL_ADAPTER_IDENTITY).toMatch(
+      /^app-server\/[0-9a-f]{32}\+@openai\/codex@\d+\.\d+\.\d+$/,
     );
   });
 
@@ -121,7 +142,7 @@ describe("the shipped manifest", () => {
       ".harness-bootstrap/claude-code",
     );
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterBootstrapDir).toBe(
-      ".harness-bootstrap/codex",
+      ".harness-bootstrap/codex-appserver",
     );
   });
 
@@ -148,32 +169,77 @@ describe("the shipped manifest", () => {
   });
 });
 
-describe("codex is structurally barred from native mode", () => {
-  it("has no native platform at all", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.nativePlatforms).toEqual([]);
+describe("codex runs locally only on the app-server adapter, attended, where certified", () => {
+  const codex = (overrides: Partial<LocalHarnessCompatibility> = {}) =>
+    conformed(LOCAL_HARNESS_MANIFEST.codex, overrides);
+
+  it("offers only the attended profiles — never unrestricted", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.permissionProfileMapping).toEqual({
+      "read-only": "allow-reads",
+      "workspace-edits": "allow-edits",
+    });
   });
 
-  it("stays barred even with conformance recorded and on every platform", () => {
-    for (const platform of ["darwin", "linux", "win32"] as const) {
-      const result = resolveLocalCompatibility(
-        {
-          harnessId: "codex",
-          platform,
-          targetKind: "local-native",
-          installedAdapterVersion: PINNED_CODEX,
-          permissionProfile: "unrestricted",
-        },
-        conformed(LOCAL_HARNESS_MANIFEST.codex),
-      );
-      expect(result).toMatchObject({ status: "native-not-eligible" });
-      expect((result as { message: string }).message).toMatch(
-        /cannot surface tool approvals/,
-      );
+  it("maps attended profiles onto approval-gated modes on a certified target", () => {
+    for (const [profile, mode] of [
+      ["read-only", "allow-reads"],
+      ["workspace-edits", "allow-edits"],
+    ] as const) {
+      expect(
+        resolveLocalCompatibility(
+          {
+            harnessId: "codex",
+            platform: "linux",
+            targetKind: "local-native",
+            packTarget: "linux-x64",
+            installedAdapterVersion: PINNED_CODEX,
+            permissionProfile: profile,
+          },
+          codex(),
+        ),
+      ).toMatchObject({ ok: true, permissionMode: mode });
     }
   });
 
-  it("offers no local permission profile whatsoever", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.permissionProfileMapping).toEqual({});
+  it("refuses an architecture its evidence does not cover, even on a listed OS (D8)", () => {
+    const result = resolveLocalCompatibility(
+      {
+        harnessId: "codex",
+        platform: "linux",
+        targetKind: "local-native",
+        packTarget: "linux-arm64",
+        installedAdapterVersion: PINNED_CODEX,
+        permissionProfile: "workspace-edits",
+      },
+      codex(),
+    );
+    expect(result).toMatchObject({ status: "native-not-eligible" });
+    expect((result as { message: string }).message).toMatch(/certified/);
+  });
+
+  it("refuses Windows until its sandbox setup has evidence", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.nativePlatforms).not.toContain("win32");
+  });
+
+  it("refuses unrestricted even for an unattended scheduler", () => {
+    expect(
+      resolveLocalCompatibility(
+        {
+          scope: "unattended",
+          harnessId: "codex",
+          platform: "linux",
+          targetKind: "local-native",
+          packTarget: "linux-x64",
+          installedAdapterVersion: PINNED_CODEX,
+          permissionProfile: "unrestricted",
+        },
+        codex(),
+      ),
+    ).toMatchObject({ status: "permission-profile-not-supported" });
+  });
+
+  it("records no target as passing the unattended sandbox yet", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxTargets).toEqual([]);
   });
 });
 

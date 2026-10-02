@@ -172,33 +172,129 @@ describe("the pinned command grammar", () => {
     });
   });
 
-  it("accepts codex's --cli-shim-dir, which claude-code does not carry", async () => {
-    const codexBoot = `${SESSION}/.harness-bootstrap/codex`;
-    const codex = ctx({
-      harnessId: "codex",
-      adapterBootstrapDir: codexBoot,
-      managedBundleRoot: "/opt/mcpjam/runtimes/codex",
+  describe("codex (app-server adapter)", () => {
+    const CODEX_BOOT = `${SESSION}/.harness-bootstrap/codex-appserver`;
+    const CODEX_BUNDLE = "/opt/mcpjam/runtimes/codex";
+    const STATE = "/home/dev/.mcpjam/harness-local-sessions/s1/work";
+    const codex = (overrides: Partial<CommandTranslationContext> = {}) =>
+      ctx({
+        harnessId: "codex",
+        adapterBootstrapDir: CODEX_BOOT,
+        managedBundleRoot: CODEX_BUNDLE,
+        adapterBootstrapFiles: [
+          "package.json",
+          "pnpm-lock.yaml",
+          "bridge.mjs",
+          "host-tools-mcp.mjs",
+        ],
+        confine: async (path) => path,
+        confineToSessionState: async (path) => {
+          if (!path.startsWith(`${STATE}/`)) {
+            throw new Error(`not session state: ${path}`);
+          }
+          return path;
+        },
+        ...overrides,
+      });
+    const launch = (opts: {
+      bridgeState?: string;
+      sessionData?: string;
+      bootstrap?: string;
+    } = {}) =>
+      `node '${CODEX_BOOT}/bridge.mjs' --workdir '${SESSION}/project' ` +
+      `--bridge-state-dir '${opts.bridgeState ?? `${STATE}/.agent-runs/s1/bridge`}' ` +
+      `--session-data-dir '${opts.sessionData ?? `${STATE}/.agent-runs/s1`}' ` +
+      `--bootstrap-dir '${opts.bootstrap ?? CODEX_BOOT}'`;
+
+    it("launches the bridge with the bootstrap dir remapped onto the verified bundle", async () => {
+      const result = await translateAdapterCommand({ command: launch() }, codex());
+      expect(result).toEqual({
+        kind: "exec",
+        executable: "/usr/local/bin/node",
+        workingDirectory: SESSION,
+        args: [
+          `${CODEX_BUNDLE}/bridge.mjs`,
+          "--workdir",
+          `${SESSION}/project`,
+          "--bridge-state-dir",
+          `${STATE}/.agent-runs/s1/bridge`,
+          "--session-data-dir",
+          `${STATE}/.agent-runs/s1`,
+          "--bootstrap-dir",
+          CODEX_BUNDLE,
+        ],
+      });
     });
-    const result = await translateAdapterCommand(
-      {
-        command:
-          `node '${codexBoot}/bridge.mjs' --workdir '${SESSION}/codex-s1' ` +
-          `--bridge-state-dir '${SESSION}/.agent-runs/s1/bridge' ` +
-          `--cli-shim-dir '${SESSION}/.agent-runs/s1/codex'`,
-      },
-      codex,
-    );
-    expect(result).toMatchObject({
-      kind: "exec",
-      args: [
-        "/opt/mcpjam/runtimes/codex/bridge.mjs",
-        "--workdir",
-        `${SESSION}/codex-s1`,
-        "--bridge-state-dir",
-        `${SESSION}/.agent-runs/s1/bridge`,
-        "--cli-shim-dir",
-        `${SESSION}/.agent-runs/s1/codex`,
-      ],
+
+    it("keeps Codex's runtime state out of the user's checkout", async () => {
+      // The workspace is a writable root for the agent, but rollouts,
+      // CODEX_HOME and the relay credential belong to the session only.
+      await expect(
+        translateAdapterCommand(
+          { command: launch({ sessionData: `${SESSION}/project/.codex` }) },
+          codex(),
+        ),
+      ).rejects.toThrow(/not session state/);
+      await expect(
+        translateAdapterCommand(
+          { command: launch({ bridgeState: `${SESSION}/project/bridge` }) },
+          codex(),
+        ),
+      ).rejects.toThrow(/not session state/);
+    });
+
+    it("refuses a --bootstrap-dir other than the adapter's own", async () => {
+      await expect(
+        translateAdapterCommand(
+          { command: launch({ bootstrap: "/tmp/evil" }) },
+          codex(),
+        ),
+      ).rejects.toThrow(/managed bundle/);
+    });
+
+    it("answers the recipe's install and version probe without a process", async () => {
+      for (const command of [
+        "pnpm install --frozen-lockfile --store-dir .pnpm-store",
+        "node node_modules/@openai/codex/bin/codex.js --version",
+      ]) {
+        const result = await translateAdapterCommand(
+          { command, workingDirectory: CODEX_BOOT },
+          codex(),
+        );
+        expect(result.kind, command).toBe("noop");
+      }
+      // The Codex probe is Codex's: Claude Code does not run it.
+      await expect(
+        translateAdapterCommand(
+          {
+            command: "node node_modules/@openai/codex/bin/codex.js --version",
+            workingDirectory: BOOT,
+          },
+          ctx(),
+        ),
+      ).rejects.toThrow(CommandTranslationError);
+    });
+
+    it("refuses the exec adapter's --cli-shim-dir launch", async () => {
+      await expect(
+        translateAdapterCommand(
+          {
+            command:
+              `node '${CODEX_BOOT}/bridge.mjs' --workdir '${SESSION}/codex-s1' ` +
+              `--bridge-state-dir '${STATE}/.agent-runs/s1/bridge' ` +
+              `--cli-shim-dir '${STATE}/.agent-runs/s1/codex'`,
+          },
+          codex(),
+        ),
+      ).rejects.toThrow(CommandTranslationError);
+    });
+
+    it("serves the lockfile and the MCP entrypoint from the bundle", () => {
+      for (const name of ["pnpm-lock.yaml", "host-tools-mcp.mjs"]) {
+        expect(
+          classifyBootstrapPath(`${CODEX_BOOT}/${name}`, codex()),
+        ).toMatchObject({ kind: "bundle-asset", relativePath: name });
+      }
     });
   });
 
@@ -306,7 +402,7 @@ describe("the pinned command grammar", () => {
     // added upstream without a translator arm shows up here first.
     expect(ADAPTER_COMMAND_SHAPES.framework).toHaveLength(7);
     expect(ADAPTER_COMMAND_SHAPES["claude-code"]).toHaveLength(4);
-    expect(ADAPTER_COMMAND_SHAPES.codex).toHaveLength(3);
+    expect(ADAPTER_COMMAND_SHAPES.codex).toHaveLength(4);
   });
 });
 

@@ -1,5 +1,5 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
-import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
+import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { apiSessionWriteAllowed } from "./api-session-write-guard";
@@ -998,11 +998,13 @@ chatV2.post("/", async (c) => {
     // misconfigured client believing its turn ran locally.
     let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
     if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
-      if (!hostedBody.projectId) return c.json({ error: "A project is required for local Claude Code" }, 400);
+      const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
+      const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
+      if (!hostedBody.projectId) return c.json({ error: `A project is required for local ${localHarnessName}` }, 400);
       try {
-        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: bearerToken, projectId: hostedBody.projectId, scope: "attended" })).target;
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: bearerToken, projectId: hostedBody.projectId, scope: "attended", harnessId: localHarnessId })).target;
       } catch (error) {
-        return c.json({ error: error instanceof Error ? error.message : "Claude Code is not ready" }, 409);
+        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready` }, 409);
       }
     } else {
       const parsed = parseHarnessExecutionTarget({ body: body as { harnessTarget?: RawHarnessTargetInput }, grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER), serverEnabled: false, actorEligible: false, actingUserId: null });

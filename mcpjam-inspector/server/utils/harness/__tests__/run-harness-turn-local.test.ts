@@ -15,6 +15,9 @@ const harnessState = vi.hoisted(() => ({
   continuations: [] as unknown[],
   teardown: vi.fn(async () => {}),
   discardState: vi.fn(async () => {}),
+  liveApprovalRuntime: false,
+  park: vi.fn((_args: unknown) => true),
+  unpark: vi.fn(() => {}),
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -73,6 +76,7 @@ vi.mock("../registry.js", () => ({
     mcpDelivery: "native",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
+    liveApprovalRuntime: harnessState.liveApprovalRuntime,
     createHarness: harnessState.createRuntime,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
@@ -147,6 +151,7 @@ import {
   runHarnessTurn,
 } from "../run-harness-turn";
 import { claimHarnessSessionState, commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
+import { getHarnessAdapter } from "../registry.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
 
@@ -161,6 +166,8 @@ vi.mock("../local/local-turn.js", () => ({
       sessionStateExists: harnessState.stateExists,
       teardown: harnessState.teardown,
       discardState: harnessState.discardState,
+      park: harnessState.park,
+      unpark: harnessState.unpark,
     },
   })),
 }));
@@ -228,6 +235,10 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.invokeSandboxCallback = false;
     harnessState.supportsSkills = false;
     harnessState.streamError = null;
+    harnessState.liveApprovalRuntime = false;
+    harnessState.park.mockReset().mockReturnValue(true);
+    harnessState.unpark.mockReset();
+    harnessState.session.suspendTurn.mockImplementation(async () => ({ type: "continue-turn" }));
     harnessState.discardState.mockImplementation(async () => {
       harnessState.stateExists = false;
     });
@@ -455,5 +466,105 @@ describe("runHarnessTurn local continuity", () => {
     expect(harnessState.teardown).toHaveBeenCalledOnce();
     expect(harnessState.discardState).not.toHaveBeenCalled();
     expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  describe("a runtime whose pending approval lives in its process (local Codex)", () => {
+    beforeEach(() => {
+      harnessState.liveApprovalRuntime = true;
+      harnessState.session.suspendTurn.mockImplementation(async () => ({
+        type: "continue-turn",
+        data: { bridge: { port: 4100, token: "gen-1", lastSeenEventId: 7 } },
+      }));
+    });
+
+    function pausedLane() {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true, leaseId: "lease-1", stateVersion: 1, fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session", computerId: "machine-1:runtime-1",
+          resumeState: {
+            type: "continue-turn",
+            data: { bridge: { port: 4100, token: "gen-1", lastSeenEventId: 7 } },
+          },
+          awaitingApproval: true,
+        },
+      } as any);
+    }
+
+    it("looks the adapter up for the LOCAL venue", async () => {
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(getHarnessAdapter).toHaveBeenCalledWith("codex", { localExecution: true });
+    });
+
+    it("parks the live runtime at an approval pause instead of tearing it down", async () => {
+      harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
+      expect(harnessState.park).toHaveBeenCalledWith({ generation: "gen-1", pendingApprovalIds: ["approval-1"] });
+      // The parked record owns cleanup now: no teardown, no discard, and the
+      // process is not handed back to ordinary teardown either.
+      expect(harnessState.teardown).not.toHaveBeenCalled();
+      expect(harnessState.discardState).not.toHaveBeenCalled();
+      expect(harnessState.unpark).not.toHaveBeenCalled();
+    });
+
+    it("tears down as usual when the session was ended before it could park", async () => {
+      harnessState.park.mockReturnValue(false);
+      harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(harnessState.teardown).toHaveBeenCalledOnce();
+    });
+
+    it("never parks a pause whose continuation could not be committed", async () => {
+      vi.mocked(commitHarnessSessionState).mockResolvedValueOnce(false);
+      harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(harnessState.park).not.toHaveBeenCalled();
+      expect(harnessState.teardown).toHaveBeenCalledOnce();
+    });
+
+    it("delivers the decision to the parked process generation and hands it back after", async () => {
+      pausedLane();
+      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "local-session",
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }));
+      expect(harnessState.create).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "local-session", continueFrom: expect.any(Object),
+      }));
+      // Finished without pausing again: back to ordinary teardown, in order.
+      expect(harnessState.unpark).toHaveBeenCalledOnce();
+      expect(harnessState.unpark.mock.invocationCallOrder[0]).toBeLessThan(
+        harnessState.teardown.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("refuses a decision when the parked runtime refuses it, running nothing", async () => {
+      pausedLane();
+      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      vi.mocked(prepareLocalHarnessTurn).mockResolvedValueOnce({
+        ok: false, status: "approval-duplicate-approval",
+        message: "This approval was already answered; the action will not run twice.",
+      } as any);
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(harnessState.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a decision with no recorded process generation instead of replaying it", async () => {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true, leaseId: "lease-1", stateVersion: 1, fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session", computerId: "machine-1:runtime-1",
+          resumeState: { type: "continue-turn", data: {} },
+          awaitingApproval: true,
+        },
+      } as any);
+      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+      expect(harnessState.create).not.toHaveBeenCalled();
+    });
   });
 });

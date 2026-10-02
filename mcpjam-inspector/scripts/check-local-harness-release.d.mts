@@ -20,6 +20,8 @@ export declare function readCommittedFacts(): Promise<
       conformance: string;
       /** The harness manifest's `nativePlatforms`. */
       nativePlatforms: string[];
+      /** The harness manifest's `nativeTargets` (D8), when it narrows. */
+      nativeTargets?: string[];
     }
   >
 >;

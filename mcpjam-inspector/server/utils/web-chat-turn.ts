@@ -257,6 +257,13 @@ export interface WebChatTurnPersistContext {
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
+  /**
+   * The server-resolved LOCAL target when this turn runs on the user's own
+   * machine. Forwarded verbatim to the harness turn: dropping it would run a
+   * turn the route resolved as local on the hosted path instead, which a
+   * local launch must never silently do.
+   */
+  harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
   respectToolVisibility?: boolean;
   /**
    * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
@@ -1176,7 +1183,9 @@ export async function streamWebChatTurn(
   // helper without one.
   if (persist.harness && !usesMcpjamFreePath) {
     const { refusal } = harnessModelRefusal({
-      adapter: getHarnessAdapter(persist.harness),
+      adapter: getHarnessAdapter(persist.harness, {
+        localExecution: persist.harnessExecutionTarget != null,
+      }),
       model: {
         id: String(prepare.modelDefinition.id),
         provider: prepare.modelDefinition.provider,
@@ -1625,6 +1634,9 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(persist.harness && persist.harnessExecutionTarget
+      ? { harnessExecutionTarget: persist.harnessExecutionTarget }
+      : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined
