@@ -54,6 +54,8 @@ export type PlatformApiErrorOptions = SdkErrorOptions & {
   endpoint?: string;
   /** See `PlatformApiError.codeSource`. Omit when the code was not wire-derived. */
   codeSource?: "envelope" | "status";
+  /** See `PlatformApiError.requestId`. Omit when no response carried one. */
+  requestId?: string;
 };
 
 export class PlatformApiError extends SdkError {
@@ -80,6 +82,15 @@ export class PlatformApiError extends SdkError {
    * Optional so an error constructed anywhere else keeps its current shape.
    */
   public readonly codeSource?: "envelope" | "status";
+  /**
+   * The failing response's `x-request-id`: the id the API stamps on every
+   * request and on every log line it writes for it. Quoting it in a bug report
+   * is what lets that report be joined to the server's logs.
+   *
+   * Absent on client-side errors (`status: 0`), which never reached a server
+   * that could mint one.
+   */
+  public readonly requestId?: string;
 
   constructor(message: string, code: string, options: PlatformApiErrorOptions) {
     super(message, code, options);
@@ -89,6 +100,7 @@ export class PlatformApiError extends SdkError {
     this.retryAfter = options.retryAfter;
     this.endpoint = options.endpoint;
     this.codeSource = options.codeSource;
+    this.requestId = options.requestId;
   }
 }
 

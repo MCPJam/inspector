@@ -386,7 +386,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       const reply = persisted.find((m) => m.role === "assistant");
       expect(
         verifyAssistantText(
-          historyProvenanceContextFor("project-1")!,
+          historyProvenanceContextFor("project-1", "chat-session-1")!,
           "Fresh reply.",
           reply.content[0].providerOptions.mcpjam.textSig,
         ),

@@ -14,7 +14,7 @@ const projects = new Hono();
 
 /**
  * Field length limits, the same ones the backend enforces on every project
- * write (MJ-013). Checked here too so an oversized field is a 400 with a
+ * write (MJ-025). Checked here too so an oversized field is a 400 with a
  * field-level message rather than a round trip to Convex.
  */
 export const PROJECT_NAME_MAX_LENGTH = 100;

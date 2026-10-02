@@ -117,7 +117,7 @@ External results enter through these `POST` endpoints, implemented as a thin pro
 | `POST /api/v1/projects/:projectId/eval-ingest/runs/iterations` | Append a batch of iterations |
 | `POST /api/v1/projects/:projectId/eval-ingest/runs/finalize` | Close the run and compute the verdict |
 | `POST /api/v1/projects/:projectId/eval-ingest/artifacts` | Store one large blob (widget HTML snapshot) sent as raw bytes; returns its `storageId` |
-| `POST /api/v1/projects/:projectId/eval-ingest/artifacts/upload-url` | Mint an upload URL for large blobs (older SDK releases) |
+| `POST /api/v1/projects/:projectId/eval-ingest/artifacts/upload-url` | Retired: the backend answers `410 Gone` (`details.code: "SDK_UPGRADE_REQUIRED"`), passed through verbatim. `@mcpjam/sdk` 8.17.0 and later use `POST .../eval-ingest/artifacts` |
 
 Proxy behavior worth knowing when debugging:
 

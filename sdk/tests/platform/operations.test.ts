@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
+  sendFeedbackOperation,
   closeTunnelOperation,
   createEvalSuiteOperation,
   createHostOperation,
@@ -2649,6 +2650,7 @@ describe("operation catalog consistency", () => {
     install_registry_directory_server: { catalogServerId: "cs" },
     install_registry_server: { registryServerId: "rs" },
     uninstall_registry_server: { registryServerId: "rs" },
+    send_feedback: { kind: "bug", summary: "the run page crashes" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -2862,6 +2864,9 @@ describe("operation catalog consistency", () => {
       // is not a visible waiver.
       "waive_eval_gate",
       "revoke_eval_gate_waiver",
+      // Stores a report and sends its text to the MCPJam team — a write, and
+      // `risk: "exposure"` because the text leaves the caller's organization.
+      "send_feedback",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -3234,5 +3239,153 @@ describe("registry operations", () => {
         source: "claude",
       }).success
     ).toBe(true);
+  });
+});
+
+describe("sendFeedbackOperation", () => {
+  const RECEIPT = { id: "fb_1", receivedAt: 1_750_000_000_000, duplicate: false };
+
+  function feedbackClient(
+    options: Partial<ConstructorParameters<typeof PlatformApiClient>[0]> = {}
+  ) {
+    const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({
+          items: [
+            {
+              id: "project-new",
+              name: "New",
+              organizationId: "org-a",
+              updatedAt: 2,
+            },
+            {
+              id: "project-old",
+              name: "Old",
+              organizationId: "org-a",
+              updatedAt: 1,
+            },
+          ],
+        });
+      }
+      if (path === "/api/v1/feedback" && init?.method === "POST") {
+        return Response.json(RECEIPT, { status: 201 });
+      }
+      return Response.json(
+        { code: "NOT_FOUND", message: `No route for ${path}` },
+        { status: 404 }
+      );
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+      ...options,
+    });
+    const feedbackCall = () => {
+      const call = fetchMock.mock.calls.find(
+        ([target]) =>
+          new URL(String(target)).pathname === "/api/v1/feedback"
+      );
+      const init = call?.[1] as RequestInit;
+      return {
+        body: JSON.parse(String(init.body)) as Record<string, unknown>,
+        headers: new Headers(init.headers as HeadersInit),
+      };
+    };
+    return { client, fetchMock, feedbackCall };
+  }
+
+  it("is a write with exposure risk and no permalink", () => {
+    expect(sendFeedbackOperation.readOnly).toBe(false);
+    expect(sendFeedbackOperation.risk).toBe("exposure");
+    expect(sendFeedbackOperation.description).toContain(
+      "SENDS YOUR TEXT TO THE MCPJAM TEAM"
+    );
+  });
+
+  it("guides details toward the goal, the expectation and the blocker", () => {
+    const shape = (
+      sendFeedbackOperation.inputSchema as unknown as {
+        shape: Record<string, { description?: string }>;
+      }
+    ).shape;
+    expect(shape.details?.description).toBe(
+      "What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried."
+    );
+  });
+
+  it("assumes no project when none is named", async () => {
+    const { client, fetchMock, feedbackCall } = feedbackClient();
+    const result = await sendFeedbackOperation.execute(
+      sendFeedbackOperation.inputSchema.parse({
+        kind: "missing_capability",
+        summary: "  cannot export a suite  ",
+        details: "Wanted YAML.",
+        requestId: "req_0123456789abcdef",
+      }),
+      { client }
+    );
+    expect(result).toEqual(RECEIPT);
+    expect(callsTo(fetchMock, "/projects")).toEqual([]);
+    expect(feedbackCall().body).toEqual({
+      kind: "missing_capability",
+      summary: "cannot export a suite",
+      details: "Wanted YAML.",
+      requestId: "req_0123456789abcdef",
+    });
+  });
+
+  it("resolves a named project to its id", async () => {
+    const onScopeResolved = vi.fn();
+    const { client, feedbackCall } = feedbackClient();
+    await sendFeedbackOperation.execute(
+      { kind: "bug", summary: "crash", project: "Old" },
+      { client, onScopeResolved }
+    );
+    expect(feedbackCall().body).toMatchObject({ projectId: "project-old" });
+    expect(onScopeResolved).toHaveBeenCalledWith({
+      projectId: "project-old",
+      organizationId: "org-a",
+    });
+  });
+
+  it("sends the idempotency key as a header, never in the body", async () => {
+    const { client, feedbackCall } = feedbackClient();
+    await sendFeedbackOperation.execute(
+      { kind: "bug", summary: "crash", idempotencyKey: "key-a" },
+      { client }
+    );
+    const { body, headers } = feedbackCall();
+    expect(headers.get("idempotency-key")).toBe("key-a");
+    expect(body).not.toHaveProperty("idempotencyKey");
+  });
+
+  it("declares the client's launcher on the report", async () => {
+    const { client, feedbackCall } = feedbackClient({
+      launcher: { kind: "mcp", client: "claude-code" },
+    });
+    await sendFeedbackOperation.execute(
+      { kind: "bug", summary: "crash" },
+      { client }
+    );
+    expect(
+      JSON.parse(feedbackCall().headers.get("x-mcpjam-launcher") ?? "null")
+    ).toMatchObject({ kind: "mcp", client: "claude-code" });
+  });
+
+  it("refuses an over-long summary before any request", () => {
+    expect(
+      sendFeedbackOperation.inputSchema.safeParse({
+        kind: "bug",
+        summary: "x".repeat(201),
+      }).success
+    ).toBe(false);
+    expect(
+      sendFeedbackOperation.inputSchema.safeParse({
+        kind: "praise",
+        summary: "nice",
+      }).success
+    ).toBe(false);
   });
 });

@@ -232,7 +232,13 @@ function backfillHistory<THistory extends BackfillableHistoryEntry>(
   return updated;
 }
 
-const FALLBACK_HINT =
+/**
+ * The advisory appended to a registration failure only when no pre-registered
+ * client is available to fall back to. Exported so a consumer grouping
+ * failures can strip exactly this — the same finding arrives with and without
+ * it.
+ */
+export const FALLBACK_HINT =
   "Configure a pre-registered client or enable DCR on the authorization server.";
 
 /**
