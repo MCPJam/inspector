@@ -67,6 +67,38 @@ const policyBlockSchema = z
   })
   .strict();
 
+/** A tool call hit a sign-in challenge; the run did not sign in. */
+const authRequiredSchema = z
+  .object({
+    classification: z.literal("authorization_required"),
+    server: z.string().optional(),
+    toolName: z.string(),
+    toolCallId: z.string().optional(),
+    challengedCalls: z.number().int().min(1),
+    challenge: z
+      .object({
+        source: z.enum([
+          "http_401",
+          "http_403_insufficient_scope",
+          "tool_result_meta",
+        ]),
+        error: z.string().optional(),
+        errorDescription: z.string().optional(),
+        requiredScope: z.string().optional(),
+        resourceMetadataUrl: z.string().optional(),
+        facets: z
+          .object({
+            challengeHeader: z.enum(["none", "bearer", "other-scheme"]),
+            hasResourceMetadata: z.boolean(),
+            hasScope: z.boolean(),
+            hasErrorParams: z.boolean(),
+          })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
 const iterationSchema = z
   .object({
     iterationNumber: z.number().int().min(1),
@@ -92,6 +124,7 @@ const iterationSchema = z
         "unavailable",
       ])
       .optional(),
+    authRequired: authRequiredSchema.optional(),
     toolCalls: z.array(
       z
         .object({
@@ -389,6 +422,19 @@ function caseLine(
   return `${measured} (threshold ${percent(decisionCase.effectivePassThreshold)}, ${decisionCase.configuredTrials} configured)`;
 }
 
+/** One phrase for an iteration a sign-in challenge interrupted. */
+function authRequiredLabel(
+  authRequired: NonNullable<
+    LocalEvalRunMetadata["cases"][number]["iterations"][number]["authRequired"]
+  >
+): string {
+  return `authorization required: ${
+    authRequired.server !== undefined
+      ? `server "${authRequired.server}"`
+      : "a target server"
+  } asked for sign-in on "${authRequired.toolName}"`;
+}
+
 function structuredCase(
   entry: LocalEvalRunMetadata["cases"][number],
   decisionCase: EvalVerdictDecision["cases"][number] | undefined,
@@ -449,6 +495,9 @@ function structuredCase(
         ...(iteration.evaluatorError ? { evaluatorError: true } : {}),
         ...(iteration.refusal ? { refusal: iteration.refusal } : {}),
         ...(iteration.error ? { error: iteration.error } : {}),
+        ...(iteration.authRequired
+          ? { authRequired: authRequiredLabel(iteration.authRequired) }
+          : {}),
         ...(iteration.policyBlocks.length > 0
           ? {
               policyBlocks: iteration.policyBlocks.map(
@@ -680,7 +729,11 @@ export function formatLocalEvalRunSummary(report: LocalEvalRunReport): string {
             score.reason ? `${score.scorerId}: ${score.reason}` : score.scorerId
           );
         lines.push(
-          `       iteration ${iteration.iterationNumber} failed: ${failed.join("; ") || "a gating check failed"}`
+          `       iteration ${iteration.iterationNumber} failed: ${failed.join("; ") || "a gating check failed"}${
+            iteration.authRequired
+              ? ` (${authRequiredLabel(iteration.authRequired)})`
+              : ""
+          }`
         );
       }
     }
