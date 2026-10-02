@@ -259,6 +259,7 @@ interface SandboxedIframeProps {
   cspDirectives?: Record<string, string[]>;
   /** Probe-derived host policy for individual CSP-backed browser APIs. */
   cspSubtypePolicy?: CspSubtypePolicy;
+  clientContext?: import("./widget-host").CspClientContext;
   /**
    * Probe-derived host policy for browser storage inside the widget.
    * Absent or `true` means available; `false` makes the proxy install a guard
@@ -340,6 +341,7 @@ export const SandboxedIframe = forwardRef<
     allowFeatures,
     cspDirectives,
     cspSubtypePolicy,
+    clientContext,
     browserStorage,
     permissive,
     recordMode,
@@ -530,6 +532,7 @@ export const SandboxedIframe = forwardRef<
         csp: csp ?? null,
         cspDirectives: cspDirectives ?? null,
         cspSubtypePolicy: cspSubtypePolicy ?? null,
+        clientContext: clientContext ?? null,
         browserStorage: browserStorage ?? null,
         html: html ?? null,
         permissive: permissive ?? null,
@@ -547,6 +550,7 @@ export const SandboxedIframe = forwardRef<
       csp,
       cspDirectives,
       cspSubtypePolicy,
+      clientContext,
       browserStorage,
       html,
       permissive,
@@ -588,6 +592,7 @@ export const SandboxedIframe = forwardRef<
           // field.
           cspDirectives,
           cspSubtypePolicy,
+          clientContext,
           browserStorage,
           permissive,
           colorScheme,

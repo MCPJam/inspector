@@ -50,6 +50,7 @@ import {
   mintLocalHarnessConsent,
   parseStoredLocalHarnessConsent,
   persistLocalHarnessConsent,
+  ensureLocalHarnessReady,
   readLocalHarnessConsentSnapshot,
   registerLocalHarnessWorkspace,
   revokeLocalHarnessConsent,
@@ -279,6 +280,7 @@ export interface LocalHarnessControllerState {
   revoke: () => Promise<void>;
   /** A fresh, re-checked snapshot for one send. Null ⇒ do not send local. */
   resolveSendTarget: () => {
+      serverAuthorized?: boolean;
     target: StoredLocalHarnessConsent["target"];
     token: string;
   } | null;
@@ -431,7 +433,7 @@ export function useLocalHarnessController(
     }
     let cancelled = false;
     setLoading(true);
-    void fetchLocalHarnessAvailability().then((result) => {
+    void fetchLocalHarnessAvailability(projectId).then((result) => {
       if (cancelled) return;
       if (result.ok) {
         setAvailability(result.availability);
@@ -449,7 +451,7 @@ export function useLocalHarnessController(
     return () => {
       cancelled = true;
     };
-  }, [offerable, inScope, refreshToken]);
+  }, [offerable, inScope, refreshToken, projectId]);
 
   // Re-read on remount, focus and reconnect. Cheap, and it is what makes a
   // second window notice the first one's finished install.
@@ -577,44 +579,42 @@ export function useLocalHarnessController(
     if (drifted) setPendingApproval(null);
   }, [pendingApproval, availability]);
 
+  // Reopen/reload and credential expiry never require another authorization click.
+  useEffect(() => {
+    if (!offerable || !inScope || !projectId || !userKey || availability?.preferredVenue !== "local") return;
+    let cancelled = false;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let renewing = false;
+    const renew = async () => {
+      if (cancelled || renewing) return;
+      renewing = true;
+      try {
+        const ready = await ensureLocalHarnessReady(projectId, false, abort.signal);
+        if (!cancelled) {
+          setRefreshToken(value => value + 1);
+          timer = setTimeout(renew, Math.max(30_000, Date.parse(ready.expiresAt) - Date.now() - 60_000));
+        }
+      } catch { /* Existing status and retry controls expose failures. */ }
+      finally { renewing = false; }
+    };
+    void renew();
+    const focus = () => { if (timer) clearTimeout(timer); void renew(); };
+    window.addEventListener("focus", focus);
+    return () => { cancelled = true; abort.abort(); if (timer) clearTimeout(timer); window.removeEventListener("focus", focus); };
+  }, [offerable, inScope, projectId, userKey, availability?.preferredVenue]);
+
   // ── The requested target ─────────────────────────────────────────────────
   const hostedAvailable = availability?.hostedAvailable ?? null;
 
   const requestedTarget: HarnessExecutionTarget | null = useMemo(() => {
     if (!offerable || !inScope) return null;
-    if (storedTarget !== null) return storedTarget;
-    // A default is chosen ONLY from a successful response that says no cloud
-    // target exists. Loading, a failed fetch and a 401 all leave this null —
-    // none of them is evidence either way, and inventing an answer from one is
-    // how a machine with no data plane ends up showing a cloud option, or a
-    // machine with one silently loses the choice.
-    if (availability !== null && availability.hostedAvailable === false) {
-      return "local-native";
-    }
-    return null;
-  }, [offerable, inScope, storedTarget, availability]);
+    return availability?.preferredVenue === "local" || (availabilityError && consent?.serverAuthorized) ? "local-native" : null;
+  }, [offerable, inScope, availability?.preferredVenue, availabilityError, consent?.serverAuthorized]);
 
-  // A default that lives only in the memo above is invisible to every reader
-  // that does not mount this controller — `useLocalHarnessRunsHere` is one, on
-  // purpose, and it labels the tools panel. Recording it makes the stored
-  // target the single fact they all read, which is the only way the chip, the
-  // panel and the send path can agree.
-  //
-  // Not "inventing a preference nobody chose": this writes only what the
-  // server just said, that the machine has exactly one place to run. An
-  // explicit choice still overwrites it, and the chip still shows it.
   useEffect(() => {
-    if (!offerable || !inScope || !projectId) return;
-    if (storedTarget !== null) return;
-    if (availability === null || availability.hostedAvailable !== false) return;
-    // Re-read at WRITE time, not just at render time. `storedTarget` is this
-    // render's snapshot, and an effect runs after the commit: another window
-    // recording an explicit choice in that gap would be overwritten by a
-    // default derived before it existed — the one thing this effect is not
-    // allowed to do, since the whole point is that an explicit choice wins.
-    if (loadStoredHarnessTarget(projectId) !== null) return;
-    saveHarnessTarget(projectId, "local-native");
-  }, [offerable, inScope, projectId, storedTarget, availability]);
+    if (availability?.preferredVenue === "local" && offerable && inScope && projectId && storedTarget !== "local-native") saveHarnessTarget(projectId, "local-native");
+  }, [offerable, inScope, projectId, storedTarget, availability?.preferredVenue]);
 
   const effectiveTarget: HarnessExecutionTarget =
     requestedTarget === "local-native" && consent !== null
@@ -954,7 +954,7 @@ export function useLocalHarnessController(
   // expiry holds a value that was true then; the send has to know what is true
   // now.
   const resolveSendTarget = useCallback(() => {
-    if (!offerable || !inScope || !projectId) return null;
+    if (!offerable || !inScope || !projectId || availability?.preferredVenue === "hosted") return null;
     if (userKey === null || userKey === undefined) return null;
     const fresh = parseStoredLocalHarnessConsent(
       readLocalHarnessConsentSnapshot(projectId),
@@ -979,7 +979,7 @@ export function useLocalHarnessController(
         return null;
       }
     }
-    return { target: fresh.target, token: fresh.token };
+    return { target: fresh.target, token: fresh.token, ...(fresh.serverAuthorized ? { serverAuthorized: true } : {}) };
   }, [offerable, inScope, projectId, userKey, availability]);
 
   return {
