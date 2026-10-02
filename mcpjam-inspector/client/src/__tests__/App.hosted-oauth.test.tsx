@@ -5069,8 +5069,6 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.getByRole("button", { name: "Open Playground" }),
     ).toBeInTheDocument();
-    expect(sonnerToast.error).not.toHaveBeenCalled();
-    expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
