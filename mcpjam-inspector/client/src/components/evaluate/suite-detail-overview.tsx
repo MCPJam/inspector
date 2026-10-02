@@ -8,6 +8,7 @@ import {
   EvaluateHistoryHeader,
   EvaluateHistoryRow,
 } from "./evaluate-history-row";
+import { useDeleteRunLaunch } from "./delete-run-launch";
 import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
@@ -144,6 +145,8 @@ export function SuiteDetailOverview({
   onDeleteTestCasesBatch,
   onRunClick,
   onTestCaseClick,
+  onDeleteRun,
+  canDeleteRun,
   onCancelRun,
   cancellingRunId = null,
   rerunningSuiteId,
@@ -190,6 +193,13 @@ export function SuiteDetailOverview({
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   onRunClick: (runId: string) => void;
   onTestCaseClick: (testCaseId: string) => void;
+  /**
+   * Adds a delete button to each run history row the caller may delete. A
+   * row is one launch, so it deletes every run in it. Absent hides the column.
+   */
+  onDeleteRun?: (runId: string) => Promise<void>;
+  /** Per-run permission; every run in a row must pass for its button. */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /**
    * Stops runs that are still going. Takes every cancellable id at once — the
    * header cancels the whole suite, a history row cancels its whole launch.
@@ -243,6 +253,12 @@ export function SuiteDetailOverview({
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
+  const showDeleteColumn = onDeleteRun != null;
+  const deleteLaunch = useDeleteRunLaunch(onDeleteRun);
+  const runsById = useMemo(
+    () => new Map(runs.map((run) => [run._id, run])),
+    [runs],
+  );
   const [reviewRun, setReviewRun] = useState(false);
   const [caseToDelete, setCaseToDelete] = useState<{
     id: string;
@@ -812,7 +828,7 @@ export function SuiteDetailOverview({
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
-                <EvaluateHistoryHeader />
+                <EvaluateHistoryHeader showActions={showDeleteColumn} />
                 <TableBody>
                   {visibleRows.map((launch) => {
                     const representative = [...launch.runs].sort(
@@ -827,6 +843,22 @@ export function SuiteDetailOverview({
                         details={details}
                         historyRows={rowMap}
                         hostNamesById={hostNamesById}
+                        showActions={showDeleteColumn}
+                        onDelete={
+                          showDeleteColumn &&
+                          launch.runs.every((row) => {
+                            const run = runsById.get(row._id);
+                            return (
+                              run != null && (canDeleteRun?.(run) ?? true)
+                            );
+                          })
+                            ? () =>
+                                deleteLaunch.request({
+                                  runIds: launch.runs.map((row) => row._id),
+                                  runNumber: representative.runNumber,
+                                })
+                            : undefined
+                        }
                         onOpen={() => onRunClick(representative._id)}
                       />
                     );
@@ -963,6 +995,8 @@ export function SuiteDetailOverview({
           </ul>
         </section>
       ) : null}
+
+      {showDeleteColumn ? deleteLaunch.dialog : null}
 
       <Dialog
         open={caseToDelete != null}

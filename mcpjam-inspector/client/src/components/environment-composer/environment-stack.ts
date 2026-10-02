@@ -32,7 +32,7 @@ import {
 } from "@/lib/harness-model-locks";
 import type { HarnessModelPurpose } from "@/shared/harness-model-support";
 import {
-  selectionKey,
+  selectionConfigKey,
   type ModelSelection as SavedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
@@ -256,7 +256,8 @@ export function sameModelSelection(
   if (!left.every((id, i) => id === right[i])) return false;
   const keyOf = (sel: ModelSelection, id: string) => {
     const saved = sel.explicitModelSelections?.[id];
-    return saved ? selectionKey(saved) : "";
+    // Config key: two effort levels of one model are different compositions.
+    return saved ? selectionConfigKey(saved) : "";
   };
   return left.every((id) => keyOf(a, id) === keyOf(b, id));
 }

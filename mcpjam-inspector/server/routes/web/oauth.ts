@@ -18,6 +18,12 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
+import {
+  prepareHostedOAuthProxyRequest,
+  projectHostedOAuthMetadata,
+  projectHostedOAuthProxyResponse,
+} from "../../utils/hosted-oauth-proxy.js";
+import { boundText } from "../../utils/hosted-upstream-projection.js";
 
 const oauthWeb = new Hono();
 const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
@@ -140,22 +146,28 @@ async function proxyConvexOAuthPost(c: Context, path: string) {
  * POST /api/web/oauth/proxy
  *
  * Mirrors /api/mcp/oauth/proxy with HTTPS-only + private IP blocking.
- * Body: { url: string, method?: string, body?: object, headers?: object }
+ * Body: { url: string, method?: "GET" | "POST", body?: object, headers?: object }
+ *
+ * The request and the answer go through `hosted-oauth-proxy` (MJ-001): GET or
+ * POST only, connection and cookie headers dropped, and the answer reduced to
+ * its status, the headers the OAuth flows read, and a JSON or form-encoded
+ * body.
  */
 oauthWeb.post("/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
+    const request = prepareHostedOAuthProxyRequest({ method, headers });
     const result = await executeOAuthProxy({
       url,
-      method,
+      method: request.method,
       body,
-      headers,
+      headers: request.headers,
       httpsOnly: true,
     });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
-    return c.json(result);
+    return c.json(projectHostedOAuthProxyResponse(result));
   } catch (error) {
     getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
       targetUrlHost: safeHostname(proxyUrl),
@@ -171,7 +183,9 @@ oauthWeb.post("/proxy", async (c) => {
  * Proxy OAuth metadata discovery requests.
  * GET /api/web/oauth/metadata?url=https://...
  *
- * Mirrors /api/mcp/oauth/metadata with HTTPS-only + private IP blocking.
+ * Mirrors /api/mcp/oauth/metadata with HTTPS-only + private IP blocking. The
+ * document is returned as a re-serialized JSON object within the hosted body
+ * cap (MJ-001).
  */
 oauthWeb.get("/metadata", async (c) => {
   const metadataUrl = c.req.query("url");
@@ -186,15 +200,19 @@ oauthWeb.get("/metadata", async (c) => {
 
     const result = await fetchOAuthMetadata(metadataUrl, true);
     if ("status" in result && result.status !== undefined) {
+      const statusText = boundText(result.statusText, 128);
       throw new WebRouteError(
         result.status,
         statusToErrorCode(result.status),
-        `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
+        `Failed to fetch OAuth metadata: ${result.status}${
+          statusText ? ` ${statusText}` : ""
+        }`,
       );
     }
 
+    const metadata = projectHostedOAuthMetadata(result.metadata);
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
-    return c.json(result.metadata);
+    return c.json(metadata);
   } catch (error) {
     getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
       targetUrlHost: safeHostname(metadataUrl),
@@ -242,24 +260,30 @@ oauthWeb.post("/import-tokens", async (c) => {
  * POST /api/web/oauth/debug/proxy
  *
  * Mirrors /api/mcp/oauth/debug/proxy with HTTPS-only + private IP blocking.
- * Body: { url: string, method?: string, body?: object, headers?: object }
+ * Body: { url: string, method?: "GET" | "POST", body?: object, headers?: object }
+ *
+ * Same request and answer rules as `/proxy` (MJ-001); an event-stream answer
+ * from an MCP server keeps its JSON events.
  */
 oauthWeb.post("/debug/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
+    const request = prepareHostedOAuthProxyRequest({ method, headers });
     // Note: no `redirect` option here — this route is always httpsOnly, and the
     // SDK proxy forces `redirect: "manual"` under httpsOnly, so passing one
     // would be dead code. The mcp route (not httpsOnly) is where it applies.
     const result = await executeDebugOAuthProxy({
       url,
-      method,
+      method: request.method,
       body,
-      headers,
+      headers: request.headers,
       httpsOnly: true,
     });
-    return c.json(result);
+    return c.json(
+      projectHostedOAuthProxyResponse(result, { eventStreams: true }),
+    );
   } catch (error) {
     getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
       targetUrlHost: safeHostname(proxyUrl),

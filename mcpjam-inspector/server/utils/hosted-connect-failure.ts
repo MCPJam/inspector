@@ -1,10 +1,10 @@
 /**
  * What a hosted response may say about a failed connection to the caller's MCP
- * server (MJ-001).
+ * server, or a failed operation on it (MJ-001).
  *
- * A connection failure's own text can quote whatever the server answered — a
- * response body, a content type, a JSON-RPC error message. A hosted response
- * reports the status line instead: the HTTP status and a bounded reason phrase
+ * A failure's own text can quote whatever the server answered — a response
+ * body, a content type, a JSON-RPC error message. A hosted response reports
+ * the status line instead: the HTTP status and a bounded reason phrase
  * of the answer, or the uniform transport message when nothing answered. The
  * egress guard's refusal keeps its own wording, since it names only the host
  * the caller configured.
@@ -21,7 +21,10 @@ import {
 import {
   formatStatusLine,
   isPlainRecord,
+  jsonRpcErrorMessage,
   parseHttpStatus,
+  parseJsonRpcCode,
+  parseProtocolVersion,
   projectHostedLogEnvelope,
   projectScopeChallenge,
 } from "./hosted-upstream-projection.js";
@@ -208,10 +211,127 @@ function describeRefusal(message: string): string {
     : redactHostedTransportFailureText(message);
 }
 
+/** What a hosted response says when a request to the server timed out. */
+export const HOSTED_REQUEST_TIMEOUT_DETAIL =
+  "The MCP server did not respond in time.";
+
+/** JSON-RPC's `RequestTimeout`, which the v1 MCP SDK raises locally. */
+const JSONRPC_REQUEST_TIMEOUT = -32001;
+/** The v2 MCP SDK's own timeout code. */
+const SDK_REQUEST_TIMEOUT = "REQUEST_TIMEOUT";
+/** The error names a JSON-RPC error answer arrives under. */
+const JSONRPC_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "McpError",
+  "ProtocolError",
+]);
+
 /**
- * The status-line-only account of a failed connection. `logs` is the hosted
- * log envelope of the same request, consulted when the error itself carries
- * no status — a 200 answer that was not MCP, for instance.
+ * A request the client gave up waiting on. Recognized by the SDKs' own codes
+ * and the platform's `TimeoutError`, never by wording.
+ */
+function isRequestTimeout(error: unknown): boolean {
+  for (const node of errorChain(error)) {
+    const name = String(read(node, "name"));
+    const code = read(node, "code");
+    if (name === "TimeoutError") return true;
+    if (JSONRPC_ERROR_NAMES.has(name) && code === JSONRPC_REQUEST_TIMEOUT) {
+      return true;
+    }
+    if (SDK_ERROR_NAMES.has(name) && code === SDK_REQUEST_TIMEOUT) return true;
+  }
+  return false;
+}
+
+/**
+ * A JSON-RPC error the server answered an operation with, when it is the
+ * failure itself (not a cause under a connection error). Any 32-bit integer
+ * code counts, including the ones a server defines for itself. Reported by
+ * code, with fixed wording.
+ */
+function operationJsonRpcError(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  if (!JSONRPC_ERROR_NAMES.has(String(read(error, "name")))) return undefined;
+  return parseJsonRpcCode(read(error, "code"));
+}
+
+/** Errors raised by the MCP client, its transports, or its auth flow. */
+const MCP_CLIENT_ERROR_NAMES: ReadonlySet<string> = new Set([
+  ...JSONRPC_ERROR_NAMES,
+  ...SDK_ERROR_NAMES,
+  "UnauthorizedError",
+  "MCPAuthError",
+  "ProtocolVersionPinUnsupported",
+  "BlockedEgressTargetError",
+]);
+
+/** Socket and fetch failure codes: Node's `E…` system codes and undici's. */
+const NETWORK_ERROR_CODE = /^(?:E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)$/;
+
+/**
+ * Whether anything in the error or its causes shows it came from talking to
+ * an MCP server: an HTTP status, an error the MCP client, its transports or
+ * `fetch` raise, a network failure code, an aborted or timed-out request, or
+ * the egress guard's refusal. A failure without any of this is this server's
+ * own work failing, like a headless render.
+ */
+export function hasUpstreamFailureEvidence(error: unknown): boolean {
+  for (const node of errorChain(error)) {
+    if (node instanceof BlockedEgressTargetError) return true;
+    const name = String(read(node, "name"));
+    if (MCP_CLIENT_ERROR_NAMES.has(name)) return true;
+    if (HTTP_CODE_ERROR_CLASSES.has(className(node) ?? "")) return true;
+    if (httpStatusOf(node) !== undefined) return true;
+    const code = read(node, "code");
+    if (typeof code === "string" && NETWORK_ERROR_CODE.test(code)) return true;
+    if (name === "TypeError" && read(node, "message") === "fetch failed") {
+      return true;
+    }
+    if (
+      typeof DOMException !== "undefined" &&
+      node instanceof DOMException &&
+      (name === "AbortError" || name === "TimeoutError")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const MAX_OFFERED_VERSIONS = 8;
+
+/**
+ * A connection pinned to a protocol version the server does not offer. The
+ * pinned version is this client's setting; the versions the server offered
+ * are kept only when each is a well-formed version string.
+ */
+function describeVersionPinRefusal(error: unknown): string | undefined {
+  for (const node of errorChain(error)) {
+    if (read(node, "name") !== "ProtocolVersionPinUnsupported") continue;
+    const pinned = parseProtocolVersion(read(node, "protocolVersion"));
+    if (pinned === undefined) return undefined;
+    const offered = read(node, "supportedVersions");
+    const versions = Array.isArray(offered)
+      ? offered
+          .slice(0, MAX_OFFERED_VERSIONS)
+          .map(parseProtocolVersion)
+          .filter((version): version is string => version !== undefined)
+      : [];
+    return `The MCP server doesn't support MCP protocol version ${pinned}, which this client is pinned to.${
+      versions.length > 0 ? ` It offers ${versions.join(", ")}.` : ""
+    }`;
+  }
+  return undefined;
+}
+
+/**
+ * The status-line-only account of a failed connection or operation. `logs` is
+ * the hosted log envelope of the same request, consulted when the error itself
+ * carries no status — a 200 answer that was not MCP, for instance.
+ *
+ * Without an HTTP status on the error, three failures are worded from what
+ * this client knows rather than from the logs: a version pin the server does
+ * not offer, a request that timed out, and a JSON-RPC error answering the
+ * operation, which is reported by its code.
  */
 export function describeHostedConnectFailure(
   error: unknown,
@@ -220,6 +340,22 @@ export function describeHostedConnectFailure(
   const refusal = findEgressRefusal(error);
   if (refusal !== undefined) {
     return { message: describeRefusal(refusal), blockedTarget: true };
+  }
+  const pinRefusal = describeVersionPinRefusal(error);
+  if (pinRefusal !== undefined) {
+    return { message: pinRefusal, blockedTarget: false };
+  }
+  if (statusLineFromChain(error) === undefined) {
+    if (isRequestTimeout(error)) {
+      return { message: HOSTED_REQUEST_TIMEOUT_DETAIL, blockedTarget: false };
+    }
+    const code = operationJsonRpcError(error);
+    if (code !== undefined) {
+      return {
+        message: `The MCP server answered with JSON-RPC error ${code} (${jsonRpcErrorMessage(code)}).`,
+        blockedTarget: false,
+      };
+    }
   }
   const answer = findStatusLine(error, logs);
   if (!answer) {
@@ -296,4 +432,24 @@ export function projectHostedConnectFailureLogs(
   logs: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   return projectHostedLogEnvelope(logs, redactHostedTransportFailureText);
+}
+
+/**
+ * The log envelope of a SUCCESSFUL hosted operation: its HTTP exchanges
+ * reduced as {@link projectHostedConnectFailureLogs} reduces them — allowlisted
+ * response headers, request header values only for protocol headers — and its
+ * JSON-RPC frames as they are, since they are the operation's own result.
+ */
+export function projectHostedSuccessLogs(
+  logs: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!logs || !Array.isArray(logs._httpLogs)) return logs;
+  const { _httpLogs, _httpLogsOmitted: _omitted, ...rest } = logs;
+  return {
+    ...rest,
+    ...projectHostedLogEnvelope(
+      { _httpLogs },
+      redactHostedTransportFailureText,
+    ),
+  };
 }
