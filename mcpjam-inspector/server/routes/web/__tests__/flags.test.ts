@@ -82,6 +82,7 @@ describe("GET /api/web/flags", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       flags: {
+        "local-harness-enabled": false,
         "computers-enabled": true,
         "guest-credit-wall-copy": "treatment",
         xaa: false,
@@ -150,7 +151,7 @@ describe("GET /api/web/flags", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ flags: {} });
+    expect(body).toEqual({ flags: { "local-harness-enabled": false } });
     expect(mocks.getAllFlags).not.toHaveBeenCalled();
   });
 
@@ -167,7 +168,7 @@ describe("GET /api/web/flags", () => {
     const { response, body } = await getFlags(query);
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ flags: {} });
+    expect(body).toEqual({ flags: { "local-harness-enabled": false } });
     expect(mocks.getAllFlags).not.toHaveBeenCalled();
   });
 
@@ -175,7 +176,7 @@ describe("GET /api/web/flags", () => {
     mocks.getAllFlags.mockRejectedValueOnce(new Error("unavailable"));
     const failed = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(failed.response.status).toBe(200);
-    expect(failed.body).toEqual({ flags: {} });
+    expect(failed.body).toEqual({ flags: { "local-harness-enabled": false } });
 
     await shutdownAnalytics();
     mocks.constructPostHog.mockImplementationOnce(() => {
@@ -183,6 +184,6 @@ describe("GET /api/web/flags", () => {
     });
     const unconfigured = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(unconfigured.response.status).toBe(200);
-    expect(unconfigured.body).toEqual({ flags: {} });
+    expect(unconfigured.body).toEqual({ flags: { "local-harness-enabled": false } });
   });
 });
