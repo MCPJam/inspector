@@ -564,6 +564,17 @@ const mockHostedOrgModelConfig = {
   providers: [{ providerKey: "anthropic", enabled: true, hasSecret: true }],
 };
 
+// The live hosted catalog the compare line-up's v1 → v2 migration reads.
+// `loading` by default: no migration, so suites that set `selectedModelIds`
+// keep exercising the v1 line-up exactly as before.
+const mockHostedCatalogState: {
+  status: "loading" | "live" | "fallback";
+  hostedCatalog: unknown[];
+} = { status: "loading", hostedCatalog: [] };
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => mockHostedCatalogState,
+}));
+
 vi.mock("@/hooks/use-hosted-org-model-config", () => ({
   useHostedOrgModelConfig: () => mockHostedOrgModelConfig,
 }));
@@ -864,6 +875,217 @@ describe("PlaygroundMain", () => {
       expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
     });
 
+    describe("per-card compare keyed by comparisonKey", () => {
+      const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+      const sonnet = {
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+        hosted: true,
+        supportedReasoningEfforts: ["low", "medium", "high"],
+      };
+      const gpt = {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini",
+        provider: "openai",
+        hosted: true,
+        supportedReasoningEfforts: ["low", "high"],
+      };
+      const hosted = (modelId: string, effort?: string) => ({
+        modelId,
+        source: "hosted",
+        fallback: { provider: "openrouter", model: "none" },
+        ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+      });
+      const renderedCardProps = () => {
+        // Props of the cards in the most recent grid render, in order.
+        const calls = mockMultiModelPlaygroundCard.mock.calls.map(
+          ([props]) => props,
+        );
+        const count = screen.getAllByTestId(
+          "multi-model-playground-card",
+        ).length;
+        return calls.slice(-count);
+      };
+
+      beforeEach(() => {
+        mockUseChatSession.availableModels = [sonnet, gpt] as any;
+        mockUseChatSession.selectedModel = sonnet as any;
+        mockUseChatSession.multiModelEnabled = true;
+        mockHostedCatalogState.status = "loading";
+        mockHostedCatalogState.hostedCatalog = [];
+      });
+      afterEach(() => {
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.selectedModel = {
+          id: "gpt-4",
+          name: "GPT-4",
+          provider: "openai",
+        } as any;
+        mockHostedCatalogState.status = "loading";
+      });
+
+      it("restores two cards of one model at two efforts after a reload, each sending its own effort", () => {
+        // What a previous session saved (storage v2): Sonnet at Low and High.
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            hosted(sonnet.id, "low"),
+            hosted(sonnet.id, "high"),
+          ]),
+        );
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        const cards = renderedCardProps();
+        expect(cards).toHaveLength(2);
+        expect(cards.map((props) => props.compareLabel)).toEqual([
+          "Claude Sonnet 4.5 · Low",
+          "Claude Sonnet 4.5 · High",
+        ]);
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          "low",
+          "high",
+        ]);
+        // Two cards, two identities: keyed by comparisonKey, not model id.
+        expect(new Set(cards.map((props) => props.compareId)).size).toBe(2);
+        expect(cards.every((props) => props.model.id === sonnet.id)).toBe(true);
+        // Each card has its own chip.
+        expect(cards.map((props) => props.effort?.value)).toEqual([
+          "low",
+          "high",
+        ]);
+      });
+
+      it("adds a card of the same model at another level, and changes one card's effort alone", () => {
+        localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        let [lead] = renderedCardProps();
+        expect(lead.reasoningEffort).toBeUndefined();
+        act(() => {
+          lead.effort.onCompareAnotherEffort();
+        });
+        let cards = renderedCardProps();
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          undefined,
+          "high",
+        ]);
+        expect(cards.map((props) => props.compareLabel)).toEqual([
+          "Claude Sonnet 4.5 · Default",
+          "Claude Sonnet 4.5 · High",
+        ]);
+
+        // The lead card's chip changes only the lead card.
+        [lead] = cards;
+        act(() => {
+          lead.effort.onChange("low");
+        });
+        cards = renderedCardProps();
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          "low",
+          "high",
+        ]);
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual([
+          hosted(sonnet.id, "low"),
+          hosted(sonnet.id, "high"),
+        ]);
+
+        // The composer chip is shown in compare and edits the lead card.
+        const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        expect(composer.reasoningEffort).toBe("low");
+        expect(composer.onReasoningEffortChange).toBeTypeOf("function");
+      });
+
+      it("caps the line-up at three cards", () => {
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            hosted(sonnet.id, "low"),
+            hosted(sonnet.id, "medium"),
+            hosted(sonnet.id, "high"),
+            hosted(gpt.id),
+          ]),
+        );
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        const cards = renderedCardProps();
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          "low",
+          "medium",
+          "high",
+        ]);
+        // At the cap no card offers "Compare another effort", and the picker
+        // cannot add a fourth card either.
+        expect(
+          cards.every(
+            (props) => props.effort?.onCompareAnotherEffort === undefined,
+          ),
+        ).toBe(true);
+        const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        act(() => {
+          composer.onSelectedModelsChange([sonnet, gpt]);
+        });
+        expect(renderedCardProps()).toHaveLength(3);
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toHaveLength(3);
+      });
+
+      it("keeps both efforts of a model when the picker adds another model", () => {
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            hosted(sonnet.id, "low"),
+            hosted(sonnet.id, "high"),
+          ]),
+        );
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+        const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        act(() => {
+          composer.onSelectedModelsChange([sonnet, gpt]);
+        });
+        const cards = renderedCardProps();
+        expect(
+          cards.map((props) => [props.model.id, props.reasoningEffort]),
+        ).toEqual([
+          [sonnet.id, "low"],
+          [sonnet.id, "high"],
+          [gpt.id, undefined],
+        ]);
+      });
+
+      it("migrates a v1 line-up once the live catalog loaded, never before", () => {
+        mockUseChatSession.selectedModelIds = [sonnet.id, gpt.id];
+        localStorage.setItem(
+          "mcp-inspector-selected-models",
+          JSON.stringify([sonnet.id, gpt.id]),
+        );
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        // Catalog loading: v1 behaviour, nothing written.
+        expect(localStorage.getItem(V2_KEY)).toBeNull();
+        expect(renderedCardProps().map((props) => props.compareId)).toEqual([
+          sonnet.id,
+          gpt.id,
+        ]);
+
+        mockHostedCatalogState.status = "live";
+        mockHostedCatalogState.hostedCatalog = [sonnet, gpt];
+        rerender(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "null")).toEqual([
+          { ...hosted(sonnet.id), fallback: { provider: "none", model: "none" } },
+          { ...hosted(gpt.id), fallback: { provider: "none", model: "none" } },
+        ]);
+        // Default selections key as the bare id: same cards as before.
+        expect(renderedCardProps().map((props) => props.compareId)).toEqual([
+          sonnet.id,
+          gpt.id,
+        ]);
+        mockUseChatSession.selectedModelIds = [];
+      });
+    });
+
     describe("host model and effort seeding", () => {
       const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
       const hostedGpt5 = {
@@ -916,6 +1138,59 @@ describe("PlaygroundMain", () => {
           picked,
           "high"
         );
+        mockUseChatSession.availableModels = [];
+      });
+
+      it("puts a BYOK host's High on the lead compare card on the user's key, and clears it on a switch to a host with none", async () => {
+        const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            {
+              modelId: "openai/gpt-5",
+              source: "hosted",
+              fallback: { provider: "openrouter", model: "none" },
+            },
+          ]),
+        );
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual([
+            {
+              modelId: "openai/gpt-5",
+              source: "local",
+              connectionRef: { kind: "localProvider", providerKey: "openai" },
+              nativeModelId: "gpt-5",
+              settings: { reasoningEffort: "high" },
+              fallback: { provider: "openrouter", model: "none" },
+            },
+          ]);
+        });
+
+        mockHostQueryState.result = {
+          hostId,
+          name: "Host B",
+          config: {
+            id: "cfg-b",
+            modelId: "openai/gpt-5",
+            modelSelection: selection(),
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          const [lead] = JSON.parse(localStorage.getItem(V2_KEY) ?? "[]");
+          expect(lead.source).toBe("local");
+          expect(lead.settings).toBeUndefined();
+        });
         mockUseChatSession.availableModels = [];
       });
 

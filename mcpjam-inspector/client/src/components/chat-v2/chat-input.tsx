@@ -319,7 +319,8 @@ interface ChatInputProps {
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
   /**
-   * Reasoning effort chip beside the model picker (single-model chat only).
+   * Reasoning effort chip beside the model picker. In compare mode the
+   * caller passes the lead card's effort (each card has its own chip too).
    * `reasoningEffortLevels` is the row's supported list; empty hides the chip.
    * While an effort is set the temperature slider is disabled and the turn
    * omits temperature.
@@ -2024,9 +2025,9 @@ export function ChatInput({
                   }
                 />
               )}
-              {/* Compare mode sends to per-model cards that never carry the
-                  effort, so the chip is hidden whenever it is on. */}
-              {!minimalMode && onReasoningEffortChange && !multiModelEnabled ? (
+              {/* In compare mode the chip edits the lead card's effort; every
+                  card also has its own chip and sends its own level. */}
+              {!minimalMode && onReasoningEffortChange ? (
                 <EffortControl
                   variant="chip"
                   options={reasoningEffortLevels ?? []}
@@ -2254,7 +2255,7 @@ export function ChatInput({
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
-          reasoningEffort={multiModelEnabled ? undefined : reasoningEffort}
+          reasoningEffort={reasoningEffort}
           isLoading={isLoading}
           hasMessages={hasMessages}
           onResetChat={onResetChat}
