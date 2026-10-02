@@ -173,12 +173,17 @@ const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
  * the four ways browsers spell "the network went away". Applied to the client
  * and Electron-renderer builders only — on the server these strings would
  * suppress real upstream failures.
+ *
+ * String entries match by substring, so the bare-network spellings are
+ * anchored: Chromium's "Failed to fetch dynamically imported module: <url>"
+ * is a code-split chunk that no longer exists on the server, not the network
+ * going away, and must keep reporting.
  */
 export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
   "ResizeObserver loop limit exceeded",
   "ResizeObserver loop completed with undelivered notifications",
   /^AbortError/,
-  "Failed to fetch",
+  /^(?:TypeError: )?Failed to fetch$/,
   "NetworkError when attempting to fetch resource",
   "Load failed",
 ];
@@ -217,6 +222,8 @@ export interface FingerprintableEvent {
       stacktrace?: { frames?: { filename?: string; function?: string }[] };
     }[];
   };
+  tags?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 }
 
 /**
@@ -255,8 +262,64 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
 }
 
 /**
+ * Group OAuth-debugger step failures by WHAT failed, not by where they were
+ * reported.
+ *
+ * The inverse of the problem above. There, one bug's frames moved with every
+ * build and scattered it across nine issues. Here, every step failure the
+ * debugger has — a missing metadata document, a registration endpoint that
+ * wants a token, a wrong client secret, a server answering 404 where MCP
+ * requires 401 — is reported from the SAME line (`withStepFailureReporting` in
+ * `debug-state-machine-adapter.ts` builds the `Error` there), so they share one
+ * stack and Sentry files them all as one issue.
+ *
+ * INSPECTOR-CLIENT-2FE shows the cost. Titled "Dynamic Client Registration
+ * failed (400)", its 9 events are five unrelated findings; the headline is one
+ * of them. And because the bundle hash is in the frames, each release opens a
+ * fresh catch-all issue — INSPECTOR-CLIENT-2F9 is the same bucket for the
+ * previous build — so every deploy re-alerts on nothing new.
+ *
+ * Keyed on the step and `extra.finding`, which the reporting adapter computes
+ * with the SDK's `stepFailureFindingKey`, not on the message text. Why the
+ * text is wrong in both directions, and what the key does instead, is written
+ * once, on `stepFailureFindingKey`. It lives in the SDK next to the code that
+ * writes these messages.
+ *
+ * A report without `finding` — none should exist, since the adapter and this
+ * rule ship together — falls back to its message capped at the same length,
+ * which splits rather than merges.
+ *
+ * `environment` for the same reason `groupDomMutationConflicts` carries it:
+ * stack grouping kept dev and prod apart only by accident of their bundles, and
+ * a message-keyed fingerprint would otherwise merge them.
+ *
+ * Only `oauth_debugger_step`. `oauth_debugger_advance` is a genuine exception
+ * thrown out of the flow, and its stack is the useful part.
+ */
+export function groupOAuthDebuggerStepFailures<T extends FingerprintableEvent>(
+  event: T,
+): T {
+  if (event.tags?.source !== "oauth_debugger_step") return event;
+
+  const reported = event.extra?.finding;
+  const finding =
+    typeof reported === "string" && reported !== ""
+      ? reported
+      : (event.exception?.values?.[0]?.value ?? "").slice(0, 160);
+  const step = event.extra?.step;
+
+  event.fingerprint = [
+    "oauth-debugger-step",
+    typeof step === "string" && step !== "" ? step : "unknown",
+    finding,
+    event.environment ?? "unknown",
+  ];
+  return event;
+}
+
+/**
  * The browser `beforeSend`: drop injected-script crashes, then group the DOM
- * mutation conflicts that survive.
+ * mutation conflicts and OAuth-debugger step failures that survive.
  *
  * Sentry keeps its own `window.onerror` handler — `initSentry()` passes an
  * `integrations` array without `defaultIntegrations: false`, so
@@ -283,7 +346,7 @@ export function buildBrowserBeforeSend(origin?: string) {
       });
       if (isInjectedScriptException(stacks, origin)) return null;
     }
-    return groupDomMutationConflicts(event);
+    return groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event));
   };
 }
 
@@ -372,7 +435,8 @@ export function buildClientSentryConfig(
     ignoreErrors: BROWSER_IGNORE_ERRORS,
     // Browser surfaces only. A `NotFoundError` on the server is an upstream
     // or storage failure that has nothing to do with DOM mutation, and
-    // collapsing those by message would merge unrelated defects.
+    // collapsing those by message would merge unrelated defects. The OAuth
+    // debugger runs only in the browser client too.
     beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES

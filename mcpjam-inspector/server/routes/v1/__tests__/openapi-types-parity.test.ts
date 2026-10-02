@@ -221,6 +221,12 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalRunGoalCompletionCase: "PlatformEvalRunGoalCompletionCase",
   EvalRunGroundednessCase: "PlatformEvalRunGroundednessCase",
   ProjectCapabilities: "PlatformCapabilities",
+
+  // ── Platform feedback ─────────────────────────────────────────────────
+  //
+  // The receipt only: `FeedbackRequest` is a body the client takes as a
+  // parameter, with no interface of its own to compare.
+  FeedbackReceipt: "PlatformFeedbackReceipt",
 };
 
 /**
