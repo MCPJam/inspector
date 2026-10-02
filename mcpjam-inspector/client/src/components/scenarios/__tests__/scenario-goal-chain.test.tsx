@@ -1,10 +1,14 @@
 /**
  * The per-goal user value chain: the probe, and the tab that paints it.
  *
- * Run against a FIXTURE funnel rather than a deployment. The backend argument
- * this consumes (mcpjam-backend#1294) is not deployed yet, so these tests are
- * how the wiring is held to its contract in the meantime — and they stay the
- * cheaper check afterwards.
+ * Run against a FIXTURE funnel rather than a deployment. Two backend
+ * arguments feed this — `clusterId` (mcpjam-backend#1294, merged) and
+ * `sentiment` (mcpjam-backend#1329, open) — so these tests are how the wiring
+ * is held to its contract until both are deployed, and the cheaper check
+ * afterwards.
+ *
+ * The query is addressed as an `as never` string, so NOTHING mechanical will
+ * notice when this list goes stale. Adding an argument means updating it here.
  *
  * The behaviours worth pinning are the ones that are invisible when they go
  * wrong:
@@ -200,10 +204,18 @@ describe("ScenarioGoalChain", () => {
       "chatSessionStageDerivation:getScenarioStageFunnel",
       { scenarioId: "scn-1", clusterId: "cluster-export" },
     );
+    // ABSENT, not `undefined`. `toHaveBeenCalledWith` uses `toEqual`
+    // semantics, which ignore undefined-valued keys — so the assertion above
+    // is satisfied by `{ …, sentiment: undefined }`, which the server rejects
+    // at argument validation. Simplifying the spread to a plain `sentiment,`
+    // would pass every other test in this file and ship that error.
+    const args = mockUseQuery.mock.calls.at(-1)![1] as object;
+    expect("sentiment" in args).toBe(false);
     expect(onResolved).toHaveBeenCalledTimes(1);
-    const [goalId, stages] = onResolved.mock.calls[0]!;
-    // Named with the goal it is about, so a stale answer is recognisable.
-    expect(goalId).toBe("cluster-export");
+    const [about, stages] = onResolved.mock.calls[0]!;
+    // Named with the population it is about, so a stale answer is
+    // recognisable — no persona is selected here, so there is no sentiment.
+    expect(about).toEqual({ goalId: "cluster-export", sentiment: undefined });
     expect(stages?.stages.discovery.state).toBe("fail");
     expect(stages?.defaultStage).toBe("discovery");
   });
@@ -238,7 +250,10 @@ describe("ScenarioGoalChain", () => {
       />,
     );
 
-    expect(onResolved).toHaveBeenCalledWith("cluster-export", null);
+    expect(onResolved).toHaveBeenCalledWith(
+      { goalId: "cluster-export", sentiment: undefined },
+      null,
+    );
   });
 
   it("falls back to unmeasured on a throw, and still reports the throw", () => {
@@ -260,7 +275,10 @@ describe("ScenarioGoalChain", () => {
       />,
     );
 
-    expect(onResolved).toHaveBeenCalledWith("cluster-export", null);
+    expect(onResolved).toHaveBeenCalledWith(
+      { goalId: "cluster-export", sentiment: undefined },
+      null,
+    );
     // Not swallowed. This is the assertion that separates a real fallback from
     // a silenced alarm.
     expect(mockReportBoundaryError).toHaveBeenCalled();
@@ -699,5 +717,186 @@ describe("the Findings tab, once a goal is open", () => {
     // One funnel per expand, paid by the reader who asked. Subscribing every
     // goal on open would buy a scan per cluster to paint rows nobody read.
     expect(mockUseQuery).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The card is about ONE persona: its goal row counts that persona's sessions,
+ * its session list shows them. The chain has to describe the same population
+ * or the reader gets three numbers about two groups — which is exactly what
+ * shipped, and showed up the day chains first derived as a card headed
+ * "2 sessions" whose chain read "failed in 3 of 6 graded sessions".
+ */
+describe("the chain is scoped to the persona, not just the goal", () => {
+  it("asks for the selected persona's sentiment alongside the goal", async () => {
+    mockUseQuery.mockReturnValue(null);
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "chatSessionStageDerivation:getScenarioStageFunnel",
+      {
+        scenarioId: "scn-1",
+        clusterId: "cluster-export",
+        sentiment: "frustrated",
+      },
+    );
+  });
+
+  /** Two personas, both of whom tried the same goal. */
+  function twoPersonaDrilldown() {
+    return {
+      ...drilldownFixture(),
+      sessions: [
+        ...drilldownFixture().sessions,
+        {
+          _id: "sess-9",
+          sentiment: "satisfied" as const,
+          themeClusterId: "cluster-export",
+          themeClusterLabel: "Export the board",
+          outcome: "completed" as const,
+        },
+      ],
+      total: 3,
+    };
+  }
+
+  const sentimentsAsked = () =>
+    mockUseQuery.mock.calls
+      .map(([, args]) => args as { sentiment?: string } | undefined)
+      .filter((a) => a && "sentiment" in a)
+      .map((a) => a!.sentiment);
+
+  it("re-asks when the reader switches persona", async () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: twoPersonaDrilldown(),
+      isLoading: false,
+    });
+    mockUseQuery.mockReturnValue(null);
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    // Before the switch, only the first persona has been asked about.
+    //
+    // A FULL revert fails on the line below, not on the switch — with no
+    // sentiment sent at all, `sentimentsAsked()` is empty. The switch is here
+    // for the narrower regression the first half cannot see: a sentiment that
+    // is sent once and then never re-sent when the reader changes persona.
+    expect(sentimentsAsked()).toContain("frustrated");
+    expect(sentimentsAsked()).not.toContain("satisfied");
+
+    // Switching persona closes the open goal, so the reader reopens it.
+    const tabs = await screen.findAllByTestId("findings-persona-tab");
+    await userEvent.click(tabs[1]!);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    // The same cluster under a different persona is a DIFFERENT population,
+    // so it must be asked about separately rather than reusing the first
+    // persona's answer.
+    expect(sentimentsAsked()).toContain("satisfied");
+  });
+
+  it("paints the second persona's OWN chain, not a blank one", async () => {
+    // Every other test here asserts an ABSENCE: that something was asked, or
+    // that a stale chain is not painted. None of them would notice the most
+    // likely regression — `sentiment` reaching the query while the answer's
+    // identity stops matching the guard, which leaves persona two permanently
+    // unmeasured. The staleness test below asserts blankness as the DESIRED
+    // outcome, so it would call that bug a pass.
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: twoPersonaDrilldown(),
+      isLoading: false,
+    });
+    // Built once, outside the implementation, for the identity reason this
+    // file documents at the effect: a funnel minted per render spins forever.
+    const frustratedFunnel = funnelOf(
+      { connection: { passed: 2 }, discovery: { failed: 2 } },
+      { counted: 2, total: 2, firstFailedStage: { discovery: 2 } },
+    );
+    const satisfiedFunnel = funnelOf(
+      { connection: { failed: 1 }, discovery: { passed: 1 } },
+      { counted: 1, total: 1, firstFailedStage: { connection: 1 } },
+    );
+    mockUseQuery.mockImplementation((_name: unknown, args: unknown) =>
+      (args as { sentiment?: string }).sentiment === "frustrated"
+        ? frustratedFunnel
+        : satisfiedFunnel,
+    );
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+    await waitFor(() =>
+      expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
+        "data-state",
+        "fail",
+      ),
+    );
+
+    const tabs = await screen.findAllByTestId("findings-persona-tab");
+    await userEvent.click(tabs[1]!);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    // Persona two's own chain, and it breaks somewhere else — so this cannot
+    // pass by repainting persona one's answer OR by going blank.
+    //
+    // COMPLEMENTS the staleness test below rather than overlapping it: this
+    // one resolves the second query immediately, so it cannot see the guard
+    // being dropped; that one leaves it loading, which is the only window the
+    // guard is for. Two regressions, two tests — do not fold them together.
+    await waitFor(() =>
+      expect(screen.getByTestId("findings-stage-connection")).toHaveAttribute(
+        "data-state",
+        "fail",
+      ),
+    );
+    expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
+      "data-state",
+      "ok",
+    );
+  });
+
+  it("never paints one persona with another persona's chain", async () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: twoPersonaDrilldown(),
+      isLoading: false,
+    });
+    // Built ONCE, outside the implementation, for the reason the goal-axis
+    // twin of this test gives: the chain effect keys on result identity and a
+    // funnel minted per render would report forever.
+    const frustratedFunnel = funnelOf(
+      { connection: { passed: 2 }, discovery: { failed: 2 } },
+      { counted: 2, total: 2, firstFailedStage: { discovery: 2 } },
+    );
+    // The first persona has an answer. The second is still loading, which is
+    // the window a stale chain would show through.
+    mockUseQuery.mockImplementation((_name: unknown, args: unknown) =>
+      (args as { sentiment?: string }).sentiment === "frustrated"
+        ? frustratedFunnel
+        : undefined,
+    );
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+    await waitFor(() =>
+      expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
+        "data-state",
+        "fail",
+      ),
+    );
+
+    const tabs = await screen.findAllByTestId("findings-persona-tab");
+    await userEvent.click(tabs[1]!);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    // Nobody has measured this goal for the satisfied persona yet. Showing the
+    // frustrated persona's failure here would put a diagnosis on a population
+    // it was never about — under a card headed with the other one's count.
+    expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
+      "data-state",
+      "none",
+    );
+    expect(screen.getByTestId("findings-empty-stage")).toBeInTheDocument();
   });
 });
