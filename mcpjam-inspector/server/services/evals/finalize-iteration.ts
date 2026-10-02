@@ -31,6 +31,7 @@ import {
   finalMessageEndsWithQuestion,
 } from "@mcpjam/sdk/predicates";
 import { buildIterationMetadata } from "./iteration-metadata.js";
+import { buildIterationErrorMetadata } from "./iteration-error-metadata.js";
 import {
   buildHostIterationMetadata,
   type HostExecutionPolicy,
@@ -964,6 +965,16 @@ export function buildIterationFinishParams(args: {
     resultSource: "reported" as const,
     metadata: {
       ...iterationMetadataBase,
+      ...buildIterationErrorMetadata({
+        messages,
+        spans,
+        toolErrors: stageToolErrors,
+        browserInteractionSteps,
+        widgetRenderObservations,
+        status,
+        error,
+        stepError: args.stepError,
+      }),
       ...buildIterationMetadata(evaluation as never),
       // Written for EVERY trial, from the same helper the `noEndingQuestion`
       // check uses — not only when somebody authored that check.
@@ -1215,8 +1226,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-      ? "eval_failed"
-      : "eval_completed";
+        ? "eval_failed"
+        : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke

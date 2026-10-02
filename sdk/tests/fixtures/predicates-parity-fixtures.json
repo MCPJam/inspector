@@ -854,6 +854,137 @@
         "type": "noToolErrors",
         "role": "gating"
       }
+    },
+    {
+      "label": "toolInputMatches — single pattern",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ]
+      }
+    },
+    {
+      "label": "toolInputMatches — three patterns at one path, ignore case, bounds",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea",
+          "Build",
+          "Ship"
+        ],
+        "flags": "i",
+        "path": "/elements",
+        "min": 1,
+        "max": 3
+      }
+    },
+    {
+      "label": "toolInputMatches — min 0 max 0 (no call matches)",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "DROP\\s+TABLE"
+        ],
+        "flags": "i",
+        "min": 0,
+        "max": 0
+      }
+    },
+    {
+      "label": "toolInputMatches — named group (translated to re2 syntax)",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "(?<label>Idea|Build)"
+        ],
+        "path": "/elements"
+      }
+    },
+    {
+      "label": "toolInputMatches — advisory warn",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolInputMatches — path with ~1 and ~0 escapes (the key a/b~c)",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/a~1b~0c"
+      }
+    },
+    {
+      "label": "toolInputMatches — path at the 257-character limit",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+      }
+    },
+    {
+      "label": "toolResultMatches — no toolName (every tool's results)",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ]
+      }
+    },
+    {
+      "label": "toolResultMatches — toolName, path, three patterns, ignore case",
+      "value": {
+        "type": "toolResultMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea",
+          "Build",
+          "Ship"
+        ],
+        "flags": "i",
+        "path": "/elements"
+      }
+    },
+    {
+      "label": "toolResultMatches — min 0 max 0 (no result matches)",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "rate\\s+limit"
+        ],
+        "flags": "i",
+        "min": 0,
+        "max": 0
+      }
+    },
+    {
+      "label": "toolResultMatches — advisory warn",
+      "value": {
+        "type": "toolResultMatches",
+        "toolName": "search",
+        "patterns": [
+          "Idea"
+        ],
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
@@ -1477,6 +1608,574 @@
         "type": "noToolErrors",
         "role": "require"
       }
+    },
+    {
+      "label": "toolInputMatches — empty patterns",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": []
+      },
+      "why": "at least one pattern is required"
+    },
+    {
+      "label": "toolInputMatches — nine patterns",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "i"
+        ]
+      },
+      "why": "at most 8 patterns"
+    },
+    {
+      "label": "toolInputMatches — an empty pattern item",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea",
+          ""
+        ]
+      },
+      "why": "every pattern must be 1 to 512 characters"
+    },
+    {
+      "label": "toolInputMatches — a 513-character pattern",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "why": "every pattern must be 1 to 512 characters"
+    },
+    {
+      "label": "toolInputMatches — an unbalanced group",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "("
+        ]
+      },
+      "why": "the pattern must compile in re2js"
+    },
+    {
+      "label": "toolInputMatches — a lookahead",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "(?=a)"
+        ]
+      },
+      "why": "re2js has no lookaround; the pattern must compile in re2js"
+    },
+    {
+      "label": "toolInputMatches — a backreference",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "(a)\\1"
+        ]
+      },
+      "why": "re2js has no backreferences; the pattern must compile in re2js"
+    },
+    {
+      "label": "toolInputMatches — flags g",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "g"
+      },
+      "why": "flags is closed to i, m, s, im, is, ms, ims"
+    },
+    {
+      "label": "toolInputMatches — flags u",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "u"
+      },
+      "why": "flags is closed to i, m, s, im, is, ms, ims"
+    },
+    {
+      "label": "toolInputMatches — flags si (non-canonical order)",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "si"
+      },
+      "why": "one spelling per flag set: is, not si"
+    },
+    {
+      "label": "toolInputMatches — empty flags",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": ""
+      },
+      "why": "omit flags instead of sending an empty string"
+    },
+    {
+      "label": "toolInputMatches — negative min",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": -1
+      },
+      "why": "min is a non-negative integer"
+    },
+    {
+      "label": "toolInputMatches — fractional min",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 1.5
+      },
+      "why": "min is an integer"
+    },
+    {
+      "label": "toolInputMatches — max below min",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 2,
+        "max": 1
+      },
+      "why": "max must be at least min"
+    },
+    {
+      "label": "toolInputMatches — max 0 alone",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "max": 0
+      },
+      "why": "max must be at least the default min of 1"
+    },
+    {
+      "label": "toolInputMatches — min 0 alone",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 0
+      },
+      "why": "min 0 needs a max; on its own it passes every transcript"
+    },
+    {
+      "label": "toolInputMatches — empty toolName",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "",
+        "patterns": [
+          "Idea"
+        ]
+      },
+      "why": "toolName is required and non-empty"
+    },
+    {
+      "label": "toolInputMatches — empty path (the root)",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": ""
+      },
+      "why": "path \"\" is the whole value; omit path instead"
+    },
+    {
+      "label": "toolInputMatches — path without a leading slash",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "elements"
+      },
+      "why": "path is a JSON Pointer and starts with \"/\""
+    },
+    {
+      "label": "toolInputMatches — two-segment path",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/a/b"
+      },
+      "why": "path names exactly one top-level key for now"
+    },
+    {
+      "label": "toolInputMatches — path to the empty key",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/"
+      },
+      "why": "path is 2 to 257 characters; \"/\" (the empty-string key) is refused"
+    },
+    {
+      "label": "toolInputMatches — a 258-character path",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+      },
+      "why": "path is at most 257 characters"
+    },
+    {
+      "label": "toolInputMatches — an invalid ~ escape in path",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/a~2"
+      },
+      "why": "every \"~\" in path must be followed by 0 or 1"
+    },
+    {
+      "label": "toolInputMatches — pattern (singular) instead of patterns",
+      "value": {
+        "type": "toolInputMatches",
+        "toolName": "create_view",
+        "pattern": "Idea"
+      },
+      "why": "patterns (an array) is required; there is no singular pattern field"
+    },
+    {
+      "label": "toolInputMatches — no toolName",
+      "value": {
+        "type": "toolInputMatches",
+        "patterns": [
+          "Idea"
+        ]
+      },
+      "why": "toolName is required for toolInputMatches (only toolResultMatches may omit it)"
+    },
+    {
+      "label": "toolArgumentsMatch — the pre-release name, renamed to toolInputMatches",
+      "value": {
+        "type": "toolArgumentsMatch",
+        "toolName": "create_view",
+        "patterns": [
+          "Idea"
+        ]
+      },
+      "why": "renamed before release; neither validator accepts a new write of toolArgumentsMatch"
+    },
+    {
+      "label": "toolResultMatches — empty patterns",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": []
+      },
+      "why": "at least one pattern is required"
+    },
+    {
+      "label": "toolResultMatches — nine patterns",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "i"
+        ]
+      },
+      "why": "at most 8 patterns"
+    },
+    {
+      "label": "toolResultMatches — an empty pattern item",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea",
+          ""
+        ]
+      },
+      "why": "every pattern must be 1 to 512 characters"
+    },
+    {
+      "label": "toolResultMatches — a 513-character pattern",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "why": "every pattern must be 1 to 512 characters"
+    },
+    {
+      "label": "toolResultMatches — an unbalanced group",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "("
+        ]
+      },
+      "why": "the pattern must compile in re2js"
+    },
+    {
+      "label": "toolResultMatches — a lookahead",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "(?=a)"
+        ]
+      },
+      "why": "re2js has no lookaround; the pattern must compile in re2js"
+    },
+    {
+      "label": "toolResultMatches — a backreference",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "(a)\\1"
+        ]
+      },
+      "why": "re2js has no backreferences; the pattern must compile in re2js"
+    },
+    {
+      "label": "toolResultMatches — flags g",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "g"
+      },
+      "why": "flags is closed to i, m, s, im, is, ms, ims"
+    },
+    {
+      "label": "toolResultMatches — flags u",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "u"
+      },
+      "why": "flags is closed to i, m, s, im, is, ms, ims"
+    },
+    {
+      "label": "toolResultMatches — flags si (non-canonical order)",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": "si"
+      },
+      "why": "one spelling per flag set: is, not si"
+    },
+    {
+      "label": "toolResultMatches — empty flags",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "flags": ""
+      },
+      "why": "omit flags instead of sending an empty string"
+    },
+    {
+      "label": "toolResultMatches — negative min",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "min": -1
+      },
+      "why": "min is a non-negative integer"
+    },
+    {
+      "label": "toolResultMatches — fractional min",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 1.5
+      },
+      "why": "min is an integer"
+    },
+    {
+      "label": "toolResultMatches — max below min",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 2,
+        "max": 1
+      },
+      "why": "max must be at least min"
+    },
+    {
+      "label": "toolResultMatches — max 0 alone",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "max": 0
+      },
+      "why": "max must be at least the default min of 1"
+    },
+    {
+      "label": "toolResultMatches — min 0 alone",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "min": 0
+      },
+      "why": "min 0 needs a max; on its own it passes every transcript"
+    },
+    {
+      "label": "toolResultMatches — empty toolName",
+      "value": {
+        "type": "toolResultMatches",
+        "toolName": "",
+        "patterns": [
+          "Idea"
+        ]
+      },
+      "why": "toolName, when set, is non-empty"
+    },
+    {
+      "label": "toolResultMatches — pattern (singular) instead of patterns",
+      "value": {
+        "type": "toolResultMatches",
+        "pattern": "Idea"
+      },
+      "why": "patterns (an array) is required; there is no singular pattern field"
+    },
+    {
+      "label": "toolResultMatches — empty path (the root)",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "path": ""
+      },
+      "why": "path \"\" is the whole value; omit path instead"
+    },
+    {
+      "label": "toolResultMatches — path without a leading slash",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "elements"
+      },
+      "why": "path is a JSON Pointer and starts with \"/\""
+    },
+    {
+      "label": "toolResultMatches — two-segment path",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/a/b"
+      },
+      "why": "path names exactly one top-level key for now"
+    },
+    {
+      "label": "toolResultMatches — path to the empty key",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/"
+      },
+      "why": "path is 2 to 257 characters; \"/\" (the empty-string key) is refused"
+    },
+    {
+      "label": "toolResultMatches — a 258-character path",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+      },
+      "why": "path is at most 257 characters"
+    },
+    {
+      "label": "toolResultMatches — an invalid ~ escape in path",
+      "value": {
+        "type": "toolResultMatches",
+        "patterns": [
+          "Idea"
+        ],
+        "path": "/a~2"
+      },
+      "why": "every \"~\" in path must be followed by 0 or 1"
     }
   ]
 }

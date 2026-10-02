@@ -83,6 +83,7 @@ import { HOSTED_MODE } from "../../config.js";
 // drift, which is the failure this whole layer exists to prevent.
 import { requirePersonaInProject } from "./personas.js";
 import { requireSwarmInProject } from "./swarms.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const goals = new Hono();
 
@@ -130,6 +131,21 @@ const MAX_PAGE_SIZE = 200;
  */
 function translateReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, { scope: "v1.journeys" });
+}
+
+/**
+ * For the SCOPING reads — the ones that authorize a caller-supplied id
+ * (`getJourney`, `getJourneyRun`, the by-project list). Their refusals are
+ * plain errors production Convex masks to "Server Error", so without
+ * `redactedIsRefusal` a cross-tenant probe answered 502 instead of the 404
+ * the scope check exists to guarantee (MJ-021). Reads AFTER one of these keep
+ * `translateReadError`: there a redacted error is a genuine incident.
+ */
+function translatePreflightReadError(error: unknown): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "v1.journeys",
+    redactedIsRefusal: true,
+  });
 }
 
 /**
@@ -663,7 +679,7 @@ async function requireGoalInProject(
       } as never,
     )) as JourneyRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!row) {
     // The 404 names the noun the caller asked for. A script grepping the
@@ -694,7 +710,7 @@ async function requireRunInProject(
       } as never,
     )) as JourneyRunRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!run || String(run.projectId) !== projectId) {
     throw new WebRouteError(
@@ -714,7 +730,7 @@ both(
   "/projects/:projectId/goals",
   "/projects/:projectId/journeys",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.goals");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     let rows: JourneyRow[] | null;
     try {
@@ -725,7 +741,7 @@ both(
         } as never,
       )) as JourneyRow[] | null;
     } catch (error) {
-      throw translateReadError(error);
+      throw translatePreflightReadError(error);
     }
     // Archived goals are filtered backend-side; this list is live ones only.
     return v1PageJson(
