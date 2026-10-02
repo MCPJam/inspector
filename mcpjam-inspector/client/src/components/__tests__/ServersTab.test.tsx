@@ -21,6 +21,7 @@ import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
 
 // The header Auto-connect switch reads the real preferences store, which
 // throws without a provider — wrap every render in one.
@@ -140,6 +141,7 @@ function createDualTypeCatalogCard(): EnrichedRegistryCatalogCard {
 }
 
 let mockIsAuthenticated = false;
+const mockUseQuery = vi.fn((..._args: unknown[]): unknown => undefined);
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
 let mockJsonRpcPanelVisible = false;
@@ -188,7 +190,7 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: mockIsAuthenticated,
   }),
-  useQuery: () => undefined,
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
@@ -1655,6 +1657,46 @@ describe("ServersTab shared detail modal", () => {
       );
       expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe("false");
       expect(mockResetAutoConnectAttempts).not.toHaveBeenCalled();
+    });
+  });
+
+  // `projectServerConfig:getConfig` validates `projectId` as
+  // `v.id("projects")`. A local UUID in `sharedProjectId` made it reject
+  // during render (Sentry CONVEX-HQ, Kestral PLB-47).
+  describe("project server config query", () => {
+    function renderReady(sharedProjectId: string) {
+      mockIsAuthenticated = true;
+      render(
+        <DbUserReadyProvider isUserReady>
+          <ServersTab
+            {...defaultProps}
+            projects={{
+              "project-1": {
+                ...createProject({}),
+                sharedProjectId,
+              },
+            }}
+          />
+        </DbUserReadyProvider>
+      );
+      return mockUseQuery.mock.calls.filter(
+        ([name]) => name === "projectServerConfig:getConfig"
+      );
+    }
+
+    it("skips it for a local UUID project id", () => {
+      const calls = renderReady("c10f759d-0262-4805-b599-0aa7fa1c1cc1");
+
+      expect(calls.length).toBeGreaterThan(0);
+      for (const [, args] of calls) expect(args).toBe("skip");
+    });
+
+    it("queries it for a Convex project id", () => {
+      const calls = renderReady("jh7abc123def456ghi789jk");
+
+      expect(calls.at(-1)?.[1]).toEqual({
+        projectId: "jh7abc123def456ghi789jk",
+      });
     });
   });
 });

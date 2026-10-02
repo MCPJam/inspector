@@ -1,7 +1,7 @@
 import { defineConfig, Plugin } from "vite";
 import { resolve } from "path";
-import { copyFileSync, mkdirSync } from "fs";
-import { builtinModules } from "module";
+import { copyFileSync, mkdirSync, readFileSync } from "fs";
+import { builtinModules, createRequire } from "module";
 import { hotRestart } from "./vite.dev-plugins";
 
 /**
@@ -195,6 +195,7 @@ export default defineConfig((env) => {
       // is running it; `hotRestart` supplies the missing half.
       ...(isDevRun ? [hotRestart("main")] : []),
     ],
+    define: { __MCPJAM_CLAUDE_ADAPTER_VERSION__: JSON.stringify(JSON.parse(readFileSync(createRequire(import.meta.url).resolve("@ai-sdk/harness-claude-code/package.json"), "utf8")).version) },
     resolve: {
       alias: { ...ALIASES },
       mainFields: ["module", "jsnext:main", "jsnext"],

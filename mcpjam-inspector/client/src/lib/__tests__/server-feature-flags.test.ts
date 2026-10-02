@@ -13,6 +13,10 @@ import {
   refreshServerFeatureFlagsForActor,
 } from "../server-feature-flags";
 import { VITE_PUBLIC_POSTHOG_KEY } from "../PosthogUtils";
+import {
+  resetSessionRevokedForTests,
+  setSessionRevokedHandler,
+} from "../auth/session-revoked";
 
 const STORAGE_KEY = `ph_${VITE_PUBLIC_POSTHOG_KEY}_posthog`;
 
@@ -136,6 +140,31 @@ describe("server-evaluated feature flags", () => {
       expect(posthog.updateFlags).toHaveBeenCalledWith({
         "billing-entitlements-ui": true,
       });
+    });
+
+    it("keeps the flags and reports a signed-out session", async () => {
+      resetSessionRevokedForTests();
+      const onRevoked = vi.fn();
+      setSessionRevokedHandler(onRevoked);
+      const posthog = { updateFlags: vi.fn() };
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "SESSION_REVOKED" }), {
+          status: 401,
+        }),
+      );
+
+      try {
+        await refreshServerFeatureFlagsForActor(posthog, {
+          actorKey: "user_1",
+          isAuthedActor: true,
+          getAccessToken: async () => "access-token",
+        });
+
+        expect(posthog.updateFlags).not.toHaveBeenCalled();
+        expect(onRevoked).toHaveBeenCalledOnce();
+      } finally {
+        resetSessionRevokedForTests();
+      }
     });
 
     it("does not refresh a signed-in actor without a token", async () => {

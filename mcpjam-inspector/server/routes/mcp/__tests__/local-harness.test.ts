@@ -1,3 +1,7 @@
+const accountRollout = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("../../../utils/harness/local/readiness.js", async importOriginal => ({
+  ...await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>(), localHarnessAccountEnabled: accountRollout,
+}));
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -462,7 +466,7 @@ describe("POST /consent/grant", () => {
     packVersion: "3.4.0",
     treeDigest: `sha256:${"a".repeat(64)}`,
     permissionProfile: "workspace-edits",
-    policyVersion: "local-harness-policy-2026-09-01",
+    policyVersion: "local-harness-policy-2026-09-28",
   };
 
   it("mints when what was approved is still true", async () => {
@@ -539,7 +543,11 @@ describe("POST /consent/grant", () => {
     expect(response.status).toBe(200);
     expect(grantLocalHarnessConsentMock).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "authkit:user_1" }),
+      { ttlMs: 15 * 60_000 },
     );
+    const payload = await response.json();
+    expect(payload).not.toHaveProperty("token");
+    expect(payload.serverAuthorized).toBe(true);
   });
 
   it("409s before minting when no runtime is installed", async () => {

@@ -27,6 +27,7 @@ export type FindingsAnalysisAction = {
   available: boolean;
   pending: boolean;
   error: string | null;
+  errorCode?: string;
   onRun: () => void;
 };
 export type UnifiedFindingsPanelProps = {
@@ -241,14 +242,41 @@ export function UnifiedFindingsPanel({
         </p>
       ) : null}
 
-      {backendUnavailableNote || analyze.error ? (
+      {build?.error ? (
+        <div className="mb-5 space-y-3">
+          <StateNote tone="destructive" testId="unified-findings-build-error">
+            {build.errorCode &&
+            [
+              "run_too_large",
+              "snapshot_too_large",
+              "build_timeout",
+              "evidence_changed",
+            ].includes(build.errorCode)
+              ? build.error
+              : "Couldn’t generate the report"}
+          </StateNote>
+          {build.available ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={build.onRun}
+              disabled={build.pending || analyze.pending}
+              data-testid="unified-findings-build-retry"
+            >
+              Try again
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {backendUnavailableNote || (analyze.error && !build?.error) ? (
         <div className="mb-5 space-y-3">
           {backendUnavailableNote ? (
             <StateNote tone="warning" testId="unified-findings-backend-missing">
               {backendUnavailableNote}
             </StateNote>
           ) : null}
-          {analyze.error ? (
+          {analyze.error && !build?.error ? (
             <StateNote
               tone="destructive"
               testId="unified-findings-analysis-error"
@@ -301,7 +329,10 @@ export function UnifiedFindingsPanel({
                   : "Findings have not been built for this run yet. Building reads the recorded evidence; it does not call a model."}
               </StateNote>
             ) : null}
-            {build?.available && !build.pending && !analyze.pending ? (
+            {build?.available &&
+            !build.error &&
+            !build.pending &&
+            !analyze.pending ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -311,14 +342,6 @@ export function UnifiedFindingsPanel({
               >
                 Build findings
               </Button>
-            ) : null}
-            {build?.error ? (
-              <StateNote
-                tone="destructive"
-                testId="unified-findings-build-error"
-              >
-                Findings could not be built: {build.error}
-              </StateNote>
             ) : null}
           </div>
         )

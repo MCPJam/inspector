@@ -1,6 +1,10 @@
 import { type ReactElement } from "react";
 import { NetworkAccessError } from "./NetworkAccessError";
-import { isSessionTokenHostDenied } from "@/lib/session-token";
+import { AccessRequired } from "./AccessRequired";
+import {
+  SessionTokenError,
+  isSessionTokenHostDenied,
+} from "@/lib/session-token";
 
 /**
  * The generic "couldn't establish a session" screen shown at bootstrap for a
@@ -87,6 +91,15 @@ export function resolveBootstrapErrorScreen(error: unknown): {
   report: boolean;
   element: ReactElement;
 } {
+  if (
+    error instanceof SessionTokenError &&
+    error.code === "ACCESS_LINK_REQUIRED"
+  ) {
+    return {
+      report: false,
+      element: <AccessRequired restarted={error.restarted} />,
+    };
+  }
   if (isSessionTokenHostDenied(error)) {
     return { report: false, element: <NetworkAccessError /> };
   }

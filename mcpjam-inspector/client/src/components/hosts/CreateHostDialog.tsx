@@ -1,3 +1,6 @@
+import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { HOSTED_MODE } from "@/lib/config";
+import { ensureLocalHarnessReady, fetchLocalHarnessAvailability } from "@/lib/local-harness-consent";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -68,6 +71,16 @@ export function CreateHostDialog({
   const adminOnly = !roleLoading && !canManageClients;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
+  const localHarnessFlag = useLocalHarnessEnabled();
+  const [localHarnessEnabled, setLocalHarnessEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setLocalHarnessEnabled(false);
+    if (!HOSTED_MODE && localHarnessFlag) void fetchLocalHarnessAvailability().then(result => {
+      if (!cancelled) setLocalHarnessEnabled(result.ok && result.availability.setupAvailable === true);
+    });
+    return () => { cancelled = true; };
+  }, [localHarnessFlag]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
@@ -102,6 +115,7 @@ export function CreateHostDialog({
     initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const selectedTemplateInput =
     catalogState.status === "live"
       ? getCatalogTemplate(catalogState.catalog, selectedTemplateId)
@@ -140,6 +154,7 @@ export function CreateHostDialog({
   }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
+    setSetupError(null);
     setName("");
     userEditedNameRef.current = false;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
@@ -155,6 +170,7 @@ export function CreateHostDialog({
       }
       return;
     }
+    setSetupError(null);
     setIsSaving(true);
     try {
       // New hosts start with no seeded servers: keeps creation deliberate.
@@ -178,6 +194,12 @@ export function CreateHostDialog({
         // scenario-minting path.
         ...(owner ? { owner } : {}),
       });
+      if (!HOSTED_MODE && localHarnessEnabled && seed.harness === "claude-code") {
+        const setupToast = toast.loading("Installing Claude Code…");
+        void ensureLocalHarnessReady(projectId, true, undefined, message => toast.loading(message, { id: setupToast }))
+          .then(() => toast.success("Claude Code is ready", { id: setupToast }))
+          .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : "Claude Code setup needs a retry."}`, { id: setupToast }));
+      }
       toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
@@ -196,7 +218,9 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create client");
+      const message = err instanceof Error ? err.message : "Failed to create client";
+      setSetupError(message);
+      toast.error(message);
     } finally {
       setIsSaving(false);
     }
@@ -273,13 +297,15 @@ export function CreateHostDialog({
             />
           </div>
         </div>
+        {!HOSTED_MODE && localHarnessEnabled && selectedTemplateInput?.harness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
+        {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSaving}>
+          <Button variant="outline" onClick={handleClose}>
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create
+            {isSaving && !HOSTED_MODE && localHarnessEnabled && selectedTemplateInput?.harness === "claude-code" ? "Setting up Claude Code…" : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

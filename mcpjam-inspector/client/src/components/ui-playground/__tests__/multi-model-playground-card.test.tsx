@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
+import type { LiveChatTraceEnvelope } from "@/shared/live-chat-trace";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
 
 vi.mock("use-stick-to-bottom", () => {
@@ -336,6 +337,99 @@ describe("MultiModelPlaygroundCard", () => {
 
     await waitFor(() => {
       expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("summary while streaming", () => {
+    const idleSession = { ...mockUseChatSession };
+
+    afterEach(() => {
+      Object.assign(mockUseChatSession, idleSession);
+    });
+
+    // `useChatSession` rebuilds the live trace envelope on every trace event,
+    // and the server emits one per text token, so each token hands the card a
+    // new turn object carrying the same numbers.
+    const envelopeAtToken = (
+      usage?: LiveChatTraceEnvelope["usage"],
+    ): LiveChatTraceEnvelope => ({
+      traceVersion: 1,
+      messages: [],
+      turns: [
+        {
+          turnId: "turn-1",
+          promptIndex: 0,
+          durationMs: 0,
+          usage,
+          actualToolCalls: [],
+        },
+      ],
+    });
+
+    const streamingCard = (
+      onSummaryChange: (summary: MultiModelCardSummary) => void,
+    ) => (
+      <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        broadcastRequest={null}
+        deterministicExecutionRequest={null}
+        stopRequestId={0}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
+        displayMode="inline"
+        onDisplayModeChange={vi.fn()}
+        hostStyle="chatgpt"
+        effectiveThreadTheme="light"
+        deviceType="desktop"
+        onSummaryChange={onSummaryChange}
+      />
+    );
+
+    // INSPECTOR-CLIENT-2HP: in compare mode the parent stores each lifted
+    // summary with `setCompareSummaries`. Lifting once per token, per card,
+    // stacked enough nested updates on a fast stream to trip React's
+    // "Maximum update depth exceeded".
+    it("lifts the summary when its numbers change, not on every streamed token", () => {
+      Object.assign(mockUseChatSession, {
+        messages: [
+          { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ],
+        status: "streaming",
+        isStreaming: true,
+        liveTraceEnvelope: envelopeAtToken(),
+      });
+      const onSummaryChange = vi.fn();
+      const { rerender } = render(streamingCard(onSummaryChange));
+      expect(onSummaryChange).toHaveBeenCalledTimes(1);
+
+      for (let token = 0; token < 100; token++) {
+        Object.assign(mockUseChatSession, {
+          liveTraceEnvelope: envelopeAtToken(),
+        });
+        rerender(streamingCard(onSummaryChange));
+      }
+      expect(onSummaryChange).toHaveBeenCalledTimes(1);
+
+      Object.assign(mockUseChatSession, {
+        liveTraceEnvelope: envelopeAtToken({
+          inputTokens: 30,
+          outputTokens: 12,
+          totalTokens: 42,
+        }),
+      });
+      rerender(streamingCard(onSummaryChange));
+      expect(onSummaryChange).toHaveBeenCalledTimes(2);
+      expect(onSummaryChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: "running", tokens: 42 }),
+      );
     });
   });
 

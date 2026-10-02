@@ -16,9 +16,13 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
  * briefly couldn't reach the auth server.
  *
  * Retry is a real in-place re-authentication (see `retryNonce`), not a
- * disguised page reload, so the user keeps their page state.
+ * disguised page reload. The recovery boundary can reset temporary page state.
  */
-export function SessionRefreshBanner() {
+export function SessionRefreshBanner({
+  dismissible = true,
+}: {
+  dismissible?: boolean;
+}) {
   const status = useSessionRefreshStore((s) => s.status);
   const kind = useSessionRefreshStore((s) => s.kind);
   const { signIn } = useAuth();
@@ -70,14 +74,16 @@ export function SessionRefreshBanner() {
         </Button>
       )}
 
-      <button
-        type="button"
-        aria-label="Dismiss"
-        className="text-muted-foreground hover:text-foreground transition-colors"
-        onClick={() => useSessionRefreshStore.getState().clear()}
-      >
-        <X className="h-4 w-4" />
-      </button>
+      {dismissible && (
+        <button
+          type="button"
+          aria-label="Dismiss"
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => useSessionRefreshStore.getState().clear()}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }
