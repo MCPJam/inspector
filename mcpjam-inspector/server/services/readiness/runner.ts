@@ -82,8 +82,7 @@ export interface RunReadinessOptions {
   submissionMode?: OpenAISubmissionMode;
   /**
    * Headers the MCP endpoint needs, e.g. a saved server's credential. The SDK
-   * sends them only on MCP requests to the endpoint's own origin, never on
-   * discovery.
+   * sends them only on MCP requests to the endpoint, never on discovery.
    */
   mcpHeaders?: Record<string, string>;
   /** Cancellation. A cancelled run must stop dialling somebody else's server. */

@@ -44,13 +44,17 @@ export interface DirectoryDiscoveryOptions {
   /**
    * Headers the MCP endpoint needs, e.g. a credential under test.
    *
-   * SENT ONLY TO THE ENDPOINT'S OWN ORIGIN, and only on the requests that
-   * speak MCP to it: the dial, and the redirect trace's same-origin hops.
+   * SENT ONLY ON THE REQUESTS THAT SPEAK MCP TO THE ENDPOINT: the dial, and
+   * the redirect trace's hops while they stay on the entered URL's origin.
    * Never on discovery. The unauthenticated probe is unauthenticated by
    * definition. Protected Resource Metadata is public. Authorization-server
    * metadata lives on whatever origin `authorization_servers` names, which the
    * server under test chooses. A credential sent there goes to a third party,
    * and a credential on the probe makes an OAuth server look authless.
+   *
+   * The dial's requests still follow redirects through `fetchFn`. A
+   * Fetch-conformant transport strips `Authorization` on a cross-origin hop,
+   * but may forward a custom header.
    */
   mcpHeaders?: Record<string, string>;
   /**

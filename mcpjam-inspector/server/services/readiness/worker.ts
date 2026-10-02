@@ -75,7 +75,7 @@ export interface ExecuteHostedReadinessOptions {
   /** From the SAVED project server, never from a worker-supplied URL. */
   target: string;
   submissionMode?: OpenAISubmissionMode;
-  /** Sent only on MCP requests to the target's origin. See `RunReadinessOptions`. */
+  /** Sent only on MCP requests to the target, never on discovery. */
   mcpHeaders?: Record<string, string>;
   /** The DNS-pinned transport. */
   fetchFn: typeof fetch;

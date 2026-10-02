@@ -119,8 +119,8 @@ function resolveAccessToken(
 }
 
 /**
- * Headers for MCP requests to the server. The SDK sends them only to the
- * server's own origin, never on discovery.
+ * Headers for MCP requests to the server. The SDK never sends them on
+ * discovery.
  */
 function mcpRequestHeaders(
   options: ReadinessCheckOptions,
@@ -317,7 +317,7 @@ export function registerReadinessCommands(program: Command): void {
     .argument("<url>", "MCP server URL")
     .option(
       "--access-token <token>",
-      "Bearer access token, sent only to the MCP server, never to discovery",
+      "Bearer access token, sent on MCP requests, never on discovery",
     )
     .option(
       "--credentials-file <path>",
@@ -325,7 +325,7 @@ export function registerReadinessCommands(program: Command): void {
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format, sent only to the MCP server. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent on MCP requests, never on discovery. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -356,7 +356,7 @@ export function registerReadinessCommands(program: Command): void {
     .option("--package <path>", "Plugin package directory or .zip to grade")
     .option(
       "--access-token <token>",
-      "Bearer access token, sent only to the MCP server, never to discovery",
+      "Bearer access token, sent on MCP requests, never on discovery",
     )
     .option(
       "--credentials-file <path>",
@@ -364,7 +364,7 @@ export function registerReadinessCommands(program: Command): void {
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format, sent only to the MCP server. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent on MCP requests, never on discovery. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
