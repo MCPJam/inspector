@@ -514,6 +514,35 @@ describe("credits held by in-flight requests", () => {
     expect(exhausted).not.toBeNull();
   });
 
+  it("does not tell a locked wallet to retry in a few seconds", () => {
+    // `buildSpendRefusalBody` can emit the structured hold reason beside
+    // `wallet_locked`. A disputed payment is not a wait.
+    const retry =
+      "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.";
+    expect(
+      describeMCPJamLimitMessage(
+        JSON.stringify({
+          code: "wallet_locked",
+          refusalReason: "holds_committed",
+          error: "MCPJam model limit reached for the moment.",
+        }),
+      ),
+    ).not.toBe(retry);
+  });
+
+  it("reads a structured hold reason at any depth, the way the dialog does", () => {
+    const retry =
+      "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.";
+    const nested = JSON.stringify({
+      code: "user_rate_limit",
+      error: "Daily MCPJam model limit reached.",
+      details: { refusal: { refusalReason: "holds_committed" } },
+    });
+    expect(describeMCPJamLimitMessage(nested)).toBe(retry);
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    expect(notifyMCPJamLimitError({ message: nested })).toBe(false);
+  });
+
   it("words a refusal the way the dialog reads it, so the panel never contradicts an open dialog", () => {
     const HELD =
       "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
@@ -858,6 +887,39 @@ describe("one dialog per swarm wave", () => {
       organizationId: "org-b",
     });
     expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("keeps the newest evidence for a notice held for auth: a later shortfall is not undone at sign-in", () => {
+    const store = useMCPJamLimitDialogStore;
+
+    // Auth is still loading, so the exhaustion is held for sign-in.
+    notify({
+      runId: "run-a",
+      swarmRunGroupId: "wave-1",
+      organizationId: "org-a",
+    });
+    expect(store.getState().hasPendingLimit).toBe(true);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+
+    // A later run of the wave reports only a shortfall: credits remain, so the
+    // latch clears. The held notice must not bring it back.
+    notifyMCPJamLimitError({
+      runId: "run-b",
+      swarmRunGroupId: "wave-1",
+      message: INSUFFICIENT_BODY,
+      surface: "swarm",
+    });
+    expect(store.getState().outOfCreditsHit).toBe(false);
+
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState().isOpen).toBe(true);
+    expect(store.getState().outOfCreditsHit).toBe(false);
+    expect(store.getState().shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+    // The shortfall's notice named no organization; the held one's still does.
+    expect(store.getState().organizationId).toBe("org-a");
   });
 
   it("keeps the wave suppressed across the loading-to-signed-in handoff", () => {
