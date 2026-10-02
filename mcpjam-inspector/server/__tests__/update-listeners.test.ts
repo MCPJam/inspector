@@ -1004,3 +1004,108 @@ it("joins an existing startup check when Retry is clicked, without getting stuck
   expect(status().kind).toBe("downloaded");
   expect(mocks.install).not.toHaveBeenCalled();
 });
+
+describe("expired background update records", () => {
+  async function backgroundRecord(overrides: Record<string, unknown> = {}) {
+    mocks.version = "3.12.3";
+    emit("update-available");
+    await vi.advanceTimersByTimeAsync(40_269);
+    emit("update-downloaded", {}, "", "3.12.4");
+    const data = { ...marker(), at: Date.now() - 80 * 60_000, ...overrides };
+    mocks.files.set(file, JSON.stringify(data));
+    mocks.capture.mockClear();
+    return data;
+  }
+
+  it.each(["downloading", "retry_waiting"])(
+    "quietly discards an expired background %s record and checks again",
+    async (phase) => {
+      await backgroundRecord({
+        phase,
+        downloadRetries: phase === "retry_waiting" ? 1 : 0,
+      });
+      await boot();
+      expect(status()).toEqual({ kind: "idle" });
+      expect(mocks.files.has(file)).toBe(false);
+      expect(mocks.capture).not.toHaveBeenCalled();
+      expect(window.webContents.send).not.toHaveBeenCalledWith(
+        "update-error",
+        expect.anything(),
+      );
+      expect(mocks.relaunch).not.toHaveBeenCalled();
+      expect(mocks.quit).not.toHaveBeenCalled();
+      expect(mocks.install).not.toHaveBeenCalled();
+      mod.startUpdatePolling();
+      expect(mocks.check).toHaveBeenCalledTimes(1);
+      emit("update-available");
+      expect(status()).toMatchObject({
+        kind: "pending",
+        installRequested: false,
+      });
+    },
+  );
+
+  it.each([
+    { userRequested: true },
+    { downloadRequested: true },
+    { downloadRecoveryRequested: true },
+    { retries: 1 },
+    { phase: "installing" },
+    { phase: "recovering" },
+  ])(
+    "preserves expiry handling for an actual request or recovery: %j",
+    async (overrides) => {
+      await backgroundRecord(overrides);
+      await boot();
+      expect(status().reason).toBe("recovery_expired");
+      expect(mocks.capture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tags: expect.objectContaining({ update_reason: "recovery_expired" }),
+        }),
+      );
+      expect(mocks.relaunch).not.toHaveBeenCalled();
+      expect(mocks.install).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports a storage failure when an expired background record cannot be removed", async () => {
+    await backgroundRecord();
+    mocks.remove.mockImplementation(() => {
+      throw new Error("read-only");
+    });
+    await boot();
+    expect(status().reason).toBe("marker_write_failed");
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    expect(mocks.capture.mock.calls[0][0].tags.update_reason).toBe(
+      "marker_write_failed",
+    );
+    mod.startUpdatePolling();
+    expect(mocks.check).not.toHaveBeenCalled();
+  });
+
+  it("keeps a fresh background retry and its spent budget", async () => {
+    await backgroundRecord({
+      phase: "retry_waiting",
+      downloadRetries: 2,
+      at: Date.now(),
+    });
+    await boot();
+    expect(status()).toMatchObject({ kind: "retry-waiting", retry: 2 });
+    expect(marker().downloadRetries).toBe(2);
+    expect(mocks.capture).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifies an installed version before discarding an expired background retry", async () => {
+    await backgroundRecord({ downloadRetries: 1 });
+    mocks.version = "3.12.4";
+    await boot();
+    expect(status()).toEqual({ kind: "idle" });
+    expect(mocks.capture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: expect.objectContaining({ update_reason: "install_verified" }),
+      }),
+    );
+  });
+});

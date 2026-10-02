@@ -563,7 +563,8 @@ export function EnvironmentComposer({
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}
         >
-          {targetCount} of {maxTargets} targets
+          {targetCount}
+          {Number.isFinite(maxTargets) ? ` of ${maxTargets}` : ""} targets
         </p>
       ) : null}
     </div>

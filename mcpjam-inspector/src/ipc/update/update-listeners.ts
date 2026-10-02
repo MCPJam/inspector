@@ -398,6 +398,22 @@ function restoreAttempt(): void {
     return;
   }
   if (loaded.kind === "expired") {
+    // An old background download is not a failed user-requested recovery.
+    // Discard its bookkeeping and let normal polling discover the update again.
+    if (
+      (attempt.phase === "downloading" || attempt.phase === "retry_waiting") &&
+      !attempt.userRequested &&
+      !attempt.downloadRequested &&
+      !attempt.downloadRecoveryRequested &&
+      attempt.retries === 0
+    ) {
+      if (!removeAttempt(markerPath())) {
+        finishFailure("marker_write_failed");
+        return;
+      }
+      attempt = undefined;
+      return;
+    }
     // Expiry revokes unattended recovery, not verification: a successful
     // update is still successful when the user reopens the app next week.
     finishFailure("recovery_expired");
