@@ -70,7 +70,7 @@ function request(
 
 const PLUGIN_ROW = {
   pluginId: "pl1",
-  projectId: "p1",
+  projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   name: "linear-tools",
   displayName: "Linear Tools",
   description: "Linear helpers",
@@ -143,7 +143,7 @@ describe("v1 plugin routes", () => {
 
   describe("auth", () => {
     it("rejects a request with no bearer token (401)", async () => {
-      const res = await request("/api/v1/projects/p1/plugins", { token: null });
+      const res = await request("/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/plugins", { token: null });
       expect(res.status).toBe(401);
     });
 
@@ -152,7 +152,7 @@ describe("v1 plugin routes", () => {
         valid: true,
         guestId: "guest_1",
       });
-      const res = await request("/api/v1/projects/p1/plugins", {
+      const res = await request("/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/plugins", {
         token: "guest-jwt",
       });
       expect(res.status).toBe(401);
@@ -175,13 +175,13 @@ describe("v1 plugin routes", () => {
   describe("GET /projects/:projectId/plugins", () => {
     it("lists plugins in the public DTO shape (clean id, no pluginId leak)", async () => {
       convexQueryMock.mockResolvedValue([PLUGIN_ROW]);
-      const res = await request("/api/v1/projects/p1/plugins");
+      const res = await request("/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/plugins");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: Record<string, unknown>[] };
       expect(body.items).toEqual([
         {
           id: "pl1",
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           name: "linear-tools",
           displayName: "Linear Tools",
           description: "Linear helpers",
@@ -193,7 +193,7 @@ describe("v1 plugin routes", () => {
       ]);
       expect(convexQueryMock).toHaveBeenCalledWith(
         "plugins:listProjectPlugins",
-        { projectId: "p1" }
+        { projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
       );
     });
 
@@ -201,18 +201,18 @@ describe("v1 plugin routes", () => {
       convexQueryMock.mockResolvedValue([
         {
           pluginId: "pl2",
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           name: "bare",
           enabled: false,
           createdAt: 1,
           updatedAt: 1,
         },
       ]);
-      const res = await request("/api/v1/projects/p1/plugins");
+      const res = await request("/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/plugins");
       const body = (await res.json()) as { items: Record<string, unknown>[] };
       expect(body.items[0]).toEqual({
         id: "pl2",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         name: "bare",
         enabled: false,
         createdAt: 1,
@@ -224,7 +224,7 @@ describe("v1 plugin routes", () => {
       convexQueryMock.mockRejectedValue(
         convexError("FORBIDDEN", "Not a member of this project")
       );
-      const res = await request("/api/v1/projects/p1/plugins");
+      const res = await request("/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/plugins");
       expect(res.status).toBe(404);
     });
   });

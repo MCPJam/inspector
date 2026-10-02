@@ -909,7 +909,9 @@ describe("MessageView", () => {
       },
     };
 
-    it("shows what the turn ran on from the finish message's record", () => {
+    // The record stays on the finish message's metadata, but chat no longer
+    // shows it — only evals and swarms do.
+    it("does not show what the turn ran on, even with a record", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hi" }],
@@ -918,52 +920,24 @@ describe("MessageView", () => {
 
       renderMessageView(<MessageView {...defaultProps} message={message} />);
 
+      expect(screen.getByTestId("part-text")).toBeInTheDocument();
+      expect(screen.queryByText(/Ran on/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Deviation:/)).not.toBeInTheDocument();
       expect(
-        screen.getByTestId("chat-turn-execution-provenance-line"),
-      ).toHaveTextContent(
-        "Ran on openai/gpt-5 via OpenRouter (MCPJam key), effort low, max output provider default",
-      );
-      expect(
-        screen.getByTestId("chat-turn-execution-deviation-banner"),
-      ).toHaveTextContent("Deviation: Provider fallback");
+        screen.queryByTestId("chat-turn-execution-provenance"),
+      ).not.toBeInTheDocument();
     });
 
-    it("shows nothing for a turn without a record", () => {
+    it("still shows the copy action for a turn with a record", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hi" }],
-        metadata: { inputTokens: 1, outputTokens: 2 },
+        metadata: { execution },
       });
 
       renderMessageView(<MessageView {...defaultProps} message={message} />);
 
-      expect(
-        screen.queryByTestId("chat-turn-execution-provenance"),
-      ).not.toBeInTheDocument();
-    });
-
-    it("re-renders when the finish chunk adds the record to an unchanged message", () => {
-      const parts = [{ type: "text" as const, text: "Hi" }];
-      const message = createMessage({ role: "assistant", parts });
-      const { rerender } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
-      );
-      expect(
-        screen.queryByTestId("chat-turn-execution-provenance"),
-      ).not.toBeInTheDocument();
-
-      rerender(
-        <PreferencesStoreProvider themeMode="light" themePreset="default">
-          <MessageView
-            {...defaultProps}
-            message={{ ...message, parts, metadata: { execution } }}
-          />
-        </PreferencesStoreProvider>,
-      );
-
-      expect(
-        screen.getByTestId("chat-turn-execution-provenance"),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /copy/i })).toBeInTheDocument();
     });
   });
 });
