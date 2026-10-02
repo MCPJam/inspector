@@ -357,6 +357,19 @@ export const ANALYTICS_EVENTS = {
    * stored session shape. A sustained rate means something is clearing flow
    * state that should not be.
    */
+  /**
+   * Mid-session sign-in: a server refused one call and asked the user to sign
+   * in. `shown` fires when the Connect card is presented, `connect_clicked` on
+   * the trusted click that alone may start the redirect, `completed` /
+   * `failed` when the sign-in settles, and `dismissed` on "Not now". Props are
+   * closed vocabularies (surface, source, action); never scopes, URLs or the
+   * server's own text.
+   */
+  auth_challenge_card_shown: { source: "client" },
+  auth_challenge_connect_clicked: { source: "client" },
+  auth_challenge_completed: { source: "client" },
+  auth_challenge_failed: { source: "client" },
+  auth_challenge_dismissed: { source: "client" },
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },

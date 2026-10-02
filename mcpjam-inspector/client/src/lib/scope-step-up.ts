@@ -24,13 +24,16 @@
  */
 
 import {
+  authChallengeFromError,
   insufficientScopeFromError,
   isActionableStepUpChallenge,
   parseInsufficientScopeChallenge,
+  type AuthChallengeSignal,
   type InsufficientScopeChallenge,
 } from "@/lib/apis/insufficient-scope";
 import {
   applyToolCallStepUp,
+  resetAuthChallenge,
   resetToolCallStepUp,
   type ToolCallStepUpOperation,
 } from "@/state/oauth-orchestrator";
@@ -39,6 +42,84 @@ import {
   type AppState,
   type ServerWithName,
 } from "@/state/app-types";
+import {
+  connectionIntentForBinding,
+  type StepUpCredentialBinding,
+} from "@/lib/scope-step-up-credential";
+import {
+  setPendingChatScopeStepUpCredentialBinding,
+  setPendingChatScopeStepUpOAuthState,
+} from "@/lib/scope-step-up-pending";
+import {
+  setPendingDirectScopeStepUpReplayCredentialBinding,
+  setPendingDirectScopeStepUpReplayOAuthState,
+} from "@/lib/scope-step-up-replay";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
+
+/**
+ * What only the app shell knows, provided to this module-level lifecycle.
+ *
+ * A hosted redirect must write the hosted OAuth pending marker (project,
+ * server id, connection intent) before it navigates, or the callback has no
+ * context to complete against. The step-up lifecycle is plain module code
+ * and cannot reach the project state that marker needs, so the shell
+ * registers it here. Absent (tests, an embedder without the shell), a
+ * step-up still runs; only the hosted marker is skipped.
+ */
+export interface ScopeStepUpHostBridge {
+  /**
+   * Decide which credential the sign-in authorizes. `connectionId` is the
+   * credential the failed call used, when the server reported one.
+   */
+  resolveCredentialBinding?: (
+    server: ServerWithName,
+    connectionId: string | undefined,
+  ) => Promise<StepUpCredentialBinding>;
+  /** Write the hosted OAuth pending marker for this redirect. */
+  prepareRedirect?: (
+    server: ServerWithName,
+    connectionIntent: ConnectionIntent | undefined,
+  ) => void;
+}
+
+let hostBridge: ScopeStepUpHostBridge | undefined;
+
+/** The registered bridge, shared with the mid-session sign-in lifecycle. */
+export function getScopeStepUpHostBridge(): ScopeStepUpHostBridge | undefined {
+  return hostBridge;
+}
+
+/** Registers the shell's bridge; returns the unregister. */
+export function registerScopeStepUpHostBridge(
+  bridge: ScopeStepUpHostBridge,
+): () => void {
+  hostBridge = bridge;
+  return () => {
+    if (hostBridge === bridge) hostBridge = undefined;
+  };
+}
+
+async function resolveCredentialBinding(
+  server: ServerWithName,
+  connectionId: string | undefined,
+): Promise<StepUpCredentialBinding> {
+  try {
+    const resolved = await hostBridge?.resolveCredentialBinding?.(
+      server,
+      connectionId,
+    );
+    if (resolved) return resolved;
+  } catch {
+    // Unknown ownership is treated as not ours: never replace a credential
+    // we could not prove belongs to this user.
+    return connectionId
+      ? { kind: "shared", credentialId: connectionId }
+      : { kind: "none" };
+  }
+  return connectionId
+    ? { kind: "owned", credentialId: connectionId }
+    : { kind: "none" };
+}
 
 /**
  * Servers with a step-up in flight. Module-level so the dedup holds ACROSS
@@ -114,6 +195,12 @@ type PendingChatStepUp = {
   server: ServerWithName;
   challenge: InsufficientScopeChallenge;
   operation?: ToolCallStepUpOperation;
+  options?: DriveScopeStepUpOptions;
+};
+
+export type DriveScopeStepUpOptions = {
+  /** The credential the failed call used, when the server reported one. */
+  connectionId?: string;
 };
 const pendingChatStepUps = new Map<string, PendingChatStepUp>();
 
@@ -130,6 +217,8 @@ export type ChatTurnScopeStepUpHold = { abort?: () => void };
 const activeHolds = new Set<ChatTurnScopeStepUpHold>();
 /** Persistence checks owed by turns that have already ended. */
 const pendingPersistWaits = new Set<() => Promise<unknown>>();
+/** Callers waiting for every live turn to end (a mid-session sign-in click). */
+const settleWaiters = new Set<() => void>();
 /** Guards against two release rounds racing each other to the redirect. */
 let releaseInProgress = false;
 let holdTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -140,6 +229,7 @@ export function __resetScopeStepUpInFlightForTests(): void {
   pendingChatStepUps.clear();
   activeHolds.clear();
   pendingPersistWaits.clear();
+  settleWaiters.clear();
   releaseInProgress = false;
   if (holdTimeoutId !== null) {
     clearTimeout(holdTimeoutId);
@@ -158,8 +248,8 @@ function flushPendingChatStepUps(): void {
   if (pendingChatStepUps.size === 0) return;
   const queued = [...pendingChatStepUps.values()];
   pendingChatStepUps.clear();
-  for (const { server, challenge, operation } of queued) {
-    driveScopeStepUp(server, challenge, operation);
+  for (const { server, challenge, operation, options } of queued) {
+    driveScopeStepUp(server, challenge, operation, options);
   }
 }
 
@@ -235,7 +325,33 @@ export function endChatTurnScopeStepUpHold(
     pendingPersistWaits.add(waitForPersist);
   }
   if (activeHolds.size > 0) return;
+  if (settleWaiters.size > 0) {
+    const waits = [...pendingPersistWaits];
+    void Promise.allSettled(waits.map((wait) => wait())).then(() => {
+      if (activeHolds.size > 0) return;
+      for (const waiter of [...settleWaiters]) waiter();
+    });
+  }
   void releaseQueuedChatStepUps();
+}
+
+/**
+ * Resolves once no chat turn is streaming and the ended turns had a chance to
+ * persist, or after the same timeout the step-up hold uses. A mid-session
+ * sign-in click waits on this before it redirects, so the transcript holding
+ * the suspended tool call is saved first.
+ */
+export function whenChatTurnsSettle(): Promise<void> {
+  if (activeHolds.size === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      settleWaiters.delete(done);
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(done, CHAT_TURN_HOLD_TIMEOUT_MS);
+    settleWaiters.add(done);
+  });
 }
 
 /**
@@ -249,6 +365,7 @@ export function driveChatScopeStepUp(
   server: ServerWithName | undefined,
   challenge: InsufficientScopeChallenge | undefined,
   operation?: ToolCallStepUpOperation,
+  options?: DriveScopeStepUpOptions,
 ): void {
   // Apply the same gates the immediate path does, up front: a scenario /
   // share-link turn (no resolvable server) and a challenge with nothing to
@@ -256,13 +373,13 @@ export function driveChatScopeStepUp(
   if (!server) return;
   if (!isActionableStepUpChallenge(challenge)) return;
   if (activeHolds.size === 0) {
-    driveScopeStepUp(server, challenge, operation);
+    driveScopeStepUp(server, challenge, operation, options);
     return;
   }
   const key = operationIdentity(server, operation);
   if (inFlight.has(key)) return;
   if (pendingChatStepUps.has(key)) return;
-  pendingChatStepUps.set(key, { server, challenge, operation });
+  pendingChatStepUps.set(key, { server, challenge, operation, options });
   if (holdTimeoutId !== null) return;
   holdTimeoutId = setTimeout(() => {
     holdTimeoutId = null;
@@ -297,6 +414,9 @@ export function resetScopeStepUp(
   try {
     if (operation) {
       resetToolCallStepUp(server, operation);
+      // The mid-session sign-in attempt for the same operation, too: a
+      // success after sign-in means a later challenge is a new one.
+      resetAuthChallenge(server, operation);
     } else {
       resetToolCallStepUp(server);
     }
@@ -320,6 +440,7 @@ export function driveScopeStepUp(
   server: ServerWithName | undefined,
   challenge: InsufficientScopeChallenge | undefined,
   operation?: ToolCallStepUpOperation,
+  options?: DriveScopeStepUpOptions,
 ): void {
   if (!server) return;
   if (!isActionableStepUpChallenge(challenge)) return;
@@ -330,9 +451,38 @@ export function driveScopeStepUp(
     requiredScope: challenge.requiredScope,
     resourceMetadataUrl: challenge.resourceMetadataUrl,
   };
-  void (operation
-    ? applyToolCallStepUp(server, stepUp, { operation })
-    : applyToolCallStepUp(server, stepUp))
+  const authorize = (binding: StepUpCredentialBinding) => {
+    // Which credential this sign-in authorizes, recorded on whichever saved
+    // call is waiting for it, so the callback replays only onto the very
+    // credential the call used.
+    setPendingChatScopeStepUpCredentialBinding(server.name, binding);
+    setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding);
+    const connectionIntent = connectionIntentForBinding(binding);
+    return applyToolCallStepUp(server, stepUp, {
+      ...(operation ? { operation } : {}),
+      // Hosted: the callback completes against this marker. Without it the
+      // hosted callback has no context and the step-up never resumes.
+      beforeRedirect: () =>
+        hostBridge?.prepareRedirect?.(server, connectionIntent),
+      // Binds the saved call to THIS flow: only its own callback replays it.
+      onAuthorizationRedirect: ({ state }) => {
+        if (!state) return;
+        setPendingChatScopeStepUpOAuthState(server.name, state);
+        setPendingDirectScopeStepUpReplayOAuthState(server.name, state);
+      },
+    });
+  };
+  // Synchronous unless there is a credential whose ownership has to be
+  // looked up first; a call that used none needs no lookup.
+  const started =
+    options?.connectionId && hostBridge?.resolveCredentialBinding
+      ? resolveCredentialBinding(server, options.connectionId).then(authorize)
+      : authorize(
+          options?.connectionId
+            ? { kind: "owned", credentialId: options.connectionId }
+            : { kind: "none" },
+        );
+  void Promise.resolve(started)
     .catch(() => {
       // The operation's own error is already surfaced by the caller, so a
       // failed step-up has nothing further to report to the user.
@@ -386,6 +536,12 @@ export async function runWithScopeStepUp<T>(
     beforeStepUp?: (
       challenge: InsufficientScopeChallenge,
     ) => void;
+    /**
+     * A mid-session sign-in challenge (an HTTP 401) on this operation. Only
+     * an on-screen call passes it, to present a Connect card; a
+     * machine-driven call omits it and never offers sign-in.
+     */
+    onAuthChallenge?: (signal: AuthChallengeSignal) => void;
   },
 ): Promise<T> {
   const operationKey =
@@ -409,6 +565,10 @@ export async function runWithScopeStepUp<T>(
       options?.beforeStepUp?.(challenge);
     }
     driveScopeStepUp(server, challenge, operationKey);
+    const signal = authChallengeFromError(error);
+    if (signal && signal.source !== "http_403_insufficient_scope") {
+      options?.onAuthChallenge?.(signal);
+    }
     throw error;
   }
 }

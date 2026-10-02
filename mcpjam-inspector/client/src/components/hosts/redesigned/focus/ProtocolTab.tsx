@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
@@ -14,6 +14,8 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
   clearTasksPolicy,
   describeInvalidTasksPolicy,
   isKnownProtocolVersion,
@@ -23,6 +25,8 @@ import {
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
   withXaaEnterprisePolicy,
   withoutXaaEnterprisePolicy,
   XAA_MCP_EXTENSION,
@@ -35,9 +39,12 @@ import {
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
 import type {
+  AuthChallengeAction,
   MrtrSupport,
   PaginationTraversalMode,
   ToolParamHeaderMirroring,
+  ToolResultAuthChallengeTrigger,
+  UnauthorizedChallengeTrigger,
 } from "@mcpjam/sdk/browser";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
@@ -90,6 +97,97 @@ const TASKS_POLICY_VALUE: Partial<Record<TasksPolicy, TasksPolicyChoice>> = {
   on: "on",
   off: "off",
 };
+
+/**
+ * Mid-session sign-in ("lazy authentication") knobs: what this client does
+ * when a server refuses a call until the user signs in. Two signal families,
+ * each an action plus a trigger. The absent value of each is the SDK's own
+ * default (`AUTH_CHALLENGE_POLICY_DEFAULTS`), which the dropdown labels
+ * "(default)" and writes back as ABSENCE, like every conformance knob here.
+ *
+ * Read per call, not at connect time, so there is nothing to reconnect after
+ * a save.
+ */
+type AuthChallengeKnob =
+  | "unauthorizedChallenge"
+  | "unauthorizedChallengeTrigger"
+  | "toolResultAuthChallenge"
+  | "toolResultAuthChallengeTrigger";
+
+const AUTH_CHALLENGE_ACTION_LABELS: Record<AuthChallengeAction, string> = {
+  prompt: "Prompt to sign in",
+  notify: "Notify",
+  passthrough: "Pass through",
+};
+
+const UNAUTHORIZED_CHALLENGE_TRIGGER_LABELS: Record<
+  UnauthorizedChallengeTrigger,
+  string
+> = {
+  any: "Any 401",
+  "bearer-header": "Needs WWW-Authenticate: Bearer",
+  "resource-metadata": "Needs resource_metadata",
+};
+
+const TOOL_RESULT_AUTH_CHALLENGE_TRIGGER_LABELS: Record<
+  ToolResultAuthChallengeTrigger,
+  string
+> = {
+  any: "Any",
+  "oauth2-scheme": "Tool declares oauth2",
+  "oauth2-scheme+error-params": "oauth2 + error and error_description",
+};
+
+const UNAUTHORIZED_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
+  {
+    prompt:
+      "A 401 shows a Connect card. After sign-in, the call runs again.",
+    notify:
+      "A 401 ends the call with a sign-in message. The call is not run again.",
+    passthrough: "A 401 is an ordinary error.",
+  };
+
+const UNAUTHORIZED_TRIGGER_DESCRIPTIONS: Record<
+  UnauthorizedChallengeTrigger,
+  string
+> = {
+  any: "Every 401 counts, with or without a WWW-Authenticate header. The MCP spec falls back to well-known discovery when the header is missing.",
+  "bearer-header":
+    "Only a 401 carrying WWW-Authenticate: Bearer counts. Any other 401 is an ordinary error.",
+  "resource-metadata":
+    "Only a 401 carrying WWW-Authenticate: Bearer with a resource_metadata parameter counts.",
+};
+
+const TOOL_RESULT_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
+  {
+    prompt:
+      'A tool result with isError and _meta["mcp/www_authenticate"] shows a Connect card. After sign-in, the call runs again.',
+    notify:
+      'A tool result with isError and _meta["mcp/www_authenticate"] ends with a sign-in message. The call is not run again.',
+    passthrough:
+      'A tool result with _meta["mcp/www_authenticate"] is an ordinary tool error. This challenge is not part of the MCP spec.',
+  };
+
+const TOOL_RESULT_TRIGGER_DESCRIPTIONS: Record<
+  ToolResultAuthChallengeTrigger,
+  string
+> = {
+  any: "Every tool result carrying the challenge counts.",
+  "oauth2-scheme":
+    "Only counts when the tool declares an oauth2 entry in securitySchemes.",
+  "oauth2-scheme+error-params":
+    "Only counts when the tool declares an oauth2 entry in securitySchemes and the challenge has both error and error_description.",
+};
+
+/** Narrow an untrusted JSON value to one of a closed set of literals. */
+function closedEnumValue<T extends string>(
+  allowed: readonly T[],
+  raw: unknown,
+): T | undefined {
+  return typeof raw === "string" && (allowed as readonly string[]).includes(raw)
+    ? (raw as T)
+    : undefined;
+}
 
 /**
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
@@ -242,6 +340,15 @@ type ProtocolDoc = {
     listens?: boolean;
     refetches?: boolean;
   };
+  /**
+   * Mid-session sign-in knobs. Absent → the SDK default for each, written
+   * back as absence for the same hash reason as the knobs above. Map onto
+   * the same-named `mcpProfile` fields.
+   */
+  unauthorizedChallenge?: AuthChallengeAction;
+  unauthorizedChallengeTrigger?: UnauthorizedChallengeTrigger;
+  toolResultAuthChallenge?: AuthChallengeAction;
+  toolResultAuthChallengeTrigger?: ToolResultAuthChallengeTrigger;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -320,6 +427,22 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   const toolListChanged = draft.mcpProfile?.toolListChanged;
   if (toolListChanged && Object.keys(toolListChanged).length > 0) {
     doc.toolListChanged = { ...toolListChanged };
+  }
+
+  // Same only-when-set rule for the mid-session sign-in knobs.
+  if (draft.mcpProfile?.unauthorizedChallenge !== undefined) {
+    doc.unauthorizedChallenge = draft.mcpProfile.unauthorizedChallenge;
+  }
+  if (draft.mcpProfile?.unauthorizedChallengeTrigger !== undefined) {
+    doc.unauthorizedChallengeTrigger =
+      draft.mcpProfile.unauthorizedChallengeTrigger;
+  }
+  if (draft.mcpProfile?.toolResultAuthChallenge !== undefined) {
+    doc.toolResultAuthChallenge = draft.mcpProfile.toolResultAuthChallenge;
+  }
+  if (draft.mcpProfile?.toolResultAuthChallengeTrigger !== undefined) {
+    doc.toolResultAuthChallengeTrigger =
+      draft.mcpProfile.toolResultAuthChallengeTrigger;
   }
 
   if (
@@ -581,6 +704,25 @@ export function applyJsonToDraft(
     }
   }
 
+  // Same closed-enum collapse for the mid-session sign-in knobs, against the
+  // SDK's own literal lists so a new value never needs a second edit here.
+  const unauthorizedChallenge = closedEnumValue(
+    AUTH_CHALLENGE_ACTIONS,
+    parsed.unauthorizedChallenge,
+  );
+  const unauthorizedChallengeTrigger = closedEnumValue(
+    UNAUTHORIZED_CHALLENGE_TRIGGERS,
+    parsed.unauthorizedChallengeTrigger,
+  );
+  const toolResultAuthChallenge = closedEnumValue(
+    AUTH_CHALLENGE_ACTIONS,
+    parsed.toolResultAuthChallenge,
+  );
+  const toolResultAuthChallengeTrigger = closedEnumValue(
+    TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+    parsed.toolResultAuthChallengeTrigger,
+  );
+
   let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
   if (isPlainObject(parsed.toolListChanged)) {
     const incoming = parsed.toolListChanged;
@@ -664,6 +806,10 @@ export function applyJsonToDraft(
       mrtrSupport,
       toolCallCancellation,
       toolListChanged: toolListChangedParsed,
+      unauthorizedChallenge,
+      unauthorizedChallengeTrigger,
+      toolResultAuthChallenge,
+      toolResultAuthChallengeTrigger,
       extensions: profileExtensions,
       // `apps` is owned by the Apps tab (including the widget tool-result
       // policy that used to be edited here); this view must pass it through
@@ -683,6 +829,65 @@ export function applyJsonToDraft(
     },
     mcpProfile: nextProfile,
   };
+}
+
+/**
+ * One mid-session sign-in dropdown. The SDK default is labelled "(default)"
+ * and picking it writes ABSENCE, so a host that never touches the control
+ * keeps hashing exactly as it did before the field existed.
+ */
+function AuthChallengeKnobRow<T extends string>({
+  label,
+  ariaLabel,
+  value,
+  defaultValue,
+  options,
+  description,
+  onChange,
+  readOnly,
+}: {
+  label: ReactNode;
+  ariaLabel: string;
+  value: T | undefined;
+  defaultValue: T;
+  options: Record<T, string>;
+  description: string;
+  onChange: (next: T | undefined) => void;
+  readOnly: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2">
+      <div className="min-w-0">
+        <span className="text-[12px]">{label}</span>
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <Select
+        value={value ?? defaultValue}
+        onValueChange={(next) =>
+          onChange(next === defaultValue ? undefined : (next as T))
+        }
+        disabled={readOnly}
+      >
+        <SelectTrigger
+          aria-label={ariaLabel}
+          className="h-9 w-[220px] flex-shrink-0 text-xs"
+        >
+          <SelectValue placeholder={options[defaultValue]} />
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.keys(options) as T[]).map((option) => (
+            <SelectItem key={option} value={option}>
+              {option === defaultValue
+                ? `${options[option]} (default)`
+                : options[option]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
 }
 
 export function ProtocolTab({
@@ -860,7 +1065,9 @@ export function ProtocolTab({
     });
   };
 
-  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
+  const setConformanceKnob = <
+    K extends "paginationTraversal" | "mrtrSupport" | AuthChallengeKnob,
+  >(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined,
   ) => {
@@ -875,6 +1082,25 @@ export function ProtocolTab({
       };
     });
   };
+
+  // Mid-session sign-in knobs. Absent reads as the SDK default for display
+  // only; `setConformanceKnob` writes absence back when the default is picked.
+  const storedUnauthorizedChallenge = draft.mcpProfile?.unauthorizedChallenge;
+  const storedUnauthorizedTrigger =
+    draft.mcpProfile?.unauthorizedChallengeTrigger;
+  const storedToolResultChallenge = draft.mcpProfile?.toolResultAuthChallenge;
+  const storedToolResultTrigger =
+    draft.mcpProfile?.toolResultAuthChallengeTrigger;
+  const effectiveUnauthorizedChallenge =
+    storedUnauthorizedChallenge ??
+    AUTH_CHALLENGE_POLICY_DEFAULTS.unauthorizedChallenge;
+  const effectiveToolResultChallenge =
+    storedToolResultChallenge ??
+    AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallenge;
+  // A trigger only narrows its action, so it is inert under Pass through. Say
+  // so rather than disabling the control: a stored trigger must stay editable.
+  const inertTriggerNote =
+    "No effect while the action above is Pass through.";
 
   const storedToolListChanged = draft.mcpProfile?.toolListChanged;
   // Delete-on-default: absence IS the
@@ -1258,6 +1484,103 @@ export function ProtocolTab({
                 aria-label="Re-fetches tools after the notification"
               />
             </div>
+          </div>
+        </div>
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Mid-session sign-in
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              What this client does when a server refuses a call until the
+              user signs in. Takes effect on the next call, with no reconnect.
+            </p>
+          </div>
+          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
+            <AuthChallengeKnobRow
+              label="On HTTP 401"
+              ariaLabel="On HTTP 401"
+              value={storedUnauthorizedChallenge}
+              defaultValue={AUTH_CHALLENGE_POLICY_DEFAULTS.unauthorizedChallenge}
+              options={AUTH_CHALLENGE_ACTION_LABELS}
+              description={
+                UNAUTHORIZED_CHALLENGE_DESCRIPTIONS[
+                  effectiveUnauthorizedChallenge
+                ]
+              }
+              onChange={(next) =>
+                setConformanceKnob("unauthorizedChallenge", next)
+              }
+              readOnly={readOnly}
+            />
+            <AuthChallengeKnobRow
+              label="What counts as a 401 challenge"
+              ariaLabel="HTTP 401 trigger"
+              value={storedUnauthorizedTrigger}
+              defaultValue={
+                AUTH_CHALLENGE_POLICY_DEFAULTS.unauthorizedChallengeTrigger
+              }
+              options={UNAUTHORIZED_CHALLENGE_TRIGGER_LABELS}
+              description={
+                effectiveUnauthorizedChallenge === "passthrough"
+                  ? inertTriggerNote
+                  : UNAUTHORIZED_TRIGGER_DESCRIPTIONS[
+                      storedUnauthorizedTrigger ??
+                        AUTH_CHALLENGE_POLICY_DEFAULTS.unauthorizedChallengeTrigger
+                    ]
+              }
+              onChange={(next) =>
+                setConformanceKnob("unauthorizedChallengeTrigger", next)
+              }
+              readOnly={readOnly}
+            />
+            <AuthChallengeKnobRow
+              label={
+                <>
+                  On tool-result <code className="text-[10px]">_meta</code>{" "}
+                  challenge (ChatGPT style)
+                </>
+              }
+              ariaLabel="On tool-result _meta challenge"
+              value={storedToolResultChallenge}
+              defaultValue={
+                AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallenge
+              }
+              options={AUTH_CHALLENGE_ACTION_LABELS}
+              description={
+                TOOL_RESULT_CHALLENGE_DESCRIPTIONS[effectiveToolResultChallenge]
+              }
+              onChange={(next) =>
+                setConformanceKnob("toolResultAuthChallenge", next)
+              }
+              readOnly={readOnly}
+            />
+            <AuthChallengeKnobRow
+              label={
+                <>
+                  What counts as a <code className="text-[10px]">_meta</code>{" "}
+                  challenge
+                </>
+              }
+              ariaLabel="Tool-result _meta trigger"
+              value={storedToolResultTrigger}
+              defaultValue={
+                AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallengeTrigger
+              }
+              options={TOOL_RESULT_AUTH_CHALLENGE_TRIGGER_LABELS}
+              description={
+                effectiveToolResultChallenge === "passthrough"
+                  ? inertTriggerNote
+                  : TOOL_RESULT_TRIGGER_DESCRIPTIONS[
+                      storedToolResultTrigger ??
+                        AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallengeTrigger
+                    ]
+              }
+              onChange={(next) =>
+                setConformanceKnob("toolResultAuthChallengeTrigger", next)
+              }
+              readOnly={readOnly}
+            />
           </div>
         </div>
         {showPolicyToggle && (
