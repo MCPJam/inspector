@@ -13,10 +13,12 @@ const {
   resolveStoredIssuerMock: vi.fn(),
 }));
 
+const readStoredDiscoveryScopesMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   clearOAuthData: clearOAuthDataMock,
   hasOAuthConfig: vi.fn(),
   initiateOAuth: initiateOAuthMock,
+  readStoredDiscoveryScopes: readStoredDiscoveryScopesMock,
   readStoredOAuthConfig: readStoredOAuthConfigMock,
   resolveStoredIssuer: resolveStoredIssuerMock,
 }));
@@ -540,5 +542,54 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
         resourceMetadataUrl,
       })
     );
+  });
+});
+
+describe("applyToolCallStepUp: a bare insufficient_scope", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+    readStoredOAuthConfigMock.mockReturnValue({});
+    resolveStoredIssuerMock.mockReturnValue(ISSUER);
+    initiateOAuthMock.mockResolvedValue({ success: true });
+  });
+
+  it("re-authorizes with the previous scopes plus discovery's scopes_supported", async () => {
+    persistRequestedScopes("asana", ISSUER, ["read"]);
+    readStoredDiscoveryScopesMock.mockReturnValue(["read", "write", "admin"]);
+    const outcome = await applyToolCallStepUp(
+      createServer(),
+      {},
+      { operation: { method: "tools/call", operation: "update_task" } },
+    );
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.scopes).toEqual(["read", "write", "admin"]);
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ["read", "write", "admin"] }),
+    );
+  });
+
+  it("an error_description-only challenge is a bare challenge too", async () => {
+    readStoredDiscoveryScopesMock.mockReturnValue(["tasks:write"]);
+    const outcome = await applyToolCallStepUp(
+      createServer(),
+      { errorDescription: "Need more access" },
+      { operation: { method: "tools/call", operation: "update_task" } },
+    );
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.scopes).toContain("tasks:write");
+  });
+
+  it("a metadata-only challenge still keeps the existing scopes (no discovery widening)", async () => {
+    persistRequestedScopes("asana", ISSUER, ["read"]);
+    readStoredDiscoveryScopesMock.mockReturnValue(["read", "admin"]);
+    const outcome = await applyToolCallStepUp(
+      createServer(),
+      { resourceMetadataUrl: "https://mcp.asana.com/.well-known/oauth-protected-resource" },
+      { operation: { method: "tools/call", operation: "update_task" } },
+    );
+    expect(outcome.scopes).toEqual(["read"]);
+    expect(readStoredDiscoveryScopesMock).not.toHaveBeenCalled();
   });
 });

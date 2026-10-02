@@ -22,9 +22,14 @@ import { resolveHostedServerId } from "@/lib/apis/web/context";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 import {
+  McpRequestError,
+  authChallengeFromError,
+  parseAuthChallenge,
   parseInsufficientScopeChallenge,
+  type AuthChallengeSignal,
   type InsufficientScopeChallenge,
 } from "@/lib/apis/insufficient-scope";
+import type { ToolSecuritySchemeResolution } from "@mcpjam/sdk/browser";
 import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
 /** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
@@ -50,6 +55,20 @@ export type ToolExecutionResponse =
       status: "completed";
       result: CallToolResult;
       durationMs?: number;
+      /**
+       * A ChatGPT-style sign-in challenge on this completed result
+       * (`_meta["mcp/www_authenticate"]`), parsed and stamped server-side with
+       * the connection's effective auth method. The only input the sign-in
+       * gate reads for a completed result: the browser never parses the
+       * result itself for this.
+       */
+      authChallenge?: AuthChallengeSignal;
+      /**
+       * The challenged tool's `securitySchemes`, as the server resolved them
+       * (the upstream client strips the field, so only the server sees it).
+       * Present only beside `authChallenge`.
+       */
+      toolSecuritySchemes?: ToolSecuritySchemeResolution;
     }
   | {
       status: "elicitation_required";
@@ -86,6 +105,13 @@ export type ToolExecutionResponse =
        * when rendering.
        */
       insufficientScope?: ToolInsufficientScopeChallenge;
+      /**
+       * A sign-in challenge (HTTP 401 on this call, or a 403 step-up), stamped
+       * server-side with the connection's effective auth method.
+       */
+      authChallenge?: AuthChallengeSignal;
+      /** The HTTP status of the failed request, when one was received. */
+      status?: number;
     };
 
 // SEP-2350 challenge plumbing now lives in the surface-agnostic
@@ -261,6 +287,79 @@ export async function listToolsForServers(
   });
 }
 
+/**
+ * Narrow the server's `authChallenge` envelope on a completed result, and drop
+ * a malformed one rather than let it reach the sign-in gate.
+ */
+function narrowCompletedAuthChallenge(
+  response: ToolExecutionResponse,
+): ToolExecutionResponse {
+  if (
+    !response ||
+    typeof response !== "object" ||
+    !("status" in response) ||
+    response.status !== "completed" ||
+    !("authChallenge" in response)
+  ) {
+    return response;
+  }
+  const { authChallenge: raw, toolSecuritySchemes: rawSchemes, ...rest } =
+    response;
+  const authChallenge = parseAuthChallenge(raw);
+  if (!authChallenge) return rest;
+  const toolSecuritySchemes = narrowToolSecuritySchemes(rawSchemes);
+  return {
+    ...rest,
+    authChallenge,
+    ...(toolSecuritySchemes ? { toolSecuritySchemes } : {}),
+  };
+}
+
+const TOOL_SECURITY_SCHEME_SOURCES = new Set([
+  "tool",
+  "tool-meta",
+  "server-default",
+  "unresolved",
+  "none",
+]);
+
+/** Shape-check the server's scheme resolution; anything else is unresolved. */
+function narrowToolSecuritySchemes(
+  raw: unknown,
+): ToolSecuritySchemeResolution | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw as { source?: unknown; schemes?: unknown };
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof value.source !== "string" ||
+    !TOOL_SECURITY_SCHEME_SOURCES.has(value.source) ||
+    !Array.isArray(value.schemes)
+  ) {
+    return { schemes: [], source: "unresolved" };
+  }
+  return {
+    source: value.source as ToolSecuritySchemeResolution["source"],
+    schemes: value.schemes
+      .filter(
+        (scheme): scheme is { type: string; scopes?: unknown } =>
+          !!scheme &&
+          typeof scheme === "object" &&
+          typeof (scheme as { type?: unknown }).type === "string",
+      )
+      .map((scheme) => ({
+        type: scheme.type,
+        ...(Array.isArray(scheme.scopes)
+          ? {
+              scopes: scheme.scopes.filter(
+                (scope): scope is string => typeof scope === "string",
+              ),
+            }
+          : {}),
+      })),
+  };
+}
+
 export async function executeToolApi(
   serverId: string,
   toolName: string,
@@ -271,13 +370,15 @@ export async function executeToolApi(
   return runByMode({
     hosted: async () => {
       try {
-        return (await executeHostedTool({
-          serverNameOrId: serverId,
-          toolName,
-          parameters,
-          taskOptions: taskOptions as Record<string, unknown> | undefined,
-          allowTaskResult,
-        })) as ToolExecutionResponse;
+        return narrowCompletedAuthChallenge(
+          (await executeHostedTool({
+            serverNameOrId: serverId,
+            toolName,
+            parameters,
+            taskOptions: taskOptions as Record<string, unknown> | undefined,
+            allowTaskResult,
+          })) as ToolExecutionResponse,
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // This catch swallows the throw into a `{error}` result, so nothing
@@ -304,10 +405,13 @@ export async function executeToolApi(
                 (error.details as any)?.insufficientScope,
               )
             : undefined;
+        const authChallenge = authChallengeFromError(error);
         return {
           error: message,
           ...(normalized ? { normalized } : {}),
           ...(insufficientScope ? { insufficientScope } : {}),
+          ...(authChallenge ? { authChallenge } : {}),
+          ...(error instanceof WebApiError ? { status: error.status } : {}),
         };
       }
     },
@@ -343,16 +447,21 @@ export async function executeToolApi(
         const insufficientScope = parseInsufficientScopeChallenge(
           body?.mcpError?.insufficientScope,
         );
+        const authChallenge = parseAuthChallenge(
+          body?.mcpError?.authChallenge,
+        );
         return {
           error: message,
           ...(normalized ? { normalized } : {}),
           ...(insufficientScope ? { insufficientScope } : {}),
+          ...(authChallenge ? { authChallenge } : {}),
+          status: res.status,
         } as ToolExecutionResponse;
       }
 
       // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests
       // per MCP Tasks spec (2025-11-25)
-      return body as ToolExecutionResponse;
+      return narrowCompletedAuthChallenge(body as ToolExecutionResponse);
     },
   });
 }
@@ -361,16 +470,42 @@ export async function callTool(
   serverId: string,
   toolName: string,
   parameters: Record<string, unknown>,
+  options?: {
+    /**
+     * Told about a sign-in challenge on a COMPLETED result (a ChatGPT-style
+     * `_meta` challenge), with the tool's schemes as the server resolved them.
+     * The result is still returned unchanged. A failed call's challenge rides
+     * on the thrown `McpRequestError` instead.
+     */
+    onResultAuthChallenge?: (
+      challenge: AuthChallengeSignal,
+      schemes: ToolSecuritySchemeResolution | undefined,
+    ) => void;
+  },
 ): Promise<CallToolResult> {
   const response = await executeToolApi(serverId, toolName, parameters);
 
   if ("error" in response) {
-    throw new Error(response.error);
+    // Keeps the challenges (step-up and sign-in) the failure carried, so a
+    // widget call's host chrome can react to them; the iframe still receives
+    // an ordinary error.
+    throw new McpRequestError(response.error, {
+      insufficientScope: response.insufficientScope,
+      authChallenge: response.authChallenge,
+      status: response.status,
+    });
   }
 
   if (response.status === "elicitation_required") {
     throw new Error(
       "Tool execution requires elicitation, which is not supported in the emulator yet.",
+    );
+  }
+
+  if (response.status === "completed" && response.authChallenge) {
+    options?.onResultAuthChallenge?.(
+      response.authChallenge,
+      response.toolSecuritySchemes,
     );
   }
 

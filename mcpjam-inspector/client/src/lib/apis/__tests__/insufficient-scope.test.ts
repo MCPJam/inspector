@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { WebApiError } from "@/lib/apis/web/base";
 import {
   McpRequestError,
+  authChallengeFromError,
+  parseAuthChallenge,
   insufficientScopeFromError,
   isActionableStepUpChallenge,
   parseInsufficientScopeChallenge,
@@ -22,9 +24,14 @@ describe("parseInsufficientScopeChallenge (SEP-2350)", () => {
     });
   });
 
-  it("returns undefined when no string field is present", () => {
-    expect(parseInsufficientScopeChallenge({})).toBeUndefined();
-    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toBeUndefined();
+  it("keeps a bare challenge (no scope, no pointer) as a step-up request", () => {
+    // The server sends `insufficientScope` only for a real 403
+    // insufficient_scope, so an empty object is a bare challenge.
+    expect(parseInsufficientScopeChallenge({})).toEqual({});
+    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toEqual({});
+  });
+
+  it("returns undefined when there is no challenge object", () => {
     expect(parseInsufficientScopeChallenge(undefined)).toBeUndefined();
     expect(parseInsufficientScopeChallenge("nope")).toBeUndefined();
   });
@@ -65,21 +72,20 @@ describe("insufficientScopeFromError (SEP-2350)", () => {
     ).toBeUndefined();
   });
 
-  it("returns undefined when the WebApiError details carry no challenge fields", () => {
-    const err = new WebApiError(500, "INTERNAL_ERROR", "boom", undefined, {
+  it("reads a bare challenge off WebApiError details", () => {
+    const err = new WebApiError(403, "UPSTREAM_AUTH_FAILED", "boom", undefined, {
       insufficientScope: {},
     });
-    expect(insufficientScopeFromError(err)).toBeUndefined();
+    expect(insufficientScopeFromError(err)).toEqual({});
   });
 
-  it("returns undefined for an McpRequestError carrying an empty {} challenge", () => {
-    // A truthy-but-empty challenge must re-narrow to undefined, matching the
-    // hosted path — never leak a non-actionable {} to a step-up caller.
+  it("reads a bare challenge off an McpRequestError", () => {
+    // Same on both paths: a bare insufficient_scope is a step-up request.
     const err = new McpRequestError("read failed", {
       insufficientScope: {},
       status: 403,
     });
-    expect(insufficientScopeFromError(err)).toBeUndefined();
+    expect(insufficientScopeFromError(err)).toEqual({});
   });
 });
 
@@ -98,9 +104,9 @@ describe("isActionableStepUpChallenge (SEP-2350)", () => {
     ).toBe(true);
   });
 
-  it("is NOT actionable for a whitespace-only resourceMetadataUrl", () => {
+  it("is actionable for a whitespace-only resourceMetadataUrl (a bare challenge)", () => {
     expect(isActionableStepUpChallenge({ resourceMetadataUrl: "   " })).toBe(
-      false,
+      true,
     );
   });
 
@@ -113,18 +119,57 @@ describe("isActionableStepUpChallenge (SEP-2350)", () => {
     ).toBe(true);
   });
 
-  it("is NOT actionable for an errorDescription-only challenge", () => {
+  it("is actionable for an errorDescription-only or empty challenge (discovery chooses the scopes)", () => {
     expect(
       isActionableStepUpChallenge({ errorDescription: "more scope needed" }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(isActionableStepUpChallenge({})).toBe(true);
   });
 
-  it("is NOT actionable for a whitespace-only requiredScope (parses to zero scopes — would burn the budget without widening)", () => {
-    expect(isActionableStepUpChallenge({ requiredScope: "   " })).toBe(false);
-    expect(isActionableStepUpChallenge({ requiredScope: "\t\n" })).toBe(false);
+  it("treats a whitespace-only requiredScope as a bare challenge", () => {
+    expect(isActionableStepUpChallenge({ requiredScope: "   " })).toBe(true);
   });
 
   it("is NOT actionable for undefined", () => {
     expect(isActionableStepUpChallenge(undefined)).toBe(false);
+  });
+});
+
+describe("authChallengeFromError (mid-session sign-in)", () => {
+  const challenge = {
+    source: "http_401",
+    requiredScope: "orders:read",
+    effectiveAuth: "discover",
+    facets: {
+      challengeHeader: "bearer",
+      hasResourceMetadata: false,
+      hasScope: true,
+      hasErrorParams: false,
+    },
+  };
+
+  it("reads the challenge off an McpRequestError (local throw path)", () => {
+    const err = new McpRequestError("read failed", {
+      authChallenge: challenge as never,
+      status: 401,
+    });
+    expect(authChallengeFromError(err)).toEqual(challenge);
+  });
+
+  it("reads the challenge off a hosted WebApiError's details", () => {
+    const err = new WebApiError(403, "UPSTREAM_AUTH_FAILED", "sign in", undefined, {
+      upstreamAuthRequired: true,
+      authChallenge: challenge,
+    });
+    expect(authChallengeFromError(err)).toEqual(challenge);
+  });
+
+  it("narrows a malformed payload away instead of trusting it", () => {
+    expect(parseAuthChallenge({ source: "evil" })).toBeUndefined();
+    expect(
+      parseAuthChallenge({ ...challenge, effectiveAuth: "root" })
+        ?.effectiveAuth,
+    ).toBeUndefined();
+    expect(authChallengeFromError(new Error("plain"))).toBeUndefined();
   });
 });

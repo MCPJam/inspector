@@ -85,12 +85,16 @@ describe("scope step-up lifecycle", () => {
     expect(applyToolCallStepUp).not.toHaveBeenCalled();
   });
 
-  it("ignores an unactionable challenge", () => {
-    // Nothing to widen: driving here would burn the one-attempt budget.
+  it("ignores a response with no challenge", () => {
+    driveScopeStepUpFromChallenge(server, undefined);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("drives a bare challenge (discovery chooses the scopes)", () => {
     driveScopeStepUpFromChallenge(server, {
       errorDescription: "nope",
     });
-    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
   });
 
   it("drives once while an attempt is in flight, across surfaces", async () => {
@@ -214,10 +218,16 @@ describe("chat turn step-up deferral", () => {
 
     endChatTurnScopeStepUpHold(hold);
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
-    expect(applyToolCallStepUp).toHaveBeenCalledWith(server, {
-      requiredScope: "files:write",
-      resourceMetadataUrl: undefined,
-    });
+    expect(applyToolCallStepUp).toHaveBeenCalledWith(
+      server,
+      {
+        requiredScope: "files:write",
+        resourceMetadataUrl: undefined,
+      },
+      // The hosted redirect marker is written through this hook right
+      // before navigating.
+      expect.objectContaining({ beforeRedirect: expect.any(Function) }),
+    );
   });
 
   it("waits for persistence before redirecting", async () => {
@@ -278,12 +288,12 @@ describe("chat turn step-up deferral", () => {
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
   });
 
-  it("never queues an unactionable challenge or an unresolved server", () => {
+  it("never queues a missing challenge or an unresolved server", () => {
     const hold = beginChatTurnScopeStepUpHold();
     // A share-link scenario turn resolves to no server; it must stay inert
     // rather than authorize on the host's behalf after the turn.
     driveChatScopeStepUp(undefined, challenge);
-    driveChatScopeStepUp(server, { errorDescription: "nope" });
+    driveChatScopeStepUp(server, undefined);
     endChatTurnScopeStepUpHold(hold);
     expect(applyToolCallStepUp).not.toHaveBeenCalled();
   });

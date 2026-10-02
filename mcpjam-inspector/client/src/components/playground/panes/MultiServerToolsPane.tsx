@@ -16,6 +16,7 @@
  * The Saved tab renders an empty state pointing this out.
  */
 import { useEffect, useMemo, useState } from "react";
+import { PlaygroundAuthChallengeCards } from "@/components/auth-challenge/PlaygroundAuthChallengeCards";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
@@ -270,6 +271,8 @@ export function MultiServerToolsPaneInner({
         onSave={() => {}}
         onRefresh={() => void refetch()}
       />
+
+      <PlaygroundAuthChallengeCards />
 
       <div className="flex-1 min-h-0">
         {activeTab === "saved" ? (
