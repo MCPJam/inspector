@@ -2660,6 +2660,45 @@ export function useServerState({
     ]
   );
 
+  /**
+   * The Convex row a rename should update in place, found the way
+   * `removeServerFromConvex` finds the row it deletes. A rename used to delete
+   * that row and create a new one, losing everything stored under the old id:
+   * the client secret (the edit form never holds it), hosted OAuth tokens, app
+   * views. Undefined where the old path had no row to delete, so those renames
+   * keep their current behavior.
+   */
+  const resolveRenameWriteTarget = useCallback(
+    (originalServerName: string): HostedServerWriteTarget | undefined => {
+      if (
+        useLocalFallback ||
+        !isAuthenticated ||
+        !effectiveActiveProjectId ||
+        effectiveActiveProjectId === "none"
+      ) {
+        return undefined;
+      }
+      const row = (
+        activeProjectServersFlatRef.current ?? activeProjectServersFlat
+      )?.find((s) => s.name === originalServerName);
+      if (!row) return undefined;
+      return {
+        projectId:
+          row.projectId ||
+          effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ||
+          effectiveActiveProjectId,
+        serverId: row._id,
+      };
+    },
+    [
+      useLocalFallback,
+      isAuthenticated,
+      effectiveActiveProjectId,
+      effectiveProjects,
+      activeProjectServersFlat,
+    ]
+  );
+
   const persistServerToLocalProject = useCallback(
     (
       serverName: string,
@@ -3570,6 +3609,10 @@ export function useServerState({
       options?: {
         suppressErrorToast?: boolean;
         suppressSuccessToast?: boolean;
+        // Exact row to save to, for a rename: the new name is not in the
+        // project-server snapshot yet, and a name lookup would fall through
+        // to create-if-missing, which returns the row without the edit.
+        hostedWriteTarget?: HostedServerWriteTarget;
       }
     ) => {
       const showConnectionError = (
@@ -3694,7 +3737,10 @@ export function useServerState({
         const synced = await syncServerToConvex(
           formData.name,
           serverEntryForSave,
-          clientSecretSyncOptions
+          clientSecretSyncOptions,
+          options?.hostedWriteTarget
+            ? { ...options.hostedWriteTarget, exactServerId: true }
+            : undefined
         );
         if (isStaleOp(formData.name, token)) return;
         if (synced.ok) {
@@ -4231,6 +4277,13 @@ export function useServerState({
         );
         return false;
       }
+      // A rename updates the same row by id even when the caller passed no
+      // target (the OAuth debugger's modal); XAA's edit passes its own.
+      const hostedWriteTarget =
+        options?.hostedWriteTarget ??
+        (isRename && originalServerName
+          ? resolveRenameWriteTarget(originalServerName)
+          : undefined);
 
       const existingServer = appState.servers[originalServerName ?? serverName];
       const mcpConfig = toMCPConfig(formData);
@@ -4315,7 +4368,7 @@ export function useServerState({
       }
 
       const hostedProjectId =
-        options?.hostedWriteTarget?.projectId ?? effectiveActiveProjectId;
+        hostedWriteTarget?.projectId ?? effectiveActiveProjectId;
       const activeHostedProjectId =
         effectiveActiveProjectId && effectiveActiveProjectId !== "none"
           ? effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
@@ -4326,8 +4379,8 @@ export function useServerState({
       // state only represents the ambient project, so never inject the saved
       // config into a different project's server map.
       const shouldUpdateActiveProjectState =
-        !options?.hostedWriteTarget ||
-        options.hostedWriteTarget.projectId === activeHostedProjectId;
+        !hostedWriteTarget ||
+        hostedWriteTarget.projectId === activeHostedProjectId;
       if (
         isAuthenticated &&
         !useLocalFallback &&
@@ -4354,9 +4407,9 @@ export function useServerState({
                 ? { headers: formData.secretPatch.headers }
                 : {}),
             },
-            options?.hostedWriteTarget
+            hostedWriteTarget
               ? {
-                  ...options.hostedWriteTarget,
+                  ...hostedWriteTarget,
                   exactServerId: true,
                 }
               : undefined
@@ -4402,7 +4455,7 @@ export function useServerState({
         // snapshot.
         if (isRename && originalServerName) {
           await handleRemoveServerRef.current?.(originalServerName, {
-            removeFromCloud: !options?.hostedWriteTarget,
+            removeFromCloud: !hostedWriteTarget,
           });
         }
 
@@ -4435,6 +4488,7 @@ export function useServerState({
       effectiveProjects,
       syncServerToConvex,
       persistServerToLocalProject,
+      resolveRenameWriteTarget,
     ]
   );
 
@@ -6270,12 +6324,20 @@ export function useServerState({
       const originalServer =
         appState.servers[originalServerName] ??
         effectiveServers[originalServerName];
+      // A rename updates the same Convex row by id, as XAA's edit does, so the
+      // stored client secret, hosted OAuth tokens and app views stay on it.
+      // Without a row to target, the old name is removed as before.
+      const renameTarget = isRename
+        ? resolveRenameWriteTarget(originalServerName)
+        : undefined;
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
         if (isRename) {
           await handleDisconnect(originalServerName);
-          await removeServerFromStateAndCloud(originalServerName);
+          if (!renameTarget) {
+            await removeServerFromStateAndCloud(originalServerName);
+          }
         }
 
         const updatedServer: ServerWithName = {
@@ -6346,7 +6408,9 @@ export function useServerState({
         } else {
           const synced = await syncServerToConvex(
             nextServerName,
-            updatedServer
+            updatedServer,
+            undefined,
+            renameTarget ? { ...renameTarget, exactServerId: true } : undefined
           );
           // Nothing was written, so the success toast below would be a lie.
           if (!synced.ok) {
@@ -6357,6 +6421,11 @@ export function useServerState({
             );
             return { ok: false, serverName: originalServerName };
           }
+        }
+        // The row now has the new name; only the old name's local state goes.
+        if (renameTarget) {
+          cleanupServerLocalArtifacts(originalServerName);
+          dispatch({ type: "REMOVE_SERVER", name: originalServerName });
         }
 
         saveOAuthConfigToLocalStorage(formData);
@@ -6433,13 +6502,19 @@ export function useServerState({
 
       saveOAuthConfigToLocalStorage(formData);
 
-      if (isRename) {
-        await handleDisconnect(originalServerName);
+      await handleDisconnect(originalServerName);
+      if (renameTarget) {
+        // handleConnect saves to this row by id; only the old name's local
+        // state goes.
+        cleanupServerLocalArtifacts(originalServerName);
+        dispatch({ type: "REMOVE_SERVER", name: originalServerName });
+      } else if (isRename) {
         await removeServerFromStateAndCloud(originalServerName);
-      } else {
-        await handleDisconnect(originalServerName);
       }
-      await handleConnect(formData);
+      await handleConnect(
+        formData,
+        renameTarget ? { hostedWriteTarget: renameTarget } : undefined
+      );
       if (
         appState.selectedServer === originalServerName &&
         nextServerName !== originalServerName
@@ -6462,6 +6537,8 @@ export function useServerState({
       handleConnect,
       isAuthenticated,
       removeServerFromStateAndCloud,
+      cleanupServerLocalArtifacts,
+      resolveRenameWriteTarget,
       setSelectedServer,
       syncServerToConvex,
       useLocalFallback,
