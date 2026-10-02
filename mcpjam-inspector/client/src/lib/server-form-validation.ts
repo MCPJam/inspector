@@ -1,5 +1,25 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { isPrivateNetworkUrl } from "@/shared/private-address";
 import type { ServerFormData } from "@/shared/types.js";
+
+export function validateBearerTargetUrl(url: string): string | null {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    // The general form validator owns malformed and missing URL copy.
+    return null;
+  }
+
+  if (
+    parsedUrl.protocol === "https:" ||
+    (parsedUrl.protocol === "http:" && isPrivateNetworkUrl(url))
+  ) {
+    return null;
+  }
+
+  return "Bearer tokens require HTTPS for non-local server URLs.";
+}
 
 /**
  * Single source of truth for server-config validation, shared by the save

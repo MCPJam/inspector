@@ -104,6 +104,8 @@ interface PlaygroundTabProps {
   onFirstRunPromptConsumed?: () => void;
   /** Pauses route-local reconnect work while first-run onboarding owns it. */
   suspendAutoConnect?: boolean;
+  /** Signals that Playground has cleared its initial skeleton render gate. */
+  onReady?: () => void;
 }
 
 /**
@@ -234,6 +236,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     selectedServerNames:
       props.playgroundServerSelectorProps?.selectedMultipleServers,
   });
+
+  useEffect(() => {
+    if (playgroundState.loadingState.kind !== "skeleton") props.onReady?.();
+  }, [playgroundState.loadingState.kind, props.onReady]);
 
   // Rail collapse state — local to the workspace; not persisted per view.
   // Defaults match the previous flag-on behavior (left rail showing tools,

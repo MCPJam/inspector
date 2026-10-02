@@ -513,6 +513,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "UPDATE_PROJECT_SERVER": {
+      const project = state.projects[action.projectId];
+      if (!project) return state;
+      return {
+        ...state,
+        projects: {
+          ...state.projects,
+          [action.projectId]: {
+            ...project,
+            servers: { ...project.servers, [action.name]: action.server },
+            updatedAt: new Date(),
+          },
+        },
+      };
+    }
+
     case "UPDATE_PROJECT_CLIENT_CONFIG_SLICE": {
       // Merge a single section of clientConfig into the project's
       // current value. Reading clientConfig from the latest state here
