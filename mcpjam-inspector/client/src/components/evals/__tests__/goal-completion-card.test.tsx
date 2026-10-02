@@ -8,6 +8,19 @@ import { pickEffort } from "@/test/effort";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// Whether the deployment stores saved selections. Most tests run against one
+// that does; one test flips it to prove the card falls back to the bare id.
+const capability = vi.hoisted(() => ({ selections: true }));
+vi.mock(
+  "@/hooks/use-project-environment-capability",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@/hooks/use-project-environment-capability")
+    >()),
+    useModelSelectionsSupported: () => capability.selections,
+  }),
+);
+
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => <span aria-hidden="true" />,
 }));
@@ -456,6 +469,32 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
       },
       false,
     );
+  });
+
+  it("sends the judge model alone to a deployment without saved selections", async () => {
+    capability.selections = false;
+    try {
+      const onRun = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <GoalCompletionCard
+          {...baseProps}
+          availableModels={[hosted, ineligibleHosted, bareByok]}
+          onRun={onRun}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: "Judge model" }));
+      await user.click(
+        screen.getByRole("option", { name: /Claude Haiku 4\.5/ }),
+      );
+      await user.click(screen.getByRole("button", { name: /Run judge/i }));
+      expect(onRun).toHaveBeenCalledWith(
+        { runOverride: { judgeModel: "anthropic/claude-haiku-4.5" } },
+        false,
+      );
+    } finally {
+      capability.selections = true;
+    }
   });
 
   it("shows a saved ineligible judge as the current value, disabled", async () => {

@@ -17,6 +17,7 @@ import { groupRunIterationsByTestCase } from "./run-case-groups";
 import { JudgeModelPicker } from "./judge-model-picker";
 import { judgeModelPatch } from "./judges-section";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
 import {
   selectionConfigKey,
@@ -152,6 +153,11 @@ export function GoalCompletionCard({
     overrideThresholdValue !== undefined ||
     overrideEffort !== undefined;
 
+  // A backend that predates saved selections refuses an override that names
+  // one, so on such a deployment the card sends the model id alone (as
+  // `JudgesSection` does) and offers no effort.
+  const saveSelections = useModelSelectionsSupported();
+
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's model selection DIFFERS from the
     // suite config. Threshold is no longer adjustable from this card — it
@@ -162,10 +168,12 @@ export function GoalCompletionCard({
       (selectedSelection ? selectionConfigKey(selectedSelection) : "") !==
       (suiteSelection ? selectionConfigKey(suiteSelection) : "");
     const runOverride =
-      modelDiffers || selectionDiffers
+      modelDiffers || (saveSelections && selectionDiffers)
         ? {
             judgeModel: selectedModelId,
-            ...(selectedSelection ? { judgeSelection: selectedSelection } : {}),
+            ...(saveSelections && selectedSelection
+              ? { judgeSelection: selectedSelection }
+              : {}),
           }
         : undefined;
     onRun(
@@ -289,7 +297,7 @@ export function GoalCompletionCard({
                   const patch = judgeModelPatch(
                     row,
                     availableModels,
-                    true,
+                    saveSelections,
                     selectionReasoningEffort(selectedSelection),
                   );
                   setSelectedModelId(String(row.id));
@@ -304,6 +312,7 @@ export function GoalCompletionCard({
                 row={selectedRow}
                 selection={selectedSelection}
                 purpose="judge"
+                selectionsSupported={saveSelections}
                 disabled={inFlight}
                 hint="Applies to this run's judge only"
                 onChange={(write) => {
