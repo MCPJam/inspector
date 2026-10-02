@@ -19,6 +19,10 @@ import {
 } from "../../middleware/internal-service-auth.js";
 import { logger } from "../../utils/logger.js";
 import { isUsableStorageDestination } from "../../utils/storage-destination.js";
+import {
+  confirmUploadedObject,
+  type UploadDestination,
+} from "../../utils/upload-receipt.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, handleRoute } from "./auth.js";
 
@@ -57,29 +61,40 @@ function declaredLength(header: string | undefined): number | null {
 }
 
 /**
- * Where to store one archive, asked for on the caller's behalf.
- *
- * With the inspector service credential, the backend's internal route checks
- * the caller's bearer against the project and answers. A local install holds
- * no service credential, so it asks the backend's per-user route instead; a
- * hosted deployment without one is misconfigured and refuses.
+ * Saving a profile needs the inspector service credential: the backend names
+ * an archive destination only to a caller that holds it. A local or desktop
+ * install holds none, so it says so up front instead of asking the backend.
+ * (The client hides Save on such a server — see `GET /availability`.)
+ */
+export const BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE =
+  "Saving browser profiles isn't available on this server.";
+
+/**
+ * Where to store one archive, asked for on the caller's behalf: the backend's
+ * internal route checks the caller's bearer against the project and answers.
+ * A hosted deployment without the service credential is misconfigured and
+ * refuses.
  */
 async function requestArchiveDestination(
   c: Context,
   projectId: string,
-): Promise<string> {
+): Promise<UploadDestination> {
   const serviceToken = getConfiguredInspectorServiceToken();
-  if (!serviceToken && HOSTED_MODE) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing INSPECTOR_SERVICE_TOKEN configuration",
-    );
+  if (!serviceToken) {
+    throw HOSTED_MODE
+      ? new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Server missing INSPECTOR_SERVICE_TOKEN configuration",
+        )
+      : new WebRouteError(
+          503,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE,
+        );
   }
   const bearer = await getConvexBearerForRequest(c);
-  const path = serviceToken
-    ? "/internal/v1/browser-profiles/upload-url"
-    : "/browser-profiles/upload-url";
+  const path = "/internal/v1/browser-profiles/upload-url";
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DESTINATION_TIMEOUT_MS);
@@ -89,15 +104,14 @@ async function requestArchiveDestination(
       headers: {
         Authorization: `Bearer ${bearer}`,
         "Content-Type": "application/json",
-        ...(serviceToken
-          ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken }
-          : {}),
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken,
       },
       body: JSON.stringify({ projectId }),
       signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
     });
     const body = (await response.json().catch(() => null)) as {
       uploadUrl?: unknown;
+      uploadGrantId?: unknown;
       code?: unknown;
       error?: unknown;
     } | null;
@@ -110,14 +124,21 @@ async function requestArchiveDestination(
         typeof body?.error === "string" ? body.error : "Backend error",
       );
     }
-    if (!isUsableStorageDestination(body?.uploadUrl)) {
+    if (
+      !isUsableStorageDestination(body?.uploadUrl) ||
+      (body?.uploadGrantId !== undefined &&
+        (typeof body.uploadGrantId !== "string" || !body.uploadGrantId))
+    ) {
       throw new WebRouteError(
         502,
         ErrorCode.INTERNAL_ERROR,
         UPLOAD_FAILED_MESSAGE,
       );
     }
-    return body.uploadUrl;
+    return {
+      uploadUrl: body.uploadUrl,
+      uploadGrantId: body.uploadGrantId as string | undefined,
+    };
   } catch (error) {
     if (error instanceof WebRouteError) throw error;
     if (controller.signal.aborted) {
@@ -161,6 +182,13 @@ function limitedBody(
 
 export function handleBrowserProfileUpload(c: Context) {
   return handleRoute(c, async () => {
+    if (!HOSTED_MODE && !getConfiguredInspectorServiceToken()) {
+      throw new WebRouteError(
+        503,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE,
+      );
+    }
     const projectId = c.req.query("projectId")?.trim();
     if (!projectId) {
       throw new WebRouteError(
@@ -201,7 +229,7 @@ export function handleBrowserProfileUpload(c: Context) {
       ARCHIVE_UPLOAD_TIMEOUT_MS,
     );
     try {
-      const response = await fetch(destination, {
+      const response = await fetch(destination.uploadUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",
@@ -232,6 +260,14 @@ export function handleBrowserProfileUpload(c: Context) {
           UPLOAD_FAILED_MESSAGE,
         );
       }
+      await confirmUploadedObject({
+        convexHttpUrl: convexHttpUrl(),
+        bearer: await getConvexBearerForRequest(c),
+        serviceToken: getConfiguredInspectorServiceToken(),
+        uploadGrantId: destination.uploadGrantId,
+        storageId: stored.storageId,
+        signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
+      });
       return { storageId: stored.storageId };
     } catch (error) {
       if (error instanceof WebRouteError) throw error;

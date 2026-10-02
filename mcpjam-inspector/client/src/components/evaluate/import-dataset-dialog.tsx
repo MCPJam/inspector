@@ -24,6 +24,11 @@ interface ImportDatasetDialogProps {
    * environments to pick from. The drafts are written for its tools.
    */
   environmentChoices?: EvalSuiteEnvironmentTarget[] | null;
+  /**
+   * The environment to author against when there is nothing to pick: the
+   * only runnable one, or any of several that connect the same servers.
+   */
+  environmentId?: string;
 }
 export function ImportDatasetDialog({
   open,
@@ -31,6 +36,7 @@ export function ImportDatasetDialog({
   projectId,
   suiteId,
   environmentChoices,
+  environmentId: defaultEnvironmentId,
 }: ImportDatasetDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [environmentId, setEnvironmentId] = useState<string>();
@@ -40,6 +46,7 @@ export function ImportDatasetDialog({
   )
     ? environmentId
     : undefined;
+  const startEnvironmentId = pickedEnvironmentId ?? defaultEnvironmentId;
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "extracting">("idle");
   // The limit dialog already opened on the refusal; the inline line only has
@@ -127,8 +134,8 @@ export function ImportDatasetDialog({
             fileName: file.name,
             projectId,
             suiteId,
-            ...(pickedEnvironmentId
-              ? { environmentId: pickedEnvironmentId }
+            ...(startEnvironmentId
+              ? { environmentId: startEnvironmentId }
               : {}),
             requestKey: (() => {
               if (startIdentity.current.file !== file)

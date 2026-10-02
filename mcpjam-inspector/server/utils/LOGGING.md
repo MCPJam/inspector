@@ -42,6 +42,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 |---|---|---|
 | `http.request.completed` | middleware | `statusCode` |
 | `http.request.failed` | middleware | `statusCode`, `errorCode` |
+| `eval.import.environment_selection.failed` | `routes/shared/eval-authoring.ts` | `projectId`, `suiteId`, `reason`; hosted imports missing an environment also report to Sentry |
 | `mcp.oauth.proxy.failed` | `routes/mcp/oauth.ts`, `routes/web/oauth.ts` | `targetUrlHost`, `oauthPhase`, `errorCode`, `statusCode?` |
 | `mcp.tool.execution.failed` | `routes/web/tools.ts` | `toolName`, `serverId?`, `errorCode` |
 | `tunnel.created` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain`, `existed`, `credentialIdPresent?` |

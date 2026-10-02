@@ -310,6 +310,9 @@ export async function commitEnvironmentQuickRun(
         startedAt: args.startedAt,
         environment: {
           environmentId: args.resolved.environmentRef.environmentId,
+          ...(args.resolved.runtimeVenue === "local"
+            ? { runtimeVenue: "local" }
+            : {}),
           expectedRevision: args.resolved.environmentRef.revision,
           ...(args.resolved.hostConfigId
             ? { expectedHostConfigId: args.resolved.hostConfigId }
