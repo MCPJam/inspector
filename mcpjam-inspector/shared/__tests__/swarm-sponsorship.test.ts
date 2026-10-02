@@ -7,6 +7,7 @@ import {
   SPONSORSHIP_REJECTED_MESSAGE,
   SPONSORSHIP_UNCONFIRMED_MESSAGE,
   sponsoredPlatformFailure,
+  unstartedSponsoredStopMessage,
 } from "../swarm-sponsorship";
 import { isCreditExhaustion } from "../credit-exhaustion";
 
@@ -146,5 +147,23 @@ describe("funding parsers", () => {
     expect(
       parseFundingChangedDetails({ expectedSponsored: 5 }),
     ).toBeUndefined();
+  });
+});
+
+describe("unstartedSponsoredStopMessage", () => {
+  it("says nothing was charged for a conversation an unconfirmed stop swept before it started", () => {
+    const stop = sponsoredPlatformFailure({ code: "agent_billing_rejected" })!;
+    expect(stop.message).toBe(SPONSORSHIP_UNCONFIRMED_MESSAGE);
+    expect(unstartedSponsoredStopMessage(stop)).toBe(
+      SPONSORSHIP_REJECTED_MESSAGE,
+    );
+    expect(unstartedSponsoredStopMessage(stop)).not.toMatch(/contact support/i);
+  });
+
+  it("leaves every other stop's sentence alone", () => {
+    for (const code of ["platform_capacity", "swarm_sponsorship_rejected"]) {
+      const stop = sponsoredPlatformFailure({ code })!;
+      expect(unstartedSponsoredStopMessage(stop)).toBe(stop.message);
+    }
   });
 });

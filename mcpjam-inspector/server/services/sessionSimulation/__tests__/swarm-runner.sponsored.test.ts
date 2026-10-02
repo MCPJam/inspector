@@ -56,6 +56,8 @@ import { startJourneyRun } from "../swarm-runner.js";
 import { SwarmSetupError } from "../swarm-setup-turn.js";
 import {
   SPONSORED_CAPACITY_MESSAGE,
+  SPONSORSHIP_REJECTED_MESSAGE,
+  SPONSORSHIP_UNCONFIRMED_MESSAGE,
   type SwarmSessionFunding,
 } from "../../../../shared/swarm-sponsorship.js";
 
@@ -864,5 +866,50 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
       (call) => (call[0] as any).persist.targetId,
     );
     expect(ran).toEqual(["target-b", "target-b"]);
+  });
+
+  // `agent_billing_rejected` is the one platform failure whose copy cannot say
+  // "not charged" for a STEP: it may have been admitted without the paid
+  // confirmation. A setup refused that way ends no conversation, and the sweep
+  // that closes the target's sponsored conversations only ever closes ones that
+  // never started and are refunded. Stamping them with "if your organization's
+  // credits were charged, contact support" doubts a charge that cannot exist.
+  it("sweeps the never-started conversations of a setup refused as unconfirmed with the copy that says they were not charged", async () => {
+    setupTurnMock.mockImplementation(async ({ target }: any) => {
+      if (target.targetId !== "target-a") return READY_SETUP;
+      throw new SwarmSetupError(
+        {
+          status: "failed",
+          readiness: "unavailable",
+          reason: "transport_failed",
+        } as never,
+        {
+          code: "swarm_sponsorship_rejected",
+          message: SPONSORSHIP_UNCONFIRMED_MESSAGE,
+        },
+      );
+    });
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        setupWrites: true,
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "starter", "starter"),
+          ...funding(B.targetId, "credits", "credits"),
+        ],
+      }) as never,
+    );
+
+    // Nothing of A's was claimed: every sponsored conversation is swept.
+    expect(claimed().filter((c) => c.targetId === "target-a")).toEqual([]);
+    const sweep = finalizePendingAttemptsMock.mock.calls[0]![2];
+    expect(sweep).toMatchObject({
+      terminalStatus: "failed",
+      errorCode: "swarm_sponsorship_rejected",
+      errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+    });
+    expect(sweep.errorMessage).not.toMatch(/contact support/i);
   });
 });

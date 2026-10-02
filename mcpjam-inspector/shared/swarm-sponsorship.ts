@@ -170,6 +170,23 @@ export function sponsoredPlatformFailure(input: {
 }
 
 /**
+ * The sentence for a sponsored conversation a platform stop closes BEFORE it
+ * started: the run-level sweep runs after every worker has finished, so what it
+ * still finds are conversations that were never claimed and are refunded.
+ * Nothing was charged for them, whatever the stop that ended their neighbours
+ * had to hedge about ("could not confirm" is about a step that was admitted
+ * without its paid confirmation, which a conversation that never ran did not
+ * have).
+ */
+export function unstartedSponsoredStopMessage(
+  stop: SponsoredPlatformFailure,
+): string {
+  return stop.message === SPONSORSHIP_UNCONFIRMED_MESSAGE
+    ? SPONSORSHIP_REJECTED_MESSAGE
+    : stop.message;
+}
+
+/**
  * Whether a FAILED attempt's stored code is one of the two a sponsored
  * conversation ends with when the platform could not pay for it. Screens use it
  * to keep these out of the organization-usage-limit callout: no organization
