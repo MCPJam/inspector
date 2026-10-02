@@ -160,7 +160,7 @@ export async function createHonoApp() {
   // loads in the background, idempotent, a no-op without the service token.
   startRevokedSessionCache();
 
-    startLocalBrowserRenderingSetupInBackground();
+  startLocalBrowserRenderingSetupInBackground();
   // Reports whether a local-harness runtime pack is present. Deliberately
   // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
   // kill switch and a consent grant is installed when the user asks, never

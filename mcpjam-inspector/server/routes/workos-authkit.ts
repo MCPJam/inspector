@@ -375,7 +375,13 @@ function redirectToWorkos(c: Context, path: string) {
 }
 
 workosAuthkitRoutes.get("/authorize", (c) => {
-  const refusal = clientIdRefusal(c, c.req.query("client_id"));
+  // The whole query string is forwarded, so a second `client_id` behind ours
+  // would reach WorkOS unchecked.
+  const clientIds = c.req.queries("client_id") ?? [];
+  const refusal = clientIdRefusal(
+    c,
+    clientIds.length === 1 ? clientIds[0] : undefined,
+  );
   if (refusal) return refusal;
   return redirectToWorkos(c, "/user_management/authorize");
 });

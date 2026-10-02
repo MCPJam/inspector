@@ -11,7 +11,10 @@ import {
 } from "../../utils/guest-session-source.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
-import { usesScopedSessionCookies } from "../../utils/scoped-cookie-context.js";
+import {
+  applyScopedCookieWrites,
+  usesScopedSessionCookies,
+} from "../../utils/scoped-cookie-context.js";
 import {
   GUEST_SESSION_COOKIE_NAME,
   allowMint,
@@ -123,9 +126,12 @@ guestSession.post("/", async (c) => {
     // a legacy shared cookie is migrated through `lookup_only` first.
     const local = await resolveLocalGuestCookie(c, base);
     if (local.kind === "migrated") {
+      applyScopedCookieWrites(c, [local.write]);
       result = local.result;
     } else if (local.kind === "lookup_failed") {
-      result = local.result;
+      // A lookup never creates a guest, so its 429 is not the creation cap the
+      // 429 below tells the user to sign in over.
+      result = { ...local.result, status: 503 };
     } else {
       result = await fetchGuestSession({
         ...base,
@@ -358,6 +364,7 @@ guestSession.post("/promotion-proof", async (c) => {
         "Unable to obtain a guest promotion proof right now. Please try again."
       );
     }
+    if (local.kind === "migrated") applyScopedCookieWrites(c, [local.write]);
     cookie = local.upstream ? upstreamGuestCookieHeader(local.upstream) : null;
   } else {
     cookie = extractGuestSessionCookie(c.req.header("cookie"));

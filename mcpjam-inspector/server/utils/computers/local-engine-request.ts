@@ -87,11 +87,6 @@ export function isVerifiedMember(
   return actor.kind === "member";
 }
 
-/** Guests and anonymous callers, i.e. the old `isGuestChatRequest` population. */
-export function isGuestOrAnonymous(actor: ChatRequestActor): boolean {
-  return actor.kind === "guest" || actor.kind === "anonymous";
-}
-
 /**
  * The guest half of the classification only: no bearer, or a bearer the
  * selected guest authority signed.

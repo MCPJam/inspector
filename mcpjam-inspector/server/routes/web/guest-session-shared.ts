@@ -6,11 +6,16 @@ import {
 } from "../../utils/guest-session-source.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
-import { usesScopedSessionCookies } from "../../utils/scoped-cookie-context.js";
+import {
+  applyScopedCookieWrites,
+  usesScopedSessionCookies,
+} from "../../utils/scoped-cookie-context.js";
+import type { ScopedCookieWrite } from "../../utils/scoped-cookies.js";
 import {
   applyUpstreamGuestCookies,
   resolveLocalGuestCookie,
   upstreamGuestCookieHeader,
+  upstreamGuestCookieWrites,
 } from "./guest-cookie-scope.js";
 
 // IP-based rate limiting: 10 req/min per IP (sliding window).
@@ -127,8 +132,10 @@ export type DocumentGuestMintResult = {
  * (guest cookie, UA, hashed client IP, `mode: "lookup_or_create"`), sends it to
  * the selected guest authority, and races the ENTIRE mint against a hard
  * deadline, so the document handler can never block past it; losing the race
- * abandons the mint and serves blob-less. The helper performs no configuration
- * writes of any kind.
+ * abandons the mint and serves blob-less. A loopback mint's scoped cookie is
+ * written only when the mint wins: a loser finishing after the response went
+ * out would otherwise write a guest the browser never receives. The helper
+ * performs no configuration writes of any kind.
  *
  * Never throws and never rate-limit-fails the caller — on any failure,
  * timeout, or rate-limit cap the caller simply serves the HTML without a blob
@@ -164,7 +171,12 @@ export async function mintGuestSessionForDocument(
     ...(ipHash ? { ipHash } : {}),
   };
 
-  const mint = async (): Promise<DocumentGuestMintResult> => {
+  type MintOutcome = DocumentGuestMintResult & {
+    scopedWrites: ScopedCookieWrite[];
+  };
+  const deadlineAt = Date.now() + DOCUMENT_MINT_DEADLINE_MS;
+
+  const mint = async (): Promise<MintOutcome> => {
     if (usesScopedSessionCookies(c)) {
       // Loopback: the guest lives in this namespace's scoped cookie, which
       // this path writes itself; nothing upstream is passed through.
@@ -173,10 +185,16 @@ export async function mintGuestSessionForDocument(
         base,
         DOCUMENT_MINT_DEADLINE_MS
       );
-      if (local.kind === "lookup_failed") return empty;
+      if (local.kind === "lookup_failed") return { ...empty, scopedWrites: [] };
       if (local.kind === "migrated") {
-        return { session: local.result.session, setCookies: [] };
+        return {
+          session: local.result.session,
+          setCookies: [],
+          scopedWrites: [local.write],
+        };
       }
+      // Only what is left of the deadline: a create still in flight when the
+      // race is lost would mint a guest nobody keeps.
       const result = await fetchGuestSession(
         {
           ...base,
@@ -185,12 +203,13 @@ export async function mintGuestSessionForDocument(
             : null,
           body: { mode: "lookup_or_create" },
         },
-        DOCUMENT_MINT_DEADLINE_MS
+        Math.max(0, deadlineAt - Date.now())
       );
-      applyUpstreamGuestCookies(c, result.setCookies);
-      return result.kind === "session"
-        ? { session: result.session, setCookies: [] }
-        : empty;
+      return {
+        session: result.kind === "session" ? result.session : null,
+        setCookies: [],
+        scopedWrites: upstreamGuestCookieWrites(result.setCookies),
+      };
     }
 
     const context: GuestSessionFetchContext = {
@@ -199,19 +218,25 @@ export async function mintGuestSessionForDocument(
       body: { mode: "lookup_or_create" },
     };
     const result = await fetchGuestSession(context, DOCUMENT_MINT_DEADLINE_MS);
-    if (result.kind === "session") {
-      return { session: result.session, setCookies: result.setCookies };
-    }
-    return { session: null, setCookies: result.setCookies };
+    return {
+      session: result.kind === "session" ? result.session : null,
+      setCookies: result.setCookies,
+      scopedWrites: [],
+    };
   };
 
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<DocumentGuestMintResult>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve(empty), DOCUMENT_MINT_DEADLINE_MS);
+  const deadline = new Promise<null>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve(null), DOCUMENT_MINT_DEADLINE_MS);
   });
 
   try {
-    return await Promise.race([mint(), deadline]);
+    const outcome = await Promise.race([mint(), deadline]);
+    if (!outcome) return empty;
+    if (outcome.scopedWrites.length > 0) {
+      applyScopedCookieWrites(c, outcome.scopedWrites);
+    }
+    return { session: outcome.session, setCookies: outcome.setCookies };
   } catch {
     // Defense-in-depth: mint() is written to not throw, but never let a
     // bootstrap mint failure escape into the document handler.

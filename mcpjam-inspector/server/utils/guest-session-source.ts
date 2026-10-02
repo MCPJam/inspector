@@ -426,13 +426,15 @@ export async function fetchGuestPromotionProof(
 }
 
 /**
- * The selected authority's guest JWKS. A read — it never provisions anything.
+ * The selected authority's guest JWKS (or `jwksUrl`, a URL already resolved
+ * from it). A read — it never provisions anything.
  */
-export async function fetchGuestJwks(): Promise<Response | null> {
-  const authority = authorityOrNull();
-  if (!authority) return null;
+export async function fetchGuestJwks(
+  jwksUrl: string | undefined = authorityOrNull()?.jwksUrl,
+): Promise<Response | null> {
+  if (!jwksUrl) return null;
   try {
-    return await fetch(authority.jwksUrl, {
+    return await fetch(jwksUrl, {
       method: "GET",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),

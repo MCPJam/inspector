@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Hono } from "hono";
-import guestSession from "../guest-session.js";
+import { Hono, type Context } from "hono";
+import guestSession, { GUEST_SESSION_REFUSED_MESSAGE } from "../guest-session.js";
+import { mintGuestSessionForDocument } from "../guest-session-shared.js";
 import { resetGuestAuthorityForTests } from "../../../utils/guest-authority.js";
 import { getLocalSessionNamespace } from "../../../utils/local-session-namespace.js";
 import {
@@ -271,7 +272,7 @@ describe("loopback guest cookies are namespace-scoped", () => {
 
     it("rejects cross-backend reuse: an unmatched legacy guest is neither reused nor deleted", async () => {
       // Backend A has never seen this cookie (it came from another backend).
-      upstream = (body, cookie) =>
+      upstream = (_body, cookie) =>
         cookie
           ? new Response(null, { status: 204 })
           : session("t-new", "guest-fresh", UPSTREAM_COOKIE("opaque-fresh"));
@@ -310,6 +311,26 @@ describe("loopback guest cookies are namespace-scoped", () => {
       expect(upstreamCalls()).toHaveLength(1);
       expect(upstreamCalls()[0]!.body).toEqual({ mode: "lookup_only" });
       expect(setCookies(res)).toEqual([]);
+    });
+
+    it("answers a rate-limited legacy lookup as a failed lookup, not the creation cap", async () => {
+      upstream = () =>
+        new Response("slow down", {
+          status: 429,
+          headers: { "Retry-After": "60" },
+        });
+      const res = await post(
+        "/guest-session",
+        "mcpjam_guest_session=legacy-a",
+        { mode: "lookup_or_create" },
+        "203.0.113.65",
+      );
+      expect(res.status).toBe(503);
+      expect(res.headers.get("retry-after")).toBeNull();
+      expect(JSON.stringify(await res.json())).not.toContain(
+        GUEST_SESSION_REFUSED_MESSAGE,
+      );
+      expect(upstreamCalls()).toHaveLength(1);
     });
 
     it("never consults legacy cookies once this namespace has its own guest", async () => {
@@ -447,6 +468,52 @@ describe("loopback guest cookies are namespace-scoped", () => {
         cookie: "__Host-mcpjam_guest_session=opaque-new",
       }),
     ]);
+  });
+
+  it("a document mint that loses its deadline writes no guest cookie and abandons the create", async () => {
+    const createSignals: AbortSignal[] = [];
+    global.fetch = vi.fn((_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const signal = init!.signal!;
+      if (body.mode === "lookup_or_create") createSignals.push(signal);
+      return new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            resolve(
+              body.mode === "lookup_only"
+                ? new Response(null, { status: 204 })
+                : session("t-late", "guest-late", UPSTREAM_COOKIE("late")),
+            ),
+          900,
+        );
+        signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(signal.reason);
+        });
+      });
+    }) as typeof fetch;
+
+    let context: Context | undefined;
+    const documentApp = new Hono();
+    documentApp.get("/", async (c) => {
+      context = c;
+      const minted = await mintGuestSessionForDocument(c);
+      return c.json({ minted: minted.session !== null });
+    });
+    const res = await documentApp.request("http://localhost/", {
+      headers: {
+        cookie: "mcpjam_guest_session=legacy-a",
+        "x-forwarded-for": "203.0.113.100",
+      },
+    });
+    expect(await res.json()).toEqual({ minted: false });
+    expect(setCookies(res)).toEqual([]);
+
+    // Past the moment the create would have answered.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(createSignals).toHaveLength(1);
+    expect(createSignals[0]!.aborted).toBe(true);
+    expect(context!.res.headers.getSetCookie()).toEqual([]);
   });
 
   it("forwarded headers never choose the namespace", async () => {

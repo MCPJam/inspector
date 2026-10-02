@@ -9,7 +9,6 @@ import { resetGuestJwksCacheForTests } from "../../../services/guest-token-verif
 import { resetGuestAuthorityForTests } from "../../guest-authority.js";
 import {
   classifyChatRequestActor,
-  isGuestOrAnonymous,
   isGuestOrAnonymousRequest,
   isVerifiedMember,
 } from "../local-engine-request.js";
@@ -118,7 +117,6 @@ describe("classifyChatRequestActor — the local-engine boundary", () => {
       const actor = await classify(header);
       expect(actor.kind).toBe("anonymous");
       expect(isVerifiedMember(actor)).toBe(false);
-      expect(isGuestOrAnonymous(actor)).toBe(true);
     }
   });
 
@@ -136,7 +134,6 @@ describe("classifyChatRequestActor — the local-engine boundary", () => {
     const actor = await classify("Bearer anything-at-all");
     expect(actor.kind).toBe("unverified");
     expect(isVerifiedMember(actor)).toBe(false);
-    expect(isGuestOrAnonymous(actor)).toBe(false);
   });
 
   it("an expired AuthKit session ⇒ unverified", async () => {

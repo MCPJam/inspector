@@ -216,6 +216,14 @@ describe("workos authkit local session bridge", () => {
       expect(res.headers.get("location")).toBeNull();
     });
 
+    it("refuses an authorize redirect that names a second client behind ours", async () => {
+      const res = await createTestApp().request(
+        `${LOCAL}/user_management/authorize?client_id=${CLIENT_ID}&client_id=client_other`,
+      );
+      expect(res.status).toBe(400);
+      expect(res.headers.get("location")).toBeNull();
+    });
+
     it("redirects an authorize request for this client", async () => {
       const res = await createTestApp().request(
         `${LOCAL}/user_management/authorize?client_id=${CLIENT_ID}&code_challenge=abc`,
@@ -375,7 +383,7 @@ describe("workos authkit local session bridge", () => {
       const nameB = useInstance(5175);
       expect(nameA).not.toBe(nameB);
 
-      const as = async <T>(port: number, run: () => Promise<T>) => {
+      const as = <T>(port: number, run: () => T): T => {
         useInstance(port);
         return run();
       };

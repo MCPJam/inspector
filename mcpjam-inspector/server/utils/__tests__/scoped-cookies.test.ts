@@ -1,5 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_SCOPED_NAMESPACES,
   SCOPED_COOKIE_BYTE_BUDGET,
@@ -14,6 +17,7 @@ import {
 import {
   computeLocalSessionNamespace,
   resolveBrowserPort,
+  resolveLocalSessionNamespace,
 } from "../local-session-namespace.js";
 
 const SECRET = "machine-local-secret";
@@ -25,6 +29,7 @@ function ns(i: number): string {
     browserPort: 5173 + i,
     backendIdentity: "https://backend.convex.site",
     workosClientId: "client_dev",
+    guestAuthorityId: "hosted:https://app.mcpjam.com",
   }).id;
 }
 
@@ -183,14 +188,54 @@ describe("sealing", () => {
       }),
     ).toBeNull();
   });
+
+  it("refuses a truncated auth tag", () => {
+    const a = ns(1);
+    const parts = sealed("workos", a, NOW).split(".");
+    parts[4] = Buffer.from(parts[4]!, "base64url")
+      .subarray(0, 4)
+      .toString("base64url");
+    expect(
+      unsealScopedCookie({
+        kind: "workos",
+        nsId: a,
+        value: parts.join("."),
+        nowMs: NOW,
+        secret: SECRET,
+      }),
+    ).toBeNull();
+  });
+
+  it("raises a cookie-secret failure instead of reading it as no session", () => {
+    const value = sealed("workos", ns(1), NOW);
+    const dir = mkdtempSync(path.join(os.tmpdir(), "scoped-cookie-secret-"));
+    const blocker = path.join(dir, "not-a-directory");
+    writeFileSync(blocker, "");
+    vi.stubEnv("MCPJAM_WORKOS_SESSION_SECRET", "");
+    vi.stubEnv("GUEST_JWT_KEY_DIR", path.join(blocker, "secrets"));
+    try {
+      expect(() =>
+        unsealScopedCookie({
+          kind: "workos",
+          nsId: ns(1),
+          value,
+          nowMs: NOW,
+        }),
+      ).toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("namespace", () => {
-  it("differs by browser port, backend, and WorkOS client", () => {
+  it("differs by browser port, backend, WorkOS client, and guest authority", () => {
     const base = {
       browserPort: 5173,
       backendIdentity: "https://a.convex.site",
       workosClientId: "client_a",
+      guestAuthorityId: "hosted:https://app.mcpjam.com",
     };
     const id = computeLocalSessionNamespace(base).id;
     expect(id).toMatch(/^[0-9a-f]{12}$/);
@@ -206,6 +251,42 @@ describe("namespace", () => {
     expect(
       computeLocalSessionNamespace({ ...base, workosClientId: "client_b" }).id,
     ).not.toBe(id);
+    expect(
+      computeLocalSessionNamespace({
+        ...base,
+        guestAuthorityId: "backend:https://a.convex.site",
+      }).id,
+    ).not.toBe(id);
+  });
+
+  it("separates the hosted and backend guest authorities on one backend", () => {
+    const shared = {
+      MCPJAM_BROWSER_PORT: "5173",
+      CONVEX_HTTP_URL: "https://a.convex.site",
+      WORKOS_CLIENT_ID: "client_a",
+    };
+    const hosted = resolveLocalSessionNamespace({
+      ...shared,
+      MCPJAM_GUEST_AUTHORITY: "hosted",
+      MCPJAM_GUEST_AUTHORITY_ORIGIN: "https://a.convex.site",
+    });
+    const backend = resolveLocalSessionNamespace({
+      ...shared,
+      MCPJAM_GUEST_AUTHORITY: "backend",
+      MCPJAM_GUEST_SESSION_SHARED_SECRET: "backend-secret",
+    });
+    expect(hosted.guestAuthorityId).toBe("hosted:https://a.convex.site");
+    expect(backend.guestAuthorityId).toBe("backend:https://a.convex.site");
+    expect(hosted.id).not.toBe(backend.id);
+  });
+
+  it("still names a namespace when the guest authority is misconfigured", () => {
+    const resolved = resolveLocalSessionNamespace({
+      MCPJAM_BROWSER_PORT: "5173",
+      MCPJAM_GUEST_AUTHORITY: "backend",
+    });
+    expect(resolved.guestAuthorityId).toBe("unconfigured");
+    expect(resolved.id).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it("takes the browser port from configuration only", () => {

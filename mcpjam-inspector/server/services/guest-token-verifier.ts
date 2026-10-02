@@ -140,7 +140,7 @@ async function refreshAuthorityKeys(
   jwksUrl: string,
 ): Promise<AuthorityKeySet | undefined> {
   try {
-    const response = await fetchGuestJwks();
+    const response = await fetchGuestJwks(jwksUrl);
     if (!response) {
       logger.warn("[guest-auth] Failed to fetch guest JWKS: unavailable");
       return undefined;
@@ -168,6 +168,12 @@ async function refreshAuthorityKeys(
       } catch {
         // Skip malformed keys.
       }
+    }
+    // Replacing the cached set with an empty one would refuse every guest
+    // until the next refresh; treat it as the failed fetch it is.
+    if (keysByKid.size === 0) {
+      logger.warn("[guest-auth] Guest JWKS published no usable keys");
+      return undefined;
     }
 
     authorityKeysCache = { jwksUrl, fetchedAt: Date.now(), keysByKid };
@@ -229,8 +235,9 @@ async function getAuthorityVerificationKey(
   const now = Date.now();
   let keySet =
     authorityKeysCache?.jwksUrl === jwksUrl ? authorityKeysCache : undefined;
+  const backingOff = now - lastFailedRefreshAt < FAILED_REFRESH_BACKOFF_MS;
   const refresh = async () => {
-    if (now - lastFailedRefreshAt < FAILED_REFRESH_BACKOFF_MS) return keySet;
+    if (backingOff) return keySet;
     const fresh = await sharedAuthorityRefresh(jwksUrl);
     return fresh ?? keySet;
   };
@@ -240,7 +247,7 @@ async function getAuthorityVerificationKey(
     !keySet.keysByKid.has(kid) &&
     now - lastUnknownKidRefreshAt >= UNKNOWN_KID_REFRESH_INTERVAL_MS
   ) {
-    lastUnknownKidRefreshAt = now;
+    if (!backingOff) lastUnknownKidRefreshAt = now;
     keySet = await refresh();
   }
   if (keySet && Date.now() - keySet.fetchedAt >= AUTHORITY_JWKS_MAX_STALE_MS) {

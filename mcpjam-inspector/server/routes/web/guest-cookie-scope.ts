@@ -144,6 +144,19 @@ export function scopedGuestWrite(
   };
 }
 
+/** The scoped-cookie writes that mirror what the authority did to its cookie. */
+export function upstreamGuestCookieWrites(
+  setCookies: readonly string[],
+): ScopedCookieWrite[] {
+  const upstream = parseUpstreamGuestSetCookie(setCookies);
+  if (!upstream) return [];
+  return [
+    upstream.kind === "set"
+      ? scopedGuestWrite(upstream.value, upstream.maxAgeSeconds)
+      : { kind: "guest", value: null },
+  ];
+}
+
 /**
  * Mirror what the authority did to its cookie onto this namespace's scoped
  * cookie. Upstream `Set-Cookie` headers themselves are never passed through.
@@ -152,13 +165,8 @@ export function applyUpstreamGuestCookies(
   c: Context,
   setCookies: readonly string[],
 ): void {
-  const upstream = parseUpstreamGuestSetCookie(setCookies);
-  if (!upstream) return;
-  applyScopedCookieWrites(c, [
-    upstream.kind === "set"
-      ? scopedGuestWrite(upstream.value, upstream.maxAgeSeconds)
-      : { kind: "guest", value: null },
-  ]);
+  const writes = upstreamGuestCookieWrites(setCookies);
+  if (writes.length > 0) applyScopedCookieWrites(c, writes);
 }
 
 export function clearScopedGuestCookie(c: Context): void {
@@ -200,11 +208,15 @@ export function deleteMatchedLegacyGuestCookies(
 export type LocalGuestCookieResolution =
   /** This namespace already has a guest, or none could be migrated. */
   | { kind: "cookie"; upstream: string | null }
-  /** A legacy guest was matched and adopted; `result` is its session. */
+  /**
+   * A legacy guest was matched; `result` is its session and `write` adopts it
+   * into this namespace's scoped cookie.
+   */
   | {
       kind: "migrated";
       upstream: string;
       result: Extract<GuestSessionFetchResult, { kind: "session" }>;
+      write: ScopedCookieWrite;
     }
   /** A legacy lookup failed (not a miss); do not mint a replacement. */
   | {
@@ -214,7 +226,8 @@ export type LocalGuestCookieResolution =
 
 /**
  * Which guest this local request is about, migrating a legacy one if this
- * namespace has none. Writes the scoped cookie for a migrated guest.
+ * namespace has none. Writes nothing: a migrated guest's scoped cookie comes
+ * back as `write`, for the caller to apply only if its response still can.
  */
 export async function resolveLocalGuestCookie(
   c: Context,
@@ -243,14 +256,16 @@ export async function resolveLocalGuestCookie(
               value: legacy,
               maxAgeSeconds: DEFAULT_UPSTREAM_GUEST_COOKIE_MAX_AGE_S,
             };
-      applyScopedCookieWrites(c, [
-        scopedGuestWrite(adopted.value, adopted.maxAgeSeconds),
-      ]);
       logger.info("Migrated a legacy local guest cookie", {
         event: "guest_auth.legacy_cookie_migrated",
         namespace: currentNamespace().id,
       });
-      return { kind: "migrated", upstream: adopted.value, result };
+      return {
+        kind: "migrated",
+        upstream: adopted.value,
+        result,
+        write: scopedGuestWrite(adopted.value, adopted.maxAgeSeconds),
+      };
     }
     if (result.kind === "error" && result.status !== 403) {
       logger.warn(

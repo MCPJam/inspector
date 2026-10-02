@@ -64,6 +64,7 @@ export const SCOPED_COOKIE_BYTE_BUDGET = 6 * 1024;
 export const WORKOS_SCOPED_COOKIE_MAX_AGE_S = 30 * 24 * 60 * 60;
 
 const SEAL_VERSION = "v1";
+const AUTH_TAG_BYTES = 16;
 
 export function scopedCookieName(kind: ScopedCookieKind, nsId: string): string {
   return `${PREFIX[kind]}${nsId}`;
@@ -180,19 +181,24 @@ export function unsealScopedCookie(args: {
   ];
   const meta = parseScopedCookieMeta(args.value);
   if (!meta || meta.expiresAtMs <= (args.nowMs ?? Date.now())) return null;
+  const tag = Buffer.from(tagPart, "base64url");
+  if (tag.length !== AUTH_TAG_BYTES) return null;
+  // Outside the try: a secret-store failure is a configuration error, not an
+  // unreadable cookie, and must not quietly sign the user out.
+  const key = deriveKey(
+    args.secret ?? getMachineCookieSecret(),
+    args.kind,
+    args.nsId,
+  );
   try {
-    const key = deriveKey(
-      args.secret ?? getMachineCookieSecret(),
-      args.kind,
-      args.nsId,
-    );
     const decipher = createDecipheriv(
       "aes-256-gcm",
       key,
       Buffer.from(ivPart, "base64url"),
+      { authTagLength: AUTH_TAG_BYTES },
     );
     decipher.setAAD(aad(args.kind, args.nsId, iat, exp));
-    decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
+    decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([
       decipher.update(Buffer.from(ctPart, "base64url")),
       decipher.final(),

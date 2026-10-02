@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { resolveWorkosClientId } from "../services/authkit-jwt.js";
+import {
+  GuestAuthorityConfigError,
+  resolveGuestAuthority,
+} from "./guest-authority.js";
 
 /**
  * The local session namespace: which Inspector instance a browser session
@@ -17,11 +21,14 @@ import { resolveWorkosClientId } from "../services/authkit-jwt.js";
  *     (`MCPJAM_BROWSER_PORT`, set by the launcher; else the Vite client port in
  *     development; else the server port);
  *   - the backend identity: the Convex HTTP origin this instance talks to;
- *   - the WorkOS client id the instance signs in with.
+ *   - the WorkOS client id the instance signs in with;
+ *   - the guest authority's identity (`guest-authority.ts`): the hosted and
+ *     backend authorities can share one `CONVEX_HTTP_URL`, and a guest cookie
+ *     minted by one must never be presented to the other.
  *
  * Never from `Origin`, `Referer`, `Host` or `X-Forwarded-*`: a request header
  * chooses nothing about whose session it reads. Two instances that differ in
- * any of the three never share a session, which is also what keeps a session
+ * any of the four never share a session, which is also what keeps a session
  * minted for one backend or WorkOS client from being replayed against another.
  */
 export interface LocalSessionNamespace {
@@ -30,6 +37,7 @@ export interface LocalSessionNamespace {
   browserPort: number;
   backendIdentity: string;
   workosClientId: string;
+  guestAuthorityId: string;
 }
 
 function parsePort(raw: string | undefined): number | undefined {
@@ -70,10 +78,27 @@ export function resolveBackendIdentity(
   return "none";
 }
 
+/**
+ * The selected guest authority's id, or "unconfigured" when it cannot be
+ * resolved: a misconfigured guest authority fails every guest call on its own,
+ * and must not stop this instance from naming its WorkOS cookie.
+ */
+export function resolveGuestAuthorityIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  try {
+    return resolveGuestAuthority(env).id;
+  } catch (error) {
+    if (error instanceof GuestAuthorityConfigError) return "unconfigured";
+    throw error;
+  }
+}
+
 export function computeLocalSessionNamespace(parts: {
   browserPort: number;
   backendIdentity: string;
   workosClientId: string;
+  guestAuthorityId: string;
 }): LocalSessionNamespace {
   const id = createHash("sha256")
     .update(
@@ -82,6 +107,7 @@ export function computeLocalSessionNamespace(parts: {
         String(parts.browserPort),
         parts.backendIdentity,
         parts.workosClientId,
+        parts.guestAuthorityId,
       ].join("\0"),
     )
     .digest("hex")
@@ -96,6 +122,7 @@ export function resolveLocalSessionNamespace(
     browserPort: resolveBrowserPort(env),
     backendIdentity: resolveBackendIdentity(env),
     workosClientId: resolveWorkosClientId(env) ?? "none",
+    guestAuthorityId: resolveGuestAuthorityIdentity(env),
   });
 }
 

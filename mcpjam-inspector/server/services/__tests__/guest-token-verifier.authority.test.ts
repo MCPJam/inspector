@@ -150,6 +150,67 @@ describe("guest bearer verification against the selected authority", () => {
     expect(vi.mocked(global.fetch).mock.calls.length).toBeLessThanOrEqual(2);
   });
 
+  it("does not spend the unknown-kid throttle while a failed refresh is backing off", async () => {
+    const current = rsa();
+    const next = rsa();
+    published = [await jwkFor(current.publicKey, "guest-2")];
+    const start = Date.now();
+    vi.useFakeTimers({ now: start, toFake: ["Date"] });
+    await validateGuestTokenDetailedAsync(
+      await token(current.privateKey, "guest-2"),
+    );
+    const nextBearer = await token(next.privateKey, "guest-3");
+
+    // A slow failing refresh: the backoff runs from when it finished.
+    const servedFetch = global.fetch;
+    let fail: () => void = () => {};
+    global.fetch = vi.fn(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          fail = () => reject(new TypeError("fetch failed"));
+        }),
+    ) as typeof fetch;
+    vi.setSystemTime(start + 1_000);
+    const pending = validateGuestTokenDetailedAsync(nextBearer);
+    vi.setSystemTime(start + 11_000);
+    fail();
+    expect((await pending).valid).toBe(false);
+
+    // Throttle window over, backoff not: nothing is fetched.
+    global.fetch = servedFetch;
+    vi.mocked(global.fetch).mockClear();
+    vi.setSystemTime(start + 32_000);
+    expect((await validateGuestTokenDetailedAsync(nextBearer)).valid).toBe(
+      false,
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    // Backoff over: the rotated key is picked up on the next token naming it.
+    published = [await jwkFor(next.publicKey, "guest-3")];
+    vi.setSystemTime(start + 42_000);
+    expect((await validateGuestTokenDetailedAsync(nextBearer)).valid).toBe(
+      true,
+    );
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the previous key set when the authority publishes no usable keys", async () => {
+    const current = rsa();
+    published = [await jwkFor(current.publicKey, "guest-2")];
+    const bearer = await token(current.privateKey, "guest-2");
+    const start = Date.now();
+    vi.useFakeTimers({ now: start, toFake: ["Date"] });
+    expect((await validateGuestTokenDetailedAsync(bearer)).valid).toBe(true);
+
+    published = [];
+    vi.setSystemTime(start + 6 * 60 * 1000);
+    expect((await validateGuestTokenDetailedAsync(bearer)).valid).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    // An empty set is a failed refresh: it backs off like one.
+    expect((await validateGuestTokenDetailedAsync(bearer)).valid).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("shares one JWKS fetch among concurrent verifications, succeeding or failing", async () => {
     const current = rsa();
     published = [await jwkFor(current.publicKey, "guest-2")];
