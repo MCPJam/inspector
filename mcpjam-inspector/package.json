@@ -51,6 +51,7 @@
     "predev:app": "node scripts/check-dev-env.mjs --task=dev && npm run sdk:build && npm run bundle:all",
     "dev:app": "node scripts/dev-session-token.mjs dev:app:processes",
     "dev:worktree": "node scripts/dev-worktree.mjs",
+    "dev:setup-guest-auth": "node scripts/dev-setup-guest-auth.mjs",
     "worktree": "node scripts/worktree.mjs",
     "dev:hosted": "cross-env VITE_MCPJAM_HOSTED_MODE=true WEB_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 npm run dev",
     "sdk:build": "npm --prefix ../sdk run build",

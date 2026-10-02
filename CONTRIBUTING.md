@@ -99,9 +99,60 @@ config, not in this repo):
 ```bash
 npx convex env set WORKOS_CLIENT_ID client_01KTN2EWHHJCKRB8RSR307X4SG
 npx convex env set AUTHKIT_DOMAIN  deep-vanilla-68-test.authkit.app
-npx convex env set GUEST_JWKS_URL  http://localhost:6274/api/web/guest-jwks
 npx convex env list   # verify WORKOS_CLIENT_ID / AUTHKIT_DOMAIN are the dev values
 ```
+
+Do not point `GUEST_JWKS_URL` anywhere: a development deployment verifies guest
+tokens with its own `/guest/jwks` by default. (The shared OSS deployment's
+pairing with the hosted guest authority is managed by operators.)
+
+### Guest sessions
+
+The Inspector never writes configuration to a backend while it runs. Guests come
+from ONE guest authority per instance:
+
+- **Standard profile** (the committed `.env.local`, and packaged releases): the
+  hosted Inspector at `app.mcpjam.com`. Nothing to set up.
+- **Your own development deployment**: initialize it once, explicitly:
+
+  ```bash
+  npm run dev:setup-guest-auth -w @mcpjam/inspector -- --deployment dev:<deployment-name> \
+    --env-file mcpjam-inspector/.env.development.local
+  ```
+
+  This accepts only a fully qualified `dev:` selector, runs the Convex CLI from an
+  isolated directory with your shell's `CONVEX_*` settings removed, initializes only
+  missing values (it never overwrites, never writes `GUEST_JWKS_URL`), and adds the
+  deployment's addresses and guest credentials to the profile you name.
+
+### Running several instances (worktrees)
+
+```bash
+npm run dev:worktree -w @mcpjam/inspector -- <N> [local|staging|preview <viteConvexUrl> <convexHttpUrl>] [--env-file <profile>]
+```
+
+Instance `N` gets client `5173+N`, server `6274+N`, platform worker `8787+N` and
+worker debugger `9229+N` (`--client-port`, `--server-port`, `--worker-port`,
+`--debugger-port` override them; `--no-worker` skips the worker). The launcher
+resolves ONE profile for the instance and passes it to the server, Vite and the
+worker, none of which then reads `.env` files on its own:
+
+- `--env-file <profile>` is the whole profile and wins over everything.
+- `local` (default): the committed `.env.local`, overlaid by this worktree's
+  `.env.development.local` — or, only when you named no target, the main
+  worktree's, read in place (secrets are never copied between worktrees).
+- `staging` / `preview` never inherit the local profile.
+
+Backend settings (Convex addresses, guest authority, service tokens, `COMPUTERS_*`,
+`DEPLOYMENT_SESSION_JWT_*`) and sign-in settings (WorkOS, CLI/Slack/Discord auth) are
+each taken as a group from one layer, so a profile that points at another backend never
+picks up the standard profile's credentials. Values for those settings exported in your
+shell are ignored (the launcher lists them). Callback origins (`CLI_AUTH_PUBLIC_ORIGIN`
+and the Slack/Discord link origins) follow the instance's port.
+
+Each instance keeps its own sign-in and guest cookies, so instances never sign each other
+in or out. After upgrading from an older Inspector, each instance asks you to sign in
+once; guest sessions carry over.
 
 ### Electron Development
 
