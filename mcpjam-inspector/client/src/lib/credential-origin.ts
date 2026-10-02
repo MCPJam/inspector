@@ -3,9 +3,9 @@
  *
  * The backend clears a row's saved headers, env, OAuth tokens and client secret
  * when the row's DESTINATION moves — a `url` change that crosses their origin,
- * or a `command`/`args` swap on a stdio row. Either one is the same primitive:
- * anyone who can edit a project points a server somewhere they control and has
- * the Inspector deliver somebody else's credential to it.
+ * or a `command`/`args` swap on a stdio row. Either one would send a stored
+ * credential to a destination it was not entered for, so it is cleared rather
+ * than carried over.
  *
  * That is the right behaviour and a genuinely surprising one — it destroys data
  * the person saving may not have entered and cannot see. So the edit form has

@@ -26,6 +26,7 @@ import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 
 const serverGroups = new Hono();
@@ -53,7 +54,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -93,10 +94,16 @@ serverGroups.get("/projects/:projectId/server-groups", async (c) => {
   try {
     rows = (await readClient.query(
       "serverAttachments:listServerAttachments" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as ServerGroupRow[] | null | undefined;
   } catch (error) {
-    throw translateServerGroupError(error);
+    // The project-scoped list read. A plain membership refusal — masked to
+    // "Server Error" in production — answers the same 404 an unknown project
+    // does instead of the write translator's terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(error, "Server group not found") ??
+      translateServerGroupError(error)
+    );
   }
   return v1PageJson(c, (rows ?? []).map(toServerGroupDto));
 });
@@ -106,7 +113,7 @@ serverGroups.post("/projects/:projectId/server-groups", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     createServerGroupSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const convexClient = createConvexClient(await getConvexBearerForRequest(c));
   let created: ServerGroupRow;
@@ -120,7 +127,7 @@ serverGroups.post("/projects/:projectId/server-groups", async (c) => {
           ? { description: body.description }
           : {}),
         serverIds: body.serverIds,
-      } as any
+      } as any,
     )) as ServerGroupRow;
   } catch (error) {
     throw translateServerGroupError(error);

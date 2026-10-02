@@ -78,10 +78,7 @@ describe("useUnifiedConvexAuth", () => {
     });
     expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(2);
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.user).toEqual({
-      __guest: true,
-      id: "__guest__",
-    });
+    expect(result.current.isAuthenticated).toBe(true);
     expect(mockState.reportCaught).not.toHaveBeenCalled();
   });
 
@@ -100,7 +97,7 @@ describe("useUnifiedConvexAuth", () => {
     expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
     expect(mockState.reportCaught).not.toHaveBeenCalled();
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
   });
 
   it("reports once after guest session bootstrap exhausts every attempt", async () => {
@@ -124,7 +121,7 @@ describe("useUnifiedConvexAuth", () => {
       extra: { attempts: 4 },
     });
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
   });
 
   it("reports the real cause when guest session bootstrap fails", async () => {
@@ -242,7 +239,7 @@ describe("useUnifiedConvexAuth", () => {
 
     // Convex authenticating as the guest is the real activation signal.
     await act(async () => {
-      await result.current.getAccessToken();
+      await result.current.fetchAccessToken();
     });
     expect(mockState.markGuestActivated).toHaveBeenCalledWith("guest-1");
   });
@@ -293,7 +290,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let token: string | null = null;
       await act(async () => {
-        token = await result.current.getAccessToken();
+        token = await result.current.fetchAccessToken();
       });
 
       expect(token).toBe("fresh-guest-token");
@@ -316,7 +313,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let pending: Promise<string | null>;
       await act(async () => {
-        pending = result.current.getAccessToken();
+        pending = result.current.fetchAccessToken();
         await vi.advanceTimersByTimeAsync(500 + 1500);
       });
 
@@ -336,7 +333,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let pending: Promise<string | null>;
       await act(async () => {
-        pending = result.current.getAccessToken();
+        pending = result.current.fetchAccessToken();
         await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
       });
 
@@ -358,7 +355,7 @@ describe("useUnifiedConvexAuth", () => {
       expect(useSessionRefreshStore.getState().kind).toBe("transient");
     });
 
-    it("reports the real cause and status when the guest ladder is exhausted", async () => {
+    it("reports a safe message and status when the guest ladder is exhausted", async () => {
       mockState.getCachedGuestSession.mockReturnValue(null);
       mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
@@ -372,7 +369,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let pending: Promise<string | null>;
       await act(async () => {
-        pending = result.current.getAccessToken();
+        pending = result.current.fetchAccessToken();
         await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
       });
 
@@ -381,11 +378,14 @@ describe("useUnifiedConvexAuth", () => {
       });
       expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(4);
       expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
-      expect(mockState.reportCaught).toHaveBeenCalledWith(serverError, {
-        source: "guest_token_refresh",
-        level: "warning",
-        extra: { attempts: 4, httpStatus: 503 },
-      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(
+        new Error("guest_token_refresh failed"),
+        {
+          source: "guest_token_refresh",
+          level: "warning",
+          extra: { attempts: 4, httpStatus: 503 },
+        },
+      );
     });
 
     it("reports the upstream status when the server's own hop got one", async () => {
@@ -407,41 +407,48 @@ describe("useUnifiedConvexAuth", () => {
 
       let pending: Promise<string | null>;
       await act(async () => {
-        pending = result.current.getAccessToken();
+        pending = result.current.fetchAccessToken();
         await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
       });
 
       await act(async () => {
         await expect(pending).resolves.toBeNull();
       });
-      expect(mockState.reportCaught).toHaveBeenCalledWith(relayError, {
-        source: "guest_token_refresh",
-        level: "warning",
-        extra: {
-          attempts: 4,
-          httpStatus: 503,
-          upstreamReason: "upstream_status",
-          upstreamStatus: 522,
+      expect(mockState.reportCaught).toHaveBeenCalledWith(
+        new Error("guest_token_refresh failed"),
+        {
+          source: "guest_token_refresh",
+          level: "warning",
+          extra: {
+            attempts: 4,
+            httpStatus: 503,
+            upstreamReason: "upstream_status",
+            upstreamStatus: 522,
+          },
         },
-      });
+      );
     });
 
     it("still honors the explicit force-refresh path", async () => {
       mockState.getCachedGuestSession.mockReturnValue(session);
       mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
-      mockState.forceRefreshGuestSessionOrThrow.mockResolvedValue("forced-token");
+      mockState.forceRefreshGuestSessionOrThrow.mockResolvedValue(
+        "forced-token",
+      );
 
       const result = await mountGuest();
 
       let token: string | null = null;
       await act(async () => {
-        token = await result.current.getAccessToken({
+        token = await result.current.fetchAccessToken({
           forceRefreshToken: true,
         });
       });
 
       expect(token).toBe("forced-token");
-      expect(mockState.forceRefreshGuestSessionOrThrow).toHaveBeenCalledTimes(1);
+      expect(mockState.forceRefreshGuestSessionOrThrow).toHaveBeenCalledTimes(
+        1,
+      );
     });
 
     it("retries a transient WorkOS network failure", async () => {
@@ -455,7 +462,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let pending: Promise<string | null>;
       await act(async () => {
-        pending = result.current.getAccessToken();
+        pending = result.current.fetchAccessToken();
         await vi.advanceTimersByTimeAsync(500 + 1500);
       });
 
@@ -482,7 +489,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let token: string | null = "unset";
       await act(async () => {
-        token = await result.current.getAccessToken();
+        token = await result.current.fetchAccessToken();
       });
 
       expect(token).toBeNull();
@@ -504,7 +511,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let token: string | null = "unset";
       await act(async () => {
-        token = await result.current.getAccessToken();
+        token = await result.current.fetchAccessToken();
       });
 
       expect(token).toBeNull();
@@ -524,7 +531,7 @@ describe("useUnifiedConvexAuth", () => {
       const result = await mountGuest();
 
       await act(async () => {
-        await result.current.getAccessToken();
+        await result.current.fetchAccessToken();
       });
 
       expect(useSessionRefreshStore.getState().status).toBe("idle");
@@ -539,7 +546,7 @@ describe("useUnifiedConvexAuth", () => {
       await act(async () => {
         await Promise.resolve();
       });
-      const before = result.current.getAccessToken;
+      const before = result.current.fetchAccessToken;
 
       // A fresh identity is the whole retry lever: @convex-dev/workos keys its
       // fetchAccessToken on it, and ConvexAuthState re-runs setAuth when that
@@ -548,7 +555,7 @@ describe("useUnifiedConvexAuth", () => {
         useSessionRefreshStore.getState().retry();
       });
 
-      expect(result.current.getAccessToken).not.toBe(before);
+      expect(result.current.fetchAccessToken).not.toBe(before);
     });
 
     it("reports once when the WorkOS ladder is exhausted", async () => {
@@ -561,7 +568,7 @@ describe("useUnifiedConvexAuth", () => {
 
       let pending: Promise<string | null>;
       await act(async () => {
-        pending = result.current.getAccessToken();
+        pending = result.current.fetchAccessToken();
         await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
       });
 
@@ -571,7 +578,7 @@ describe("useUnifiedConvexAuth", () => {
       expect(mockState.workos.getAccessToken).toHaveBeenCalledTimes(4);
       expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
       expect(mockState.reportCaught).toHaveBeenCalledWith(
-        expect.any(TypeError),
+        expect.any(Error),
         expect.objectContaining({
           source: "workos_token_refresh",
           level: "warning",
@@ -626,7 +633,7 @@ describe("useUnifiedConvexAuth on a vanity landing", () => {
     // Settled, not spinning: the surface renders instead of waiting on a
     // bootstrap that will never run.
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
 
     // Past the whole retry ladder, still nothing — and no error reported.
     await act(async () => {
@@ -669,6 +676,6 @@ describe("useUnifiedConvexAuth on a vanity landing", () => {
 
     expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.user).not.toBeNull();
+    expect(result.current.isAuthenticated).toBe(true);
   });
 });
