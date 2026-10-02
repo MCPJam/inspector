@@ -50,6 +50,7 @@ import {
   type DirectScopeStepUpReplayDescriptor,
 } from "../scope-step-up-replay";
 import { registerScopeStepUpHostBridge } from "../scope-step-up";
+import { authorizationFlowDigest } from "../oauth/flow-digest";
 
 const PRM = "https://orders.example/.well-known/oauth-protected-resource/mcp";
 const OPERATION = { method: "tools/call" as const, operation: "list_orders" };
@@ -139,7 +140,7 @@ describe("auth challenge lifecycle", () => {
     readStoredOAuthConfigMock.mockReturnValue({});
     resolveStoredIssuerMock.mockReturnValue("https://as.example");
     initiateOAuthMock.mockImplementation(async (options) => {
-      options.onAuthorizationRedirect?.({ state: "flow-1" });
+      await options.onAuthorizationRedirect?.({ state: "flow-1" });
       return { success: true };
     });
   });
@@ -299,7 +300,7 @@ describe("auth challenge lifecycle", () => {
       expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
     });
 
-    it("saves a read-only call for replay, bound to the flow's state", async () => {
+    it("saves a read-only call for replay, bound to a digest of the flow's state", async () => {
       const card = await presentCard();
       const result = await connectAuthChallenge(card, server, {
         isTrusted: true,
@@ -308,16 +309,18 @@ describe("auth challenge lifecycle", () => {
       expect(peekPendingDirectScopeStepUpReplay()).toMatchObject({
         phase: "awaiting_oauth",
         reason: "authorization_required",
-        oauthState: "flow-1",
+        flowDigest: await authorizationFlowDigest("flow-1"),
         descriptor: REPLAY,
       });
       expect(peekPendingDirectScopeStepUpReplay()).not.toHaveProperty(
         "requiresConfirmation",
       );
+      // The state itself is never stored.
+      expect(JSON.stringify({ ...sessionStorage })).not.toContain("flow-1");
 
       // Another flow's callback does not replay it.
       expect(
-        settleSignInCallback("orders", { state: "flow-other" }),
+        await settleSignInCallback("orders", { state: "flow-other" }),
       ).toMatch(/not retried/);
       expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
     });
@@ -325,7 +328,9 @@ describe("auth challenge lifecycle", () => {
     it("replays after its own callback", async () => {
       const card = await presentCard();
       await connectAuthChallenge(card, server, { isTrusted: true });
-      expect(settleSignInCallback("orders", { state: "flow-1" })).toBeUndefined();
+      expect(
+        await settleSignInCallback("orders", { state: "flow-1" }),
+      ).toBeUndefined();
       expect(
         claimPendingDirectScopeStepUpReplay({
           serverName: "orders",
@@ -357,7 +362,7 @@ describe("auth challenge lifecycle", () => {
         const card = await presentCard({ connectionId: "project-cred" });
         await connectAuthChallenge(card, server, { isTrusted: true });
         expect(
-          settleSignInCallback("orders", {
+          await settleSignInCallback("orders", {
             state: "flow-1",
             credentialId: "personal-cred",
           }),
@@ -394,7 +399,7 @@ describe("auth challenge lifecycle", () => {
     it("a repeat challenge after sign-in is permanent", async () => {
       const card = await presentCard();
       await connectAuthChallenge(card, server, { isTrusted: true });
-      settleSignInCallback("orders", { state: "flow-1" });
+      await settleSignInCallback("orders", { state: "flow-1" });
       const repeat = await presentAuthChallenge({
         server,
         signal: http401(),

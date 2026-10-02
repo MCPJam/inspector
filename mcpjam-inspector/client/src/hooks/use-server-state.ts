@@ -3077,7 +3077,7 @@ export function useServerState({
           const settledServerName =
             result.serverName ?? hostedCallbackContext.serverName;
           if (settledServerName) {
-            const notRetried = settleSignInCallback(settledServerName, {
+            const notRetried = await settleSignInCallback(settledServerName, {
               state,
               credentialId: result.credentialId,
             });
@@ -3231,7 +3231,7 @@ export function useServerState({
                 oauthTrace: result.oauthTrace,
               });
               logger.info("OAuth connection successful", { serverName });
-              const notRetried = settleSignInCallback(serverName, {
+              const notRetried = await settleSignInCallback(serverName, {
                 state,
                 credentialId: result.credentialId,
               });

@@ -48,11 +48,12 @@ export type PendingDirectScopeStepUpReplay = {
   /** Which credential the sign-in authorizes; see `scope-step-up-credential`. */
   credentialBinding?: StepUpCredentialBinding;
   /**
-   * The authorization request's `state`, recorded right before the redirect.
+   * A digest of the authorization request's `state`, recorded right before
+   * the redirect (never the state itself; see `authorizationFlowDigest`).
    * Only the callback for THIS flow may mark the call ready; another flow for
    * the same server cancels it instead of replaying it.
    */
-  oauthState?: string;
+  flowDigest?: string;
   /**
    * Set for a mid-session sign-in. A step-up leaves it absent.
    */
@@ -81,8 +82,8 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
       typeof value.expiresAt !== "number" ||
       (value.credentialBinding !== undefined &&
         !isStepUpCredentialBinding(value.credentialBinding)) ||
-      (value.oauthState !== undefined &&
-        typeof value.oauthState !== "string") ||
+      (value.flowDigest !== undefined &&
+        typeof value.flowDigest !== "string") ||
       (value.reason !== undefined &&
         value.reason !== "authorization_required") ||
       (value.requiresConfirmation !== undefined &&
@@ -127,10 +128,10 @@ export function savePendingDirectScopeStepUpReplay(input: {
   });
 }
 
-/** Record the `state` of the authorization request the saved call waits on. */
-export function setPendingDirectScopeStepUpReplayOAuthState(
+/** Bind the saved call to the authorization flow it waits on. */
+export function setPendingDirectScopeStepUpReplayFlowDigest(
   serverName: string,
-  oauthState: string,
+  flowDigest: string,
 ): void {
   const pending = readStored();
   if (
@@ -140,7 +141,7 @@ export function setPendingDirectScopeStepUpReplayOAuthState(
   ) {
     return;
   }
-  write({ ...pending, oauthState });
+  write({ ...pending, flowDigest });
 }
 
 export const SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE =
@@ -165,16 +166,16 @@ export function setPendingDirectScopeStepUpReplayCredentialBinding(
 export function settlePendingDirectScopeStepUpReplayAfterCallback(
   serverName: string,
   callbackCredentialId: string | undefined,
-  callbackState?: string | null,
+  callbackDigest?: string,
 ): string | undefined {
   const pending = readStored();
   if (!pending || pending.descriptor.serverName !== serverName) return undefined;
   // Bound to its flow: a callback for a different authorization request (an
   // older tab, a second Connect) must not replay this call's saved arguments.
   if (
-    pending.oauthState &&
-    callbackState &&
-    pending.oauthState !== callbackState
+    pending.flowDigest &&
+    callbackDigest &&
+    pending.flowDigest !== callbackDigest
   ) {
     sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
     return SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE;
@@ -193,14 +194,14 @@ export function settlePendingDirectScopeStepUpReplayAfterCallback(
 
 export function markPendingDirectScopeStepUpReplayReady(
   serverName: string,
-  callbackState?: string | null,
+  callbackDigest?: string,
 ): void {
   const pending = readStored();
   if (!pending || pending.descriptor.serverName !== serverName) return;
   if (
-    pending.oauthState &&
-    callbackState &&
-    pending.oauthState !== callbackState
+    pending.flowDigest &&
+    callbackDigest &&
+    pending.flowDigest !== callbackDigest
   ) {
     sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
     return;

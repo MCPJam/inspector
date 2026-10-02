@@ -1541,10 +1541,12 @@ export interface MCPOAuthOptions {
   onTraceUpdate?: (trace: OAuthTrace) => void;
   /**
    * Called with the authorization request's `state` right before the browser
-   * leaves for the authorization server. A caller that saved work to resume
-   * after sign-in records it, so only the callback for THIS flow resumes it.
+   * leaves for the authorization server, and awaited. A caller that saved
+   * work to resume after sign-in binds it to this flow (by a digest of the
+   * state, never the state itself), so only the callback for THIS flow
+   * resumes it.
    */
-  onAuthorizationRedirect?: (flow: { state?: string }) => void;
+  onAuthorizationRedirect?: (flow: { state?: string }) => void | Promise<void>;
 }
 
 export type OAuthProtocolResolutionSource =
@@ -2957,7 +2959,7 @@ export async function initiateOAuth(
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
         try {
-          options.onAuthorizationRedirect?.({
+          await options.onAuthorizationRedirect?.({
             state:
               typeof getState().state === "string"
                 ? (getState().state as string)

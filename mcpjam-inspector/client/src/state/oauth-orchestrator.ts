@@ -15,6 +15,7 @@ import {
   selectStoredResourceUrl,
   type BuiltOAuthRequest,
 } from "@/lib/oauth/oauth-request";
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   describeAsSlug,
   resolveStepUpAction,
@@ -331,7 +332,7 @@ export async function ensureAuthorizedForReconnect(
      */
     forceInteractiveFlow?: boolean;
     /** See `MCPOAuthOptions.onAuthorizationRedirect`. */
-    onAuthorizationRedirect?: (flow: { state?: string }) => void;
+    onAuthorizationRedirect?: (flow: { state?: string }) => void | Promise<void>;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -864,8 +865,12 @@ export async function applyToolCallStepUp(
     maxRetries?: number;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
-    /** See `MCPOAuthOptions.onAuthorizationRedirect`. */
-    onAuthorizationRedirect?: (flow: { state?: string }) => void;
+    /**
+     * Told the digest of the authorization request's `state` right before the
+     * redirect, so a saved call can be bound to this flow. See
+     * `authorizationFlowDigest`.
+     */
+    onAuthorizationFlow?: (flow: { digest: string }) => void;
     /**
      * Exact MCP operation whose retry budget this challenge consumes.
      * Defaults to a server-wide tools/call bucket only for compatibility with
@@ -971,7 +976,7 @@ export async function applyToolCallStepUp(
       resourceMetadataUrl,
       onTraceUpdate: options?.onTraceUpdate,
       beforeRedirect: options?.beforeRedirect,
-      onAuthorizationRedirect: options?.onAuthorizationRedirect,
+      onAuthorizationRedirect: flowDigestHook(options?.onAuthorizationFlow),
     });
   } catch (error) {
     writeStepUpAttempts(
@@ -1079,10 +1084,28 @@ type AuthChallengeLedgerEntry = {
   serverName: string;
   operation: StepUpOperationKey;
   phase: "awaiting_callback" | "signed_in";
-  /** The authorization request's `state`, once the redirect started. */
-  oauthState?: string;
+  /**
+   * A digest of the authorization request's `state`, once the redirect
+   * started (never the state itself; see `authorizationFlowDigest`).
+   */
+  flowDigest?: string;
   expiresAt: number;
 };
+
+/**
+ * The `onAuthorizationRedirect` hook that turns the flow's `state` into its
+ * digest before anything sees it. Awaited by the OAuth flow, so the digest is
+ * recorded before the browser leaves.
+ */
+function flowDigestHook(
+  onFlow: ((flow: { digest: string }) => void) | undefined,
+): ((flow: { state?: string }) => Promise<void>) | undefined {
+  if (!onFlow) return undefined;
+  return async ({ state }) => {
+    const digest = await authorizationFlowDigest(state);
+    if (digest) onFlow({ digest });
+  };
+}
 
 function authChallengeLedgerKey(operation: StepUpOperationKey): string {
   return `${AUTH_CHALLENGE_LEDGER_PREFIX}${encodeURIComponent(
@@ -1182,13 +1205,13 @@ function forEachAuthChallengeLedgerEntry(
  * to `signed_in`, so a repeat challenge on the same call is permanent.
  * Returns how many attempts it completed.
  *
- * When the callback's `state` is known, only the attempt that started that
- * flow completes. An attempt that recorded no state (the redirect never
- * reported one) completes on any callback for the server.
+ * When the callback's flow digest is known, only the attempt that started
+ * that flow completes. An attempt that recorded no digest (the redirect never
+ * reported a `state`) completes on any callback for the server.
  */
 export function markAuthChallengeSignedIn(
   serverName: string,
-  callbackState?: string | null,
+  callbackDigest?: string,
 ): number {
   let completed = 0;
   try {
@@ -1200,9 +1223,9 @@ export function markAuthChallengeSignedIn(
         return;
       }
       if (
-        callbackState &&
-        entry.oauthState &&
-        entry.oauthState !== callbackState
+        callbackDigest &&
+        entry.flowDigest &&
+        entry.flowDigest !== callbackDigest
       ) {
         return;
       }
@@ -1306,7 +1329,7 @@ export type AuthChallengeOutcome =
  * Without `confirmed: true` this has NO side effects: it gates and reports
  * whether a Connect card applies. A confirmed click writes the one-attempt
  * ledger and starts OAuth; the caller saves anything it will replay BEFORE
- * calling, and records the flow's `state` through `onAuthorizationRedirect`.
+ * calling, and binds it to the flow through `onAuthorizationFlow`.
  */
 export async function applyToolCallAuthChallenge(
   server: ServerWithName,
@@ -1315,7 +1338,8 @@ export async function applyToolCallAuthChallenge(
     operation: ToolCallStepUpOperation;
     confirmed: boolean;
     beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
-    onAuthorizationRedirect?: (flow: { state?: string }) => void;
+    /** Told the digest of the flow's `state`; see `authorizationFlowDigest`. */
+    onAuthorizationFlow?: (flow: { digest: string }) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
   },
 ): Promise<AuthChallengeOutcome> {
@@ -1372,13 +1396,13 @@ export async function applyToolCallAuthChallenge(
       ),
       onTraceUpdate: options.onTraceUpdate,
       beforeRedirect: options.beforeRedirect,
-      onAuthorizationRedirect: (flow) => {
+      onAuthorizationRedirect: flowDigestHook((flow) => {
         const current = readAuthChallengeLedger(operationKey);
-        if (current?.phase === "awaiting_callback" && flow.state) {
-          writeAuthChallengeLedger({ ...current, oauthState: flow.state });
+        if (current?.phase === "awaiting_callback") {
+          writeAuthChallengeLedger({ ...current, flowDigest: flow.digest });
         }
-        options.onAuthorizationRedirect?.(flow);
-      },
+        options.onAuthorizationFlow?.(flow);
+      }),
     });
   } catch (error) {
     clearAuthChallengeLedger(operationKey);
