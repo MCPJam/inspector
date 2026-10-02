@@ -41,8 +41,10 @@ export type SharedSlackChannelDto = {
   channel: SharedSlackChannelView | null;
   canProvision: boolean;
   canManageInvite: boolean;
-  // A paid org's automatic onboarding job is queued or running and will
-  // email the owner a Slack invite. Optional: older backends omit it.
+  // A paid org's automatic onboarding job is queued or running. With no
+  // channel yet it means an invite is on its way to the owner; with a channel
+  // row, the worker is still handling it, so Retry is hidden. Optional: older
+  // backends omit it.
   automaticInvitePending?: boolean;
 };
 
@@ -104,7 +106,7 @@ function errorCopy(
     case "provision_outcome_unknown":
       return "We couldn't confirm the shared channel was created. Contact support to finish setting it up.";
     case "invite_outcome_unknown":
-      return "We couldn't confirm Slack sent your invite. Check your email, or retry to look for it again — retrying won't send a second invite.";
+      return "We couldn't confirm Slack sent your invite. Check your email, or retry to look for it again. Retrying won't send a second invite.";
     case "owner_changed":
       return "Your organization's owner changed during setup. We'll retry and invite the new owner.";
     case "not_paid":
@@ -215,7 +217,12 @@ export function SharedSlackChannelCard({
 
   useEffect(() => {
     if (!enabled || !organizationId || dto === undefined) return;
-    if (dto.channel === null && !dto.canProvision) return;
+    if (
+      dto.channel === null &&
+      !dto.canProvision &&
+      !dto.automaticInvitePending
+    )
+      return;
     const state = cardState(dto);
     const key = `${organizationId}:${state}`;
     if (viewedKey.current === key) return;
@@ -258,7 +265,14 @@ export function SharedSlackChannelCard({
 
   if (!enabled || !organizationId) return null;
   if (dto === undefined) return <SharedSlackSkeleton />;
-  if (dto.channel === null && !dto.canProvision) return null;
+  // A member can't set anything up, but should still see that an invite is
+  // on its way to their owner.
+  if (
+    dto.channel === null &&
+    !dto.canProvision &&
+    !dto.automaticInvitePending
+  )
+    return null;
 
   const channel = dto.channel;
   const showSpinner = busy || channel?.status === "provisioning";
@@ -420,6 +434,7 @@ export function SharedSlackChannelCard({
           </p>
         </div>
         {dto.canManageInvite &&
+        !dto.automaticInvitePending &&
         !SUPPORT_ONLY_ERROR_CODES.has(channel.errorCode ?? "") ? (
           <button
             type="button"

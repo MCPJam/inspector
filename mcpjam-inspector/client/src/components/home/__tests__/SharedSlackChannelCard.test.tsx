@@ -146,6 +146,28 @@ describe("SharedSlackChannelCard", () => {
       screen.queryByText("Your Slack invite is on its way")
     ).not.toBeInTheDocument();
     expect(screen.getByText(/owner changed during setup/)).toBeInTheDocument();
+    // The automatic worker still owns this row, so no competing manual Retry.
+    expect(
+      screen.queryByRole("button", { name: "Retry" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a member that the invite is on its way to their owner", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        canProvision: false,
+        canManageInvite: false,
+        automaticInvitePending: true,
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText("Your Slack invite is on its way")
+    ).toBeInTheDocument();
+    expect(trackMock).toHaveBeenCalledWith("home_shared_slack_card_viewed", {
+      location: "home",
+      state: "automatic_invite_pending",
+    });
   });
 
   it("shows Slack's real logo, not a placeholder glyph or Slackbot", () => {
@@ -291,7 +313,7 @@ describe("SharedSlackChannelCard", () => {
   });
 
   it.each([
-    ["invite_outcome_unknown", /retrying won't send a second invite/, true],
+    ["invite_outcome_unknown", /Retrying won't send a second invite/, true],
     ["owner_changed", /invite the new owner/, true],
     ["not_paid", /no longer has an active paid plan/, true],
     ["stale_claim", /Channel setup was interrupted/, true],
