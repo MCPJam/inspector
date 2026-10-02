@@ -2,7 +2,8 @@ import { buildEvalServerPreview } from "../evaluate/eval-server-preview-model";
 import { readEvalServerPreviewDraft } from "../evaluate/eval-server-preview-state";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import * as errorReporting from "@/lib/error-reporting";
 import userEvent from "@testing-library/user-event";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -1059,6 +1060,50 @@ describe("EvaluateTab", () => {
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
       consoleError.mockRestore();
+    }
+  });
+
+  it.each([
+    "Failed to fetch dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-old.js",
+    "error loading dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-old.js",
+  ])("reloads the page for a rejected module: %s", (message) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reportBoundaryError = vi
+      .spyOn(errorReporting, "reportBoundaryError")
+      .mockImplementation(() => {});
+    const error = new TypeError(message);
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+
+    try {
+      mocks.useEvalQueries.mockImplementation(() => {
+        throw error;
+      });
+      render(<EvaluateTab projectId="project-1" />);
+
+      expect(
+        screen.getByRole("heading", { name: "Please refresh the page" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Something didn’t load. Refresh to try again."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(message)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Try again" }),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+      expect(reportBoundaryError).toHaveBeenCalledWith(
+        error,
+        expect.any(Object),
+        undefined,
+      );
+    } finally {
+      consoleError.mockRestore();
+      reportBoundaryError.mockRestore();
+      vi.unstubAllGlobals();
     }
   });
 
