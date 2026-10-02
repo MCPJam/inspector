@@ -8,8 +8,9 @@ import {
 } from "../../shared/server-request-budget.js";
 
 /**
- * MJ-012. A per-server request budget for the MCP operation routes on
- * `/api/web`: `/tools/*`, `/resources/*`, `/prompts/*` and `/tasks/*`.
+ * MJ-012. A per-server request budget for the MCP operation routes: on
+ * `/api/web`, `/tools/*`, `/resources/*`, `/prompts/*` and `/tasks/*`; on
+ * `/api/v1`, their twins under `/projects/:projectId/servers/:serverId/`.
  *
  * Every request on those routes opens a connection to one of the caller's MCP
  * servers and runs one operation on it. The limiters already in front of them
@@ -24,8 +25,11 @@ import {
  *
  * - PRINCIPAL: the identity `bearerAuthMiddleware` resolved, which is why this
  *   is mounted behind it — see `principalKey`.
- * - SERVER: the `serverId` the route handler connects to, read from the same
- *   JSON body the handler reads. A request that does not name exactly one
+ * - SERVER: the `serverId` the route handler connects to. On `/api/v1` that
+ *   is the `:serverId` path parameter, which the handler lets win over the
+ *   body; on `/api/web` it is read from the same JSON body the handler reads.
+ *   Both spell the key the same way, so the two surfaces share one bucket per
+ *   server rather than one each. A request that does not name exactly one
  *   server — a batch (`/prompts/list-multi` names several), or a body the
  *   handler will reject — is charged to ONE shared bucket per principal and
  *   family instead. Charged rather than skipped, so omitting the field is never
@@ -34,6 +38,8 @@ import {
  *   a `serverId` and a `serverIds` list is charged to both buckets.
  * - FAMILY: tools, resources, prompts and tasks each get their own bucket, so
  *   polling a server's tasks does not spend the budget for listing its tools.
+ *   Calling a tool (`/tools/execute`, `/tools/call`) is its own bucket inside
+ *   the tools family, a little deeper than the listing one — see CALL_BURST.
  *
  * ## PER REPLICA, like every limiter in this directory
  *
@@ -52,6 +58,18 @@ import {
  * host-compat check), so a page load spends a few of these.
  */
 const BURST = 8;
+
+/**
+ * Requests a full tool-CALL bucket holds. A widget on screen calls its server's
+ * tools in bursts of its own, and those calls used to share the listing
+ * bucket, so opening a server and using its widget spent one budget. They are
+ * apart now, and this one is one deeper.
+ *
+ * Kept below 10 on purpose: with no replica affinity, N replicas admit about
+ * N × this at once, and 40 rapid calls to one server must still meet a 429
+ * across four replicas.
+ */
+const CALL_BURST = 9;
 
 /**
  * One request returns to the bucket every 2 s — 30 a minute sustained, per
@@ -93,7 +111,11 @@ const SHARED_SERVER_KEY = "*";
 
 export type McpOperationFamily = "tools" | "resources" | "prompts" | "tasks";
 
-type Bucket = { tokens: number; updatedAt: number };
+/** `burst` is the bucket's capacity: BURST, or CALL_BURST for tool calls. */
+type Bucket = { tokens: number; updatedAt: number; burst: number };
+
+/** A bucket to charge, and the capacity it starts with. */
+type BucketKey = { key: string; burst: number };
 
 const buckets = new Map<string, Bucket>();
 let lastPruneAtCap = 0;
@@ -101,13 +123,13 @@ let lastPruneAtCap = 0;
 /** Tokens `bucket` holds at `now`, with the refill applied and capped. */
 function available(bucket: Bucket, now: number): number {
   const elapsed = Math.max(0, now - bucket.updatedAt);
-  return Math.min(BURST, bucket.tokens + elapsed / REFILL_INTERVAL_MS);
+  return Math.min(bucket.burst, bucket.tokens + elapsed / REFILL_INTERVAL_MS);
 }
 
-/** Drop every bucket that is back at BURST. See MAX_ENTRIES. */
+/** Drop every bucket that is back at its burst. See MAX_ENTRIES. */
 function pruneFull(now: number): void {
   for (const [key, bucket] of buckets) {
-    if (available(bucket, now) >= BURST) buckets.delete(key);
+    if (available(bucket, now) >= bucket.burst) buckets.delete(key);
   }
 }
 
@@ -133,9 +155,9 @@ function makeRoom(now: number): void {
  * those buckets holds a token again. A refused request spends nothing, so an
  * empty bucket refills on schedule however often it is asked.
  */
-function spend(keys: readonly string[], now: number): number | null {
+function spend(keys: readonly BucketKey[], now: number): number | null {
   let waitMs = 0;
-  for (const key of keys) {
+  for (const { key } of keys) {
     const bucket = buckets.get(key);
     // An absent bucket is a full one.
     if (!bucket) continue;
@@ -149,7 +171,7 @@ function spend(keys: readonly string[], now: number): number | null {
   }
   if (waitMs > 0) return waitMs;
 
-  for (const key of keys) {
+  for (const { key, burst } of keys) {
     const bucket = buckets.get(key);
     if (bucket) {
       bucket.tokens = available(bucket, now) - 1;
@@ -157,7 +179,7 @@ function spend(keys: readonly string[], now: number): number | null {
       continue;
     }
     if (buckets.size >= MAX_ENTRIES) makeRoom(now);
-    buckets.set(key, { tokens: BURST - 1, updatedAt: now });
+    buckets.set(key, { tokens: burst - 1, updatedAt: now, burst });
   }
   return null;
 }
@@ -200,11 +222,49 @@ function principalKey(c: Context): string {
   return `bearer:${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
 }
 
+/**
+ * A tool CALL rather than a listing: `/api/web/tools/execute`, or
+ * `/api/v1/.../tools/call`. See CALL_BURST.
+ */
+function isToolCall(c: Context, family: McpOperationFamily): boolean {
+  if (family !== "tools") return false;
+  const path = c.req.path;
+  return path.endsWith("/tools/execute") || path.endsWith("/tools/call");
+}
+
+/** A server id short enough to key on. See MAX_SERVER_ID_LENGTH. */
+function usableServerId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_SERVER_ID_LENGTH
+  );
+}
+
 /** The buckets this request spends. See "Keys" in the header. */
 async function bucketKeys(
   c: Context,
   family: McpOperationFamily,
-): Promise<string[]> {
+): Promise<BucketKey[]> {
+  const call = isToolCall(c, family);
+  const burst = call ? CALL_BURST : BURST;
+  const prefix = `${call ? "tools-call" : family}|${principalKey(c)}|`;
+
+  // `/api/v1`: the server is in the path, and the handler lets the path win
+  // over anything the body says (`synthesizeServerBody`), so the body is not
+  // read at all.
+  const pathServerId = c.req.param("serverId");
+  if (pathServerId !== undefined) {
+    return [
+      {
+        key: usableServerId(pathServerId)
+          ? `${prefix}server:${pathServerId}`
+          : `${prefix}${SHARED_SERVER_KEY}`,
+        burst,
+      },
+    ];
+  }
+
   let body: unknown;
   try {
     // Hono caches the body, so the route handler's own read still sees it.
@@ -219,18 +279,12 @@ async function bucketKeys(
       ? (body as Record<string, unknown>)
       : {};
 
-  const prefix = `${family}|${principalKey(c)}|`;
-  const keys: string[] = [];
-  const serverId = fields.serverId;
-  if (
-    typeof serverId === "string" &&
-    serverId.length > 0 &&
-    serverId.length <= MAX_SERVER_ID_LENGTH
-  ) {
-    keys.push(`${prefix}server:${serverId}`);
+  const keys: BucketKey[] = [];
+  if (usableServerId(fields.serverId)) {
+    keys.push({ key: `${prefix}server:${fields.serverId}`, burst });
   }
   if (keys.length === 0 || Array.isArray(fields.serverIds)) {
-    keys.push(`${prefix}${SHARED_SERVER_KEY}`);
+    keys.push({ key: `${prefix}${SHARED_SERVER_KEY}`, burst });
   }
   return keys;
 }
@@ -270,7 +324,8 @@ function tooMany(c: Context, waitMs: number) {
 
 /**
  * The per-server budget for one route family. Mount it on that family's path
- * AFTER `bearerAuthMiddleware`, which resolves the principal it keys on.
+ * AFTER `bearerAuthMiddleware`, which resolves the principal it keys on. On a
+ * path with a `:serverId` parameter, that parameter is the server.
  */
 export function mcpOperationRateLimit(family: McpOperationFamily) {
   return async function mcpOperationRateLimitMiddleware(
@@ -289,6 +344,7 @@ export function mcpOperationRateLimit(family: McpOperationFamily) {
 }
 
 export const MCP_OPERATION_BURST = BURST;
+export const MCP_OPERATION_CALL_BURST = CALL_BURST;
 export const MCP_OPERATION_REFILL_INTERVAL_MS = REFILL_INTERVAL_MS;
 export const MCP_OPERATION_MAX_ENTRIES = MAX_ENTRIES;
 

@@ -3,6 +3,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono, type Context } from "hono";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const mockConfig = vi.hoisted(() => ({ hosted: false }));
 
@@ -31,12 +34,15 @@ vi.mock("../../env.js", async (importOriginal) => {
 });
 
 const {
+  CSP_REPORT_SAMPLE_RATE,
   DOCUMENT_CONTENT_SECURITY_POLICY,
   DOCUMENT_PERMISSIONS_POLICY,
   buildReportOnlyContentSecurityPolicy,
+  documentScriptNonce,
   resetContentSecurityPolicyForTests,
   securityHeadersMiddleware,
   sentryCspTargets,
+  withScriptNonce,
 } = await import("../security-headers.js");
 
 function createApp(): Hono {
@@ -44,6 +50,18 @@ function createApp(): Hono {
   app.use("*", securityHeadersMiddleware);
   app.get("/", (c) => c.html("<!doctype html><title>app</title>"));
   app.get("/api/data", (c) => c.json({ ok: true }));
+  // Mirrors the SPA document handlers in server/index.ts and server/app.ts:
+  // inline scripts written into the document carry the response's nonce.
+  app.get("/document", (c) => {
+    const nonce = documentScriptNonce(c);
+    const scripts = [
+      `<script>window.__MCP_SESSION_TOKEN__="token";</script>`,
+      `<script>window.__MCP_RUNTIME_CONFIG__={};</script>`,
+    ].map((script) => withScriptNonce(script, nonce));
+    return c.html(
+      `<!doctype html><html><head>${scripts.join("")}</head></html>`,
+    );
+  });
   app.get("/own-policy", (c) => {
     c.header("Content-Security-Policy", "frame-ancestors https://host.test");
     return c.html("<!doctype html><title>own</title>");
@@ -60,17 +78,30 @@ function directives(policy: string | null): Map<string, string[]> {
   return out;
 }
 
+function inlineScriptNonces(html: string): Array<string | null> {
+  return Array.from(
+    html.matchAll(/<script(?: nonce="([^"]*)")?>/gi),
+    (match) => match[1] ?? null,
+  );
+}
+
 describe("securityHeadersMiddleware document policies", () => {
   beforeEach(() => {
     mockConfig.hosted = false;
     resetContentSecurityPolicyForTests();
+    // Sample every document unless a test says otherwise.
+    vi.spyOn(Math, "random").mockReturnValue(0);
   });
   afterEach(() => {
     mockConfig.hosted = false;
     resetContentSecurityPolicyForTests();
+    vi.restoreAllMocks();
   });
 
-  it("enforces frame-ancestors, object-src and base-uri on HTML documents", async () => {
+  it("enforces frame-ancestors and object-src on HTML documents", async () => {
+    expect(DOCUMENT_CONTENT_SECURITY_POLICY).toBe(
+      "frame-ancestors 'self'; object-src 'none'",
+    );
     const res = await createApp().request("/");
     expect(res.headers.get("Content-Security-Policy")).toBe(
       DOCUMENT_CONTENT_SECURITY_POLICY,
@@ -78,16 +109,38 @@ describe("securityHeadersMiddleware document policies", () => {
     const enforced = directives(res.headers.get("Content-Security-Policy"));
     expect(enforced.get("frame-ancestors")).toEqual(["'self'"]);
     expect(enforced.get("object-src")).toEqual(["'none'"]);
-    expect(enforced.get("base-uri")).toEqual(["'self'"]);
+    expect([...enforced.keys()]).toEqual(["frame-ancestors", "object-src"]);
     // The pre-existing headers are unchanged.
     expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
-  it("leaves non-HTML responses without a policy", async () => {
+  it("keeps base-uri out of the enforcing policy and in the report-only one", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("/");
+    const enforced = directives(res.headers.get("Content-Security-Policy"));
+    expect(enforced.has("base-uri")).toBe(false);
+    const reportOnly = directives(
+      res.headers.get("Content-Security-Policy-Report-Only"),
+    );
+    expect(reportOnly.get("base-uri")).toEqual(["'self'"]);
+  });
+
+  it("leaves non-HTML responses without a policy outside hosted mode", async () => {
     const res = await createApp().request("/api/data");
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    expect(res.headers.get("Permissions-Policy")).toBeNull();
+  });
+
+  it("sends the report-only policy on hosted non-document responses", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("/api/data");
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBe(
+      buildReportOnlyContentSecurityPolicy(),
+    );
+    // The document policies stay document-only.
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("Permissions-Policy")).toBeNull();
   });
 
@@ -116,7 +169,8 @@ describe("securityHeadersMiddleware document policies", () => {
     }
   });
 
-  it("keeps a route's own policy", async () => {
+  it("keeps a route's own policy without a report-only beside it", async () => {
+    mockConfig.hosted = true;
     const res = await createApp().request("/own-policy");
     expect(res.headers.get("Content-Security-Policy")).toBe(
       "frame-ancestors https://host.test",
@@ -167,6 +221,148 @@ describe("securityHeadersMiddleware document policies", () => {
       DOCUMENT_CONTENT_SECURITY_POLICY,
     );
   });
+
+  it("allows the document's inline scripts by the nonce they carry", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("/document");
+    const html = await res.text();
+
+    const nonces = inlineScriptNonces(html);
+    expect(nonces).toHaveLength(2);
+    const [nonce] = nonces;
+    expect(nonce).toMatch(/^[A-Za-z0-9+/]{22}==$/);
+    expect(nonces).toEqual([nonce, nonce]);
+
+    const policy = res.headers.get("Content-Security-Policy-Report-Only");
+    expect(policy).toBe(
+      buildReportOnlyContentSecurityPolicy(
+        undefined,
+        undefined,
+        undefined,
+        nonce!,
+      ),
+    );
+    expect(directives(policy).get("script-src")).toContain(`'nonce-${nonce}'`);
+    // The enforcing policy has no script-src to carry a nonce.
+    expect(res.headers.get("Content-Security-Policy")).toBe(
+      DOCUMENT_CONTENT_SECURITY_POLICY,
+    );
+  });
+
+  it("issues a fresh nonce for each response", async () => {
+    mockConfig.hosted = true;
+    const app = createApp();
+    const first = inlineScriptNonces(
+      await (await app.request("/document")).text(),
+    )[0];
+    const second = inlineScriptNonces(
+      await (await app.request("/document")).text(),
+    )[0];
+    expect(first).not.toBe(second);
+  });
+
+  it("leaves script-src without a nonce when the document issued none", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("/");
+    const scriptSrc =
+      directives(res.headers.get("Content-Security-Policy-Report-Only")).get(
+        "script-src",
+      ) ?? [];
+    expect(scriptSrc.some((source) => source.startsWith("'nonce-"))).toBe(
+      false,
+    );
+  });
+
+  it("carries report-uri on a sampled share while the policy is on every document", async () => {
+    mockConfig.hosted = true;
+    const app = createApp();
+
+    vi.mocked(Math.random).mockReturnValue(CSP_REPORT_SAMPLE_RATE - 0.001);
+    const sampled = await app.request("/document");
+    expect(sampled.headers.get("Content-Security-Policy-Report-Only")).toMatch(
+      /report-uri /,
+    );
+
+    vi.mocked(Math.random).mockReturnValue(CSP_REPORT_SAMPLE_RATE);
+    const unsampled = await app.request("/document");
+    const unsampledPolicy = unsampled.headers.get(
+      "Content-Security-Policy-Report-Only",
+    );
+    // The header is always there (MJ-016); only the report
+    // endpoint is sampled.
+    expect(unsampledPolicy).toMatch(/^default-src 'self'; /);
+    expect(unsampledPolicy).not.toMatch(/report-uri /);
+    // The enforcing policy and Permissions-Policy are on every document.
+    for (const res of [sampled, unsampled]) {
+      expect(res.headers.get("Content-Security-Policy")).toBe(
+        DOCUMENT_CONTENT_SECURITY_POLICY,
+      );
+      expect(res.headers.get("Permissions-Policy")).toBe(
+        DOCUMENT_PERMISSIONS_POLICY,
+      );
+    }
+
+    vi.mocked(Math.random).mockRestore();
+    let reported = 0;
+    for (let i = 0; i < 2000; i++) {
+      const res = await app.request("/");
+      expect(res.headers.has("Content-Security-Policy-Report-Only")).toBe(true);
+      if (
+        res.headers
+          .get("Content-Security-Policy-Report-Only")!
+          .includes("report-uri ")
+      ) {
+        reported++;
+      }
+    }
+    expect(CSP_REPORT_SAMPLE_RATE).toBe(0.05);
+    expect(reported).toBeGreaterThan(40);
+    expect(reported).toBeLessThan(170);
+  });
+});
+
+// Source text, like entrypoint-parity.test.ts: importing server/index.ts
+// would bind a port.
+describe.each(["index.ts", "app.ts"])("server/%s document handler", (file) => {
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../..", file),
+    "utf8",
+  );
+
+  it("writes every inline script with the response's nonce", () => {
+    expect(source).toContain("documentScriptNonce(c)");
+    const literals = [...source.matchAll(/`<script>/g)];
+    // Local session-token scripts were removed; index alone has a CLI config literal.
+    expect(literals.length).toBe(file === "index.ts" ? 1 : 0);
+    for (const literal of literals) {
+      expect(source.slice(0, literal.index)).toMatch(/withScriptNonce\(\s*$/);
+    }
+    expect(source).toMatch(
+      /withScriptNonce\(runtimeConfigScript, scriptNonce\)/,
+    );
+    expect(source).toMatch(
+      /withScriptNonce\(\s*buildGuestBootstrapScript\(session\),\s*scriptNonce,?\s*\)/,
+    );
+  });
+});
+
+describe("withScriptNonce", () => {
+  it("adds the nonce to the leading script tag only", () => {
+    expect(
+      withScriptNonce('<script>window.x="<script>";</script>', "abc+/="),
+    ).toBe('<script nonce="abc+/=">window.x="<script>";</script>');
+  });
+
+  it("matches the tag name in any case", () => {
+    expect(withScriptNonce("<SCRIPT>x</SCRIPT>", "n")).toBe(
+      '<script nonce="n">x</SCRIPT>',
+    );
+  });
+
+  it("leaves anything that is not an inline script element unchanged", () => {
+    expect(withScriptNonce("<scripts>", "n")).toBe("<scripts>");
+    expect(withScriptNonce("<meta name=x>", "n")).toBe("<meta name=x>");
+  });
 });
 
 describe("buildReportOnlyContentSecurityPolicy", () => {
@@ -175,7 +371,10 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
 
     expect(policy.get("script-src")).toEqual([
       "'self'",
+      "'unsafe-eval'",
       "https://js.stripe.com",
+      "https://*.js.stripe.com",
+      "https://maps.googleapis.com",
     ]);
     expect(policy.get("style-src")).toEqual([
       "'self'",
@@ -195,6 +394,8 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
         "wss://rt-http.mcpjam.test",
         "https://auth.mcpjam.test",
         "https://api.stripe.com",
+        "https://maps.googleapis.com",
+        "https://r.stripe.com",
       ]),
     );
     expect(policy.get("frame-src")).toEqual([
@@ -202,7 +403,9 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https://sandbox.mcpjam.test",
       "https://*.sandbox.mcpjam.test",
       "https://js.stripe.com",
+      "https://*.js.stripe.com",
       "https://hooks.stripe.com",
+      "https://m.stripe.network",
       "https://www.youtube.com",
     ]);
     expect(policy.get("img-src")).toEqual([
@@ -212,8 +415,25 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https:",
     ]);
     expect(policy.get("worker-src")).toEqual(["'self'", "blob:"]);
+    expect(policy.get("base-uri")).toEqual(["'self'"]);
     expect(policy.get("report-uri")).toHaveLength(1);
-    expect(policy.has("default-src")).toBe(false);
+    expect(policy.get("default-src")).toEqual(["'self'"]);
+  });
+
+  it("drops only report-uri when the response is not sampled", async () => {
+    const sampled = directives(buildReportOnlyContentSecurityPolicy());
+    const unsampled = directives(
+      buildReportOnlyContentSecurityPolicy(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+      ),
+    );
+    expect(unsampled.has("report-uri")).toBe(false);
+    sampled.delete("report-uri");
+    expect(unsampled).toEqual(sampled);
   });
 
   it("reports to the Sentry security endpoint for the DSN", () => {

@@ -26,6 +26,7 @@ import {
   isPositiveToolCallPredicateKind,
   isSelectionPredicateKind,
   stageDerivationToMetadata,
+  type StageAuthoredCase,
 } from "./contract/stage-derivation.js";
 import { attachStageMeasurements } from "./contract/stage-measurements.js";
 
@@ -799,7 +800,7 @@ function mergeHostExtrasIntoMetadata(
  * the caseKey, so a changed threshold would fork case identity and split one
  * scenario's history in two.
  */
-function scoreMetadata(
+export function iterationScoreMetadata(
   iteration: IterationResult,
   evaluationConfig: EvaluationConfigSnapshot | undefined
 ): Record<string, unknown> {
@@ -1108,11 +1109,19 @@ function deriveSdkStageResults(args: {
   expectedToolCalls?: EvalExpectedToolCall[];
   predicates?: Predicate[];
   caseIdentity?: EvalCaseIdentity;
+  /** A policy block, when an enforcement point refused one of the calls. */
+  policy?: { blocked: boolean; reason?: string };
+  /**
+   * The authored case, when the caller has the case itself — built with
+   * `buildStageAuthoredCase`, as the hosted runner builds it — instead of the
+   * approximation below from what an uploaded result carries.
+   */
+  authored?: StageAuthoredCase;
 }) {
   const { iteration, trace, expectedToolCalls, predicates } = args;
   const caseIdentity = args.caseIdentity;
   return deriveStageResults({
-    authored: {
+    authored: args.authored ?? {
       // An SDK case always drives a HostExecutor with prompts, so there is
       // always a model turn that could select a tool.
       mode: "model_driven",
@@ -1151,7 +1160,66 @@ function deriveSdkStageResults(args: {
       status: resolveIterationLifecycleStatus(iteration),
       ...(iteration.error ? { error: iteration.error } : {}),
     },
+    ...(args.policy ? { policy: args.policy } : {}),
   });
+}
+
+/**
+ * One iteration's stage chain as stage metadata — the SAME derivation the
+ * upload mappers attach, plus an optional policy block.
+ *
+ * For a runner that grades locally and uploads nothing (`runSuiteFile`), so a
+ * blocked call is reported as `blockedByPolicy` by the canonical stage engine
+ * rather than by a second classifier. The block is passed on the hosted rule:
+ * only when blocks occurred and the iteration neither errored nor recorded a
+ * tool error, because a block is the explanation only when nothing else broke.
+ *
+ * @internal
+ */
+export function deriveIterationStageMetadata(args: {
+  iteration: IterationResult;
+  expectedToolCalls?: EvalExpectedToolCall[];
+  predicates?: Predicate[];
+  caseIdentity?: EvalCaseIdentity;
+  policyBlocks?: ReadonlyArray<{ reason: string }>;
+  /** See `deriveSdkStageResults`: the hosted runner's own authored case. */
+  authored?: StageAuthoredCase;
+}): Record<string, unknown> {
+  const prompts = args.iteration.prompts ?? [];
+  const trace = iterationTraceFromPrompts(
+    prompts,
+    traceMessagesFromPrompts(prompts)
+  );
+  const spans =
+    trace && typeof trace === "object" && !Array.isArray(trace) && trace.spans
+      ? trace.spans
+      : [];
+  const toolErrored = spans.some(
+    (span) =>
+      (span as { category?: unknown }).category === "tool" &&
+      (span as { status?: unknown }).status === "error"
+  );
+  const blocks = args.policyBlocks ?? [];
+  const policy =
+    blocks.length > 0 && !args.iteration.error && !toolErrored
+      ? { blocked: true, reason: blocks[0]!.reason }
+      : undefined;
+  return attachStageMeasurements(
+    stageDerivationToMetadata(
+      deriveSdkStageResults({
+        iteration: args.iteration,
+        trace,
+        ...(args.expectedToolCalls
+          ? { expectedToolCalls: args.expectedToolCalls }
+          : {}),
+        ...(args.predicates ? { predicates: args.predicates } : {}),
+        ...(args.caseIdentity ? { caseIdentity: args.caseIdentity } : {}),
+        ...(policy ? { policy } : {}),
+        ...(args.authored ? { authored: args.authored } : {}),
+      })
+    ),
+    spans
+  );
 }
 
 /**
@@ -1296,7 +1364,7 @@ export function iterationsToEvalResultInputs(
           // Per-step verdicts for the Steps tab. Omitted when empty, the same
           // rule the hosted runner applies.
           ...(stepResults.length > 0 ? { stepResults } : {}),
-          ...scoreMetadata(iteration, evaluationConfig),
+          ...iterationScoreMetadata(iteration, evaluationConfig),
           ...attachStageMeasurements(
             stageDerivationToMetadata(stageDerivation),
             trace && typeof trace === "object" && !Array.isArray(trace)
@@ -1421,7 +1489,7 @@ export function suiteTestResultsToEvalResultInputs(
               ? { predicates: iteration.predicateResults }
               : {}),
             ...(stepResults.length > 0 ? { stepResults } : {}),
-            ...scoreMetadata(iteration, testResult.evaluationConfig),
+            ...iterationScoreMetadata(iteration, testResult.evaluationConfig),
             ...attachStageMeasurements(
               stageDerivationToMetadata(
                 deriveSdkStageResults({

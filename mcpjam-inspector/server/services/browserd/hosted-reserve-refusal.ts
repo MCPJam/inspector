@@ -45,6 +45,12 @@ export interface HostedRefusal {
   code: string;
   /** Shown to the person. Says what happened AND what they can do about it. */
   error: string;
+  /**
+   * The control plane's own account of the failure, for the server log only.
+   * Never serialized: it is written for an operator and can name the vendor
+   * or the machine, so the person sees `error` and a request id instead.
+   */
+  detail?: string;
 }
 
 export function classifyHostedReserveError(
@@ -101,7 +107,8 @@ function classifyByStatus(error: HostedReserveError): HostedRefusal | null {
       return {
         status: 502,
         code: "hosted-provision-failed",
-        error: `Your computer failed to start (${error.message}).`,
+        error: "Your computer failed to start. Try again in a few minutes.",
+        detail: error.message,
       };
     case 410:
       return {
