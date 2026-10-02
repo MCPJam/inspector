@@ -50,28 +50,42 @@ export async function abortableSetup<T>(
 /**
  * Thrown when a saved client's `modelSelection` names credentials
  * `runWithClient` cannot use. The runner only has the hosted MCPJam rail (the
- * caller's MCPJam API key), so an `org` or `local` selection is refused rather
- * than silently run on MCPJam's key as a bare model id.
+ * caller's MCPJam API key), so an `org` or `local` selection — or a STORED
+ * legacy one (`source: "legacy"`, which means "own key only") — is refused
+ * rather than silently run on MCPJam's key as a bare model id.
  */
 export class UnsupportedModelSelectionError extends Error {
-  readonly source: Exclude<ModelSelectionSource, "hosted">;
+  readonly source: Exclude<ModelSelectionSource, "hosted"> | "legacy";
   readonly modelId: string;
 
   constructor(
-    source: Exclude<ModelSelectionSource, "hosted">,
+    source: Exclude<ModelSelectionSource, "hosted"> | "legacy",
     modelId: string
   ) {
     super(
       `runWithClient only runs hosted MCPJam models; this client's model selection "${modelId}" uses source "${source}" (${
         source === "org"
           ? "an organization provider connection"
-          : "a local provider"
+          : source === "local"
+            ? "a local provider"
+            : "your own provider key only"
       }), which it cannot honour. Run this client from MCPJam, or save it with a hosted model.`
     );
     this.name = "UnsupportedModelSelectionError";
     this.source = source;
     this.modelId = modelId;
   }
+}
+
+function isLegacySelectionLike(
+  value: unknown
+): value is { source: "legacy"; modelId: string } {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    (value as { source?: unknown }).source === "legacy" &&
+    typeof (value as { modelId?: unknown }).modelId === "string"
+  );
 }
 
 /** One saved client — what a single run resolves. */
@@ -138,7 +152,25 @@ export async function createSavedClientRunner(
   // agree with.
   const savedSelection = (config as { modelSelection?: unknown })
     .modelSelection;
+  // A store-once backend computes `modelId` on the response; read the
+  // selection's own id when an older shape omits it.
+  const selectionModelId =
+    savedSelection !== null &&
+    typeof savedSelection === "object" &&
+    typeof (savedSelection as { modelId?: unknown }).modelId === "string"
+      ? (savedSelection as { modelId: string }).modelId
+      : undefined;
+  if (
+    (typeof config.modelId !== "string" || config.modelId.trim() === "") &&
+    selectionModelId
+  ) {
+    (config as { modelId?: unknown }).modelId = selectionModelId;
+  }
   let savedSettings: ModelSelection["settings"];
+  if (isLegacySelectionLike(savedSelection)) {
+    // "Own key only": never run on the caller's MCPJam key.
+    throw new UnsupportedModelSelectionError("legacy", savedSelection.modelId);
+  }
   if (savedSelection !== undefined) {
     const selection = canonicalizeModelSelection(
       config.modelId as string,
@@ -153,6 +185,9 @@ export async function createSavedClientRunner(
     savedSettings = selection.settings;
   }
   delete (config as { modelSelection?: unknown }).modelSelection;
+  // The conversion marker beside the selection describes the stored row, not
+  // the host this run builds.
+  delete (config as { modelSelectionOrigin?: unknown }).modelSelectionOrigin;
   let model = String(config.modelId ?? "").replace(/^mcpjam\//, "");
   if (!model.includes("/")) {
     if (model.startsWith("claude-")) model = `anthropic/${model}`;

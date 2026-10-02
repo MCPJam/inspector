@@ -232,6 +232,7 @@ describe("eval runner reads saved model selections", () => {
       model: string;
       provider: string;
       selection?: ModelSelection;
+      legacySelection?: { source: "legacy"; modelId: string; provider?: string };
       advancedConfig?: Record<string, unknown>;
       promptTurns?: unknown[];
     },
@@ -329,6 +330,83 @@ describe("eval runner reads saved model selections", () => {
       );
       expect(requestTo("/stream")).toMatchObject({ model: SAME_ID });
       expect(requestTo("/stream/org")).toBeNull();
+    });
+  });
+
+  describe("a STORED legacy selection (own key only)", () => {
+    const LEGACY = { source: "legacy" as const, modelId: SAME_ID };
+
+    it("a hosted-catalog id runs on the org connection, never the hosted rail", async () => {
+      await run(
+        { model: SAME_ID, provider: "anthropic", legacySelection: LEGACY },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toBeNull();
+      const body = requestTo("/stream/org");
+      expect(body).toMatchObject({
+        model: SAME_ID,
+        providerKey: "anthropic",
+        projectId: "project-1",
+      });
+      // Never forwarded: `/stream` refuses a legacy selection, and the org
+      // rail has nothing in it to re-check.
+      expect(body).not.toHaveProperty("modelSelection");
+    });
+
+    it("with request keys it runs on them, still never on MCPJam credits", async () => {
+      await run(
+        { model: SAME_ID, provider: "anthropic", legacySelection: LEGACY },
+        { modelApiKeys: { anthropic: "sk-ant-local" } },
+      );
+      expect(requestTo("/stream")).toBeNull();
+      expect(requestTo("/stream/org")).toBeNull();
+      expect(createLlmModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ hosted: false }),
+        "sk-ant-local",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("without any own key it fails the case rather than falling back to MCPJam", async () => {
+      const errorSpy = vi.spyOn(logger, "error");
+      await run({
+        model: SAME_ID,
+        provider: "anthropic",
+        legacySelection: LEGACY,
+      });
+      const failure = errorSpy.mock.calls.find(
+        ([message]) => message === "[evals] Test case failed:",
+      )?.[1] as { message?: string } | undefined;
+      errorSpy.mockRestore();
+      expect(failure?.message).toMatch(/Missing API key for provider anthropic/);
+      expect(requestTo("/stream")).toBeNull();
+    });
+
+    it("a legacy selection for a different model is ignored: today's hosted-first read", async () => {
+      await run(
+        {
+          model: SAME_ID,
+          provider: "anthropic",
+          legacySelection: { source: "legacy", modelId: "anthropic/other" },
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toMatchObject({ model: SAME_ID });
+      expect(requestTo("/stream/org")).toBeNull();
+    });
+
+    it("a full selection wins over a legacy one when both are present", async () => {
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: HOSTED,
+          legacySelection: LEGACY,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toMatchObject({ model: SAME_ID });
     });
   });
 

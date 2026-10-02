@@ -44,9 +44,13 @@ import {
 import {
   readTasksPolicy,
   type ModelSelection,
+  type RequestedModelSelection,
   type TasksPolicy,
 } from "@mcpjam/sdk";
-import { readStoredModelSelection } from "./model-resolution-local.js";
+import {
+  readRoutingSelection,
+  readStoredModelSelection,
+} from "./model-resolution-local.js";
 
 /**
  * How the resolver picks a winner when both the hostConfig and the
@@ -133,6 +137,15 @@ export interface ResolvedExecutionContext {
    * model the body chose.
    */
   modelSelection: ModelSelection | undefined;
+  /**
+   * The selection that DECIDES THE RAIL for the host's model: `modelSelection`
+   * above, or a STORED legacy selection (`{ source: "legacy" }`, "own key
+   * only"), which `modelSelection` deliberately does not carry because it has
+   * no settings to apply. `undefined` for an unlabelled host, which keeps
+   * today's hosted-list routing (see `selection-rail.ts`). Host-only, and FOR
+   * ONE MODEL like `modelSelection`: narrow it with `routingSelectionForModel`.
+   */
+  routingSelection: RequestedModelSelection | undefined;
   /**
    * MCPJam's Tasks product policy, read HOST-ONLY — exactly like `harness`,
    * and for a stronger reason.
@@ -352,6 +365,7 @@ export function resolveExecutionContext(args: {
       modelId: overrides.modelId,
       harness: undefined,
       modelSelection: undefined,
+      routingSelection: undefined,
       // No host config means nothing said anything about tasks. `unset`, not
       // `off`: the two differ on the Tools tab, which keeps its own per-call
       // controls under `unset` and loses them under `off`.
@@ -500,6 +514,7 @@ export function resolveExecutionContext(args: {
     modelId: modelId.value,
     harness: readHarness(hostConfig),
     modelSelection: readModelSelection(hostConfig),
+    routingSelection: readRoutingSelection(hostConfig.modelSelection),
     tasksPolicy: readTasksPolicy(
       hostConfig as Parameters<typeof readTasksPolicy>[0],
     ),

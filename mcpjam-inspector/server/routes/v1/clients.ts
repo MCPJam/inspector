@@ -64,7 +64,7 @@ import { translateConvexWriteError as translateConvexError } from "./convex-erro
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
-  modelSelectionSchema,
+  requestedModelSelectionSchema,
   selectionModelMismatch,
 } from "./model-selection-schema.js";
 
@@ -578,11 +578,13 @@ const clientSetSchema = z
     modelId: z.string().trim().min(1).optional(),
     /**
      * The saved model choice (source, connection, settings such as
-     * `reasoningEffort`). A full selection only: it must be FOR `modelId`
-     * when both are sent, and sending one alone pins its model. `null` clears
-     * the saved selection and keeps the bare `modelId`.
+     * `reasoningEffort`). It must be FOR `modelId` when both are sent, and
+     * sending one alone pins its model. A STORED legacy selection read back
+     * from a client (`source: "legacy"`, "own key only") may be sent back
+     * verbatim. `null` clears the saved selection and keeps the bare
+     * `modelId`.
      */
-    modelSelection: modelSelectionSchema.nullable().optional(),
+    modelSelection: requestedModelSelectionSchema.nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
     temperature: z.number().finite().nullable().optional(),
     requireToolApproval: z.boolean().nullable().optional(),

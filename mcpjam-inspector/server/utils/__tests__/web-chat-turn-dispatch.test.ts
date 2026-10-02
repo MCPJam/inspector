@@ -200,6 +200,74 @@ describe("streamWebChatTurn model dispatch", () => {
     expect(handlers.mcpjamFree).not.toHaveBeenCalled();
   });
 
+  describe("the saved selection decides the rail (routingSelection)", () => {
+    const none = { provider: "none", model: "none" } as const;
+
+    it("a STORED legacy selection keeps a hosted id off MCPJam credits", async () => {
+      await streamWebChatTurn(
+        args({ id: "openai/gpt-5-nano", provider: "openai" }, null, {
+          routingSelection: { source: "legacy", modelId: "openai/gpt-5-nano" },
+        }) as never,
+      );
+      expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    });
+
+    it("an org selection takes the org path and is forwarded to the resolve", async () => {
+      const config = await import("../org-model-config.js");
+      vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({
+        ok: true,
+        key: "ollama",
+      });
+      vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
+      vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({
+        runtimeLocation: "cloud",
+        providerKey: "ollama",
+      });
+      const org = {
+        modelId: "ollama/llama3",
+        source: "org" as const,
+        connectionRef: { kind: "orgProvider" as const, id: "orgprov_1" },
+        fallback: none,
+      };
+      await streamWebChatTurn(
+        args({ id: "ollama/llama3", provider: "ollama" }, null, {
+          routingSelection: org,
+        }) as never,
+      );
+      expect(config.resolveOrgProviderRuntime).toHaveBeenLastCalledWith(
+        "p1",
+        "ollama",
+        "ollama/llama3",
+        expect.anything(),
+        expect.objectContaining({ modelSelection: org }),
+      );
+      expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    });
+
+    it("a hosted selection takes MCPJam /stream even where the hosted list would not", async () => {
+      await streamWebChatTurn(
+        args({ id: "vendor/brand-new", provider: "openai" }, null, {
+          routingSelection: {
+            modelId: "vendor/brand-new",
+            source: "hosted",
+            fallback: none,
+          },
+        }) as never,
+      );
+      expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+    });
+
+    it("no selection: the hosted-list check decides, unchanged", async () => {
+      await streamWebChatTurn(
+        args({ id: "openai/gpt-5-nano", provider: "openai" }, null) as never,
+      );
+      expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("reasoning effort", () => {
     it("MCPJam path: forwards the effort to the hosted engine and to prepare", async () => {
       const orchestration = await import("../chat-v2-orchestration.js");

@@ -341,10 +341,55 @@ describe("resolveTurnRuntime: saved selection forwarding", () => {
       endpointPath: "/stream",
       extraBodyFields: { modelSelection: HOSTED_SELECTION },
     });
-    // Not an org selection: nothing to hand the org resolve.
-    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).not.toHaveProperty(
-      "modelSelection",
-    );
+    // The WHOLE selection reaches the resolver: it decides the source (the
+    // resolver forwards only an org one to `/stream/org/resolve`).
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: HOSTED_SELECTION,
+    });
+  });
+
+  it("a stored legacy selection decides the rail but is never sent on any body", async () => {
+    // The resolver (mocked here) puts a legacy selection on the own-key path;
+    // `selection-rail.test.ts` pins that it never answers `mcpjam` for one.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const legacy = { source: "legacy" as const, modelId: MCPJAM_MODEL.id };
+    const rt = await resolveTurnRuntime(baseArgs({ modelSelection: legacy }));
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: legacy,
+    });
+    expect(rt.modelSource).toBe("byok");
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream/org",
+      extraBodyFields: { providerKey: "anthropic", serverIds: ["server-a"] },
+    });
+  });
+
+  it("a local selection decides the rail but is never sent to the backend", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const local = {
+      modelId: MCPJAM_MODEL.id,
+      source: "local" as const,
+      connectionRef: {
+        kind: "localProvider" as const,
+        providerKey: "anthropic",
+      },
+      fallback: none,
+    };
+    const rt = await resolveTurnRuntime(baseArgs({ modelSelection: local }));
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: local,
+    });
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("modelSelection");
   });
 
   it("an org selection rides the /stream/org body and the org resolve", async () => {

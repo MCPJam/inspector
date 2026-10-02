@@ -15662,7 +15662,9 @@
               "required": ["model"],
               "properties": {
                 "model": {
-                  "type": "string"
+                  "type": "string",
+                  "readOnly": true,
+                  "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
                 },
                 "provider": {
                   "type": "string"
@@ -15670,10 +15672,15 @@
                 "selection": {
                   "allOf": [
                     {
-                      "$ref": "#/components/schemas/ModelSelection"
+                      "$ref": "#/components/schemas/RequestedModelSelection"
                     }
                   ],
-                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id."
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+                },
+                "selectionOrigin": {
+                  "type": "string",
+                  "enum": ["backfill"],
+                  "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `selection` rather than a person. Absent when a person chose it, and on rows with no selection."
                 }
               }
             }
@@ -15826,7 +15833,7 @@
                 "selection": {
                   "allOf": [
                     {
-                      "$ref": "#/components/schemas/ModelSelection"
+                      "$ref": "#/components/schemas/RequestedModelSelection"
                     }
                   ],
                   "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
@@ -16032,7 +16039,7 @@
                 "selection": {
                   "oneOf": [
                     {
-                      "$ref": "#/components/schemas/ModelSelection"
+                      "$ref": "#/components/schemas/RequestedModelSelection"
                     },
                     {
                       "type": "null"
@@ -16278,7 +16285,9 @@
             "type": ["object", "null"],
             "properties": {
               "model": {
-                "type": "string"
+                "type": "string",
+                "readOnly": true,
+                "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
               },
               "systemPrompt": {
                 "type": "string"
@@ -16289,10 +16298,15 @@
               "modelSelection": {
                 "allOf": [
                   {
-                    "$ref": "#/components/schemas/ModelSelection"
+                    "$ref": "#/components/schemas/RequestedModelSelection"
                   }
                 ],
-                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id."
+                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+              },
+              "modelSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
               }
             }
           },
@@ -16401,7 +16415,7 @@
               "modelSelection": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/ModelSelection"
+                    "$ref": "#/components/schemas/RequestedModelSelection"
                   },
                   {
                     "type": "null"
@@ -16696,7 +16710,9 @@
               ],
               "properties": {
                 "model": {
-                  "type": "string"
+                  "type": "string",
+                  "readOnly": true,
+                  "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
                 },
                 "provider": {
                   "type": "string"
@@ -16704,10 +16720,15 @@
                 "selection": {
                   "allOf": [
                     {
-                      "$ref": "#/components/schemas/ModelSelection"
+                      "$ref": "#/components/schemas/RequestedModelSelection"
                     }
                   ],
-                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id."
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+                },
+                "selectionOrigin": {
+                  "type": "string",
+                  "enum": ["backfill"],
+                  "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `selection` rather than a person. Absent when a person chose it, and on rows with no selection."
                 }
               }
             }
@@ -17026,7 +17047,7 @@
                 "selection": {
                   "allOf": [
                     {
-                      "$ref": "#/components/schemas/ModelSelection"
+                      "$ref": "#/components/schemas/RequestedModelSelection"
                     }
                   ],
                   "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
@@ -17644,7 +17665,7 @@
                 "selection": {
                   "oneOf": [
                     {
-                      "$ref": "#/components/schemas/ModelSelection"
+                      "$ref": "#/components/schemas/RequestedModelSelection"
                     },
                     {
                       "type": "null"
@@ -19065,7 +19086,20 @@
               },
               "model": {
                 "type": ["string", "null"],
-                "description": "Resolved judge model. `null` only from deployments that predate resolution."
+                "description": "Resolved judge model, COMPUTED: `judgeSelection.modelId` when the suite stores a judge selection, else the stored bare id, else the platform default. `null` only from deployments that predate resolution. A bare id is accepted on writes as a shorthand (the platform converts it)."
+              },
+              "judgeSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  }
+                ],
+                "description": "The judge's saved model choice (source, connection, `settings.reasoningEffort`), when the suite stores one. May be a STORED legacy selection: own key only. Absent on an unlabelled suite and on older deployments."
+              },
+              "judgeSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion chose `judgeSelection` rather than a person."
               },
               "autoRun": {
                 "type": "boolean",
@@ -19220,7 +19254,20 @@
               },
               "model": {
                 "type": ["string", "null"],
-                "description": "Resolved judge model. `null` only from deployments that predate resolution."
+                "description": "Resolved judge model, COMPUTED: `judgeSelection.modelId` when the suite stores a judge selection, else the stored bare id, else the platform default. `null` only from deployments that predate resolution. A bare id is accepted on writes as a shorthand (the platform converts it)."
+              },
+              "judgeSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  }
+                ],
+                "description": "The judge's saved model choice (source, connection, `settings.reasoningEffort`), when the suite stores one. May be a STORED legacy selection: own key only. Absent on an unlabelled suite and on older deployments."
+              },
+              "judgeSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion chose `judgeSelection` rather than a person."
               },
               "autoRun": {
                 "type": "boolean",
@@ -19457,7 +19504,9 @@
             "type": ["object", "null"],
             "properties": {
               "model": {
-                "type": "string"
+                "type": "string",
+                "readOnly": true,
+                "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
               },
               "systemPrompt": {
                 "type": "string"
@@ -19468,10 +19517,15 @@
               "modelSelection": {
                 "allOf": [
                   {
-                    "$ref": "#/components/schemas/ModelSelection"
+                    "$ref": "#/components/schemas/RequestedModelSelection"
                   }
                 ],
-                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id."
+                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+              },
+              "modelSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
               }
             }
           },
@@ -23598,7 +23652,7 @@
               "modelSelection": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/ModelSelection"
+                    "$ref": "#/components/schemas/RequestedModelSelection"
                   },
                   {
                     "type": "null"
@@ -24619,6 +24673,37 @@
           }
         }
       },
+      "LegacyModelSelection": {
+        "type": "object",
+        "description": "A STORED legacy selection: a model id with no saved source. Written when a save sends a bare id the platform does not host (the shorthand), or by the old-data backfill. It means OWN KEY ONLY: the call runs on the organization's connection for the model's provider (or a key on the caller's machine) and never on MCPJam credits. It carries no settings; to save an effort, send a full `ModelSelection`. A read may be sent back verbatim.",
+        "required": ["source", "modelId"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["legacy"]
+          },
+          "modelId": {
+            "type": "string",
+            "description": "The id exactly as stored (it may be a bare, non-canonical id)."
+          },
+          "provider": {
+            "type": "string",
+            "description": "The case entry's provider hint, kept so the stored `{ model, provider }` pair survives the round trip."
+          }
+        }
+      },
+      "RequestedModelSelection": {
+        "description": "What a store-once row holds as its ONLY copy of the model: a full `ModelSelection` (`hosted` runs on MCPJam credits, `org` on an organization connection, `local` on a key on the caller's machine) or a STORED `LegacyModelSelection` (own key only). Wherever one sits beside a model id (`modelId`, `model`), that id is COMPUTED from it on reads, and accepted on writes as a shorthand the platform converts. A row with neither is an unlabelled old row and runs exactly as it always has.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ModelSelection"
+          },
+          {
+            "$ref": "#/components/schemas/LegacyModelSelection"
+          }
+        ]
+      },
       "ModelSelection": {
         "type": "object",
         "description": "A saved model choice. Never carries a secret: an unknown key is refused. `settings.reasoningEffort` is where a reasoning effort is saved — there is no other saved carrier (`advancedConfig.reasoningEffort` is refused). Which efforts a model accepts is `supportedReasoningEfforts` on `GET /v1/models`; a saved effort the route the run takes cannot apply is refused (`capability_missing`), never dropped.",
@@ -24710,13 +24795,13 @@
           "modelSelection": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "The saved model choice: source, connection, and `settings.reasoningEffort`. A full selection only. Must be FOR `modelId` when both are sent; sent alone it pins its own model. `null` clears the saved selection and keeps the bare `modelId`."
+            "description": "The saved model choice: source, connection, and `settings.reasoningEffort`. A full selection, or a STORED legacy selection read back from the client and sent back verbatim. Must be FOR `modelId` when both are sent; sent alone it pins its own model. `null` clears the saved selection and keeps the bare `modelId`."
           },
           "systemPrompt": {
             "type": ["string", "null"],
@@ -25163,15 +25248,21 @@
           },
           "modelId": {
             "type": "string",
-            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
+            "readOnly": true,
+            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run. COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
           },
           "modelSelection": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               }
             ],
-            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model."
+            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -25552,15 +25643,21 @@
           },
           "modelId": {
             "type": "string",
-            "description": "The stack's model override. Absent means it inherits the host's."
+            "readOnly": true,
+            "description": "The stack's model override. Absent means it inherits the host's. COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
           },
           "modelSelection": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               }
             ],
-            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model."
+            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -25629,7 +25726,7 @@
           "modelSelection": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               }
             ],
             "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability."
@@ -25700,7 +25797,7 @@
           "modelSelection": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               }
             ],
             "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability."
@@ -25764,7 +25861,7 @@
           "modelSelection": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               },
               {
                 "type": "null"

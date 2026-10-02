@@ -3825,6 +3825,14 @@ function selectionWithReasoningEffort(
       `${subject} has no saved model selection, so \`reasoningEffort\` has nothing to edit. Send \`modelSelection\` (a full selection: modelId, source, fallback and settings.reasoningEffort) instead.`
     );
   }
+  // A STORED legacy selection (`source: "legacy"`, "own key only") names no
+  // source or connection to keep, and carries no settings: an effort cannot be
+  // edited onto it. Choosing whose credentials pay is the caller's to say.
+  if ((existing as { source?: unknown }).source === "legacy") {
+    throw operationInputError(
+      `${subject} has a legacy model selection (own key only, no settings), so \`reasoningEffort\` has nothing to edit. Send \`modelSelection\` (a full selection: modelId, source, fallback and settings.reasoningEffort) instead.`
+    );
+  }
   const selection = existing as ModelSelection;
   const { reasoningEffort: _previous, ...otherSettings } =
     selection.settings ?? {};
