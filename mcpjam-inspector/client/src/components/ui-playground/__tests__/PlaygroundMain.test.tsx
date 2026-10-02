@@ -1194,6 +1194,42 @@ describe("PlaygroundMain", () => {
         mockUseChatSession.availableModels = [];
       });
 
+      it("keeps a saved compare card whose row has not loaded yet when a host seeds the lead", async () => {
+        const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+        // The second card runs on an org connection whose row arrives later
+        // (the org-provider query resolves after the host).
+        const orgCard = {
+          modelId: "anthropic/claude-sonnet-4.5",
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "orgprov_late" },
+          fallback: { provider: "none", model: "none" },
+        };
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            {
+              modelId: "openai/gpt-5",
+              source: "hosted",
+              fallback: { provider: "openrouter", model: "none" },
+            },
+            orgCard,
+          ])
+        );
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          const [lead] = JSON.parse(localStorage.getItem(V2_KEY) ?? "[]");
+          expect(lead?.settings).toEqual({ reasoningEffort: "high" });
+        });
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toContainEqual(
+          orgCard
+        );
+        mockUseChatSession.availableModels = [];
+      });
+
       it("clears a previous host's effort when the next host saved none", async () => {
         mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
         previewHost(selection("high"));

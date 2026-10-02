@@ -172,6 +172,12 @@ export function mergePickedRows(
   cards: readonly CompareCard[],
   rows: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
+  /**
+   * The saved line-up. A saved card whose row has not loaded yet is not in
+   * `cards` and not in the menu, so the user cannot have removed it: it is
+   * kept (after the picked rows, within the cap) instead of being dropped.
+   */
+  saved: readonly RequestedModelSelection[] = [],
 ): RequestedModelSelection[] {
   const next: RequestedModelSelection[] = [];
   const seen = new Set<string>();
@@ -190,6 +196,10 @@ export function mergePickedRows(
     }
     const selection = compareSelectionForRow(row, orgConfig);
     if (selection) push(selection);
+  }
+  const resolved = new Set(cards.map((card) => comparisonKey(card.selection)));
+  for (const selection of saved) {
+    if (!resolved.has(comparisonKey(selection))) push(selection);
   }
   return next;
 }

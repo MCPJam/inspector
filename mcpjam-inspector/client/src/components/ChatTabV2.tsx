@@ -2070,7 +2070,8 @@ export function ChatTabV2({
           mergePickedRows(
             compareCards ?? [],
             nextSelectedModels,
-            hostedOrgModelConfig
+            hostedOrgModelConfig,
+            compareSelections
           )
         );
       }
