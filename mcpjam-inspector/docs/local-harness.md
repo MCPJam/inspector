@@ -120,13 +120,39 @@ existing tag or release. The repository ruleset template in
 update/deletion when applied by repository administration.
 
 Inspector release preflight checks the already-published signed assets against
-its committed expected digests and fingerprint. It does not rebuild the runtime.
-An Inspector version bump alone does not require a new runtime version.
+its committed expected digests and fingerprint, for exactly the targets each
+harness advertises (`nativeTargets`, when a harness certifies per architecture),
+and checks that each published pack carries the bridge this checkout builds. It
+does not rebuild the runtime. An Inspector version bump alone does not require a
+new runtime version.
+
+To install a pack from the command line, `mcpjam-inspector harness install`
+(or `status`) takes `--harness <id>`; without it, it means Claude Code.
+
+### Codex pack
+
+Codex's pack (`--harness codex`) carries MCPJam's app-server bridge and
+host-tool MCP relay — rebuilt from source by the recipe, never taken from a
+generated file on disk — and the pinned `@openai/codex` wrapper plus exactly
+one platform package, every file of which is checked against
+`scripts/local-harness-pack-recipes/codex-vendor-checksums.json` (recorded
+from the published tarballs). A pack is built on the target it is for.
+
+**Any change under `server/utils/harness/codex-appserver/` that reaches the
+bridge bundle needs a Codex pack bump, and the data PR recording its digests,
+before it ships to local users.** A local session byte-compares the pack's
+`bridge.mjs` with the bridge the Inspector carries and refuses to start on a
+mismatch, so an unbumped bridge change would fail every local Codex session.
+The fingerprint makes such a change visible (the bridge sources, the bundler,
+the bootstrap package and lockfile, and the `@ai-sdk/harness` and `esbuild`
+closures are all inputs), and release preflight blocks on a published
+`bridgeDigest` that differs from this checkout's.
 
 ## Validation and activation
 
 The conformance workflow builds and runs the native runtime on macOS arm64/x64,
-Linux arm64/x64, and Windows x64. It exercises process lifecycle, cancellation,
+Linux arm64/x64, and Windows x64, and Codex's own legs on the four POSIX
+targets (the certified ones block; see the conformance README). It exercises process lifecycle, cancellation,
 workspace access, skills, secrets, selected MCP delivery, exclusion of a real
 planted project MCP server, and resume after Stop. The upstream model is mocked;
 the vendor CLI, bridge and supervisor are real. For release evidence, dispatch

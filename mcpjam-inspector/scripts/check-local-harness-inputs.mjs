@@ -71,8 +71,12 @@ export function packDependencyClosure(packages, roots = ['@ai-sdk/harness-claude
       else if (!pkg.optionalDependencies?.[name]) throw new Error(`Missing pack dependency ${name} from ${key}`);
     }
   }
+  // Roots resolve the way Node resolves them for the build, which runs in the
+  // Inspector workspace: its own `node_modules` first, then the repo root. A
+  // workspace-local copy (the Inspector's `@ai-sdk/harness`, its `esbuild`) is
+  // the one that produces the pack, not whatever the root hoisted.
   for (const name of roots) {
-    const key = locate(name);
+    const key = locate(name, 'mcpjam-inspector');
     if (!key) throw new Error(`Missing pack dependency ${name}`);
     visit(key);
   }

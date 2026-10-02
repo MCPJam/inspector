@@ -47,7 +47,9 @@ export const RUNTIME_REHASH_POLICIES: Readonly<
       // `@openai/codex-<platform>/vendor/<triple>/…`: the CLI and its
       // code-mode host, the bundled ripgrep, and the sandbox helpers Codex
       // execs (bubblewrap on Linux, the shell it wraps commands in).
-      /(^|\/)@openai\/codex-[a-z0-9-]+\/vendor\/[^/]+\/(bin\/[^/]+|codex-path\/[^/]+|codex-resources\/bwrap|codex-resources\/zsh\/bin\/zsh)$/,
+      /(^|\/)@openai\/codex-[a-z0-9-]+\/vendor\/[^/]+\/(bin\/[^/]+|codex-path\/[^/]+|codex-resources\/bwrap|codex-resources\/zsh\/bin\/zsh|codex-resources\/[^/]+\.exe)$/,
+      // The wrapper the bridge runs (`node …/bin/codex.js`) to find that CLI.
+      /(^|\/)@openai\/codex\/bin\/codex\.js$/,
     ],
   },
 };

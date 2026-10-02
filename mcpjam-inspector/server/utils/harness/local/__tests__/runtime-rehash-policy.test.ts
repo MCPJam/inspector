@@ -34,6 +34,10 @@ describe("which pack files are re-hashed before a spawn", () => {
       "node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources/bwrap",
       "node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path/rg",
       "node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+      "node_modules/@openai/codex/bin/codex.js",
+      // Windows sandbox helpers Codex runs (recorded in the vendor checksums).
+      "node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/codex-resources/codex-command-runner.exe",
+      "node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/codex-resources/codex-windows-sandbox-setup.exe",
     ]) {
       expect(matches("codex", path), path).toBe(true);
     }

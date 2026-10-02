@@ -16,7 +16,7 @@ export interface PackHarnessRecipe {
   loadRecipe(): Promise<{ bootstrapDir: string; files: Array<{ path: string; content: string }> }>;
   stageRecipe(packRoot: string, install: () => void | Promise<void>): Promise<{ bridgeDigest: string }>;
   verifyVendorBinary(packRoot: string, platformKey: string): { path: string; sha256: string; bytes: number };
-  prunePack(packRoot: string): void;
+  prunePack(packRoot: string, platformKey?: string): void;
   vendorPackages(packRoot: string): Record<string, string>;
   adapterVersion(): string;
 }

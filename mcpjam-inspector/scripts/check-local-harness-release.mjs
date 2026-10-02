@@ -1,5 +1,5 @@
 import { computeHarnessPackInputs, computePackInputs } from "./check-local-harness-inputs.mjs";
-import { packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
+import { loadPackHarness, packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
 import { parseManifestFacts, parsePackTables } from "./local-harness-pack-tables.mjs";
 /**
  * The release gate for local harness execution, run for EVERY harness with a
@@ -142,6 +142,22 @@ async function fetchAsset(baseUrl, name) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+/**
+ * The bridge this checkout's recipe emits, digested the way the pack build
+ * digests `bridge.mjs`. `null` when the recipe cannot be produced here.
+ */
+async function expectedBridgeDigestFor(harnessId) {
+  try {
+    const recipe = await loadPackHarness(harnessId);
+    const { bootstrapDir, files } = await recipe.loadRecipe();
+    const bridge = files.find((file) => file.path === `${bootstrapDir}/bridge.mjs`);
+    if (!bridge) return null;
+    return `sha256:${createHash("sha256").update(bridge.content).digest("hex")}`;
+  } catch {
+    return null;
+  }
+}
+
 async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notShipped }) {
   const version = facts.expectedVersion;
   const advertisedTargets = [];
@@ -207,8 +223,21 @@ async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notS
         ? args["base-url"]
         : packReleaseBaseUrl(harnessId, version);
     const { fingerprint } = await computeHarnessPackInputs(harnessId).catch(() => ({ fingerprint: null }));
-    // A published pack is one complete five-target release, even before rollout.
-    for (const target of Object.values(TARGETS_BY_PLATFORM).flat()) {
+    const expectedBridgeDigest = await expectedBridgeDigestFor(harnessId);
+    if (expectedBridgeDigest === null) {
+      blockers.push(
+        `could not compute the ${harnessId} bridge this checkout builds, so ` +
+          `the published packs' bridges cannot be compared with it.`,
+      );
+    }
+    // A published pack is one complete release of every target it ADVERTISES.
+    // A harness certified per target (D8, `nativeTargets`) is checked on
+    // exactly those: an uncertified architecture is unavailable, so requiring
+    // its assets would block an independently certified one — and leaving one
+    // of the advertised targets out would hide its failure. Without
+    // `nativeTargets`, every target, as before.
+    const releaseTargets = facts.nativeTargets ?? Object.values(TARGETS_BY_PLATFORM).flat();
+    for (const target of releaseTargets) {
       const entry = facts.records[target];
       if (!entry || entry.packVersion !== version || !/^sha256:[0-9a-f]{64}$/.test(entry.treeDigest)) {
         blockers.push(`Missing or inconsistent pinned ${harnessId} pack record for ${target}`);
@@ -286,6 +315,18 @@ async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notS
         blockers.push(
           `the published ${harnessId} ${target} manifest is for pack version ` +
             `${manifest.packVersion}, not ${version}.`,
+        );
+      }
+      // A local session byte-compares the pack's bridge with the one this
+      // Inspector carries, and refuses to start on a mismatch. A bridge edit
+      // without a pack bump would therefore ship an Inspector whose every
+      // local session of this harness fails; it is caught here instead.
+      if (expectedBridgeDigest !== null && manifest.bridgeDigest !== expectedBridgeDigest) {
+        blockers.push(
+          `the published ${harnessId} ${target} pack carries bridge ` +
+            `${manifest.bridgeDigest}, but this checkout builds ` +
+            `${expectedBridgeDigest}. Bump the ${harnessId} pack version, ` +
+            `rebuild it, and commit the new digests before releasing.`,
         );
       }
     }

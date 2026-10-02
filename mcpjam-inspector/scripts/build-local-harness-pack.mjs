@@ -460,9 +460,6 @@ async function main() {
     : null;
   if (nodeTarball === null) fail("--node-tarball is required");
 
-  const adapterVersion = recipe.adapterVersion();
-  const packVersion = String(args["pack-version"] ?? adapterVersion);
-
   // The archive's top-level directory is the harness id: the installer
   // extracts it and digests `<version>/<harnessId>`.
   const packRoot = join(outRoot, harnessId);
@@ -491,6 +488,10 @@ async function main() {
   } catch (error) {
     fail(error.stack ?? error.message);
   }
+  // Read after staging: a recipe whose identity comes from a build product
+  // (Codex's bridge bundle) has produced it by now.
+  const adapterVersion = recipe.adapterVersion();
+  const packVersion = String(args["pack-version"] ?? adapterVersion);
 
   // 2. The Inspector-owned loopback launcher, from the repo (digest-covered,
   //    reviewed in a diff like any other source file).
@@ -505,7 +506,7 @@ async function main() {
   let vendor;
   try {
     vendor = recipe.verifyVendorBinary(packRoot, platformKey);
-    recipe.prunePack(packRoot);
+    recipe.prunePack(packRoot, platformKey);
   } catch (error) {
     fail(error.message);
   }
