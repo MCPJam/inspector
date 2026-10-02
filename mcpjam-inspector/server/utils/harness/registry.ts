@@ -23,7 +23,11 @@ import type {
   HarnessV1PermissionMode,
 } from "@ai-sdk/harness";
 import { asSchema } from "ai";
-import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import {
+  HARNESS_REASONING_EFFORTS,
+  type Harness,
+} from "@mcpjam/sdk/host-config/internal";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   harnessModelSupport,
   harnessPinnedVersion,
@@ -302,6 +306,15 @@ type HarnessRuntimeAdapterBase = {
   transport?: "exec" | "app-server";
   /** Human-facing runtime name for preflight/availability messages + UI. */
   displayName: string;
+  /**
+   * The reasoning efforts this adapter is VERIFIED to apply when handed one
+   * through `HarnessCreateArgs.reasoningEffort`. Declared per adapter and
+   * REQUIRED, so a new adapter has to say (empty = "none yet"): a saved
+   * effort on a harness host is refused before any spend when the adapter
+   * does not list it, never silently dropped. Read from the SDK table
+   * (`HARNESS_REASONING_EFFORTS`) so the UI's picker and this gate agree.
+   */
+  supportedReasoningEfforts: readonly ModelReasoningEffort[];
   /** Whether this harness must run inside an attached personal computer. Drives
    *  the availability preflight (data-plane requirement). */
   requiresComputer: boolean;
@@ -439,6 +452,13 @@ type HarnessRuntimeAdapterBase = {
 export type HarnessCreateArgs = {
   modelId: string;
   auth: HarnessAuth;
+  /**
+   * The reasoning effort this turn asked for. An adapter that lists efforts in
+   * `supportedReasoningEfforts` MUST apply it through its own runtime option;
+   * one that lists none never receives it (the refusal helper stops the turn
+   * first), so a value arriving here is always one the adapter declared.
+   */
+  reasoningEffort?: ModelReasoningEffort;
 };
 
 /** Brokered model access: MCPJam supplies the credential, so the adapter needs
@@ -750,6 +770,8 @@ function memoizedBuiltinTools(
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
+  // Nothing verified yet: an effort on this harness is refused, not dropped.
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   requiresComputer: true,
   // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
   // outside the VM, and the model proxy meters the spend.
@@ -851,6 +873,8 @@ const codexExecAdapter: HarnessRuntimeAdapter = {
   // second one exists, so a reader of either arm can tell which is which.
   transport: "exec",
   displayName: "Codex",
+  // Nothing verified yet: an effort on this harness is refused, not dropped.
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
   requiresComputer: true,
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
   // Anthropic one.
@@ -1013,6 +1037,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // different surfaces. Every preflight/refusal message a user reads comes from
   // here, so the distinction has to be in the name itself.
   displayName: "Cursor CLI",
+  // Nothing verified yet: an effort on this harness is refused, not dropped.
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["cursor"],
   requiresComputer: true,
   // NO BROKER. cursor-agent has no provider or gateway routing at all: it
   // authenticates with a `CURSOR_API_KEY` (the adapter's own `credentialEnv`

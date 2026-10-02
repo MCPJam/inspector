@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
   endOrganizationDeletion,
@@ -6065,5 +6066,53 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+  });
+
+  // `projectServerConfig:getConfig` is skipped for a local UUID (CONVEX-HQ,
+  // Kestral PLB-47). A skipped query reads as undefined, so the loading flag
+  // must use the same guard or `clientConfigSyncPending` never clears.
+  describe("project server config loading signal", () => {
+    function renderSyncPending(
+      sharedProjectId: string,
+      projectServerConfig: unknown,
+    ) {
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        projects: {
+          ws_local: { id: "ws_local", name: "Default", sharedProjectId },
+        },
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projectServerConfig:getConfig") {
+          return projectServerConfig;
+        }
+        return undefined;
+      });
+      render(<App />);
+      return vi.mocked(useApiContext).mock.calls.at(-1)?.[0]
+        .clientConfigSyncPending;
+    }
+
+    it("does not hold client config sync for a local UUID project id", () => {
+      expect(
+        renderSyncPending("c10f759d-0262-4805-b599-0aa7fa1c1cc1", undefined),
+      ).toBe(false);
+    });
+
+    it("holds it while a Convex project's config is unresolved", () => {
+      expect(renderSyncPending("jh7abc123def456ghi789jk", undefined)).toBe(
+        true,
+      );
+    });
+
+    it("releases it once that config answers", () => {
+      expect(
+        renderSyncPending("jh7abc123def456ghi789jk", {
+          serverIds: [],
+          overrides: {},
+        }),
+      ).toBe(false);
+    });
   });
 });

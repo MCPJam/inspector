@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.12.5",
+  "version": "3.12.9",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -150,7 +150,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.19.0",
+    "@mcpjam/sdk": "^8.20.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -175,7 +175,7 @@
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "convex": "^1.26.2",
+    "convex": "^1.46.0",
     "date-fns": "^4.4.0",
     "denque": "^2.1.0",
     "dotenv": "^16.4.5",
