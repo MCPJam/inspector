@@ -852,16 +852,6 @@ describe("hosted validate responses (web and v1)", () => {
           }),
       ),
     ],
-    [
-      "malformed event stream",
-      fixedAnswer(
-        () =>
-          new Response("data: {UNEXPECTED_MARKER_61\n\n", {
-            status: 200,
-            headers: { "content-type": "text/event-stream" },
-          }),
-      ),
-    ],
   ])(
     "v1: reports a non-MCP HTTP 200 %s answer by its status line",
     async (_kind, answer) => {
@@ -875,6 +865,21 @@ describe("hosted validate responses (web and v1)", () => {
       );
     },
   );
+
+  it("v1: reports a malformed event stream that never completes as a timeout", async () => {
+    upstream.current = fixedAnswer(
+      () =>
+        new Response("data: {UNEXPECTED_MARKER_61\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    );
+    const res = await v1Validate(routes);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as any;
+    expect(JSON.stringify(body)).not.toMatch(MARKER);
+    expect(body.message).toBe("The MCP server did not respond in time.");
+  });
 
   it.each([
     ["web", webValidate],

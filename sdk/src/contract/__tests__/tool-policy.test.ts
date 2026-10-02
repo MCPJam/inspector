@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  TOOL_POLICY_BLOCK_MARKER,
+  UnmatchedToolPolicyNameError,
   classifyToolSafety,
   decideToolPolicy,
+  isToolPolicyBlockResult,
+  validateToolPolicyNames,
   type EvalSuiteFileToolPolicy,
 } from "../index.js";
 
@@ -112,5 +116,73 @@ describe("tool policy precedence", () => {
     { readOnlyHint: false, destructiveHint: false },
   ])("treats garbage annotation values as unknown: %j", (annotations) => {
     expect(classifyToolSafety(annotations)).toBe("unknown");
+  });
+});
+
+describe("validateToolPolicyNames", () => {
+  const available = ["read_note", "delete_note", "echo"];
+
+  it("refuses a deny name that matches nothing, naming every one", () => {
+    let thrown: unknown;
+    try {
+      validateToolPolicyNames({
+        policy: policy({ deny: ["delete_notes", "drop_table", "echo"] }),
+        availableToolNames: available,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(UnmatchedToolPolicyNameError);
+    const error = thrown as UnmatchedToolPolicyNameError;
+    expect(error.code).toBe("TOOL_POLICY_INVALID");
+    expect(error.names).toEqual(["delete_notes", "drop_table"]);
+    expect(error.message).toBe(
+      "TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool: delete_notes, drop_table"
+    );
+  });
+
+  it("warns, not refuses, for a deferred deny name and an unmatched allow", () => {
+    expect(
+      validateToolPolicyNames({
+        policy: policy({ deny: ["later_tool"], allow: ["ghost"] }),
+        availableToolNames: available,
+        deferredToolNames: ["later_tool"],
+      })
+    ).toEqual([
+      "Tool policy deny name(s) could not be resolved at run start: later_tool",
+      "Tool policy allow name(s) did not match any available tool: ghost",
+    ]);
+  });
+
+  it("says nothing when every name matches", () => {
+    expect(
+      validateToolPolicyNames({
+        policy: policy({ deny: ["delete_note"], allow: ["echo"] }),
+        availableToolNames: available,
+      })
+    ).toEqual([]);
+  });
+});
+
+describe("the policy block marker", () => {
+  it("is the wire-stable key every enforcement point writes and reads", () => {
+    // Persisted in traces and read by the server's trace capture: renaming it
+    // would make every existing block look like an executed call.
+    expect(TOOL_POLICY_BLOCK_MARKER).toBe("mcpjamPolicyBlock");
+  });
+
+  it("recognizes only a result that carries the marker as true", () => {
+    expect(
+      isToolPolicyBlockResult({
+        content: [{ type: "text", text: "Call blocked by tool policy" }],
+        [TOOL_POLICY_BLOCK_MARKER]: true,
+      })
+    ).toBe(true);
+    expect(
+      isToolPolicyBlockResult({ [TOOL_POLICY_BLOCK_MARKER]: "true" })
+    ).toBe(false);
+    expect(isToolPolicyBlockResult({ content: [] })).toBe(false);
+    expect(isToolPolicyBlockResult(null)).toBe(false);
+    expect(isToolPolicyBlockResult("mcpjamPolicyBlock")).toBe(false);
   });
 });

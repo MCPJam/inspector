@@ -137,6 +137,84 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     expect(error.details.oauthRequired).toBeUndefined();
   });
 
+  it("forwards the server's refusal on refresh_token_invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "refresh_token_invalid",
+              message: "Hosted OAuth refresh token is invalid. Please reconnect.",
+              declined: {
+                error: "invalid_request",
+                description: "Unsupported grant_type",
+              },
+            }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    await expect(
+      forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+        { serverName: "Asana" }
+      )
+    ).rejects.toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      details: {
+        refreshTokenInvalid: true,
+        declined: {
+          error: "invalid_request",
+          description: "Unsupported grant_type",
+        },
+      },
+    });
+  });
+
+  it("forwards the transport detail when nothing answered", async () => {
+    const transport = {
+      kind: "unreachable",
+      phase: "token",
+      host: "as.example.com",
+      elapsedMs: 12,
+      cause: "ECONNREFUSED",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "authorization_server_unreachable",
+              message: "Could not reach the authorization server.",
+              detail: null,
+              transport,
+            }),
+            { status: 503, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    await expect(
+      forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+        { serverName: "Descope" }
+      )
+    ).rejects.toMatchObject({
+      status: 503,
+      details: { failure: null, transport },
+    });
+  });
+
   it("forwards the recorded failure on authorization_server_unreachable", async () => {
     vi.stubGlobal(
       "fetch",
