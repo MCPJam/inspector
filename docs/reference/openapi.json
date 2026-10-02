@@ -2376,7 +2376,7 @@
         },
         "responses": {
           "200": {
-            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures.",
+            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures. When the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]`, an additive `authChallenge` holds the parsed challenge. An HTTP 401 from the MCP server is answered with `403 AUTH_REQUIRED` instead, with the challenge in `details.authChallenge`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11056,6 +11056,40 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  },
+                  "lazyAuthProbe": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["enabled"],
+                    "description": "Opt in to the lazy-authentication probe: it calls one public tool, then one protected tool, both without credentials. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Omit the field to leave the probe off. When no tool is named, the probe picks them from their `securitySchemes`.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "enum": [true],
+                        "description": "Must be `true`. To leave the probe off, omit `lazyAuthProbe`."
+                      },
+                      "toolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The protected tool to call."
+                      },
+                      "publicToolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The public tool to call first. Must name a different tool than `toolName`."
+                      }
+                    }
+                  },
+                  "claimedFeatures": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "enum": ["lazy-authentication", "enterprise-managed-auth"]
+                    },
+                    "description": "Features the server claims to offer, so the report shows them as claimed."
                   }
                 }
               }
@@ -11131,6 +11165,40 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  },
+                  "lazyAuthProbe": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["enabled"],
+                    "description": "Opt in to the lazy-authentication probe: it calls one public tool, then one protected tool, both without credentials. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Omit the field to leave the probe off. When no tool is named, the probe picks them from their `securitySchemes`.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "enum": [true],
+                        "description": "Must be `true`. To leave the probe off, omit `lazyAuthProbe`."
+                      },
+                      "toolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The protected tool to call."
+                      },
+                      "publicToolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The public tool to call first. Must name a different tool than `toolName`."
+                      }
+                    }
+                  },
+                  "claimedFeatures": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "enum": ["lazy-authentication", "enterprise-managed-auth"]
+                    },
+                    "description": "Features the server claims to offer, so the report shows them as claimed."
                   }
                 }
               }
@@ -14408,6 +14476,7 @@
               "SERVER_UNREACHABLE",
               "TIMEOUT",
               "OAUTH_REQUIRED",
+              "AUTH_REQUIRED",
               "INTERNAL_ERROR"
             ]
           },
