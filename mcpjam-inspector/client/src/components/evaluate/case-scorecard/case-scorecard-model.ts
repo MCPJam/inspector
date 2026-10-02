@@ -53,7 +53,7 @@ import {
   USER_VALUE_STAGES,
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
-import type { PredicateScope } from "@mcpjam/sdk/predicates";
+import { checkRole, type PredicateScope } from "@mcpjam/sdk/predicates";
 import {
   hostedCriterionId,
   HOSTED_JUDGE_SCORER_ID,
@@ -399,6 +399,28 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
   ]);
 
 /**
+ * Whether this check needs a tool call, so a negative case cannot hold beside
+ * it.
+ *
+ * An advisory check of any kind only warns, never fails the iteration, so it
+ * cannot contradict a case that passes with no calls. The two pattern checks
+ * then decide by their count, not their kind: `min` (default 1) counts
+ * MATCHING calls or results, and a result needs a call, so `min: 0, max: 0` —
+ * "none matches" — holds on a transcript with no calls at all. The SDK refuses
+ * the same pairings on the same rules.
+ */
+function contradictsNegativeCase(predicate: Predicate): boolean {
+  if (checkRole(predicate) === "advisory") return false;
+  if (
+    predicate.type === "toolInputMatches" ||
+    predicate.type === "toolResultMatches"
+  ) {
+    return (predicate.min ?? 1) >= 1;
+  }
+  return NEGATIVE_CONTRADICTING_KINDS.has(predicate.type as PredicateKind);
+}
+
+/**
  * What a check PROTECTS, in words a reader who has never authored an eval can
  * repeat.
  *
@@ -444,6 +466,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   noEndingQuestion: "Catch an answer that ends by asking",
   // What the server sent back, and what it cost to read.
   toolResultContains: "Check what a tool returned",
+  toolResultMatches: "Check what the tool returned",
   toolResultMatchesSchema: "Check the shape of what a tool returned",
   toolResultSizeUnder: "Track a tool's payload growing",
   toolLatencyUnder: "Track a tool getting slower",
@@ -454,6 +477,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   toolCalledBefore: "Require this tool before that one",
   noRepeatedIdenticalCall: "Catch the same call being made twice over",
   argumentsMatchToolSchema: "Catch arguments the tool's own schema rejects",
+  toolInputMatches: "Check what the tool was sent",
   noDeprecatedToolCalled: "Catch a tool the server calls deprecated",
   noDestructiveToolCalled: "Catch a tool the server marks destructive",
 };
@@ -1067,8 +1091,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
 
   const contradicting = [...authoredStepRows, ...caseRows, ...suiteRows].some(
     (row) =>
-      row.predicate !== undefined &&
-      NEGATIVE_CONTRADICTING_KINDS.has(row.predicate.type as PredicateKind),
+      row.predicate !== undefined && contradictsNegativeCase(row.predicate),
   );
 
   return {

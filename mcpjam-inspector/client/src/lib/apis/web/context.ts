@@ -189,10 +189,10 @@ export function setApiContext(next: ApiContext | null): void {
   // actor's handles when the project/org actually changes (logout, switch).
   //
   // Only an actual actor change clears them: `useApiContext` tears the context
-  // down (`setApiContext(null)`) on every dependency change and remounts it
-  // immediately, so treating "scope went away" as a logout would delete live
-  // task handles on ordinary re-renders. A clear therefore requires a
-  // different, DEFINED next scope.
+  // down (`setApiContext(null)`) when it unmounts or is disabled, and a remount
+  // publishes it again immediately, so treating "scope went away" as a logout
+  // would delete live task handles. A clear therefore requires a different,
+  // DEFINED next scope.
   const previousProjectId = apiContext.projectId ?? undefined;
   const nextProjectId = next?.projectId ?? undefined;
   if (

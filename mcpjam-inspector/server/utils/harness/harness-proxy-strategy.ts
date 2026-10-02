@@ -25,6 +25,7 @@ import { isPubliclyReachableUrl } from "../localhost-check.js";
 
 export type HarnessMcpProxyStrategy =
   | { plane: "local-mcp" }
+  | { plane: "local-loopback"; baseUrl: string; token: string }
   | {
       plane: "web-authorized";
       mode: "direct";
@@ -78,6 +79,9 @@ export async function resolveHarnessProxyUrl(args: {
   authHeader: string;
 }): Promise<string> {
   const { strategy, serverId, authHeader } = args;
+  if (strategy.plane === "local-loopback") {
+    return `${strategy.baseUrl}/${encodeURIComponent(serverId)}`;
+  }
   if (strategy.plane === "web-authorized") {
     if (strategy.mode === "direct") {
       const base = strategy.publicBaseUrl.replace(/\/+$/, "");

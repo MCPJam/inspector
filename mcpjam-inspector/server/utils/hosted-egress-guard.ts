@@ -52,9 +52,9 @@ function parseIpv4Octets(
 /**
  * Is this hostname one the hosted inspector must refuse?
  *
- *   - ALWAYS blocked: cloud-metadata names, IPv4/IPv6 link-local (169.254/16,
- *     fe80::/10), and the unspecified address (0.0.0.0/8, ::) — never a
- *     legitimate target in any deployment.
+ *   - ALWAYS blocked: an empty host, cloud-metadata names, IPv4/IPv6
+ *     link-local (169.254/16, fe80::/10), and the unspecified address
+ *     (0.0.0.0/8, ::) — never a legitimate target in any deployment.
  *   - Blocked only when `blockPrivate` (hosted mode): loopback, RFC-1918
  *     private, CGNAT (100.64/10), and IPv6 ULA (fc00::/7). Left reachable for
  *     local dev, where the inspector legitimately talks to a localhost MCP
@@ -79,7 +79,8 @@ export function isBlockedEgressHost(
   // strip it before judging, or `http://metadata.google.internal./` walks past
   // the alias check.
   host = host.replace(/\.+$/, "");
-  if (!host) return false;
+  // Nothing left to judge: fail closed.
+  if (!host) return true;
 
   // Cloud metadata DNS aliases (they resolve to link-local, but block the
   // names too in case resolution is bypassed).
