@@ -272,6 +272,26 @@ export function createSupervisor({
   };
 }
 
+/**
+ * How to run npm. Under `npm run`, npm_execpath names npm's JS entry point:
+ * running it with this Node needs no shell, which Node otherwise requires to
+ * spawn the Windows `npm.cmd` shim (CVE-2024-27980; spawn fails with EINVAL).
+ */
+export function npmInvocation({
+  env = process.env,
+  platform = process.platform,
+  execPath = process.execPath,
+} = {}) {
+  const npmCli = env.npm_execpath;
+  if (npmCli && /npm-cli\.[cm]?js$/.test(npmCli)) {
+    return { command: execPath, args: (args) => [npmCli, ...args] };
+  }
+  return {
+    command: platform === "win32" ? "npm.cmd" : "npm",
+    args: (args) => args,
+  };
+}
+
 function runToCompletion(command, args, options) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: "inherit", ...options });
@@ -286,7 +306,7 @@ function runToCompletion(command, args, options) {
 
 async function main() {
   const inspectorDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  const { command: npm, args: npmArgs } = npmInvocation();
   let args;
   let plan;
   try {
@@ -341,11 +361,11 @@ async function main() {
 
   if (args.prepare) {
     try {
-      await runToCompletion(npm, ["run", "sdk:build"], {
+      await runToCompletion(npm, npmArgs(["run", "sdk:build"]), {
         cwd: inspectorDir,
         env: childEnv,
       });
-      await runToCompletion(npm, ["run", "bundle:all"], {
+      await runToCompletion(npm, npmArgs(["run", "bundle:all"]), {
         cwd: inspectorDir,
         env: childEnv,
       });
@@ -379,11 +399,11 @@ async function main() {
     ...childEnv,
     ...(launchToken ? { MCPJAM_SESSION_TOKEN: launchToken } : {}),
   };
-  supervisor.start("server", npm, ["run", "dev:server"], {
+  supervisor.start("server", npm, npmArgs(["run", "dev:server"]), {
     cwd: inspectorDir,
     env: serverEnv,
   });
-  supervisor.start("client", npm, ["run", "dev:client"], {
+  supervisor.start("client", npm, npmArgs(["run", "dev:client"]), {
     cwd: inspectorDir,
     env: childEnv,
   });
@@ -410,7 +430,7 @@ async function main() {
       supervisor.start(
         "worker",
         npm,
-        [
+        npmArgs([
           "--prefix",
           mcpDir,
           "run",
@@ -422,7 +442,7 @@ async function main() {
           String(ports.debugger),
           "--env-file",
           workerEnvFile,
-        ],
+        ]),
         {
           cwd: mcpDir,
           env: { ...childEnv, CLOUDFLARE_INCLUDE_PROCESS_ENV: "false" },

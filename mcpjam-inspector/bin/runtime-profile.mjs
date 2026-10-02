@@ -128,9 +128,28 @@ export class RuntimeConfigError extends Error {
 
 // ── .env files ──────────────────────────────────────────────────────────────
 
+/** Index of the first closing `quote` in `text`; `\` escapes in `"` only. */
+function closingQuoteIndex(text, quote) {
+  for (let j = 0; j < text.length; j += 1) {
+    if (quote === '"' && text[j] === "\\") {
+      j += 1;
+      continue;
+    }
+    if (text[j] === quote) return j;
+  }
+  return -1;
+}
+
+/** Reverse `formatEnvAssignment`: `\n`, `\r`, `\"`, `\\`; others stay as-is. */
+function decodeDoubleQuoted(text) {
+  return text.replace(/\\([nr"\\])/g, (_, c) =>
+    c === "n" ? "\n" : c === "r" ? "\r" : c,
+  );
+}
+
 /**
  * Parse a dotenv file: `KEY=value`, `export KEY=value`, `#` comments, single /
- * double quotes, and double-quoted `\n` escapes (multi-line PEMs).
+ * double quotes, and double-quoted `\n` / `\"` / `\\` escapes (multi-line PEMs).
  */
 export function parseEnvText(text) {
   const out = {};
@@ -146,14 +165,17 @@ export function parseEnvText(text) {
     let value = rawValue;
     const quote = value[0];
     if (quote === '"' || quote === "'") {
-      // A quoted value may span lines until its closing quote.
+      // A quoted value may span lines until its first unescaped closing
+      // quote; anything after it (e.g. `# comment`) is ignored.
       let body = value.slice(1);
-      while (!body.endsWith(quote) && i + 1 < lines.length) {
+      let end = closingQuoteIndex(body, quote);
+      while (end === -1 && i + 1 < lines.length) {
         i += 1;
         body += `\n${lines[i]}`;
+        end = closingQuoteIndex(body, quote);
       }
-      value = body.endsWith(quote) ? body.slice(0, -1) : body;
-      if (quote === '"') value = value.replace(/\\n/g, "\n");
+      value = end === -1 ? body : body.slice(0, end);
+      if (quote === '"') value = decodeDoubleQuoted(value);
     } else {
       value = value.replace(/\s+#.*$/, "").trim();
     }
@@ -164,9 +186,14 @@ export function parseEnvText(text) {
 
 /** Serialize one assignment, quoting whenever the value needs it. */
 export function formatEnvAssignment(name, value) {
-  const needsQuotes = /[\s#"'\\]/.test(value) || value.includes("\n");
+  const needsQuotes = /[\s#"'\\]/.test(value);
   if (!needsQuotes) return `${name}=${value}`;
-  return `${name}="${value.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/"/g, '\\"')}"`;
+  const escaped = value
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/"/g, '\\"');
+  return `${name}="${escaped}"`;
 }
 
 export function readEnvFile(path, fs = { existsSync, readFileSync }) {

@@ -337,3 +337,34 @@ test("env files round-trip multi-line values", () => {
   ].join("\n");
   assert.deepEqual(parseEnvText(text), { KEY: pem, PLAIN: "1", Q: "a b" });
 });
+
+test("env files round-trip quotes, backslashes and a literal backslash-n", () => {
+  const values = {
+    QUOTE: 'a"b',
+    BACKSLASH: "C:\\path\\to",
+    LITERAL_BACKSLASH_N: "not\\na newline",
+    MIXED: 'x\\"y\n"z"\r\n',
+  };
+  const text = Object.entries(values)
+    .map(([key, value]) => formatEnvAssignment(key, value))
+    .join("\n");
+  assert.deepEqual(parseEnvText(text), values);
+});
+
+test("a quoted value ends at its closing quote, not at the end of the line", () => {
+  const text = [
+    'CONVEX_HTTP_URL="https://x.convex.site" # mine',
+    "WORKOS_CLIENT_ID=client_1",
+    "SINGLE='it''s' # trailing",
+    'MULTI="line one',
+    'line two" # c',
+    "AFTER=1",
+  ].join("\n");
+  assert.deepEqual(parseEnvText(text), {
+    CONVEX_HTTP_URL: "https://x.convex.site",
+    WORKOS_CLIENT_ID: "client_1",
+    SINGLE: "it",
+    MULTI: "line one\nline two",
+    AFTER: "1",
+  });
+});

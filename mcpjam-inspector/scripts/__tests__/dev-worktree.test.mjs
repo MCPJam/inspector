@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   createSupervisor,
   findPortConflicts,
+  npmInvocation,
   parseLauncherArgs,
   planLaunch,
 } from "../dev-worktree.mjs";
@@ -257,3 +258,26 @@ test(
     assert.equal(alive(b.pid), false);
   },
 );
+
+test("npm runs through its JS entry point, never a Windows .cmd shim", () => {
+  const underNpm = npmInvocation({
+    env: { npm_execpath: "C:\\npm\\bin\\npm-cli.js" },
+    platform: "win32",
+    execPath: "C:\\node\\node.exe",
+  });
+  assert.equal(underNpm.command, "C:\\node\\node.exe");
+  assert.deepEqual(underNpm.args(["run", "dev:server"]), [
+    "C:\\npm\\bin\\npm-cli.js",
+    "run",
+    "dev:server",
+  ]);
+
+  // Another package manager's entry point is not npm: fall back to npm itself.
+  const underPnpm = npmInvocation({
+    env: { npm_execpath: "/usr/lib/pnpm/bin/pnpm.cjs" },
+    platform: "linux",
+    execPath: "/usr/bin/node",
+  });
+  assert.equal(underPnpm.command, "npm");
+  assert.deepEqual(underPnpm.args(["run", "x"]), ["run", "x"]);
+});

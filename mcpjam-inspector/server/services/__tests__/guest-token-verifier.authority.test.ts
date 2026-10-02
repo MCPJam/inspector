@@ -150,6 +150,46 @@ describe("guest bearer verification against the selected authority", () => {
     expect(vi.mocked(global.fetch).mock.calls.length).toBeLessThanOrEqual(2);
   });
 
+  it("shares one JWKS fetch among concurrent verifications, succeeding or failing", async () => {
+    const current = rsa();
+    published = [await jwkFor(current.publicKey, "guest-2")];
+    const bearer = await token(current.privateKey, "guest-2");
+    const servedFetch = global.fetch;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    global.fetch = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      await gate;
+      return servedFetch(...args);
+    }) as typeof fetch;
+
+    const burst = Array.from({ length: 5 }, () =>
+      validateGuestTokenDetailedAsync(bearer),
+    );
+    release();
+    for (const result of await Promise.all(burst)) {
+      expect(result.valid).toBe(true);
+    }
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    // Authority down once the set expires: the burst waits on ONE failing
+    // fetch, still served by the cached set, and the backoff covers it all.
+    const start = Date.now();
+    vi.useFakeTimers({ now: start, toFake: ["Date"] });
+    vi.setSystemTime(start + 6 * 60 * 1000);
+    global.fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    const outage = await Promise.all(
+      Array.from({ length: 5 }, () => validateGuestTokenDetailedAsync(bearer)),
+    );
+    for (const result of outage) expect(result.valid).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect((await validateGuestTokenDetailedAsync(bearer)).valid).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("never uses a published key that carries no kid, and refuses kid-less tokens", async () => {
     const current = rsa();
     published = [await jwkFor(current.publicKey)];

@@ -45,6 +45,9 @@ type AuthorityKeySet = {
 };
 
 let authorityKeysCache: AuthorityKeySet | undefined;
+let inflightAuthorityRefresh:
+  | { jwksUrl: string; promise: Promise<AuthorityKeySet | undefined> }
+  | undefined;
 let lastUnknownKidRefreshAt = 0;
 let lastFailedRefreshAt = 0;
 
@@ -180,6 +183,31 @@ async function refreshAuthorityKeys(
 }
 
 /**
+ * One refresh per JWKS URL at a time: verifications that find the set expired
+ * (or the authority down) together wait on the same fetch instead of each
+ * starting one, and a failure starts the backoff for all of them at once.
+ */
+function sharedAuthorityRefresh(
+  jwksUrl: string,
+): Promise<AuthorityKeySet | undefined> {
+  if (inflightAuthorityRefresh?.jwksUrl === jwksUrl) {
+    return inflightAuthorityRefresh.promise;
+  }
+  const promise = refreshAuthorityKeys(jwksUrl)
+    .then((fresh) => {
+      if (!fresh) lastFailedRefreshAt = Date.now();
+      return fresh;
+    })
+    .finally(() => {
+      if (inflightAuthorityRefresh?.promise === promise) {
+        inflightAuthorityRefresh = undefined;
+      }
+    });
+  inflightAuthorityRefresh = { jwksUrl, promise };
+  return promise;
+}
+
+/**
  * The selected authority's key for `kid`, or null.
  *
  * Strict by design: a token must name a `kid` the authority currently
@@ -203,8 +231,7 @@ async function getAuthorityVerificationKey(
     authorityKeysCache?.jwksUrl === jwksUrl ? authorityKeysCache : undefined;
   const refresh = async () => {
     if (now - lastFailedRefreshAt < FAILED_REFRESH_BACKOFF_MS) return keySet;
-    const fresh = await refreshAuthorityKeys(jwksUrl);
-    if (!fresh) lastFailedRefreshAt = now;
+    const fresh = await sharedAuthorityRefresh(jwksUrl);
     return fresh ?? keySet;
   };
   if (!keySet || now - keySet.fetchedAt >= AUTHORITY_JWKS_CACHE_MS) {
@@ -225,6 +252,7 @@ async function getAuthorityVerificationKey(
 /** Test seam: drop cached authority keys and the unknown-kid throttle. */
 export function resetGuestJwksCacheForTests(): void {
   authorityKeysCache = undefined;
+  inflightAuthorityRefresh = undefined;
   lastUnknownKidRefreshAt = 0;
   lastFailedRefreshAt = 0;
 }
