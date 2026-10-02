@@ -9,6 +9,7 @@ import {
   webmcpFrameChannel,
 } from "../webmcp-inspector-store";
 import * as sessionToken from "@/lib/session-token";
+import { rememberAccessToken } from "@/lib/access-link";
 import {
   frameStatsReport,
   notePainted,
@@ -312,11 +313,8 @@ describe("webmcp inspector store", () => {
     useWebmcpInspectorStore.getState().disconnect();
     FakeEventSource.instances = [];
     FakeWebSocket.instances = [];
-    // The token the frame socket carries as its subprotocol. Set on `window`
-    // because that is where the real one is injected.
-    (
-      window as unknown as { __MCP_SESSION_TOKEN__?: string }
-    ).__MCP_SESSION_TOKEN__ = "test-token";
+    // The access-link credential the frame socket carries as its subprotocol.
+    rememberAccessToken("test-token");
     vi.restoreAllMocks();
     useWebmcpInspectorStore.setState({
       session: undefined,
@@ -1262,9 +1260,7 @@ describe("webmcp inspector store — frame transport", () => {
     useWebmcpInspectorStore.getState().disconnect();
     FakeEventSource.instances = [];
     FakeWebSocket.instances = [];
-    (
-      window as unknown as { __MCP_SESSION_TOKEN__?: string }
-    ).__MCP_SESSION_TOKEN__ = "test-token";
+    rememberAccessToken("test-token");
     vi.restoreAllMocks();
     useWebmcpInspectorStore.setState({
       session: undefined,
