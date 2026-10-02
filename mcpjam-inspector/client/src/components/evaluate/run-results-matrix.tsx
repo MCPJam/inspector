@@ -237,6 +237,7 @@ export function RunResultsMatrix({
   onEditCase,
   onEditEvaluator,
 }: {
+  /** Target keys to show (`comparisonKey`; the bare model id when default). */
   modelIds?: readonly string[];
   run: EvalSuiteRun;
   runs?: readonly EvalSuiteRun[];
@@ -263,7 +264,7 @@ export function RunResultsMatrix({
     return {
       ...matrix,
       targets: modelIds
-        ? matrix.targets.filter((target) => modelIds.includes(target.modelId))
+        ? matrix.targets.filter((target) => modelIds.includes(target.targetKey))
         : matrix.targets,
     };
   }, [run, runs, iterations, hostNamesById, modelIds]);

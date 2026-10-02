@@ -20,6 +20,8 @@ interface SuiteHeroStatsProps {
     label: string;
   }>;
   modelStats: Array<{
+    /** Target identity (`targetKey`); `model` is its display label. */
+    key?: string;
     model: string;
     passRate: number;
     passed: number;
@@ -314,7 +316,10 @@ export function SuiteHeroStats({
           </div>
           <div className="flex flex-wrap items-center gap-4">
             {modelStats.map((model) => (
-              <div key={model.model} className="flex items-center gap-2">
+              <div
+                key={model.key ?? model.model}
+                className="flex items-center gap-2"
+              >
                 <div
                   className="h-2 w-2 rounded-full"
                   style={{

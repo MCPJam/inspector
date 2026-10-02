@@ -3,6 +3,8 @@ import {
   buildComparePreviewTrace,
   buildHistoricalCompareRunRecords,
   buildCompareRunRecord,
+  caseModelEntriesForCompareValues,
+  caseModelEntriesUnchanged,
   mergeAdvancedConfigWithOverride,
   resolveIterationModelValue,
   resolveInitialCompareModelValues,
@@ -992,5 +994,54 @@ describe("resolveTraceModel", () => {
     );
     expect(model.provider).toBe("anthropic");
     expect(model.name).not.toBe("claude-sonnet-4-5");
+  });
+});
+
+describe("case-editor compare: models[] by selection", () => {
+  const sonnet = (reasoningEffort?: "low" | "high") => ({
+    provider: "anthropic",
+    model: "anthropic/claude-sonnet-5.5",
+    selection: {
+      modelId: "anthropic/claude-sonnet-5.5",
+      source: "hosted" as const,
+      ...(reasoningEffort ? { settings: { reasoningEffort } } : {}),
+      fallback: { provider: "none" as const, model: "none" as const },
+    },
+  });
+  const bare = { provider: "anthropic", model: "anthropic/claude-sonnet-5.5" };
+
+  it("an effort-only edit counts as a change", () => {
+    expect(caseModelEntriesUnchanged([sonnet("low")], [sonnet("high")])).toBe(
+      false,
+    );
+    expect(caseModelEntriesUnchanged([bare], [sonnet("high")])).toBe(false);
+  });
+
+  it("the same selection, or a default one beside a bare entry, is unchanged", () => {
+    expect(caseModelEntriesUnchanged([sonnet("low")], [sonnet("low")])).toBe(
+      true,
+    );
+    expect(caseModelEntriesUnchanged([bare], [sonnet()])).toBe(true);
+    expect(caseModelEntriesUnchanged([bare], [bare])).toBe(true);
+    expect(caseModelEntriesUnchanged([bare], [bare, bare])).toBe(false);
+  });
+
+  it("re-saving keeps saved selections and both entries of one model", () => {
+    const build = (value: string) => ({
+      provider: value.split("/")[0]!,
+      model: value.split("/").slice(1).join("/"),
+    });
+    const current = [sonnet("low"), sonnet("high")];
+    const next = caseModelEntriesForCompareValues(
+      ["anthropic/anthropic/claude-sonnet-5.5", "openai/gpt-5"],
+      current as Array<{ provider: string; model: string }>,
+      build,
+    );
+    expect(next).toEqual([
+      sonnet("low"),
+      sonnet("high"),
+      { provider: "openai", model: "gpt-5" },
+    ]);
+    expect(caseModelEntriesUnchanged(current, next.slice(0, 2))).toBe(true);
   });
 });

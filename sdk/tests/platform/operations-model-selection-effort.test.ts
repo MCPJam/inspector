@@ -521,15 +521,28 @@ describe("composed stacks", () => {
     ).toEqual([{ modelId: "openai/gpt-5", selection: SELECTION }]);
   });
 
-  it("refuses two different selections for one model (an effort axis is a later phase)", () => {
+  it("two efforts of one model are two cells, in the order given", () => {
+    const high = { ...SELECTION, settings: { reasoningEffort: "high" as const } };
+    expect(
+      expandComposeModelChoices({
+        models: ["openai/gpt-5"],
+        modelSelections: [SELECTION, high, high],
+      })
+    ).toEqual([
+      { modelId: "openai/gpt-5", selection: SELECTION },
+      { modelId: "openai/gpt-5", selection: high },
+    ]);
+  });
+
+  it("refuses two selections of one target that differ only in fallback", () => {
     expect(() =>
       expandComposeModelChoices({
         modelSelections: [
           SELECTION,
-          { ...SELECTION, settings: { reasoningEffort: "high" } },
+          { ...SELECTION, fallback: { provider: "openrouter", model: "none" } },
         ],
       })
-    ).toThrow(/one selection per model/);
+    ).toThrow(/same target/);
   });
 
   it("ensure_adhoc_environment sends the selection and pins its model", async () => {

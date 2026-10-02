@@ -119,6 +119,7 @@ function makeSuite(
 // avoid requiring a React test renderer for pure data-shaping.
 import { buildCellTrendSeries, useCrossHostData } from "../use-cross-host-data";
 import { renderHook } from "@testing-library/react";
+import { comparisonKey } from "@mcpjam/sdk/browser";
 
 describe("useCrossHostData", () => {
   it("includes a backfilled run in a style/model column without a host address", () => {
@@ -1009,5 +1010,132 @@ describe("useCrossHostData", () => {
     expect(
       result.current.matrix.get("c1")?.get("h1::client-default")?.passCount,
     ).toBe(1);
+  });
+
+  describe("by targetKey", () => {
+    const SONNET = "anthropic/claude-sonnet-5.5";
+    const selection = (effort: "low" | "high") => ({
+      modelId: SONNET,
+      source: "hosted" as const,
+      settings: { reasoningEffort: effort },
+      fallback: { provider: "none" as const, model: "none" as const },
+    });
+    const LOW = comparisonKey(selection("low"));
+    const HIGH = comparisonKey(selection("high"));
+    const overrideRun = (
+      id: string,
+      environmentId: string,
+      targetKey: string | undefined,
+      createdAt: number,
+    ) => ({
+      ...makeEnvironmentRun(id, "h1", environmentId, 1, createdAt),
+      modelSource: "override" as const,
+      effectiveModelId: SONNET,
+      ...(targetKey ? { targetKey } : {}),
+    });
+
+    it("two efforts of one model on one client are two columns with distinct labels", () => {
+      const suite = makeSuite([], { environmentIds: ["env-low", "env-high"] });
+      const runs = [
+        overrideRun("rLow", "env-low", LOW, 1000),
+        overrideRun("rHigh", "env-high", HIGH, 2000),
+      ];
+      const iters = [
+        makeIteration("i1", { suiteRunId: "rLow", testCaseId: "c1" }),
+        makeIteration("i2", {
+          suiteRunId: "rHigh",
+          testCaseId: "c1",
+          result: "failed",
+        }),
+      ];
+      const { result } = renderHook(() =>
+        useCrossHostData(suite, [makeCase("c1")], runs, iters, {
+          environments: [
+            {
+              environmentId: "env-low",
+              hostId: "h1",
+              modelId: SONNET,
+              modelSelection: selection("low"),
+            },
+            {
+              environmentId: "env-high",
+              hostId: "h1",
+              modelId: SONNET,
+              modelSelection: selection("high"),
+            },
+          ],
+        }),
+      );
+      const columns = result.current.hostColumns;
+      expect(columns.map((c) => c.columnKey)).toEqual([
+        `h1::${LOW}`,
+        `h1::${HIGH}`,
+      ]);
+      expect(columns.map((c) => c.modelLabel)).toEqual([
+        "claude-sonnet-5.5 · Low",
+        "claude-sonnet-5.5 · High",
+      ]);
+      expect(result.current.matrix.get("c1")?.get(`h1::${LOW}`)?.passCount).toBe(
+        1,
+      );
+      expect(
+        result.current.matrix.get("c1")?.get(`h1::${HIGH}`)?.failCount,
+      ).toBe(1);
+    });
+
+    it("a lone effort target is labelled by its model alone", () => {
+      const suite = makeSuite([], { environmentIds: ["env-high"] });
+      const { result } = renderHook(() =>
+        useCrossHostData(
+          suite,
+          [makeCase("c1")],
+          [overrideRun("rHigh", "env-high", HIGH, 1000)],
+          [makeIteration("i1", { suiteRunId: "rHigh", testCaseId: "c1" })],
+          {
+            environments: [
+              {
+                environmentId: "env-high",
+                hostId: "h1",
+                modelId: SONNET,
+                modelSelection: selection("high"),
+              },
+            ],
+          },
+        ),
+      );
+      expect(result.current.hostColumns.map((c) => c.modelLabel)).toEqual([
+        "claude-sonnet-5.5",
+      ]);
+    });
+
+    it("default runs key and label exactly as before (targetKey = model id)", () => {
+      const suite = makeSuite([], { environmentIds: ["env1"] });
+      const runs = [
+        overrideRun("rNew", "env1", SONNET, 2000),
+        overrideRun("rOld", "env1", undefined, 1000),
+      ];
+      const { result } = renderHook(() =>
+        useCrossHostData(
+          suite,
+          [makeCase("c1")],
+          runs,
+          [
+            makeIteration("i1", { suiteRunId: "rOld", testCaseId: "c1" }),
+            makeIteration("i2", { suiteRunId: "rNew", testCaseId: "c1" }),
+          ],
+          {
+            environments: [
+              { environmentId: "env1", hostId: "h1", modelId: SONNET },
+            ],
+          },
+        ),
+      );
+      expect(result.current.hostColumns.map((c) => c.columnKey)).toEqual([
+        `h1::${SONNET}`,
+      ]);
+      expect(result.current.hostColumns[0]?.modelLabel).toBe(
+        "claude-sonnet-5.5",
+      );
+    });
   });
 });
