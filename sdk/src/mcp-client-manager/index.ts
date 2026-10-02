@@ -146,6 +146,8 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
+  extractAuthChallenge,
+  attachAuthChallenge,
   isMCPAuthError,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,

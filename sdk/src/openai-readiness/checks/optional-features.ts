@@ -40,6 +40,14 @@ export interface OpenAIOptionalFeatureEvidence {
   /** Whether the plugin implements a checkout flow. */
   checkout?: boolean;
   profileIdentification?: boolean;
+  /**
+   * Whether the lazy-auth probe saw anonymous public calls served AND a
+   * protected call refused in the shape ChatGPT's tool-level sign-in reads.
+   * `undefined` when the probe did not establish either answer.
+   */
+  lazyAuthentication?: boolean;
+  /** The submitter claimed lazy authentication. Unlocks `claimed`, never `supported`. */
+  lazyAuthenticationClaimed?: boolean;
 }
 
 export interface OpenAIOptionalFeatureOutput {
@@ -53,6 +61,11 @@ interface BadgeSpec {
   section: string;
   page: Parameters<typeof openaiPolicySource>[0];
   read: (evidence: OpenAIOptionalFeatureEvidence) => boolean | undefined;
+  /**
+   * Whether the submitter claimed the feature. Consulted only when `read`
+   * established nothing, so a claim can never outrank an observation.
+   */
+  claimed?: (evidence: OpenAIOptionalFeatureEvidence) => boolean;
   detail: (state: OpenAICapabilityBadge["state"]) => string;
 }
 
@@ -105,6 +118,20 @@ const BADGES: BadgeSpec[] = [
         : "No authorization server advertises Client ID Metadata Documents; dynamic registration also works.",
   },
   {
+    id: "openai.feature.lazy-authentication",
+    title: "Tool-level sign-in (lazy authentication)",
+    page: "build/auth",
+    section: "§Runtime authorization",
+    read: (evidence) => evidence.lazyAuthentication,
+    claimed: (evidence) => evidence.lazyAuthenticationClaimed === true,
+    detail: (state) =>
+      state === "supported"
+        ? "Anonymous calls to a public tool are served, and an unauthenticated call to a protected tool returns the _meta challenge ChatGPT's tool-level sign-in reads."
+        : state === "claimed"
+          ? "Declared by the submitter; not verified by this run. The lazy-auth probe verifies it."
+          : "The lazy-auth probe did not see public calls served alongside a protected call refused with the _meta challenge ChatGPT reads; requiring sign-in at connect time is also a supported shape.",
+  },
+  {
     id: "openai.feature.checkout",
     title: "In-conversation checkout",
     page: "build/monetization",
@@ -128,7 +155,9 @@ export function runOpenAIOptionalFeatureChecks(
     const observed = spec.read(evidence);
     const state: OpenAICapabilityBadge["state"] =
       observed === undefined
-        ? "not-evaluated"
+        ? spec.claimed?.(evidence)
+          ? "claimed"
+          : "not-evaluated"
         : observed
         ? "supported"
         : "unsupported";
@@ -141,7 +170,7 @@ export function runOpenAIOptionalFeatureChecks(
         state === "not-evaluated"
           ? "This run did not look."
           : spec.detail(state),
-      provenance: "wire",
+      provenance: state === "claimed" ? "declared" : "wire",
     });
 
     const definition: OpenAICheckDefinition = {

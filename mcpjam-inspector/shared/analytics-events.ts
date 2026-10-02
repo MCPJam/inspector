@@ -350,6 +350,19 @@ export const ANALYTICS_EVENTS = {
    */
   share_server_to_org_registry_clicked: { source: "client" },
   /**
+   * Mid-session sign-in: a server refused one call and asked the user to sign
+   * in. `shown` fires when the Connect card is presented, `connect_clicked` on
+   * the trusted click that alone may start the redirect, `completed` /
+   * `failed` when the sign-in settles, and `dismissed` on "Not now". Props are
+   * closed vocabularies (surface, source, action); never scopes, URLs or the
+   * server's own text.
+   */
+  auth_challenge_card_shown: { source: "client" },
+  auth_challenge_connect_clicked: { source: "client" },
+  auth_challenge_completed: { source: "client" },
+  auth_challenge_failed: { source: "client" },
+  auth_challenge_dismissed: { source: "client" },
+  /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.
    *

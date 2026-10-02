@@ -55,9 +55,20 @@ import {
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
+  peekPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   type DirectScopeStepUpReplayDescriptor,
+  type PendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
+import {
+  clearAuthChallengeCards,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import {
+  AuthChallengeCards,
+  authChallengeConnectMessage,
+} from "./auth-challenge/AuthChallengeCard";
+import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig, TaskMode } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
@@ -217,6 +228,15 @@ export function ToolsTab({
   const [activeElicitation, setActiveElicitation] =
     useState<ActiveElicitation | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  /**
+   * Why a sign-in challenge did not become a Connect card (the host passes it
+   * through, the server's auth method cannot sign in, "Not now", a repeat
+   * after sign-in), or what a Connect click led to. Text only.
+   */
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  /** A signed-in call that may change something, waiting on "Run again?". */
+  const [confirmReplay, setConfirmReplay] =
+    useState<PendingDirectScopeStepUpReplay | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
   const [highlightedRequestId, setHighlightedRequestId] = useState<
@@ -616,11 +636,42 @@ export function ToolsTab({
   // legitimate scope step-up starts fresh rather than inheriting a stale count
   // that would prematurely throw. Called from BOTH success paths — an immediate
   // `completed` result and a task-augmented `task_created`.
+  // It also forgets this operation's mid-session sign-in attempt.
   const resetStepUpOnSuccess = (toolName: string) =>
     resetScopeStepUp(server, {
       method: "tools/call",
       operation: toolName,
     });
+
+  const isReadOnlyTool = (toolName: string) =>
+    (tools[toolName]?.annotations as { readOnlyHint?: unknown } | undefined)
+      ?.readOnlyHint === true;
+
+  // A mid-session sign-in challenge on this call: a Connect card, or a notice
+  // saying why there is none. Presenting has no side effects; only the card's
+  // Connect click signs in.
+  const presentToolAuthChallenge = (
+    response: ToolExecutionResponse,
+    toolName: string,
+    replayDescriptor: DirectScopeStepUpReplayDescriptor | undefined,
+  ) => {
+    const signal = "authChallenge" in response ? response.authChallenge : undefined;
+    if (!signal || signal.source === "http_403_insufficient_scope") return false;
+    void presentAuthChallenge({
+      server,
+      signal,
+      surface: "tools",
+      operation: { method: "tools/call", operation: toolName },
+      readOnly: isReadOnlyTool(toolName),
+      ...("toolSecuritySchemes" in response && response.toolSecuritySchemes
+        ? { schemes: response.toolSecuritySchemes }
+        : {}),
+      ...(replayDescriptor?.kind === "tool" ? { replay: replayDescriptor } : {}),
+    }).then((presentation) => {
+      if (presentation.kind === "notice") setAuthNotice(presentation.message);
+    });
+    return true;
+  };
 
   // `scopeAtCall` is the auth/org scope captured when the ORIGINATING
   // execution started, threaded as a plain parameter: `executeTool` passes
@@ -633,6 +684,7 @@ export function ToolsTab({
     toolName: string,
     scopeAtCall: string | undefined,
     replayDescriptor?: DirectScopeStepUpReplayDescriptor,
+    options?: { replayedAfterSignIn?: boolean },
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -645,7 +697,13 @@ export function ToolsTab({
       const callResult = response.result;
       setResult(callResult);
 
-      resetStepUpOnSuccess(toolName);
+      // A result carrying a sign-in challenge is a refusal, not a success:
+      // resetting the budget on it would let a server that alternates
+      // challenge and refusal loop the user through sign-in.
+      if (!presentToolAuthChallenge(response, toolName, replayDescriptor)) {
+        resetStepUpOnSuccess(toolName);
+        if (serverName) clearAuthChallengeCards(serverName);
+      }
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
@@ -738,8 +796,11 @@ export function ToolsTab({
       const challenge = parseInsufficientScopeChallenge(
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
+      // A call that was itself a replay is not saved again: one step-up
+      // never chains into another replay.
       if (
         replayDescriptor?.kind === "tool" &&
+        !options?.replayedAfterSignIn &&
         isActionableStepUpChallenge(challenge)
       ) {
         savePendingDirectScopeStepUpReplay({
@@ -751,6 +812,9 @@ export function ToolsTab({
             operation: toolName,
           },
           descriptor: replayDescriptor,
+          // A call that may change something asks "Run again?" after the
+          // re-authorization instead of replaying its saved arguments.
+          requiresConfirmation: !isReadOnlyTool(toolName),
         });
       }
       driveScopeStepUpFromChallenge(
@@ -758,16 +822,14 @@ export function ToolsTab({
         challenge,
         { method: "tools/call", operation: toolName },
       );
+
+      // A 401 sign-in challenge (a 403 above is a step-up instead).
+      presentToolAuthChallenge(response, toolName, replayDescriptor);
     }
   };
 
-  useEffect(() => {
-    if (!serverName || !isServerConnected) return;
-    const pending = claimPendingDirectScopeStepUpReplay({
-      serverName,
-      surface: "tools",
-    });
-    if (!pending || pending.descriptor.kind !== "tool") return;
+  const replayToolCall = (pending: PendingDirectScopeStepUpReplay) => {
+    if (pending.descriptor.kind !== "tool") return;
     const descriptor = pending.descriptor;
     setSelectedTool(descriptor.toolName);
     setLoadingExecuteTool(true);
@@ -780,10 +842,14 @@ export function ToolsTab({
       descriptor.allowTaskResult,
     )
       .then((response) => {
+        // The descriptor travels on so a sign-in card for the replayed call
+        // can run it again; a repeat step-up still does not save it.
         handleExecutionResponse(
           response,
           descriptor.toolName,
           getTrackedTaskScope(),
+          descriptor,
+          { replayedAfterSignIn: true },
         );
       })
       .catch((error) => {
@@ -797,7 +863,47 @@ export function ToolsTab({
         setLoadingExecuteTool(false);
         clearPendingDirectScopeStepUpReplay();
       });
+  };
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    // A call that may change something is never re-run on its own after a
+    // sign-in: the user confirms it first.
+    const waiting = peekPendingDirectScopeStepUpReplay();
+    if (
+      waiting?.phase === "ready" &&
+      waiting.requiresConfirmation &&
+      waiting.descriptor.serverName === serverName &&
+      waiting.descriptor.surface === "tools"
+    ) {
+      if (waiting.descriptor.kind === "tool") {
+        setSelectedTool(waiting.descriptor.toolName);
+      }
+      setConfirmReplay(waiting);
+      return;
+    }
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "tools",
+    });
+    if (!pending) return;
+    replayToolCall(pending);
   }, [isServerConnected, serverName]);
+
+  const runConfirmedReplay = () => {
+    setConfirmReplay(null);
+    if (!serverName) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "tools",
+    });
+    if (pending) replayToolCall(pending);
+  };
+
+  const dismissConfirmedReplay = () => {
+    setConfirmReplay(null);
+    clearPendingDirectScopeStepUpReplay();
+  };
 
   const executeTool = async () => {
     // Captured before ANY await, as a local owned by THIS execution: the
@@ -835,6 +941,7 @@ export function ToolsTab({
     setLoadingExecuteTool(true);
     setError("");
     setNormalizedError(null);
+    setAuthNotice(null);
     setResult(null);
     setStructuredContentValid(undefined);
     setResponseDurationMs(null);
@@ -1137,17 +1244,66 @@ export function ToolsTab({
     />
   );
 
+  const signInBanner =
+    confirmReplay?.descriptor.kind === "tool" ? (
+      <div
+        role="region"
+        aria-label="Run again after sign-in"
+        className="rounded-lg border border-border border-l-2 border-l-primary bg-card p-4 text-sm text-card-foreground"
+      >
+        <p>
+          Signed in. Run {confirmReplay.descriptor.toolName} again?
+        </p>
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" onClick={runConfirmedReplay}>
+            Run again
+          </Button>
+          <Button size="sm" variant="ghost" onClick={dismissConfirmedReplay}>
+            Not now
+          </Button>
+        </div>
+      </div>
+    ) : null;
+
+  const authChallengeContent =
+    signInBanner || authNotice || server ? (
+      <div className="space-y-2 px-4 pt-4 empty:hidden">
+        {signInBanner}
+        <AuthChallengeCards
+          surface="tools"
+          server={server}
+          onResult={(connectResult) => {
+            const message = authChallengeConnectMessage(connectResult);
+            if (message) setAuthNotice(message);
+          }}
+        />
+        {authNotice ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="auth-challenge-notice"
+          >
+            {authNotice}
+          </p>
+        ) : null}
+      </div>
+    ) : null;
+
   const centerContent = selectedTool ? (
-    <ResultsPanel
-      error={error}
-      normalizedError={normalizedError}
-      result={result}
-      structuredContentValid={structuredContentValid}
-      toolMeta={getToolMeta(lastToolName)}
-      responseDurationMs={responseDurationMs}
-      serverName={serverName}
-      mcpToolResultImageRendering={mcpToolResultImageRendering}
-    />
+    <div className="flex h-full flex-col">
+      {authChallengeContent}
+      <div className="min-h-0 flex-1">
+        <ResultsPanel
+          error={error}
+          normalizedError={normalizedError}
+          result={result}
+          structuredContentValid={structuredContentValid}
+          toolMeta={getToolMeta(lastToolName)}
+          responseDurationMs={responseDurationMs}
+          serverName={serverName}
+          mcpToolResultImageRendering={mcpToolResultImageRendering}
+        />
+      </div>
+    </div>
   ) : (
     <div className="h-full flex items-center justify-center">
       <div className="text-center">

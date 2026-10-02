@@ -12,6 +12,7 @@
  * (it owns React state, refs, and inspector command registrations — calling
  * it twice would double-register handlers).
  */
+import { authorizationRequiredCommandErrorFromSignal } from "@/lib/auth-challenge-lifecycle";
 import {
   createContext,
   createElement,
@@ -312,6 +313,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setToolOutput,
     setToolResponseMetadata,
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+    tools,
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
@@ -738,10 +740,20 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         const outcome = await executeTool({
           toolName: command.payload.toolName,
           parameters: selection.parameters,
+          fromCommand: true,
         });
         await waitForUiCommit();
 
         if (!outcome.ok) {
+          // A sign-in challenge is reported as such; a command never signs in.
+          const authorizationRequired =
+            authorizationRequiredCommandErrorFromSignal(
+              outcome.response && "authChallenge" in outcome.response
+                ? outcome.response.authChallenge
+                : undefined,
+              selection.serverName,
+            );
+          if (authorizationRequired) throw authorizationRequired;
           throw createInspectorCommandClientError(
             "execution_failed",
             outcome.error,

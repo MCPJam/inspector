@@ -110,6 +110,53 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("the lazy-auth inputs", () => {
+  it("are threaded into the run, and the probe carries no credential", async () => {
+    const calls: Array<{ tool?: string; authorization: string | null }> = [];
+    const base = wireFetch();
+    const recording = (async (url: any, init?: any) => {
+      const body =
+        String(init?.method ?? "GET").toUpperCase() === "POST"
+          ? JSON.parse(String(init?.body ?? "{}"))
+          : {};
+      if (body.method === "tools/call") {
+        calls.push({
+          tool: body.params?.name,
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return base(url, init);
+    }) as unknown as typeof fetch;
+
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: recording,
+      mcpHeaders: { authorization: "Bearer saved-token" },
+      includeLlmObservations: false,
+      lazyAuthProbe: { enabled: true, publicToolName: "search_docs" },
+      claimedFeatures: ["lazy-authentication"],
+    });
+
+    expect(calls).toEqual([{ tool: "search_docs", authorization: null }]);
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+    const report = finalizeReadinessRun.mock.calls[0]![2] as {
+      badges?: Array<{ id: string; state: string }>;
+    };
+    // The claim reached the grader: with no protected call the probe could
+    // not decide, so the claim is what the badge reports.
+    expect(
+      report.badges?.find((b) => b.id === "claude.features.lazy-authentication")
+        ?.state,
+    ).toBe("claimed");
+  });
+});
+
 describe("a run that completes", () => {
   it("finalizes with the summary the row is indexed on", async () => {
     await executeHostedReadinessRun({
@@ -386,7 +433,7 @@ describe("what leaves this process", () => {
       lease: LEASE,
       publisher: "claude",
       target: TARGET,
-      headers: { authorization: "Bearer sk-live-never-stored" },
+      mcpHeaders: { authorization: "Bearer sk-live-never-stored" },
       fetchFn: wireFetch(),
       includeLlmObservations: false,
       analyticsActor,

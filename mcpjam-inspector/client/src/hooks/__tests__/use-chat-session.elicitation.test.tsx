@@ -333,10 +333,15 @@ describe("useChatSession elicitation", () => {
     });
 
     expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
-    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(server, {
-      requiredScope: "read write admin",
-      resourceMetadataUrl: "https://rs.example/.well-known",
-    });
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(
+      server,
+      {
+        requiredScope: "read write admin",
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      },
+      // The hosted redirect marker and the flow binding ride on the options.
+      expect.objectContaining({ beforeRedirect: expect.any(Function) }),
+    );
   });
 
   it("dedupes a re-delivered insufficient_scope part per server", async () => {

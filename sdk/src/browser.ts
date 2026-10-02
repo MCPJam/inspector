@@ -72,6 +72,24 @@ export type {
   EvidenceReuseRefusal,
 } from "./directory-readiness/evidence-reuse.js";
 
+/**
+ * Lazy authentication's vocabulary and bounds, so a client can offer the
+ * claims and the probe's tool names and validate them as every other surface
+ * does. The gate and the probe itself stay where the run is gathered.
+ */
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,
@@ -548,6 +566,38 @@ export {
   type StepUpAuthMode,
   type StepUpAction,
 } from "./oauth/state-machines/shared/challenges.js";
+// Mid-session sign-in ("lazy authentication") challenges: recognition, the
+// per-host policy, and the shared copy. Browser-safe.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+  type AuthChallengeAction,
+  type AuthChallengeDecision,
+  type AuthChallengeDecisionReason,
+  type AuthChallengeEffectiveAuth,
+  type AuthChallengeFacets,
+  type AuthChallengePolicy,
+  type AuthChallengeSignal,
+  type AuthChallengeSource,
+  type ToolResultAuthChallengeTrigger,
+  type ToolSecurityScheme,
+  type ToolSecuritySchemeResolution,
+  type ToolSecuritySchemeSource,
+  type UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 // The unauthenticated probe's acceptance gate. Exported so the debugger UI
 // decides "is this exchange an expected challenge?" from the same rule the flow
 // advances on, rather than re-testing `status === 401` and painting an accepted

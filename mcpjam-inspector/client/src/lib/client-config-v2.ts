@@ -881,6 +881,12 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    // Mid-session sign-in knobs. Each is a single enum, so presence is
+    // content: a profile carrying only one of them must survive the save.
+    profile.unauthorizedChallenge === undefined &&
+    profile.unauthorizedChallengeTrigger === undefined &&
+    profile.toolResultAuthChallenge === undefined &&
+    profile.toolResultAuthChallengeTrigger === undefined &&
     // A record, so emptiness is per-leaf: `{}` carries nothing (the
     // canonicalizer drops it), but any boolean leaf is a real setting.
     (profile.toolListChanged === undefined ||

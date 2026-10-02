@@ -41,6 +41,16 @@ import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import {
+  authorizationRequiredCommandError,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import type { AuthChallengeSignal } from "@/lib/apis/insufficient-scope";
+import type { DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
+import {
+  AuthChallengeCards,
+  authChallengeConnectMessage,
+} from "./auth-challenge/AuthChallengeCard";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
 import {
@@ -202,6 +212,8 @@ export function ResourcesTab({
   const [loading, setLoading] = useState(false);
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
+  /** Why a sign-in challenge did not become a Connect card. Text only. */
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
   const [resourcesServedFromCache, setResourcesServedFromCache] = useState<
@@ -435,6 +447,29 @@ export function ResourcesTab({
     };
   }, [nextCursor, loadingMore, loadMoreResources]);
 
+  // A mid-session sign-in challenge on an on-screen read: a Connect card, or
+  // the reason there is none. Reads are read-only, so the read runs again
+  // after sign-in.
+  const presentResourceAuthChallenge = (
+    signal: AuthChallengeSignal,
+    uri: string,
+    replay: DirectScopeStepUpReplayDescriptor,
+    isCurrentRead: () => boolean,
+  ) => {
+    void presentAuthChallenge({
+      server,
+      signal,
+      surface: "resources",
+      operation: { method: "resources/read", operation: uri },
+      readOnly: true,
+      replay,
+    }).then((presentation) => {
+      // A later read owns the notice area by now.
+      if (!isCurrentRead()) return;
+      if (presentation.kind === "notice") setAuthNotice(presentation.message);
+    });
+  };
+
   // Read resource
   const readResource = async (uri: string) => {
     if (!serverName) return;
@@ -444,6 +479,7 @@ export function ResourcesTab({
     }
     setLoading(true);
     setError("");
+    setAuthNotice(null);
     const readVersion = ++resourceReadVersionRef.current;
 
     try {
@@ -472,6 +508,19 @@ export function ResourcesTab({
                 target: "resource",
               },
             }),
+          onAuthChallenge: (signal) =>
+            presentResourceAuthChallenge(
+              signal,
+              uri,
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "resource",
+              },
+              () => readVersion === resourceReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== resourceReadVersionRef.current) return;
@@ -517,6 +566,7 @@ export function ResourcesTab({
 
     setTemplateLoading(true);
     setTemplateError("");
+    setAuthNotice(null);
     const readVersion = ++templateReadVersionRef.current;
 
     try {
@@ -544,6 +594,20 @@ export function ResourcesTab({
                 selection: selectedTemplate,
               },
             }),
+          onAuthChallenge: (signal) =>
+            presentResourceAuthChallenge(
+              signal,
+              uri,
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "template",
+                selection: selectedTemplate,
+              },
+              () => readVersion === templateReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== templateReadVersionRef.current) return;
@@ -811,9 +875,13 @@ export function ResourcesTab({
               : undefined,
           };
         } catch (e) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            e instanceof Error ? e.message : "Failed to read the resource.",
+          // A sign-in challenge is reported as such; a command never signs in.
+          throw (
+            authorizationRequiredCommandError(e, serverName) ??
+            createInspectorCommandClientError(
+              "execution_failed",
+              e instanceof Error ? e.message : "Failed to read the resource.",
+            )
           );
         }
       },
@@ -1203,8 +1271,30 @@ export function ResourcesTab({
     </div>
   );
 
+  const authChallengeBlock = (
+    <>
+      <AuthChallengeCards
+        surface="resources"
+        server={server}
+        className="p-4 pb-0"
+        onResult={(result) =>
+          setAuthNotice(authChallengeConnectMessage(result) ?? null)
+        }
+      />
+      {authNotice ? (
+        <p
+          className="px-4 pt-2 text-xs text-muted-foreground"
+          data-testid="auth-challenge-notice"
+        >
+          {authNotice}
+        </p>
+      ) : null}
+    </>
+  );
+
   const resourcesCenterContent = (
     <div className="h-full flex flex-col bg-background">
+      {authChallengeBlock}
       {error ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
@@ -1265,6 +1355,7 @@ export function ResourcesTab({
 
   const templatesCenterContent = (
     <div className="h-full flex flex-col bg-background">
+      {authChallengeBlock}
       {templateError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">

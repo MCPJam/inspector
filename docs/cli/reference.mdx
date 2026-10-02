@@ -1112,6 +1112,10 @@ Start a hosted readiness run that grades a saved server against Anthropic's conn
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
 | `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+| `--claim <feature>` | No | Declare a feature the server offers. Repeatable. See [Lazy authentication and feature claims](#lazy-authentication-and-feature-claims) |
+| `--lazy-auth-probe` | No | Opt in to the credential-free lazy-authentication probe |
+| `--lazy-auth-tool <name>` | No | The protected tool the probe calls. Implies `--lazy-auth-probe` |
+| `--lazy-auth-public-tool <name>` | No | The public tool the probe calls first. Implies `--lazy-auth-probe` |
 
 ### `readiness start openai`
 
@@ -1124,6 +1128,28 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--project <id-or-name>` | No | Project name or ID |
 | `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
 | `--idempotency-key <key>` | No | Replay guard |
+| `--claim <feature>` | No | Declare a feature the server offers. Repeatable. See [Lazy authentication and feature claims](#lazy-authentication-and-feature-claims) |
+| `--lazy-auth-probe` | No | Opt in to the credential-free lazy-authentication probe |
+| `--lazy-auth-tool <name>` | No | The protected tool the probe calls. Implies `--lazy-auth-probe` |
+| `--lazy-auth-public-tool <name>` | No | The public tool the probe calls first. Implies `--lazy-auth-probe` |
+
+### Lazy authentication and feature claims
+
+`readiness check claude`, `readiness check openai`, `readiness start claude`, and `readiness start openai` all take these flags. They let a readiness run grade a server that allows anonymous calls and asks for sign-in only on protected tools. See [Mid-session sign-in](/inspector/lazy-authentication) for the two challenge shapes.
+
+| Flag | Description |
+|------|-------------|
+| `--claim <feature>` | Declare a feature the server offers, so the report shows it as claimed. One of `lazy-authentication` or `enterprise-managed-auth`. Repeat to claim several (at most 10). An unknown value is a usage error. |
+| `--lazy-auth-probe` | Opt in to the lazy-authentication probe. The probe calls one public tool, then one protected tool, both **without credentials**. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Without the two flags below, it picks the tools from their `securitySchemes`. |
+| `--lazy-auth-tool <name>` | The protected tool the probe calls. Implies `--lazy-auth-probe`. Up to 128 characters. |
+| `--lazy-auth-public-tool <name>` | The public tool the probe calls first. Implies `--lazy-auth-probe`. Up to 128 characters, and it must name a different tool than `--lazy-auth-tool`. |
+
+The probe never sends credentials, not even an `--access-token` or `--credentials-file` passed to `readiness check`. Those still apply to the rest of the run.
+
+```bash
+mcpjam readiness check claude https://your-server.com/mcp \
+  --claim lazy-authentication --lazy-auth-tool list_files
+```
 
 ### `readiness status`
 

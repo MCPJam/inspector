@@ -9,6 +9,7 @@
  */
 
 import type { MCPServerConfig } from "../mcp-client-manager/types.js";
+import type { AuthChallengeSignal } from "../mcp-client-manager/auth-challenge.js";
 import type { BaseUrls } from "../model-factory.js";
 import type { McpjamGetAuth } from "../mcpjam-model-lease.js";
 import type { IterationStatus } from "../contract/chain.js";
@@ -133,11 +134,22 @@ export type SuiteFileRunTermination = "completed" | "aborted" | "stopped";
 
 export type SuiteFileInferenceRail = "byok" | "mcpjam";
 
-/** Why a run-affecting problem is attached to a result. */
+/**
+ * Why a run-affecting problem is attached to a result.
+ *
+ * `authorization` (code `AUTHORIZATION_REQUIRED`): a target server asked for
+ * sign-in on a tool call. Reported with what to fix, never a changed outcome:
+ * whether such a trial should leave the verdict is the verdict policy's call,
+ * not this report's.
+ */
 export type SuiteFileRunIssue = {
   code: string;
   phase: SuiteFileRunPhase;
-  category: SuiteFileRunErrorCategory | "observer" | "cleanup";
+  category:
+    | SuiteFileRunErrorCategory
+    | "observer"
+    | "cleanup"
+    | "authorization";
   message: string;
   caseId?: string;
   iterationNumber?: number;
@@ -156,6 +168,37 @@ export type SuiteFileToolPolicyBlock = {
 export type SuiteFileRefusalAttribution =
   "credentials" | "billing" | "rateLimited" | "unavailable";
 
+/**
+ * A tool call in this iteration hit a sign-in challenge: an HTTP 401 with
+ * `WWW-Authenticate`, a 403 `insufficient_scope`, or an `isError` result
+ * carrying `_meta["mcp/www_authenticate"]`.
+ *
+ * A local run never signs in. The iteration is classified
+ * `authorization_required` and its other evidence (the model saw the refusal)
+ * should be read with that in mind. Every string in `challenge` came from the
+ * server under test, length-capped by the SDK's parser: render it as text.
+ */
+export type SuiteFileAuthRequired = {
+  classification: "authorization_required";
+  /** The target server's NAME, when the tool's owner is known. Never a URL. */
+  server?: string;
+  /** The first challenged call. */
+  toolName: string;
+  toolCallId?: string;
+  /** How many of this iteration's tool calls hit a challenge (at least 1). */
+  challengedCalls: number;
+  /** The first challenge, as parsed. */
+  challenge: Pick<
+    AuthChallengeSignal,
+    | "source"
+    | "error"
+    | "errorDescription"
+    | "requiredScope"
+    | "resourceMetadataUrl"
+    | "facets"
+  >;
+};
+
 export type SuiteFileIterationEvidence = {
   iterationNumber: number;
   /** The LIFECYCLE — never inferred from a pass/fail. */
@@ -167,6 +210,11 @@ export type SuiteFileIterationEvidence = {
   error?: string;
   /** A provider/platform refusal behind `error`, when one was observed. */
   refusal?: SuiteFileRefusalAttribution;
+  /**
+   * A tool call hit a sign-in challenge; see the type. Never keyed
+   * `authorization`: redaction treats that key as a credential header.
+   */
+  authRequired?: SuiteFileAuthRequired;
   toolCalls: Array<{
     toolName: string;
     arguments: Record<string, unknown>;

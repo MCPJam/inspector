@@ -348,12 +348,26 @@ export function summarizeProbeCheck(
   hasCredentials: boolean
 ): ServerDoctorCheck {
   switch (probe.status) {
-    case "ready":
-      return okCheck(
-        `HTTP initialize probe succeeded via ${
-          probe.transport.selected ?? "unknown transport"
-        }.`
-      );
+    case "ready": {
+      const succeeded = `HTTP initialize probe succeeded via ${
+        probe.transport.selected ?? "unknown transport"
+      }.`;
+      // READY IS NOT AUTHLESS when the server also publishes Protected
+      // Resource Metadata. That is the lazy-authentication shape: anonymous
+      // clients connect and call public tools, and protected tools ask for
+      // sign-in mid-session. Saying only "succeeded" would read as "this
+      // server has no auth", which sends a developer looking for a problem
+      // that is a design choice — or hides the sign-in a protected tool needs.
+      return probe.oauth.optional
+        ? okCheck(
+            `${succeeded} Anonymous access is allowed; OAuth is available${
+              probe.oauth.resourceMetadataUrl
+                ? ` (Protected Resource Metadata at ${probe.oauth.resourceMetadataUrl})`
+                : ""
+            }. This is the lazy-authentication shape: protected tools may ask for sign-in when they are called.`
+          )
+        : okCheck(succeeded);
+    }
     case "oauth_required": {
       // The probe accepts a 403 that still carries a Bearer challenge, so the
       // check has to name the status it accepted. Reporting a server that only

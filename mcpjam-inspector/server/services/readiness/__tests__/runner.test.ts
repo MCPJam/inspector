@@ -334,3 +334,91 @@ describe("the OpenAI submission mode", () => {
     expect(result.context.mode).toBe("mcp-only");
   });
 });
+
+describe("the lazy-auth probe in a hosted-shaped run", () => {
+  /**
+   * A lazy server: everything is served anonymously except `get_my_orders`,
+   * which a request without the saved token is refused with a Bearer 401.
+   * Every request is recorded with its Authorization header.
+   */
+  function lazyFetch(seen: Array<{ rpc?: string; tool?: string; authorization?: string }>): typeof fetch {
+    return (async (_url: any, init?: any) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      if (method === "HEAD") return new Response(null, { status: 200 });
+      if (method === "GET") return new Response("", { status: 404 });
+      const headers = new Headers(init?.headers);
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      seen.push({
+        rpc: body.method,
+        tool: body.params?.name,
+        authorization: headers.get("authorization") ?? undefined,
+      });
+      if (body.method === "tools/call" && body.params?.name === "get_my_orders") {
+        if (headers.get("authorization") !== "Bearer saved-token") {
+          return new Response(null, {
+            status: 401,
+            headers: { "www-authenticate": 'Bearer resource_metadata="https://connector.example.com/prm"' },
+          });
+        }
+      }
+      if (body.method === "tools/call") {
+        return jsonRpc(body.id, { content: [{ type: "text", text: "ok" }] });
+      }
+      const answer = (
+        {
+          initialize: INITIALIZE,
+          "tools/list": {
+            tools: [
+              TOOL,
+              { ...TOOL, name: "get_my_orders", title: "My orders" },
+            ],
+          },
+          "resources/list": { resources: [] },
+        } as Record<string, unknown>
+      )[String(body.method)];
+      return answer === undefined
+        ? new Response(null, { status: 202 })
+        : jsonRpc(body.id, answer);
+    }) as unknown as typeof fetch;
+  }
+
+  it.each(["claude", "openai"] as const)(
+    "never sends the saved credential on the probe's calls (%s)",
+    async (publisher) => {
+      const seen: Array<{ rpc?: string; tool?: string; authorization?: string }> = [];
+      const { result } = await runDirectoryReadiness({
+        publisher,
+        target: TARGET,
+        ...(publisher === "openai" ? { submissionMode: "mcp-only" as const } : {}),
+        fetchFn: lazyFetch(seen),
+        mcpHeaders: { authorization: "Bearer saved-token" },
+        lazyAuthProbe: {
+          enabled: true,
+          toolName: "get_my_orders",
+          publicToolName: "search_docs",
+        },
+        claimedFeatures: ["lazy-authentication"],
+      });
+      const calls = seen.filter((entry) => entry.rpc === "tools/call");
+      expect(calls.map((entry) => entry.tool)).toEqual([
+        "search_docs",
+        "get_my_orders",
+      ]);
+      expect(calls.every((entry) => entry.authorization === undefined)).toBe(true);
+      // The authenticated dial still carried it, so the header split held.
+      expect(
+        seen.some(
+          (entry) =>
+            entry.rpc === "tools/list" &&
+            entry.authorization === "Bearer saved-token",
+        ),
+      ).toBe(true);
+      if (publisher === "claude") {
+        expect(
+          result.badges.find((b) => b.id === "claude.features.lazy-authentication")
+            ?.state,
+        ).toBe("supported");
+      }
+    },
+  );
+});

@@ -101,6 +101,7 @@ import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
+  authChallengeFromMcpProfile,
   parseXaaPolicyValue,
   conformanceKnobsFromMcpProfile,
   mirrorToolParamHeadersFromMcpProfile,
@@ -2286,6 +2287,17 @@ chatV2.post("/", async (c) => {
           ...(mrtrBridge ? { mrtrBridge } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
+          // Mid-session sign-in: the host's reaction is read per turn from
+          // the server-resolved host config, never the body; no host means
+          // the spec defaults. Without a chat session the turn cannot save
+          // the call, so a Connect card is display-only (see `scopeStepUp`).
+          authChallenge: {
+            policy: hostRuntimeConfig
+              ? authChallengeFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                )
+              : undefined,
+          },
           ...(scopeStepUpEnabled && convexBearer
             ? {
                 scopeStepUp: {

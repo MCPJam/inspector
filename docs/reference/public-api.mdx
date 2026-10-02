@@ -183,6 +183,7 @@ is stable and machine-readable; `message` is human-readable and may change;
 | --- | --- | --- |
 | `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
 | `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
+| `AUTH_REQUIRED` | 403 | The **target MCP server** allowed the connection and asked for sign-in on this call. `details.authChallenge` carries the parsed challenge. Your key is fine — see [Sign-in challenges](#sign-in-challenges) |
 | `FORBIDDEN` | 403 | Key is valid but not allowed to do this — or the **target MCP server** rejected the credentials MCPJam presented (retrying with a different MCPJam key will not help; reconnect or re-authorize the server) |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
@@ -195,6 +196,26 @@ is stable and machine-readable; `message` is human-readable and may change;
 
 New error codes may be **added** over time; treat unknown codes as
 non-retryable failures unless the HTTP status says otherwise.
+
+### Sign-in challenges
+
+Some MCP servers allow the connection and ask for sign-in only on a protected
+call. The API never starts a sign-in. It reports the challenge instead:
+
+- **HTTP 401 from the MCP server** on `tools/call`: the API answers
+  `403 AUTH_REQUIRED`. `details.authChallenge` carries the parsed challenge:
+  its `source` (`http_401`), and the `error`, `requiredScope`, and
+  `resourceMetadataUrl` the server sent, when present.
+- **An `isError` result carrying `_meta["mcp/www_authenticate"]`** (the
+  ChatGPT convention): the call succeeds, and the `CallToolResult` is returned
+  unchanged with an additive `authChallenge` field (`source:
+  "tool_result_meta"`). A field the server already set under that name is never
+  overwritten.
+
+`AUTH_REQUIRED` is not `UNAUTHORIZED`: your MCPJam key is fine, so a different
+key will not help. Complete the OAuth flow for that server yourself, push it to
+`POST .../oauth/import-tokens`, and call again. See
+[Mid-session sign-in](/inspector/lazy-authentication).
 
 ## Rate limits
 
@@ -265,7 +286,7 @@ plugin pins whose version no longer exists.
 | `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
 | `POST .../tools` | List the server's tools |
-| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` plus additive `durationMs` |
+| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` plus additive `durationMs`, and `authChallenge` when the result asks for sign-in (see [Sign-in challenges](#sign-in-challenges)) |
 | `POST .../prompts` | List the server's prompts |
 | `POST .../prompts/get` | Render a prompt; returns the MCP `GetPromptResult` verbatim |
 | `POST .../resources` | List the server's resources |

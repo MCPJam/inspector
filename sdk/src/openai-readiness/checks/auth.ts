@@ -37,6 +37,8 @@ import {
   type OpenAIReadinessFinding,
 } from "../types.js";
 import type { OpenAIAuthEvidence } from "../discovery.js";
+import { hasOAuth2Scheme } from "../../mcp-client-manager/auth-challenge.js";
+import type { DirectoryLazyAuthProbeEvidence } from "../../directory-readiness/lazy-auth.js";
 import {
   derivedFrom,
   informational,
@@ -122,6 +124,7 @@ const RUNTIME_CHALLENGE: OpenAICheckDefinition = {
   provenance: "wire",
 };
 
+
 const UNSUPPORTED_FLOWS: OpenAICheckDefinition = {
   id: "openai.auth.unsupported-flows",
   title: "The server does not require a flow public submissions cannot use",
@@ -156,9 +159,19 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+/** Evidence the auth checks read beside the discovery evidence. */
+export interface OpenAIAuthCheckContext {
+  /**
+   * The lazy-auth probe's two unauthenticated calls, when a caller armed it.
+   * The only observation that can establish a mid-session challenge.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
+}
+
 export function runOpenAIAuthChecks(
   evidence: OpenAIAuthEvidence | undefined,
   stamp: OpenAICheckStamp,
+  context: OpenAIAuthCheckContext = {},
 ): OpenAIReadinessFinding[] {
   if (!evidence) {
     return ALL.map((definition) =>
@@ -180,8 +193,19 @@ export function runOpenAIAuthChecks(
   // An authless server is a legitimate shape, not a failure. It answers the
   // unauthenticated probe successfully, and every OAuth requirement below is
   // then `not-applicable` rather than unmet.
-  const authless =
+  //
+  // ANSWERING ANONYMOUSLY IS NOT THE SAME AS AUTHLESS. A lazy-authentication
+  // server serves the anonymous `initialize` and its public tools, and asks
+  // for sign-in only on a protected call — and it still publishes Protected
+  // Resource Metadata, because that is what the protected call's challenge
+  // points a client at. Reading every 2xx as authless graded such a server's
+  // whole OAuth surface `not-applicable`. Only a 2xx with NO metadata
+  // document is authless; a 2xx with one is graded on that metadata.
+  const anonymousInitialize =
     unauth !== undefined && unauth.status >= 200 && unauth.status < 300;
+  const publishesPrm = prm !== undefined && prm.discoveredVia !== "not-found";
+  const authless = anonymousInitialize && !publishesPrm;
+  const lazyShaped = anonymousInitialize && publishesPrm;
 
   if (!unauth || unauth.status === 0) {
     findings.push(
@@ -198,7 +222,18 @@ export function runOpenAIAuthChecks(
       notApplicable(
         CHALLENGE_PRESENT,
         stamp,
-        "the endpoint answered an unauthenticated initialize, so it does not authenticate users",
+        "the endpoint answered an unauthenticated initialize and publishes no resource metadata, so it does not authenticate users",
+      ),
+    );
+  } else if (lazyShaped) {
+    // Anonymous access allowed, OAuth available. The connect-time 401 this
+    // check describes is not part of that design: the challenge belongs to a
+    // protected tool call, and `openai.auth.runtime-challenge` grades it.
+    findings.push(
+      notApplicable(
+        CHALLENGE_PRESENT,
+        stamp,
+        "the endpoint serves an unauthenticated initialize and publishes Protected Resource Metadata (anonymous access with OAuth available, the lazy-authentication shape); its sign-in challenge belongs to a protected tool call, graded by openai.auth.runtime-challenge",
       ),
     );
   } else if (unauth.status === 401) {
@@ -558,16 +593,132 @@ export function runOpenAIAuthChecks(
 
   // ------------------------------------------------------- runtime challenge
   findings.push(
-    unauth?.metaWwwAuthenticate
-      ? satisfied(RUNTIME_CHALLENGE, stamp, {
-          metaWwwAuthenticate: unauth.metaWwwAuthenticate,
-        })
-      : notEvaluated(
-          RUNTIME_CHALLENGE,
-          stamp,
-          'the initial probe carried no `_meta["mcp/www_authenticate"]`; a mid-session re-authorization is a state this run does not reach',
-        ),
+    gradeRuntimeChallenge(context.lazyAuthProbe, unauth, stamp),
   );
 
   return findings;
+}
+
+/**
+ * The mid-session challenge, graded against OpenAI's documented trigger.
+ *
+ * THE TRIGGER HAS TWO HALVES and both are required: the tool's resolved
+ * `securitySchemes` include `oauth2`, and the refusal is an `isError` tool
+ * result carrying `_meta["mcp/www_authenticate"]` with both `error` and
+ * `error_description`. Only the lazy-auth probe's protected call can show the
+ * second half, so without it this is `not-evaluated` — a challenge on the
+ * connect-time `initialize` is a different request and says nothing about
+ * what a tool call returns.
+ *
+ * A TOOL THAT DECLARES NO SCHEMES IS UNRESOLVED, NOT "NO OAUTH". OpenAI's rule
+ * is that such a tool inherits the server's default, and where that default
+ * is published is not something this run can see; grading it either way would
+ * be a guess presented as a verdict.
+ */
+function gradeRuntimeChallenge(
+  probe: DirectoryLazyAuthProbeEvidence | undefined,
+  unauth: OpenAIAuthEvidence["unauthenticated"],
+  stamp: OpenAICheckStamp,
+): OpenAIReadinessFinding {
+  const call = probe?.protectedCall;
+  if (!probe || !probe.attempted || !call) {
+    const reason = !probe
+      ? 'a mid-session challenge appears only on a protected tool call, and this run did not make one; arm the lazy-auth probe to observe it'
+      : !probe.attempted
+        ? `the lazy-auth probe did not run: ${probe.reason ?? "it was refused"}`
+        : `the lazy-auth probe made no protected call: ${
+            probe.protectedCallSkipped ?? probe.reason ?? "no protected tool was selected"
+          }`;
+    // No `missingInput`: this finding is `recommended`, so it never holds a
+    // lane open, and naming the probe in every lane's coverage would read as
+    // a request to call tools on a server the caller may not own.
+    return notEvaluated(RUNTIME_CHALLENGE, stamp, reason, {
+      // The connect-time challenge is recorded, not graded: it is a refusal
+      // of `initialize`, and the requirement is about a tool call.
+      ...(unauth?.metaWwwAuthenticate
+        ? { initializeMetaWwwAuthenticate: unauth.metaWwwAuthenticate }
+        : {}),
+    });
+  }
+
+  const details = {
+    toolName: call.toolName,
+    selectedBy: call.selectedBy,
+    schemeSource: call.schemes.source,
+    schemes: call.schemes.schemes.map((scheme) => scheme.type),
+    outcome: call.outcome,
+    status: call.status,
+    ...(call.invalidArguments ? { invalidArguments: true } : {}),
+    challengeSource: call.challenge?.source,
+    facets: call.challenge?.facets,
+    protocolVersion: probe.protocolVersion,
+    eraNote: probe.eraNote,
+  };
+
+  switch (call.outcome) {
+    case "unreachable":
+      return notEvaluated(
+        RUNTIME_CHALLENGE,
+        stamp,
+        `the protected call to "${call.toolName}" could not be reached${call.error ? `: ${call.error}` : ""}`,
+        details,
+      );
+    case "succeeded":
+      return notEvaluated(
+        RUNTIME_CHALLENGE,
+        stamp,
+        `"${call.toolName}" ran without credentials, so it produced no challenge to grade; name a tool that requires sign-in`,
+        details,
+      );
+    default:
+      break;
+  }
+  // The probe sends `{}`; a tool that rejects that never reached its
+  // authorization decision, so the missing challenge is not a violation.
+  if (call.invalidArguments) {
+    return notEvaluated(
+      RUNTIME_CHALLENGE,
+      stamp,
+      `"${call.toolName}" rejected the probe's empty arguments before any authorization decision; name a protected read-only tool that takes no required arguments`,
+      details,
+    );
+  }
+
+  const signal = call.challenge;
+  if (signal?.source !== "tool_result_meta") {
+    return violated(
+      RUNTIME_CHALLENGE,
+      stamp,
+      call.outcome === "unauthorized"
+        ? `"${call.toolName}" refused an unauthenticated call with HTTP 401. OpenAI documents the tool-level sign-in trigger as an isError tool result carrying _meta["mcp/www_authenticate"]; add that to the refusal for ChatGPT.`
+        : `"${call.toolName}" refused an unauthenticated call (${call.outcome}${call.status ? `, HTTP ${call.status}` : ""}) without _meta["mcp/www_authenticate"]. ChatGPT reads a tool-level sign-in request only from that key on an isError result.`,
+      details,
+    );
+  }
+
+  if (call.schemes.source === "unresolved") {
+    return notEvaluated(
+      RUNTIME_CHALLENGE,
+      stamp,
+      `"${call.toolName}" declares no securitySchemes, so it inherits the server default (unresolved): this run cannot see that default, and ChatGPT acts on the challenge only when the tool's schemes include oauth2. Declare securitySchemes on the tool to make this explicit.`,
+      details,
+    );
+  }
+  if (!hasOAuth2Scheme(call.schemes)) {
+    return violated(
+      RUNTIME_CHALLENGE,
+      stamp,
+      `"${call.toolName}" returned a _meta challenge but its securitySchemes do not include oauth2. ChatGPT shows its sign-in UI for a _meta challenge only on a tool that declares an oauth2 scheme.`,
+      details,
+    );
+  }
+  if (!signal.facets.hasErrorParams) {
+    return violated(
+      RUNTIME_CHALLENGE,
+      stamp,
+      `The _meta["mcp/www_authenticate"] challenge on "${call.toolName}" needs both error and error_description before ChatGPT shows sign-in.`,
+      details,
+    );
+  }
+  return satisfied(RUNTIME_CHALLENGE, stamp, details);
 }

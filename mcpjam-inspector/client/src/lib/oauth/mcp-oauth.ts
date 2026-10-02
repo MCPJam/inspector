@@ -1,4 +1,5 @@
 import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
+import { persistRequestedScopes } from "./requested-scopes";
 import { captureHostedOAuthConnection } from "@/lib/apis/web/oauth-connections";
 /**
  * Production OAuth implementation using the SDK state-machine runner with trace support.
@@ -125,6 +126,26 @@ function markReconstructedOAuthProxyResponse(
   // server. Only trust provenance captured from MCPJam's raw proxy response.
   oauthProxyResponses.set(response, { upstreamFinalUrl });
   return response;
+}
+
+function persistAuthorizationRequestScopes(
+  serverName: string,
+  authorizationUrl: string,
+  authorizationServerMetadata: { issuer?: unknown } | undefined
+): void {
+  try {
+    const scope = new URL(authorizationUrl).searchParams.get("scope");
+    const issuer =
+      typeof authorizationServerMetadata?.issuer === "string"
+        ? authorizationServerMetadata.issuer
+        : undefined;
+    const scopes = scope?.split(/\s+/).filter(Boolean);
+    if (scopes && scopes.length > 0) {
+      persistRequestedScopes(serverName, issuer, scopes);
+    }
+  } catch {
+    // Best-effort: an unparseable URL only means a later step-up unions less.
+  }
 }
 
 interface StoredOAuthDiscoveryState {
@@ -508,6 +529,7 @@ async function resolveOAuthExecutionPlan(
     | "hasClientSecret"
     | "useRegistryOAuthProxy"
     | "customHeaders"
+    | "resourceMetadataUrl"
   >
 ): Promise<ResolvedAuthorizationPlan> {
   const basePlan = resolveAuthorizationPlan({
@@ -534,7 +556,8 @@ async function resolveOAuthExecutionPlan(
     provider,
     options.serverUrl,
     fetchFn,
-    options.customHeaders
+    options.customHeaders,
+    options.resourceMetadataUrl
   );
 
   return resolveAuthorizationPlan({
@@ -1222,7 +1245,14 @@ async function loadOAuthDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,
   fetchFn: typeof fetch,
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  /**
+   * The `resource_metadata` pointer a challenge named. A server may publish
+   * its Protected Resource Metadata ONLY there, so pre-redirect discovery has
+   * to follow it rather than derive the well-known URL; a cached state found
+   * through another document is not reused.
+   */
+  resourceMetadataUrl?: string
 ): Promise<OAuthDiscoveryState> {
   const discoveryFetch = createScopedDiscoveryFetch(
     fetchFn,
@@ -1230,7 +1260,11 @@ async function loadOAuthDiscoveryState(
     customHeaders
   );
   const cachedState = await provider.discoveryState();
-  if (cachedState?.authorizationServerUrl) {
+  if (
+    cachedState?.authorizationServerUrl &&
+    (!resourceMetadataUrl ||
+      cachedState.resourceMetadataUrl === resourceMetadataUrl)
+  ) {
     const authorizationServerMetadata =
       cachedState.authorizationServerMetadata ??
       (await discoverAuthorizationServerMetadata(
@@ -1248,11 +1282,13 @@ async function loadOAuthDiscoveryState(
 
   const discovered = await discoverOAuthServerInfo(serverUrl, {
     fetchFn: discoveryFetch,
+    ...(resourceMetadataUrl ? { resourceMetadataUrl: new URL(resourceMetadataUrl) } : {}),
   });
   const discoveryState: OAuthDiscoveryState = {
     authorizationServerUrl: discovered.authorizationServerUrl,
     resourceMetadata: discovered.resourceMetadata,
     authorizationServerMetadata: discovered.authorizationServerMetadata,
+    ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
   };
   await provider.saveDiscoveryState(discoveryState);
   return discoveryState;
@@ -1503,6 +1539,14 @@ export interface MCPOAuthOptions {
    */
   allowPathScopedIssuer?: boolean;
   onTraceUpdate?: (trace: OAuthTrace) => void;
+  /**
+   * Called with the authorization request's `state` right before the browser
+   * leaves for the authorization server, and awaited. A caller that saved
+   * work to resume after sign-in binds it to this flow (by a digest of the
+   * state, never the state itself), so only the callback for THIS flow
+   * resumes it.
+   */
+  onAuthorizationRedirect?: (flow: { state?: string }) => void | Promise<void>;
 }
 
 export type OAuthProtocolResolutionSource =
@@ -2543,6 +2587,39 @@ function loadStoredDiscoveryState(
   }
 }
 
+function scopeList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const scopes = value.filter(
+    (scope): scope is string => typeof scope === "string" && scope.trim() !== ""
+  );
+  return scopes.length > 0 ? scopes : undefined;
+}
+
+/**
+ * Discovery's scope choice for this server, from its stored discovery state:
+ * the protected resource's `scopes_supported`, else the authorization
+ * server's. Used when a step-up challenge names no scope at all.
+ */
+export function readStoredDiscoveryScopes(
+  serverName: string,
+  serverUrl?: string
+): string[] | undefined {
+  const state = loadStoredDiscoveryState(serverName, serverUrl);
+  return (
+    scopeList(
+      (state?.resourceMetadata as { scopes_supported?: unknown } | undefined)
+        ?.scopes_supported
+    ) ??
+    scopeList(
+      (
+        state?.authorizationServerMetadata as
+          | { scopes_supported?: unknown }
+          | undefined
+      )?.scopes_supported
+    )
+  );
+}
+
 /**
  * Standalone twin of `MCPOAuthProvider.currentIssuer()` — resolve the exact
  * authorization-server issuer this server's flow is bound to (persisted
@@ -2851,6 +2928,17 @@ export async function initiateOAuth(
         writeStoredOAuthConfig(options.serverName, {
           resourceUrl: oauthResourceUrl,
         });
+        // The scope set this flow ACTUALLY requests, bound to its issuer.
+        // Without it an unscoped first sign-in (the state machine chose the
+        // scopes from discovery) left nothing to union, and a later step-up
+        // re-requested only the challenged scope, dropping the first grant.
+        persistAuthorizationRequestScopes(
+          options.serverName,
+          redirectedAuthorizationUrl,
+          getState().authorizationServerMetadata as
+            | { issuer?: unknown }
+            | undefined
+        );
         await createHostedOAuthSessionIfNeeded({
           serverName: options.serverName,
           serverUrl: options.serverUrl,
@@ -2870,6 +2958,16 @@ export async function initiateOAuth(
         });
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
+        try {
+          await options.onAuthorizationRedirect?.({
+            state:
+              typeof getState().state === "string"
+                ? (getState().state as string)
+                : undefined,
+          });
+        } catch {
+          // A failed bookkeeping hook must never block the sign-in itself.
+        }
         await provider.redirectToAuthorization(
           new URL(redirectedAuthorizationUrl)
         );
@@ -3982,6 +4080,24 @@ export function clearOAuthData(serverName: string): void {
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);
+  clearOAuthTraceSession(serverName);
+  clearOAuthPendingMarkerFor(serverName);
+}
+
+/**
+ * Clear only what one authorization ATTEMPT leaves behind (verifier, issued
+ * state, flow session, trace session, pending marker), keeping the server's
+ * tokens, client registration, stored config and cached discovery.
+ *
+ * Used where a sign-in starts for one call (a mid-session challenge): if the
+ * user abandons it, every other tool on the server must keep working on the
+ * tokens it already had, and the challenge-driven discovery must not be
+ * thrown away before the redirect needs it.
+ */
+export function clearOAuthFlowState(serverName: string): void {
+  localStorage.removeItem(`mcp-verifier-${serverName}`);
+  localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
+  clearOAuthFlowSession(serverName);
   clearOAuthTraceSession(serverName);
   clearOAuthPendingMarkerFor(serverName);
 }

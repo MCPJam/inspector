@@ -200,6 +200,50 @@ describe("unmeasured rows stay off the public surface", () => {
   });
 });
 
+describe("mid-session sign-in rows", () => {
+  const AUTH_FIELD_IDS = [
+    "unauthorizedChallenge",
+    "unauthorizedChallengeTrigger",
+    "toolResultAuthChallenge",
+    "toolResultAuthChallengeTrigger",
+  ];
+  const withProfile = (profile: Record<string, string>) =>
+    ({
+      ...emptyHostConfigInputV2(),
+      mcpProfile: { profileVersion: 1, ...profile },
+    }) as never;
+
+  it("stays off the public capability pages and Compare until measured", () => {
+    // The preset values come from vendor docs, not a probe, and a capability
+    // page stamps every column "Last verified".
+    const publicIds = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    const compareIds = CLIENT_COMPARE_FIELDS.map((field) => field.id);
+    for (const id of AUTH_FIELD_IDS) {
+      expect(publicIds).not.toContain(id);
+      expect(compareIds).not.toContain(id);
+      expect(getCaniuseCapabilityForField(hostConfigField(id))).toBeNull();
+    }
+  });
+
+  it("reads an action as a support level, unknown until measured", () => {
+    for (const id of ["unauthorizedChallenge", "toolResultAuthChallenge"]) {
+      const field = hostConfigField(id);
+      expect(getCaniuseSupportLevel(field, withProfile({ [id]: "prompt" }))).toBe(
+        "supported"
+      );
+      expect(getCaniuseSupportLevel(field, withProfile({ [id]: "notify" }))).toBe(
+        "partial"
+      );
+      expect(
+        getCaniuseSupportLevel(field, withProfile({ [id]: "passthrough" }))
+      ).toBe("unsupported");
+      // Absent is a real default for the emulator, but not a fact about a
+      // host nobody measured.
+      expect(getCaniuseSupportLevel(field, withProfile({}))).toBe("unknown");
+    }
+  });
+});
+
 describe("sortCaniusePresetHosts", () => {
   // Client Compare shows the same preset chips as caniuse.dev and now sorts
   // them the same way. The ranking is a deliberate reading order — vendors

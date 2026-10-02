@@ -33,7 +33,21 @@ import {
   decideLaneStatus,
   summarizeLaneCoverage,
 } from "../directory-readiness/types.js";
-import { dialMcpServer } from "../directory-readiness/mcp-dial.js";
+import { resolveMcpHeaders } from "../directory-readiness/discovery.js";
+import {
+  DIRECTORY_DIAL_PROTOCOL_VERSION,
+  dialMcpServer,
+} from "../directory-readiness/mcp-dial.js";
+import {
+  lazyAuthRediscoveryTrigger,
+  normalizeFeatureClaims,
+  refusedLazyAuthProbe,
+  resolveLazyAuthProbeMode,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
+  type DirectoryLazyAuthProbeEvidence,
+} from "../directory-readiness/lazy-auth.js";
+import { probeLazyAuthentication } from "../directory-readiness/lazy-auth-probe.js";
 import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
 import {
   mapOpenAIObservationsToFindings,
@@ -67,6 +81,7 @@ import { runOpenAIPackageChecks } from "./checks/package.js";
 import { runOpenAISubmissionChecks } from "./checks/submission.js";
 import {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIAuthMetadata,
   discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
@@ -167,6 +182,16 @@ export interface OpenAIReadinessEvidence {
   hasPublishedVersion?: boolean;
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
+  /**
+   * The lazy-auth probe's two unauthenticated calls, when a caller armed it.
+   *
+   * The only evidence that can establish a mid-session challenge: an
+   * unauthenticated `initialize` that succeeds looks the same from an
+   * authless server and from a lazy-authentication one.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
+  /** Features the submitter claimed. A claim is reported, never verified by itself. */
+  claimedFeatures?: DirectoryFeatureClaim[];
   /**
    * The model-observation axis, whatever happened on it.
    *
@@ -441,7 +466,9 @@ export function gradeOpenAIReadiness(
           complete: evidence.toolListingComplete,
           error: evidence.toolListingError,
         }),
-        ...runOpenAIAuthChecks(evidence.auth, stamp),
+        ...runOpenAIAuthChecks(evidence.auth, stamp, {
+          lazyAuthProbe: evidence.lazyAuthProbe,
+        }),
         ...runOpenAIAnnotationChecks(evidence.tools, stamp, {
           complete: evidence.toolListingComplete,
           error: evidence.toolListingError,
@@ -469,6 +496,14 @@ export function gradeOpenAIReadiness(
 
   const optional = runOpenAIOptionalFeatureChecks(
     {
+      lazyAuthentication: observedLazyAuthentication(
+        evidence.lazyAuthProbe,
+        serverFindings.find(
+          (finding) => finding.id === "openai.auth.runtime-challenge"
+        )?.status
+      ),
+      lazyAuthenticationClaimed:
+        evidence.claimedFeatures?.includes("lazy-authentication") === true,
       importedSkills: evidence.importedSkills?.extensionAdvertised,
       uiResourceCount: evidence.appsUi?.resources?.length,
       clientIdMetadataDocuments: evidence.auth?.authorizationServers?.some(
@@ -585,6 +620,38 @@ export function gradeOpenAIReadiness(
 }
 
 /**
+ * What the lazy-auth probe established about the feature, or `undefined`.
+ *
+ * Read off the runtime-challenge FINDING rather than re-deciding it, so the
+ * badge and the finding cannot disagree about one call. `supported` also
+ * needs the public half: a server that challenges every call is not lazy,
+ * however well-formed its challenge.
+ */
+function observedLazyAuthentication(
+  probe: DirectoryLazyAuthProbeEvidence | undefined,
+  runtimeChallenge: OpenAIReadinessFinding["status"] | undefined
+): boolean | undefined {
+  if (!probe?.attempted) return undefined;
+  // Refused before any call: the server signs users in at connect time. A
+  // supported shape, and not this one.
+  if (probe.initialize && !probe.initialize.ok && !probe.initialize.unreachable) {
+    return false;
+  }
+  const publicOutcome = probe.publicCall?.outcome;
+  // A public call that failed only on the probe's empty arguments shows
+  // nothing about anonymous access.
+  if (probe.publicCall?.invalidArguments) return undefined;
+  if (publicOutcome !== undefined && publicOutcome !== "unreachable") {
+    if (publicOutcome !== "succeeded") return false;
+  }
+  if (runtimeChallenge === "violated") return false;
+  if (runtimeChallenge === "satisfied" && publicOutcome === "succeeded") {
+    return true;
+  }
+  return undefined;
+}
+
+/**
  * The headline sentence, which names BOTH stages when they disagree.
  *
  * A submitter whose server is fine and whose paperwork is not should read that
@@ -631,12 +698,20 @@ export interface GatherOpenAIReadinessEvidenceOptions {
    */
   timeoutMs?: number;
   /**
-   * Headers the target needs, e.g. a saved server's credential.
+   * Headers the MCP endpoint needs, e.g. a saved server's credential.
    *
-   * Without these a credentialed server answers `401` to every probe and the
-   * whole run reports an auth wall — a true observation about an
+   * Without these a credentialed server answers `401` to every listing and
+   * the run reports an auth wall — a true observation about an
    * unauthenticated dial, and the wrong one for a submitter grading their own
    * server with a token they supplied.
+   *
+   * Sent only on MCP requests to the endpoint, never on discovery. See
+   * `DirectoryDiscoveryOptions.mcpHeaders` for the redirect caveat.
+   */
+  mcpHeaders?: Record<string, string>;
+  /**
+   * @deprecated Use `mcpHeaders`. Read as `mcpHeaders` when that is absent,
+   * with the same narrow scope.
    */
   headers?: Record<string, string>;
   /**
@@ -680,6 +755,23 @@ export interface GatherOpenAIReadinessEvidenceOptions {
   frameDomains?: string[];
   hasPublishedVersion?: boolean;
   evidenceSources?: string[];
+  /**
+   * Arm the lazy-auth probe: at most two unauthenticated calls to read-only
+   * tools — one public, one protected — in a session of the probe's own.
+   *
+   * It sends NO credentials, whatever `mcpHeaders` holds, and calls only
+   * tools annotated `readOnlyHint: true`. When the protected call's challenge
+   * names Protected Resource Metadata (or is a 401 naming none), discovery
+   * runs again from it and the authorization lanes are graded on what that
+   * finds — which is the only way a server serving its metadata solely at the
+   * challenge's pointer is graded at all.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /**
+   * Features the submitter claims, e.g. `"lazy-authentication"`. Unknown
+   * entries are ignored here; surfaces refuse them before they arrive.
+   */
+  claimedFeatures?: readonly string[];
   /**
    * An ALREADY VALIDATED observation state.
    *
@@ -731,18 +823,19 @@ export async function gatherOpenAIReadinessEvidence(
           enteredUrl: options.target,
           fetchFn: options.fetchFn,
           timeoutMs: options.timeoutMs,
-          headers: options.headers,
+          mcpHeaders: resolveMcpHeaders(options),
           signal: options.signal,
         }
       : undefined;
 
-  const [endpoint, auth, domainVerification] = discovery
+  const [endpoint, initialAuth, domainVerification] = discovery
     ? await Promise.all([
         traceOpenAIEndpoint(discovery),
         discoverOpenAIAuthEvidence(discovery),
         fetchOpenAIDomainVerification(discovery),
       ])
     : [undefined, undefined, undefined];
+  let auth = initialAuth;
 
   // THE TOOL LISTING, DIALLED. Until this landed the gatherer accepted a
   // listing as an argument and never fetched one, so every wire run graded the
@@ -780,6 +873,54 @@ export async function gatherOpenAIReadinessEvidence(
   const toolListingComplete = hasSuppliedTools
     ? undefined
     : dialled?.tools?.complete;
+
+  // THE LAZY-AUTH PROBE, after the dial so a named tool the anonymous session
+  // cannot see can still be found in the listing the dial already holds.
+  // Requested-and-refused is recorded rather than dropped: a caller who asked
+  // for the probe should read why it did not run.
+  let lazyAuthProbe: DirectoryLazyAuthProbeEvidence | undefined;
+  if (options.lazyAuthProbe !== undefined && discovery) {
+    const mode = resolveLazyAuthProbeMode(options.lazyAuthProbe);
+    if (!mode.enabled) {
+      lazyAuthProbe = refusedLazyAuthProbe(
+        mode.reason,
+        DIRECTORY_DIAL_PROTOCOL_VERSION
+      );
+    } else {
+      lazyAuthProbe = await probeLazyAuthentication({
+        // Field by field: the probe must never see `mcpHeaders`.
+        enteredUrl: discovery.enteredUrl,
+        fetchFn: discovery.fetchFn,
+        timeoutMs: discovery.timeoutMs,
+        signal: discovery.signal,
+        mode,
+        knownTools: tools,
+      });
+      // RE-DISCOVER FROM THE CHALLENGE. ChatGPT follows a `_meta` challenge on
+      // a tool whose schemes include oauth2, and any client follows a 401; in
+      // either case the metadata it reaches is the metadata to grade.
+      const trigger = lazyAuthRediscoveryTrigger(lazyAuthProbe.protectedCall, [
+        "http_401",
+        "tool_result_meta",
+      ]);
+      if (trigger && auth) {
+        const rediscovered = await discoverOpenAIAuthMetadata(
+          discovery,
+          trigger.pointer
+        );
+        auth = { ...auth, ...rediscovered };
+        lazyAuthProbe.rediscovery = {
+          trigger: trigger.trigger,
+          source: trigger.source,
+          prmFound: rediscovered.prm?.discoveredVia !== "not-found",
+          ...(rediscovered.prm?.url ? { prmUrl: rediscovered.prm.url } : {}),
+          ...(rediscovered.prm?.discoveredVia
+            ? { discoveredVia: rediscovered.prm.discoveredVia }
+            : {}),
+        };
+      }
+    }
+  }
 
   // Skills are read only in the shape that imports them. Calling `skills/list`
   // against a server that does not advertise the extension would turn a
@@ -843,6 +984,10 @@ export async function gatherOpenAIReadinessEvidence(
     frameDomains: options.frameDomains,
     hasPublishedVersion: options.hasPublishedVersion,
     evidenceSources: options.evidenceSources,
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
+    ...(options.claimedFeatures !== undefined
+      ? { claimedFeatures: normalizeFeatureClaims(options.claimedFeatures).claims }
+      : {}),
     llmObservations: options.llmObservations,
   };
 }

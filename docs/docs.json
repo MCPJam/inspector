@@ -84,7 +84,11 @@
           {
             "group": "Authentication",
             "icon": "shield-check",
-            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+            "pages": [
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/lazy-authentication"
+            ]
           },
           {
             "group": "Primitives",

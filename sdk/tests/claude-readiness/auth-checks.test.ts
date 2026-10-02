@@ -307,6 +307,66 @@ describe("insufficient_scope challenges", () => {
       ).status,
     ).toBe("violated");
   });
+
+  it("is not evaluated — not inapplicable — when nothing elicited one", () => {
+    // No ordinary request produces an insufficient_scope challenge, so having
+    // seen none says nothing about the shape the server would send.
+    const finding = byId(
+      runClaudeAuthChecks(HEALTHY, STAMP),
+      "claude.auth.insufficient-scope-challenge-shape",
+    );
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.details).toMatchObject({ missingInput: "intrusive" });
+  });
+
+  it("is inapplicable only for an authless server", () => {
+    const finding = byId(
+      runClaudeAuthChecks(
+        {
+          enteredUrl: URL_UNDER_TEST,
+          unauthenticated: {
+            status: 200,
+            representsProtectedOperation: true,
+            servedWithoutCredentials: true,
+          },
+          prm: { discoveredVia: "not-found" },
+        },
+        STAMP,
+      ),
+      "claude.auth.insufficient-scope-challenge-shape",
+    );
+    expect(finding.status).toBe("not-applicable");
+  });
+});
+
+describe("a server that answers anonymously and publishes PRM", () => {
+  const LAZY: ClaudeAuthEvidence = {
+    ...HEALTHY,
+    unauthenticated: {
+      status: 200,
+      representsProtectedOperation: true,
+      servedWithoutCredentials: true,
+    },
+  };
+
+  it("grades its PRM and authorization server instead of calling them inapplicable", () => {
+    const output = runClaudeAuthChecks(LAZY, STAMP);
+    for (const id of [
+      "claude.auth.prm-discoverable",
+      "claude.auth.first-authorization-server-usable",
+      "claude.auth.pkce-s256-advertised",
+    ]) {
+      expect(byId(output, id).status, id).toBe("satisfied");
+    }
+    expect(badge(output, "claude.auth.mode").detail).toBeDefined();
+  });
+
+  it("leaves its 401 contract unevaluated until a protected call is driven", () => {
+    const output = runClaudeAuthChecks(LAZY, STAMP);
+    const challenge = byId(output, "claude.auth.unauthenticated-challenge");
+    expect(challenge.status).toBe("not-evaluated");
+    expect(challenge.details).toMatchObject({ missingInput: "lazyAuthProbe" });
+  });
 });
 
 describe("WWW-Authenticate on a successful response", () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readAuthChallenge } from "../../utils/connection-effective-auth.js";
 import {
   describeError,
   isAuthError,
@@ -691,6 +692,25 @@ function classifyRuntimeError(error: unknown): WebRouteError {
       ErrorCode.FORBIDDEN,
       message,
       { insufficientScope },
+      normalized
+    );
+  }
+
+  // A sign-in challenge from the target on a protected operation mid-session
+  // (lazy authentication): the server allowed the connection and refused one
+  // call. Served at 403 UPSTREAM_AUTH_FAILED like every other upstream auth
+  // refusal, for the `authFetch` reason documented on that code, and WITHOUT
+  // `oauthRequired` (surfaces that escalate on that flag would prompt a
+  // second time). The parsed challenge rides along, stamped with the
+  // connection's effective auth method when the route stamped it, so the
+  // client can offer a consented sign-in for this call.
+  const authChallenge = readAuthChallenge(error);
+  if (authChallenge?.source === "http_401") {
+    return new WebRouteError(
+      403,
+      ErrorCode.UPSTREAM_AUTH_FAILED,
+      message,
+      { upstreamAuthRequired: true, authChallenge },
       normalized
     );
   }

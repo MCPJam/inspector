@@ -212,11 +212,13 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     await reader.cancel();
   });
 
-  it("does not forward ordinary or errorDescription-only failures", async () => {
+  it("forwards a bare (errorDescription-only) challenge but not an ordinary failure", async () => {
     const received: unknown[] = [];
     subscribeHarnessScopeStepUp(TURN_ID, (info) => received.push(info));
     for (const error of [
       new Error("ordinary failure"),
+      // A bare challenge is a step-up request too: discovery chooses
+      // the scopes.
       new InsufficientScopeError({
         errorDescription: "More access is required",
       }),
@@ -240,6 +242,11 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
       );
       expect(res.status).toBe(200);
     }
-    expect(received).toEqual([]);
+    expect(received).toEqual([
+      expect.objectContaining({
+        serverId: "test-server",
+        errorDescription: "More access is required",
+      }),
+    ]);
   });
 });

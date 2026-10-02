@@ -64,7 +64,7 @@ describe("wrapToolsWithScopeStepUp", () => {
     expect(chunks[0]?.data).not.toHaveProperty("serverName");
   });
 
-  it("suppresses an errorDescription-only challenge and rethrows", async () => {
+  it("surfaces an errorDescription-only challenge and rethrows", async () => {
     const error = new InsufficientScopeError({
       errorDescription: "More access is required",
     });
@@ -84,7 +84,9 @@ describe("wrapToolsWithScopeStepUp", () => {
     await expect(wrapped.bench_write.execute?.({}, {} as any)).rejects.toBe(
       error,
     );
-    expect(chunks).toHaveLength(0);
+    // A bare challenge is a step-up request: discovery chooses the scopes.
+    expect(chunks).toHaveLength(1);
+    expect(JSON.stringify(chunks[0])).toContain("insufficient_scope");
   });
 
   it("ignores ordinary tool errors and rethrows", async () => {
