@@ -1,40 +1,4 @@
-/**
- * WHERE local Claude Code execution is even a question.
- *
- * ── Why one predicate, in one file ───────────────────────────────────────
- * Three places have to agree about this and cannot be allowed to drift: the
- * chip decides whether to render, the pre-send gate decides whether to open the
- * dialog, and the transport decides whether a turn may carry a local target. If
- * any two of them disagree, the result is one of the two failures this whole
- * design exists to prevent — a user authorizing something that then runs
- * somewhere else, or a composer that blocks Send on a requirement its own
- * surface does not actually have.
- *
- * The specific drift to guard against is inheritance. Local execution is a
- * property of ONE host running ONE harness on a DIRECT chat. Nothing about it
- * belongs to normal emulated chat, to Codex, to a scenario replay, to an
- * environment run, or to somebody else's shared link — and a predicate that
- * asked only "is the local-harness flag on?" would have made all of them
- * inherit a local authorization requirement they can never satisfy.
- *
- * ── The three facts ──────────────────────────────────────────────────────
- * 1. The HOST for this send or lane runs `claude-code`. Not "a harness", and
- *    not the harness the picker is previewing somewhere else on the page — a
- *    compare view has several lanes and each answers this independently.
- * 2. The Inspector is local. A hosted replica running a vendor agent on ITS
- *    machine is the structural thing the design forbids, and `HOSTED_MODE`
- *    forces the server's kill switch off anyway.
- * 3. The surface is direct chat: not a scenario, not an environment run, not a
- *    shared/replayed session. Those are not one attended member running their
- *    own turn on their own machine, which is what consent is bound to.
- *
- * The feature FLAG is deliberately not one of the three. It gates whether setup
- * is offered; it is not part of the answer to "is this the kind of send local
- * execution could apply to". Keeping them separate is what lets an explicit
- * local request survive a flag or readiness change instead of silently becoming
- * a cloud request.
- */
-
+/** Local Claude Code is available to the member on direct and environment chat. Shared/scenario execution stays hosted. */
 export const LOCAL_HARNESS_SCOPED_HARNESS_ID = "claude-code";
 
 export interface LocalHarnessScopeInput {
@@ -84,9 +48,7 @@ export interface LocalHarnessScopeInput {
 export function isLocalHarnessScope(args: LocalHarnessScopeInput): boolean {
   if (args.hostedMode) return false;
   if (args.harnessId !== LOCAL_HARNESS_SCOPED_HARNESS_ID) return false;
-  if (args.requiresWebChatApi === true) return false;
   if (args.sharedRun === true) return false;
   if (args.scenarioId) return false;
-  if (args.environmentId) return false;
   return true;
 }

@@ -1,5 +1,6 @@
 import type { ToolSet } from "ai";
 import {
+  TOOL_POLICY_BLOCK_MARKER,
   buildToolPolicySnapshot,
   decideToolPolicy,
   type EvalSuiteFileToolPolicy,
@@ -18,7 +19,16 @@ import {
   type ResolvedCaseSideEffects,
 } from "./side-effect-manifest.js";
 
-export const TOOL_POLICY_BLOCK_MARKER = "mcpjamPolicyBlock";
+// The pure policy helpers live in the SDK contract, shared with the local
+// suite-file runner; re-exported so existing imports keep resolving here.
+// Side-effect manifests and the artifact ledger stay below: they are
+// benchmark enforcement, not policy.
+export {
+  TOOL_POLICY_BLOCK_MARKER,
+  UnmatchedToolPolicyNameError,
+  isToolPolicyBlockResult,
+  validateToolPolicyNames,
+} from "@mcpjam/sdk/contract";
 
 /**
  * Why a call was blocked by the pinned side-effect manifest.
@@ -107,19 +117,6 @@ export type ToolPolicyGate = {
   wrap: (tools: ToolSet) => ToolSet;
 };
 
-export class UnmatchedToolPolicyNameError extends Error {
-  readonly code = "TOOL_POLICY_INVALID";
-
-  constructor(names: string[]) {
-    super(
-      `TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool: ${names.join(
-        ", "
-      )}`
-    );
-    this.name = "UnmatchedToolPolicyNameError";
-  }
-}
-
 export function toolAnnotationsKey(serverId: string, toolName: string): string {
   return `${serverId}:${toolName}`;
 }
@@ -158,41 +155,6 @@ export function buildHarnessToolPolicySnapshots(args: {
     });
   }
   return snapshots;
-}
-
-export function validateToolPolicyNames(args: {
-  policy: EvalSuiteFileToolPolicy;
-  availableToolNames: Iterable<string>;
-  deferredToolNames?: Iterable<string>;
-}): string[] {
-  const availableNames = new Set(args.availableToolNames);
-  const deferredNames = new Set(args.deferredToolNames ?? []);
-  const unmatchedDeny = (args.policy.deny ?? []).filter(
-    (name) => !availableNames.has(name)
-  );
-  const invalidDeny = unmatchedDeny.filter((name) => !deferredNames.has(name));
-  if (invalidDeny.length > 0) {
-    throw new UnmatchedToolPolicyNameError(invalidDeny);
-  }
-  const warnings =
-    unmatchedDeny.length > invalidDeny.length
-      ? [
-          `Tool policy deny name(s) could not be resolved at run start: ${unmatchedDeny
-            .filter((name) => deferredNames.has(name))
-            .join(", ")}`,
-        ]
-      : [];
-  const unmatchedAllow = (args.policy.allow ?? []).filter(
-    (name) => !availableNames.has(name)
-  );
-  if (unmatchedAllow.length > 0) {
-    warnings.push(
-      `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
-        ", "
-      )}`
-    );
-  }
-  return warnings;
 }
 
 /** A refusal from the per-call manifest inspector. */
@@ -579,12 +541,4 @@ export function createToolPolicyGate(args: {
       return wrapped;
     },
   };
-}
-
-export function isToolPolicyBlockResult(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as Record<string, unknown>)[TOOL_POLICY_BLOCK_MARKER] === true
-  );
 }

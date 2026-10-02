@@ -6,15 +6,25 @@
 # supervisor, a real bridge and the real vendor CLI, with a mock upstream
 # standing in only for Anthropic.
 #
-# Two runners, because two of the facts this suite pins are darwin-specific: the
-# `(node)` command an exiting process reports, and the `ps -g` group probe.
-# Everything else is portable, so ubuntu covers the rest and is the job a change
-# to the foundation has to get past.
+# Five native targets cover platform-specific process supervision and delivery.
 name: Local harness conformance
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "mcpjam-inspector/server/utils/harness/**"
+      - "mcpjam-inspector/scripts/*local-harness*"
+      - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
+      - ".github/workflows/local-harness-*.yml"
+      - "package-lock.json"
   workflow_call:
     inputs:
+      published_pack_version:
+        description: Verify and run a pinned published pack instead of building one.
+        required: false
+        type: string
+        default: ""
       pack_version:
         description: Pack version to build and run against.
         required: false
@@ -25,10 +35,21 @@ on:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
         value: ${{ jobs.summarize.outputs.conformance_version }}
   workflow_dispatch:
+    inputs:
+      published_pack_version:
+        description: Pinned published version to verify (empty builds source).
+        required: false
+        type: string
+        default: ""
   pull_request:
     paths:
       - "mcpjam-inspector/server/utils/harness/local/**"
-      - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
+      - "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts"
+      - "mcpjam-inspector/server/utils/harness/registry.ts"
+      - "mcpjam-inspector/package.json"
+      - "package-lock.json"
+      - "mcpjam-inspector/scripts/*local-harness*"
+      - ".github/workflows/local-harness-pack.yml"
       # The launcher is part of the foundation Windows conformance rests on,
       # and this is the only workflow that compiles it. Left out of the filter,
       # a PR that changed nothing but the launcher was never built or tested
@@ -36,11 +57,14 @@ on:
       - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - ".github/workflows/local-harness-conformance.yml"
 
+concurrency:
+  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 env:
-  BUNDLED_NODE_VERSION: "24.20.0"
   # Hold every mock upstream response briefly. An instant in-process upstream
   # is not a neutral simplification: it hid a gateway defect for four runs by
   # always answering inside the window where the gateway was tearing its own
@@ -56,9 +80,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
       # partial tree and the adapter ends up in neither place the build looks.
@@ -66,9 +94,15 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+      - name: Check reviewed pack inputs
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
+
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
+      - name: Build shared contracts and adapter fixtures
+        run: npm run pretest -w @mcpjam/inspector
+
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
         run: npx vitest run server/utils/harness/local
@@ -85,22 +119,34 @@ jobs:
             runner: ubuntu-latest
             platform_key: linux-x64
             node_dist: linux-x64
+          - label: darwin-x64 scenarios
+            runner: macos-15-intel
+            platform_key: darwin-x64
+            node_dist: darwin-x64
+          - label: linux-arm64 scenarios
+            runner: ubuntu-24.04-arm
+            platform_key: linux-arm64
+            node_dist: linux-arm64
           - label: darwin-arm64 scenarios
             runner: macos-latest
             platform_key: darwin-arm64
             node_dist: darwin-arm64
     steps:
       - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ steps.toolchain.outputs.pnpm }}
 
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
@@ -115,10 +161,23 @@ jobs:
           set -euo pipefail
           url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
           curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          actual=$(shasum -a 256 "$RUNNER_TEMP/node-runtime.tar.gz" | awk '{print $1}')
+          test "$actual" = "$expected"
 
       # The real thing, not a fixture: these scenarios exist to prove the pack
       # a user would install actually runs.
+      - name: Prepare the pinned published pack
+        if: inputs.published_pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
+
       - name: Build the pack
+        if: inputs.published_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
@@ -131,6 +190,11 @@ jobs:
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
 
+      - name: Build Inspector adapter dependencies
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
+
       - name: Full turn
         working-directory: mcpjam-inspector
         env:
@@ -140,6 +204,13 @@ jobs:
         run: |
           mkdir -p "$HOME" "$CONFORMANCE_ROOT/workspace"
           npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      - name: Workspace and MCP delivery
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: npx tsx server/utils/harness/local/conformance/run-native-turn.ts delivery
 
       # The negative that makes the loopback guarantee enforceable rather than
       # aspirational: a pack whose launcher does not constrain the listener must
@@ -217,6 +288,14 @@ jobs:
             exit 1
           fi
 
+      - name: Preserve verified published-pack identity
+        if: inputs.published_pack_version != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-pack-${{ matrix.platform_key }}
+          path: ${{ runner.temp }}/conformance/published-conformance-input.json
+          if-no-files-found: error
+
   # Windows. Gating, like the POSIX legs, since `nativePlatforms` lists win32:
   # this job going green is what earned that entry, and it going red is what
   # would make the entry a lie. The two are the SAME change and must move
@@ -236,16 +315,20 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.toolchain.outputs.node }}
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ steps.toolchain.outputs.pnpm }}
 
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
@@ -258,9 +341,15 @@ jobs:
       # The Job Object launcher is what whole-tree cleanup rests on here, so a
       # conformance run without it is not testing Windows support — it is
       # testing that Windows is refused, which the unit suite already covers.
+      - name: Set up the pinned Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
       - name: Build the Job Object launcher
         working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
-        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+        run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
       # The launcher's unit tests, on the only runner that can run them: the
       # code is `syscall.SysProcAttr` and `golang.org/x/sys/windows`, so it
@@ -280,13 +369,26 @@ jobs:
           archive="node-v${BUNDLED_NODE_VERSION}-win-x64.zip"
           curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
             -o "$RUNNER_TEMP/node-runtime.zip"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="$archive" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          actual=$(sha256sum < "$RUNNER_TEMP/node-runtime.zip" | awk '{print $1}')
+          test "$actual" = "$expected"
+
+      - name: Prepare the pinned published pack
+        if: inputs.published_pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
 
       - name: Build the pack
+        if: inputs.published_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform win32-x64 \
-            --pack-version conformance \
+            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
             --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
             --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
@@ -294,6 +396,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
+
+      - name: Build Inspector adapter dependencies
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
 
       - name: Full turn
         working-directory: mcpjam-inspector
@@ -304,6 +411,15 @@ jobs:
           mkdir -p "$CONFORMANCE_ROOT/home" "$CONFORMANCE_ROOT/workspace"
           HOME="$CONFORMANCE_ROOT/home" \
             npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      - name: Workspace and MCP delivery
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-native-turn.ts delivery
 
       # The one that matters on Windows: aborting must take the vendor binary
       # down with the bridge. That is the whole reason the Job Object exists,
@@ -354,6 +470,14 @@ jobs:
             exit 1
           fi
 
+      - name: Preserve verified published-pack identity
+        if: inputs.published_pack_version != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-pack-windows-x64
+          path: ${{ runner.temp }}/conformance/published-conformance-input.json
+          if-no-files-found: error
+
   summarize:
     name: conformance version
     # A conformance version records the evidence behind EVERY platform the
@@ -369,4 +493,11 @@ jobs:
       # evidence, so a recorded conformance version can always be traced back to
       # the scenarios that justified it.
       - id: stamp
-        run: echo "version=local-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+        env:
+          PUBLISHED_PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: |
+          if [ -n "$PUBLISHED_PACK_VERSION" ]; then
+            echo "version=published-${PUBLISHED_PACK_VERSION}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=local-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi

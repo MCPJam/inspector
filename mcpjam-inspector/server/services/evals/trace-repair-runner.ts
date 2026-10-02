@@ -697,6 +697,9 @@ export async function runTraceRepairJob(
                 manager,
                 {
                   testCaseId: fc.testCaseId,
+                  ...(details?.run?.namedHostId
+                    ? { namedHostId: details.run.namedHostId }
+                    : {}),
                   model: step.model,
                   provider: step.provider,
                   serverIds: replayServerIds,
