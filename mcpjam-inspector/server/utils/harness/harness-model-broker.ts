@@ -325,6 +325,11 @@ export async function startLoopbackModelBroker(args: {
   machineId: string;
   keyId: string;
   runId?: string;
+  evalIterationId?: string;
+  journeyRunId?: string;
+  targetId?: string;
+  sessionIdx?: number;
+  hostId?: string;
   maxOutputTokens?: number;
   bearer: string;
   signal?: AbortSignal;
@@ -362,6 +367,8 @@ export async function startLoopbackModelBroker(args: {
         harnessId: args.harnessId,
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
+        ...(args.evalIterationId ? { evalIterationId: args.evalIterationId } : {}),
+        ...(args.journeyRunId ? { journeyRunId: args.journeyRunId, hostId: args.hostId, targetId: args.targetId, sessionIdx: args.sessionIdx } : {}),
         machineId: args.machineId,
         keyId: args.keyId,
         ...(args.runId ? { runId: args.runId } : {}),
@@ -462,7 +469,7 @@ export async function revokeHarnessModelBroker(args: {
         ...(args.computerId ? { computerId: args.computerId } : {}),
         runId: args.runId,
       }),
-      signal: args.signal,
+      signal: args.signal ? AbortSignal.any([args.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     });
     const payload: any = await response.json().catch(() => null);
     if (!response.ok || payload?.ok !== true) {

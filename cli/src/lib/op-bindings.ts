@@ -429,4 +429,5 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   install_registry_directory_server: { command: "registry install" },
   install_registry_server: { command: "registry install --card" },
   uninstall_registry_server: { command: "registry uninstall" },
+  send_feedback: { command: "cloud feedback" },
 };
