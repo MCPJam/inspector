@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   createQueryRequestCache,
   queryFailureTags,
@@ -6,7 +7,10 @@ import {
 } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
-import { isAuthorizationRefusal } from "./authorization-refusal";
+import {
+  isAuthorizationRefusal,
+  isSessionRevokedError,
+} from "./authorization-refusal";
 import {
   describeError,
   isNormalizedError,
@@ -83,7 +87,8 @@ export function reportPossiblyOurFailure(
     // Checked here as well as in `reportCaught`, so the documented return value
     // stays honest: without this a refusal would be dropped downstream and
     // still reported as sent.
-    if (isAuthorizationRefusal(error)) return false;
+    if (isAuthorizationRefusal(error) || isSessionRevokedError(error))
+      return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
     // the real failure with the error object in hand and puts the verdict on
@@ -142,7 +147,7 @@ function toError(error: unknown): Error {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
-  if (isAuthorizationRefusal(error)) return;
+  if (isAuthorizationRefusal(error) || isSessionRevokedError(error)) return;
 
   const normalized = safeQueryError(toError(error));
   const queryTags = queryFailureTags(normalized.message);
@@ -158,10 +163,15 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       ? queryPageLocation(window.location.href)
       : undefined;
 
+  const recovery = useSessionRefreshStore.getState();
+  const recoveryTags =
+    recovery.recoveryId && Date.now() - recovery.recoveryAt < 300_000
+      ? { auth_recovery_id: recovery.recoveryId }
+      : {};
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source, ...queryTags },
+      tags: { source: options.source, ...queryTags, ...recoveryTags },
       ...(queryTags
         ? {
             extra: {

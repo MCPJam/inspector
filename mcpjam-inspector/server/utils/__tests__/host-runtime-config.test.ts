@@ -190,6 +190,20 @@ describe("fetchHostRuntimeConfig", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("returns undici's network code when both attempts fail", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer: "t" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 502,
+      networkCode: "ENOTFOUND",
+    });
+  });
+
   it("retries one transient network failure before failing the turn", async () => {
     const fetchSpy = vi
       .fn()

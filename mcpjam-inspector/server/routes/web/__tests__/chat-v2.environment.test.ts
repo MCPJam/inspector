@@ -35,6 +35,14 @@ vi.mock("../../../utils/host-execution-context.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
+    kind: "local-native", actingUserId: "authkit:owner", workspaceGrantId: "ws",
+    runtimeId: "runtime", machineId: "machine", grantToken: "grant",
+    permissionProfile: "workspace-edits", policyVersion: "policy",
+  } })),
+}));
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return { ...actual, convertToModelMessages: vi.fn((messages) => messages) };
