@@ -1728,16 +1728,25 @@ describe("hosted connection failure logs", () => {
       }
     }
 
-    for (const error of [
-      named("McpError", { code: 503 }),
-      protocolError,
-      named("MCPAuthError", { statusCode: 401, cause: protocolError }),
-    ]) {
+    // A JSON-RPC error's `code` is the server's own code, whatever its value —
+    // reported as a JSON-RPC code, never as an HTTP status.
+    for (const [error, code] of [
+      [named("McpError", { code: 503 }), 503],
+      [protocolError, 401],
+    ] as const) {
       const failure = describeHostedConnectFailure(error, logs);
       expect(failure.message).toBe(
-        "The MCP server responded with HTTP 200 OK, but not with a valid MCP response.",
+        `The MCP server answered with JSON-RPC error ${code} (JSON-RPC error).`,
       );
     }
+    expect(
+      describeHostedConnectFailure(
+        named("MCPAuthError", { statusCode: 401, cause: protocolError }),
+        logs,
+      ).message,
+    ).toBe(
+      "The MCP server responded with HTTP 200 OK, but not with a valid MCP response.",
+    );
     expect(
       describeHostedConnectFailure(new StreamableHTTPError(502), logs).message,
     ).toBe("The MCP server responded with HTTP 502.");

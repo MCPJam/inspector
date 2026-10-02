@@ -41,7 +41,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "npm run dev:app:default",
+      command: "npm run dev:app:processes:default",
       url: "http://localhost:5373/__e2e/oauth-debugger",
       cwd: packageRoot,
       reuseExistingServer: !process.env.CI,
@@ -56,7 +56,7 @@ export default defineConfig({
       },
     },
     {
-      command: "npm run dev:app:default",
+      command: "npm run dev:app:processes:default",
       url: "http://localhost:5374/__e2e/oauth-debugger",
       cwd: packageRoot,
       reuseExistingServer: !process.env.CI,

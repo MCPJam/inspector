@@ -1009,7 +1009,7 @@ async function applyLocalRuntimeResolution<
       ...(result.serverConfig.transportType === "http" && secrets.headers
         ? {
             credentialBinding: {
-              headerNames: Object.keys(secrets.headers),
+              headerNames: secrets.credentialHeaderNames ?? Object.keys(secrets.headers),
               boundOrigins: secrets.boundOrigins ?? [],
             },
           }

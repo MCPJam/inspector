@@ -833,7 +833,7 @@ export function ServerPicker({
       </div>
 
       <PopoverContent
-        className="w-72 p-1.5"
+        className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto p-1.5"
         align="start"
         sideOffset={4}
         portalled={!inModal}

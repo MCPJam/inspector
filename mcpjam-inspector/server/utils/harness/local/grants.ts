@@ -81,6 +81,8 @@ export interface WorkspaceGrant {
  * was shown; a change to any of them means they consented to something else.
  */
 export interface HarnessGrantBinding {
+  /** Server-derived use; never read from a client request. */
+  scope?: "attended" | "unattended";
   userId: string;
   machineId: string;
   projectId: string;
@@ -139,6 +141,7 @@ const withGrantLock = createLocalStateMutationLock({
 export function hashGrantBinding(binding: HarnessGrantBinding): string {
   return sha256(
     JSON.stringify([
+      binding.scope ?? "attended",
       binding.userId,
       binding.machineId,
       binding.projectId,
@@ -196,6 +199,7 @@ function isHarnessGrantBinding(value: unknown): value is HarnessGrantBinding {
     binding.userId.length > 0 &&
     typeof binding.machineId === "string" &&
     binding.machineId.length > 0 &&
+    (binding.scope === undefined || binding.scope === "attended" || binding.scope === "unattended") &&
     typeof binding.projectId === "string" &&
     binding.projectId.length > 0 &&
     typeof binding.workspaceGrantId === "string" &&
@@ -444,7 +448,11 @@ export async function validateWorkspaceCandidate(
   // directory is itself a symlink, the raw value never equals the
   // canonicalized selection and the refusal below would not fire.
   const home = await realpath(homedir()).catch(() => homedir());
-  if (canonicalPath === home || isFilesystemRoot(canonicalPath)) {
+  const appRoot = join(home, ".mcpjam");
+  const workspaces = join(appRoot, "harness-workspaces");
+  if (canonicalPath === home || isFilesystemRoot(canonicalPath) ||
+      ((canonicalPath === appRoot || canonicalPath.startsWith(appRoot + sep)) &&
+       !canonicalPath.startsWith(workspaces + sep))) {
     return {
       ok: false,
       message:
@@ -529,6 +537,8 @@ export async function resolveWorkspaceGrant(
         message: "the granted workspace is no longer a directory",
       };
     }
+    const candidate = await validateWorkspaceCandidate(canonical);
+    if (!candidate.ok) return candidate;
     return { ok: true, canonicalPath: canonical };
   } catch {
     return {
@@ -576,10 +586,9 @@ export function grantLocalHarnessConsent(
       expiresAt: new Date(now + ttlMs).toISOString(),
     };
     const state = await readState();
-    // One live grant per binding: re-consenting rotates rather than
-    // accumulating capabilities nobody can enumerate.
+    // Each run holds an independent credential; renewal must not revoke peers.
     state.harnessGrants = state.harnessGrants.filter(
-      (g) => g.bindingHash !== grant.bindingHash,
+      (g) => Date.parse(g.expiresAt) > now,
     );
     state.harnessGrants.push(grant);
     await writeState(state);
@@ -699,6 +708,8 @@ export async function verifyLocalHarnessGrant(
 /** Revoke by grant id, by binding, or — with no argument — every grant on this
  *  machine (the "stop everything" affordance). */
 export function revokeLocalHarnessGrants(selector?: {
+  userId?: string;
+  projectId?: string;
   grantId?: string;
   binding?: HarnessGrantBinding;
 }): Promise<number> {
@@ -707,6 +718,8 @@ export function revokeLocalHarnessGrants(selector?: {
     const before = state.harnessGrants.length;
     if (!selector) {
       state.harnessGrants = [];
+    } else if (selector.userId) {
+      state.harnessGrants = state.harnessGrants.filter(g => g.binding.userId !== selector.userId || (selector.projectId !== undefined && g.binding.projectId !== selector.projectId));
     } else if (selector.grantId) {
       state.harnessGrants = state.harnessGrants.filter(
         (g) => g.grantId !== selector.grantId,
@@ -737,5 +750,15 @@ export function pruneExpiredHarnessGrants(now = Date.now()): Promise<number> {
     const removed = before - state.harnessGrants.length;
     if (removed > 0) await writeState(state);
     return removed;
+  });
+}
+
+/** Remove a finished session-owned scratch grant and its execution credentials. */
+export function forgetWorkspaceGrant(workspaceGrantId: string): Promise<void> {
+  return withGrantLock(async () => {
+    const state = await readState();
+    state.workspaces = state.workspaces.filter(w => w.workspaceGrantId !== workspaceGrantId);
+    state.harnessGrants = state.harnessGrants.filter(g => g.binding.workspaceGrantId !== workspaceGrantId);
+    await writeState(state);
   });
 }
