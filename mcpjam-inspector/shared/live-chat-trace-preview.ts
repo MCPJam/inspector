@@ -219,6 +219,11 @@ export function buildLiveChatPreviewSpans(options: {
 
 const PREVIEW_SPAN_ID_PREFIX = "pv-";
 
+/** True for a span built by `buildLiveChatPreviewSpans`, not a recorded one. */
+export function isLiveChatPreviewSpanId(spanId: string): boolean {
+  return spanId.startsWith(PREVIEW_SPAN_ID_PREFIX);
+}
+
 /**
  * Prefer UI-derived transcript when it has more messages than the snapshot blob
  * (snapshot updates only on trace_snapshot, so follow-up user turns stay stale).

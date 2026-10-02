@@ -118,6 +118,7 @@ import {
   verifyAssistantText,
 } from "../history-provenance";
 import { streamWebChatTurn } from "../web-chat-turn";
+import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
 import {
   applyWidgetStateUpdates,
   buildSkillContextMessages,
@@ -270,6 +271,7 @@ async function runTurn(
     abort?: AbortController;
     onChunk?: (chunk: any) => void;
     model?: Record<string, unknown>;
+    chatSessionId?: string;
   } = {},
 ): Promise<any[]> {
   const response = await streamWebChatTurn({
@@ -284,7 +286,7 @@ async function runTurn(
       uiMessages,
     },
     persist: {
-      chatSessionId: "chat_1",
+      chatSessionId: options.chatSessionId ?? "chat_1",
       projectId: "project_1",
       sourceType: "direct",
       origin: "playground",
@@ -412,8 +414,9 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     ]);
   });
 
-  it("leaves out an unsigned assistant reply before the user's next message", async () => {
-    await runTurn([
+  it("leaves out an unsigned assistant reply before the user's next message, and says so", async () => {
+    // A conversation from before replies were signed, reopened and continued.
+    const chunks = await runTurn([
       user("u1", "Help me plan the release."),
       {
         id: "a1",
@@ -430,6 +433,15 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     const [only] = modelRequests[0]!.messages;
     expect(only.role).toBe("user");
     expect(JSON.stringify(only)).toContain("continue");
+    expect(
+      chunks.filter((chunk) => chunk.type === HISTORY_NOTICE_DATA_PART_TYPE),
+    ).toEqual([
+      {
+        type: HISTORY_NOTICE_DATA_PART_TYPE,
+        data: { reason: "earlier_replies_not_sent", chatSessionId: "chat_1" },
+        transient: true,
+      },
+    ]);
   });
 
   it("leaves out unverified call arguments, error results, unknown browser-named tools and reasoning", async () => {
@@ -519,7 +531,7 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     const assistant = await browserMessageFrom(firstTurn);
 
     modelRequests = [];
-    await runTurn([
+    const nextTurn = await runTurn([
       user("u1", "What's open?"),
       assistant,
       user("u2", "Thanks"),
@@ -533,6 +545,9 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
       "assistant",
       "user",
     ]);
+    expect(
+      nextTurn.some((chunk) => chunk.type === HISTORY_NOTICE_DATA_PART_TYPE),
+    ).toBe(false);
     const call = request!.messages[1].content[0];
     expect(call).toMatchObject({
       type: "tool-call",
@@ -650,7 +665,7 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     expect(request!.raw).not.toContain("Result unavailable");
   });
 
-  it("signs a stopped turn's partial text, and shows it to the model next turn", async () => {
+  it("leaves out a reply the browser stopped mid-stream, and says so", async () => {
     const abort = new AbortController();
     modelSteps = [
       () =>
@@ -682,20 +697,55 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
       },
     });
     expect(firstTurn.some((chunk) => chunk.type === "text-end")).toBe(false);
+    for (const chunk of firstTurn) {
+      expect(chunk.providerMetadata?.mcpjam?.textSig).toBeUndefined();
+    }
     const stopped = await browserMessageFrom(firstTurn);
-    const text = stopped.parts.find((p: any) => p.type === "text");
-    expect(text.text).toBe("Partial answer");
-    // The browser holds a signature for exactly the text it received.
-    expect(
-      verifyAssistantText(
-        historyProvenanceContextFor("project_1")!,
-        "Partial answer",
-        text.providerMetadata?.mcpjam?.textSig,
-      ),
-    ).toBe(true);
+    expect(stopped.parts.find((p: any) => p.type === "text").text).toBe(
+      "Partial answer",
+    );
 
     modelRequests = [];
-    await runTurn([
+    const nextTurn = await runTurn([
+      user("u1", "Tell me a story"),
+      stopped,
+      user("u2", "go on"),
+    ]);
+
+    expect(modelRequests[0]!.messages.map((m: any) => m.role)).toEqual([
+      "user",
+    ]);
+    expect(modelRequests[0]!.raw).not.toContain("Partial answer");
+    expect(nextTurn).toContainEqual({
+      type: HISTORY_NOTICE_DATA_PART_TYPE,
+      data: { reason: "earlier_replies_not_sent", chatSessionId: "chat_1" },
+      transient: true,
+    });
+  });
+
+  it("signs the final text of a reply the stream ends mid-way, and shows it next turn", async () => {
+    modelSteps = [
+      [
+        { type: "start-step" },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Partial " },
+        { type: "text-delta", id: "t1", delta: "answer" },
+        { type: "error", errorText: "upstream failed" },
+      ],
+    ];
+    const firstTurn = await runTurn([user("u1", "Tell me a story")]);
+    const end = firstTurn.find((chunk) => chunk.type === "text-end");
+    expect(
+      verifyAssistantText(
+        historyProvenanceContextFor("project_1", "chat_1")!,
+        "Partial answer",
+        end?.providerMetadata?.mcpjam?.textSig,
+      ),
+    ).toBe(true);
+    const stopped = await browserMessageFrom(firstTurn);
+
+    modelRequests = [];
+    const nextTurn = await runTurn([
       user("u1", "Tell me a story"),
       stopped,
       user("u2", "go on"),
@@ -710,6 +760,29 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     expect(request!.messages[1].content).toMatchObject([
       { type: "text", text: "Partial answer" },
     ]);
+    expect(
+      nextTurn.some((chunk) => chunk.type === HISTORY_NOTICE_DATA_PART_TYPE),
+    ).toBe(false);
+  });
+
+  it("leaves out a reply signed in another chat, and says so", async () => {
+    modelSteps = [reply("CHAT_ONE_REPLY")];
+    const firstTurn = await runTurn([user("u1", "hi")]);
+    const assistant = await browserMessageFrom(firstTurn);
+
+    modelRequests = [];
+    const inOtherChat = await runTurn(
+      [user("u1", "hi"), assistant, user("u2", "go on")],
+      { chatSessionId: "chat_2" },
+    );
+
+    expect(modelRequests[0]!.messages.map((m: any) => m.role)).toEqual([
+      "user",
+    ]);
+    expect(modelRequests[0]!.raw).not.toContain("CHAT_ONE_REPLY");
+    expect(
+      inOtherChat.some((chunk) => chunk.type === HISTORY_NOTICE_DATA_PART_TYPE),
+    ).toBe(true);
   });
 
   it("without a signing key, leaves the history's assistant content out", async () => {

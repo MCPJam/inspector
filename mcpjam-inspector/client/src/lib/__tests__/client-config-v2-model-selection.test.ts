@@ -40,6 +40,23 @@ describe("host config model selection", () => {
     );
   });
 
+  it("an effort-only edit is a change (Save must enable)", () => {
+    const withEffort = (effort?: "low" | "high") => ({
+      ...base,
+      modelSelection: {
+        ...HOSTED,
+        ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+      },
+    });
+    expect(hostConfigInputsEqual(withEffort(), withEffort("high"))).toBe(false);
+    expect(hostConfigInputsEqual(withEffort("low"), withEffort("high"))).toBe(
+      false,
+    );
+    expect(hostConfigInputsEqual(withEffort("high"), withEffort("high"))).toBe(
+      true,
+    );
+  });
+
   it("save telemetry reports one model change", () => {
     const changed = (draft: typeof base) =>
       changedClientSettings({

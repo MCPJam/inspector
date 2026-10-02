@@ -216,7 +216,8 @@ export const createSuiteRunRecorder = ({
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
   let runtimeAttempt:
-    { attemptId: string; monotonicStartedAt: number } | undefined;
+    | { attemptId: string; monotonicStartedAt: number }
+    | undefined;
   const iterationRuntime = new Map<
     string,
     {
@@ -592,6 +593,7 @@ export const startSuiteRunWithRecorder = async ({
   namedHostId,
   runGroupId,
   environmentId,
+  runtimeVenue,
   expectedEnvironmentRevision,
   expectedEnvironmentHostConfigId,
   expectedEnvironmentServerIds,
@@ -673,6 +675,7 @@ export const startSuiteRunWithRecorder = async ({
    * reconstruction of the mutation args would silently drop it.
    */
   environmentId?: string;
+  runtimeVenue?: "local" | "hosted";
   /**
    * The environment revision `prepareEvalRun` resolved (and captured the
    * tool snapshot against). The mutation compares it to the environment's
@@ -780,6 +783,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(namedHostId ? { namedHostId } : {}),
       ...(runGroupId ? { runGroupId } : {}),
       ...(environmentId ? { environmentId } : {}),
+      ...(runtimeVenue ? { runtimeVenue } : {}),
       ...(expectedEnvironmentRevision !== undefined
         ? { expectedEnvironmentRevision }
         : {}),
@@ -953,7 +957,8 @@ export const startSuiteRunWithRecorder = async ({
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
   let suiteDefaultPredicates:
-    import("@/shared/eval-matching").Predicate[] | undefined;
+    | import("@/shared/eval-matching").Predicate[]
+    | undefined;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -982,9 +987,11 @@ export const startSuiteRunWithRecorder = async ({
       suiteDefaults: suiteDefaultPredicates,
       suppressedSuiteStandardCheckIds: tc.suppressedSuiteStandardCheckIds,
       envelope: tc.predicates as
-        import("@/shared/eval-matching").CasePredicates | undefined,
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
       legacyCase: tc.successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
     });
 
   // Build config from test cases for backward compatibility
@@ -1081,15 +1088,17 @@ export const startSuiteRunWithRecorder = async ({
      * "resolve the platform defaults" — the same code path, differing only in
      * which rung each field came from.
      */
-    // Read from the response's `configSnapshot`, where every other frozen
-    // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
-    // the top-level spelling as a fallback so the two repos can deploy in
-    // either order.
+    // The backend returns the frozen venue for both fresh and deduped runs.
+    // Never infer it from the new request on an idempotent retry.
+    harnessRuntimeVenue: (response?.configSnapshot?.executionVenue === "local" ? "local" : "hosted") as "local" | "hosted",
     executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
       ?.executionBudgets ?? response?.executionBudgets) as
-      ResolvedExecutionBudgets | undefined,
+      | ResolvedExecutionBudgets
+      | undefined,
     githubCredentialPolicy: response?.githubCredentialPolicy as
-      "no_customer_credentials" | "suite_credentials" | undefined,
+      | "no_customer_credentials"
+      | "suite_credentials"
+      | undefined,
     /**
      * This start was a REPLAY of an existing run (idempotency key hit, or the
      * keyless fingerprint window), not a launch.
@@ -1104,8 +1113,13 @@ export const startSuiteRunWithRecorder = async ({
     /** The run's status as the platform holds it — `completed` on a replay of
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
+    environmentRef: (response?.configSnapshot as any)?.environmentRef as
+      | { environmentId: string }
+      | undefined,
     hostConfig: response?.hostConfig as
-      Record<string, unknown> | null | undefined,
+      | Record<string, unknown>
+      | null
+      | undefined,
     /**
      * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
      * `bundleHash` of every plugin version this run pinned, in pin order.
@@ -1131,7 +1145,8 @@ export const startSuiteRunWithRecorder = async ({
      * which mean the same thing here.
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
-      { mode?: unknown } | undefined,
+      | { mode?: unknown }
+      | undefined,
     /**
      * The run's FROZEN description-experiment marker, straight off its own
      * snapshot. The runner applies `{ [toolName]: description }` and stamps

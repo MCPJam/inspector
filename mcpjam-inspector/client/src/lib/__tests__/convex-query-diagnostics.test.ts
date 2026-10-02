@@ -110,6 +110,15 @@ describe("Convex query diagnostics", () => {
     ).toBeNull();
     expect(process(event())).not.toBeNull();
   });
+  it("keeps signed-out session refusals quiet too", () => {
+    const process = createConvexQueryEventProcessor();
+    expect(
+      process(event(), {
+        originalException: new ConvexError({ kind: "session_revoked" }),
+      }),
+    ).toBeNull();
+    expect(process(event())).not.toBeNull();
+  });
   it("sanitizes errors before either telemetry sink sees them", () => {
     const original = new Error(message);
     const safe = safeQueryError(original);

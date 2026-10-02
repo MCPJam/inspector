@@ -12,20 +12,17 @@ import {
   runHostedDoctor,
   validateServerCore,
 } from "../web/servers.js";
-import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
-import { v1OnError, v1Resource } from "./envelope.js";
+import { v1Resource } from "./envelope.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-import {
-  describeHostedConnectFailure,
-  projectHostedConnectFailureDetails,
-} from "../../utils/hosted-connect-failure.js";
-import { createHostedRpcLogCollector } from "../web/hosted-rpc-logs.js";
 import {
   translateAddressedConvexWriteError,
   translateConvexWriteError,
+  translateStructuredConvexRefusal,
   type TranslateConvexWriteErrorOptions,
 } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const servers = new Hono();
@@ -98,7 +95,7 @@ const updateServerSchema = z
       Object.entries(serverFields).map(([key, schema]) => [
         key,
         schema.optional(),
-      ])
+      ]),
     ),
     clearClientSecret: z.boolean().optional(),
     clearXaaConfig: z.boolean().optional(),
@@ -113,7 +110,7 @@ function convexClient(token: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(url);
@@ -136,7 +133,7 @@ function translateAddressedServerWriteError(
   error: unknown,
   token: string,
   projectId: string,
-  serverId: string
+  serverId: string,
 ): Promise<WebRouteError> {
   return translateAddressedConvexWriteError(
     error,
@@ -145,23 +142,23 @@ function translateAddressedServerWriteError(
       (
         (await convexClient(token).query(
           "servers:getProjectServers" as any,
-          { projectId } as any
+          { projectId } as any,
         )) as Array<Record<string, unknown>>
-      ).some((row) => String(row._id ?? row.id) === serverId)
+      ).some((row) => String(row._id ?? row.id) === serverId),
   );
 }
 
 async function findProjectServer(
   token: string,
   projectId: string,
-  serverId: string
+  serverId: string,
 ) {
   const rows = (await convexClient(token).query(
     "servers:getProjectServers" as any,
-    { projectId } as any
+    { projectId } as any,
   )) as Array<Record<string, unknown>>;
   const row = rows.find(
-    (candidate) => String(candidate._id ?? candidate.id) === serverId
+    (candidate) => String(candidate._id ?? candidate.id) === serverId,
   );
   if (!row)
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Server not found");
@@ -181,7 +178,7 @@ async function findProjectServer(
 }
 
 async function readJsonObject(
-  c: Parameters<typeof synthesizeServerBody>[0]
+  c: Parameters<typeof synthesizeServerBody>[0],
 ): Promise<Record<string, unknown>> {
   const text = await c.req.text();
   if (!text.trim()) return {};
@@ -192,14 +189,14 @@ async function readJsonObject(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body"
+      "Invalid JSON body",
     );
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be a JSON object"
+      "Request body must be a JSON object",
     );
   }
   return value as Record<string, unknown>;
@@ -217,12 +214,12 @@ servers.post("/projects/:projectId/servers", async (c) => {
         ...body,
         projectId,
         failOnNameConflict: true,
-      } as any
+      } as any,
     );
     return v1Resource(
       c,
       await findProjectServer(token, projectId, String(serverId)),
-      201
+      201,
     );
   } catch (error) {
     throw translateServerWriteError(error);
@@ -232,14 +229,29 @@ servers.post("/projects/:projectId/servers", async (c) => {
 // GET /v1/projects/:projectId/servers/:serverId — one saved server.
 servers.get("/projects/:projectId/servers/:serverId", async (c) => {
   const token = await getConvexBearerForRequest(c);
-  return v1Resource(
-    c,
-    await findProjectServer(
-      token,
-      c.req.param("projectId"),
-      c.req.param("serverId")
-    )
-  );
+  try {
+    return v1Resource(
+      c,
+      await findProjectServer(
+        token,
+        c.req.param("projectId"),
+        c.req.param("serverId"),
+      ),
+    );
+  } catch (error) {
+    // The scoping read. A structured refusal keeps the backend's own mapping;
+    // a plain membership refusal — masked to "Server Error" in production —
+    // answers the same 404 an unknown id does instead of escaping to the
+    // boundary's 500 (MJ-021).
+    throw (
+      translateStructuredConvexRefusal(error) ??
+      translateConvexReadError(error, {
+        scope: "v1.servers",
+        notFoundMessage: "Server not found",
+        redactedIsRefusal: true,
+      })
+    );
+  }
 });
 
 // PATCH /v1/projects/:projectId/servers/:serverId — update metadata/secrets.
@@ -255,7 +267,7 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
         ...body,
         projectId,
         serverId,
-      } as any
+      } as any,
     );
     return v1Resource(c, await findProjectServer(token, projectId, serverId));
   } catch (error) {
@@ -263,7 +275,7 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
       error,
       token,
       projectId,
-      serverId
+      serverId,
     );
   }
 });
@@ -277,20 +289,20 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Delete body must be empty"
+      "Delete body must be empty",
     );
   const token = await getConvexBearerForRequest(c);
   try {
     await convexClient(token).mutation(
       "servers:deleteServer" as any,
-      { projectId, serverId } as any
+      { projectId, serverId } as any,
     );
   } catch (error) {
     throw await translateAddressedServerWriteError(
       error,
       token,
       projectId,
-      serverId
+      serverId,
     );
   }
   return v1Resource(c, { id: serverId, deleted: true });
@@ -298,38 +310,17 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
 
 // POST /v1/projects/:projectId/servers/:serverId/validate
 // Connect to the server and capture an inspection snapshot. Wraps the same
-// validateServerCore the web /servers/validate route uses.
-servers.post("/projects/:projectId/servers/:serverId/validate", async (c) => {
-  // Hosted: the exchange log the failure is described from, as on the web
-  // twin. It is read here and never returned.
-  const collector = HOSTED_MODE ? createHostedRpcLogCollector(null) : undefined;
-  try {
-    return await runV1ServerOp(
-      c,
-      projectServerSchema,
-      (manager, body) => validateServerCore(c, manager, body),
-      (ctx, result) => v1Resource(ctx, result),
-      {
-        timeoutMs: WEB_CONNECT_TIMEOUT_MS,
-        rpcLogger: collector?.rpcLogger,
-        httpLogger: collector?.httpLogger,
-      },
-    );
-  } catch (error) {
-    // Hosted: the target's status line in place of its answer, as on the web
-    // twin (MJ-001). Errors this server authored keep their wording.
-    if (!HOSTED_MODE || error instanceof WebRouteError) throw error;
-    const failure = describeHostedConnectFailure(
-      error,
-      collector?.buildEnvelope() as Record<string, unknown> | undefined,
-    );
-    return v1OnError(error, c, {
-      message: failure.message,
-      ...(failure.blockedTarget ? { code: "VALIDATION_ERROR" as const } : {}),
-      details: projectHostedConnectFailureDetails,
-    });
-  }
-});
+// validateServerCore the web /servers/validate route uses. Hosted, a failure is
+// answered by `runV1ServerOp` as on the web twin (MJ-001).
+servers.post("/projects/:projectId/servers/:serverId/validate", async (c) =>
+  runV1ServerOp(
+    c,
+    projectServerSchema,
+    (manager, body) => validateServerCore(c, manager, body),
+    (ctx, result) => v1Resource(ctx, result),
+    { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
+  ),
+);
 
 // POST /v1/projects/:projectId/servers/:serverId/doctor
 // Run the shared SDK doctor workflow (probe -> connect -> initialize ->
@@ -359,12 +350,12 @@ servers.post(
         accessScope: body.accessScope,
         scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
-      }
+      },
     );
     // Same projection the web twin returns, so the two never drift on what
     // "requires authorization" means.
     return v1Resource(c, buildOAuthRequirementProjection(auth.serverConfig));
-  }
+  },
 );
 
 export default servers;

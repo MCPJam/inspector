@@ -78,10 +78,28 @@ describe("add-step-picker-catalog integrity", () => {
     );
   });
 
-  it("has 6 primary items and 17 secondary items", () => {
+  it("has 6 primary items and 18 secondary items", () => {
     expect(primaryItems()).toHaveLength(6);
-    expect(secondaryItems()).toHaveLength(17);
-    expect(secondaryCount()).toBe(17);
+    expect(secondaryItems()).toHaveLength(18);
+    expect(secondaryCount()).toBe(18);
+  });
+
+  it("files toolInputMatches with the other tool-call checks", () => {
+    const entry = PICKER_CATALOG.find(
+      (e) =>
+        e.choice.kind === "check" &&
+        e.choice.predicateKind === "toolInputMatches",
+    );
+    expect(entry?.group).toBe("transcriptMore");
+    expect(entry?.tier).toBe("secondary");
+  });
+
+  it("leaves toolResultMatches out, like toolResultContains", () => {
+    // Neither can be scoped to a turn, so neither is a step here; both are
+    // added from the Add drawer as whole-run checks.
+    const kinds = catalogPredicateKinds();
+    expect(kinds).not.toContain("toolResultMatches");
+    expect(kinds).not.toContain("toolResultContains");
   });
 
   it("places widgetNoConsoleErrors under viewLifecycle, not transcript", () => {
