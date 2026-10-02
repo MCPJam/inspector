@@ -429,8 +429,10 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     const held = await screen.findByTestId("new-swarm-running-held-credits");
     const limit = await screen.findByTestId("new-swarm-running-account-limit");
     expect(held).toHaveTextContent("1 session stopped");
+    // The breakdown adds up to the run: the held session is listed in it too,
+    // not only subtracted from "failed".
     expect(limit).toHaveTextContent(
-      "0 completed, 0 failed, 1 stopped at an organization usage limit.",
+      "0 completed, 0 failed, 1 stopped at an organization usage limit, 1 held.",
     );
     expect(limit).toHaveTextContent("Out of MCPJam credits.");
     expect(

@@ -1110,10 +1110,15 @@ export function NewSwarmRunningStep({
   // Skipping them above is right — no provider throttled anything — but on a
   // run where other sessions succeeded, the run banner stays silent too, and
   // the amber chips would be left unexplained.
-  const accountLimit = useMemo(() => {
+  //
+  // Counted in the same pass: the sessions stopped while other requests held
+  // the last credits. Not a limit and not an empty wallet, so they are kept out
+  // of the account-limit count and worded as what the session card says: a wait.
+  const { accountLimit, heldCredits } = useMemo(() => {
     let count = 0;
     let message: string | null = null;
     let exhausted = 0;
+    let held = 0;
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed")
@@ -1123,7 +1128,10 @@ export function NewSwarmRunningStep({
           attempt.errorCode,
         );
         // A hold is not a limit: it has its own callout below.
-        if (isHeldAttempt(attempt, info)) continue;
+        if (isHeldAttempt(attempt, info)) {
+          held += 1;
+          continue;
+        }
         if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
           continue;
         }
@@ -1145,26 +1153,10 @@ export function NewSwarmRunningStep({
         if (!message && attempt.errorMessage) message = info.message;
       }
     }
-    return count === 0 ? null : { count, message, exhausted };
-  }, [snapshots]);
-
-  // Sessions stopped while other requests held the last credits. Not a limit
-  // and not an empty wallet, so they are kept out of the callout above and
-  // worded as what the session card says: a wait.
-  const heldCredits = useMemo(() => {
-    let count = 0;
-    for (const snap of Object.values(snapshots)) {
-      for (const attempt of snap.attempts) {
-        if (attempt.status !== "rate_limited" && attempt.status !== "failed")
-          continue;
-        const info = humanizeSwarmAttemptError(
-          attempt.errorMessage,
-          attempt.errorCode,
-        );
-        if (isHeldAttempt(attempt, info)) count += 1;
-      }
-    }
-    return count === 0 ? null : { count };
+    return {
+      accountLimit: count === 0 ? null : { count, message, exhausted },
+      heldCredits: held === 0 ? null : { count: held },
+    };
   }, [snapshots]);
 
   // The account-limit and held-credits callouts own their causes — count,
@@ -1357,7 +1349,7 @@ export function NewSwarmRunningStep({
                       providerRateLimit
                         ? `, ${providerRateLimit.count} stopped at a provider limit`
                         : ""
-                    }.`}
+                    }${heldCredits ? `, ${heldCredits.count} held` : ""}.`}
                   </p>
                   <p className="mt-0.5">
                     {accountLimit.exhausted > 0
