@@ -119,6 +119,15 @@ describe("Convex query diagnostics", () => {
     ).toBeNull();
     expect(process(event())).not.toBeNull();
   });
+  it("keeps unauthenticated refusals quiet too", () => {
+    const process = createConvexQueryEventProcessor();
+    expect(
+      process(event(), {
+        originalException: new ConvexError({ kind: "unauthenticated" }),
+      }),
+    ).toBeNull();
+    expect(process(event())).not.toBeNull();
+  });
   it("sanitizes errors before either telemetry sink sees them", () => {
     const original = new Error(message);
     const safe = safeQueryError(original);
