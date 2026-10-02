@@ -8,7 +8,9 @@ import {
   isQuietCase,
   moveActionBlock,
   removeActionWithChecks,
+  replaceActionTools,
   spineStatus,
+  toolsByLaterAction,
 } from "../case-spine/case-spine-model";
 
 const prompt = (id: string): TestStep => ({
@@ -297,5 +299,79 @@ describe("isQuietCase", () => {
 
   it("stops being quiet with a leading check", () => {
     expect(isQuietCase({ steps: [check("a0"), prompt("s1")] })).toBe(false);
+  });
+});
+
+describe("each later prompt's own tools", () => {
+  const expectTool = (id: string, toolName: string): TestStep => ({
+    id,
+    kind: "assert",
+    assertion: { type: "toolCalledWith", toolName, args: { args: {} } },
+  });
+  const steps: TestStep[] = [
+    prompt("p1"),
+    expectTool("t1", "diagnose"),
+    prompt("p2"),
+    expectTool("t2", "generate"),
+    check("c2"),
+    prompt("p3"),
+    expectTool("t3", "run"),
+  ];
+
+  it("keys each later prompt's tools by that prompt, leaving the first prompt's alone", () => {
+    const byAction = toolsByLaterAction(steps);
+    expect([...byAction.keys()]).toEqual(["p2", "p3"]);
+    expect(byAction.get("p2")!.map((tool) => tool.toolName)).toEqual([
+      "generate",
+    ]);
+    expect(byAction.get("p3")!.map((tool) => tool.id)).toEqual(["t3"]);
+  });
+
+  it("skips an advisory tool check, which is an ordinary assertion", () => {
+    const advisory: TestStep = {
+      id: "t2",
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "generate",
+        args: { args: {} },
+        role: "advisory",
+      },
+    };
+    expect(
+      toolsByLaterAction([prompt("p1"), prompt("p2"), advisory]).size,
+    ).toBe(0);
+  });
+
+  it("rewrites, removes and appends within one prompt's block only", () => {
+    const current = toolsByLaterAction(steps).get("p2")!;
+    const next = replaceActionTools(steps, "p2", current, [
+      { ...current[0]!, toolName: "generate_cases" },
+      { toolName: "list_suites", arguments: {} },
+    ]);
+    const ids = next.map((step) => step.id);
+    // The kept tool stays in place, the new one lands at the END of prompt
+    // 2's block (after its other check), and prompt 3 is untouched.
+    expect(ids.slice(0, 5)).toEqual(["p1", "t1", "p2", "t2", "c2"]);
+    expect(ids.slice(6)).toEqual(["p3", "t3"]);
+    const added = next[5]!;
+    expect(added).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "list_suites" },
+    });
+    expect(next[3]).toMatchObject({
+      id: "t2",
+      assertion: { toolName: "generate_cases" },
+    });
+
+    const removed = replaceActionTools(steps, "p2", current, []);
+    expect(removed.map((step) => step.id)).toEqual([
+      "p1",
+      "t1",
+      "p2",
+      "c2",
+      "p3",
+      "t3",
+    ]);
   });
 });

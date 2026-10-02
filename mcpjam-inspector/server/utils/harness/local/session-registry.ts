@@ -25,6 +25,8 @@ export interface LocalHarnessSessionRecord {
   /** Opaque ids only — this record is read by telemetry and a stop-all route. */
   runtimeId: string;
   workspaceGrantId: string;
+  userId?: string;
+  projectId?: string;
   /** The broker run id, for revoking the lease server-side. */
   brokerRunId: string | null;
   gateway: LocalModelGateway | null;
@@ -116,9 +118,8 @@ export function resetLocalHarnessRegistryForTests(): void {
  * reach of `stop-all`. The turn's teardown gives up the runtime reservation on
  * a proven stop either way; it is the map entry that has to belong to it.
  *
- * Unreachable through `run-harness-turn.ts` today, which mints
- * `local-<uuid>` per turn — but that invariant lives in another file, and the
- * cost of not depending on it is this comparison.
+ * Local turns reuse their lane id, so this guard also protects a resumed turn
+ * from a predecessor whose bounded teardown completes late.
  */
 export function forgetLocalHarnessSessionRecord(
   record: LocalHarnessSessionRecord,
@@ -303,4 +304,20 @@ export async function stopAllLocalHarnessSessions(): Promise<{
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Includes escaped predecessors: deleting their workspace before stop is proven is unsafe. */
+export async function stopLocalHarnessWorkspace(workspaceGrantId: string): Promise<boolean> {
+  const records = new Set([...sessions.values(), ...unstopped].filter(record => record.workspaceGrantId === workspaceGrantId));
+  let stopped = true;
+  for (const record of records) {
+    if (claimRecord(record)) stopped = (await endRecord(record)).stopped && stopped;
+    else stopped = false;
+  }
+  return stopped;
+}
+
+export async function stopLocalHarnessProject(userId: string, projectId?: string): Promise<void> {
+  const records = new Set([...sessions.values(), ...unstopped].filter(record => record.userId === userId && (projectId === undefined || record.projectId === projectId)));
+  await Promise.all([...records].filter(claimRecord).map(endRecord));
 }
