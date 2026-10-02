@@ -199,7 +199,10 @@ export async function startHostedReadinessRun(
       publisher: input.publisher,
       target,
       submissionMode: input.submissionMode,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      // The saved credential goes only to the MCP endpoint's own origin. The
+      // SDK keeps it off discovery, including authorization-server metadata
+      // on an origin the server chooses.
+      mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
       // The DNS-pinned transport: resolve once, refuse the disallowed answers,
       // pin the surviving addresses into the socket, re-run it on every hop.
       // A readiness run follows redirects by design, so a check performed only

@@ -41,7 +41,23 @@ export interface DirectoryDiscoveryOptions {
   timeoutMs?: number;
   /** Redirect hops to walk while tracing the endpoint. */
   maxRedirects?: number;
-  /** Headers the target needs, e.g. a static credential under test. */
+  /**
+   * Headers the MCP endpoint needs, e.g. a credential under test.
+   *
+   * SENT ONLY TO THE ENDPOINT'S OWN ORIGIN, and only on the requests that
+   * speak MCP to it: the dial, and the redirect trace's same-origin hops.
+   * Never on discovery. The unauthenticated probe is unauthenticated by
+   * definition. Protected Resource Metadata is public. Authorization-server
+   * metadata lives on whatever origin `authorization_servers` names, which the
+   * server under test chooses. A credential sent there goes to a third party,
+   * and a credential on the probe makes an OAuth server look authless.
+   */
+  mcpHeaders?: Record<string, string>;
+  /**
+   * @deprecated Use `mcpHeaders`. Read as `mcpHeaders` when that is absent,
+   * with the same narrow scope: these were once sent on every discovery
+   * request, including to other origins.
+   */
   headers?: Record<string, string>;
   /**
    * The caller's cancellation, composed with each request's own timeout.
@@ -54,6 +70,17 @@ export interface DirectoryDiscoveryOptions {
    * another.
    */
   signal?: AbortSignal;
+}
+
+/**
+ * The headers an MCP request to the endpoint carries. The only reader of
+ * `mcpHeaders` and its deprecated alias, so no discovery request can pick them
+ * up by accident.
+ */
+export function resolveMcpHeaders(
+  options: Pick<DirectoryDiscoveryOptions, "mcpHeaders" | "headers">,
+): Record<string, string> | undefined {
+  return options.mcpHeaders ?? options.headers;
 }
 
 export const DIRECTORY_DISCOVERY_DEFAULTS = {
@@ -206,6 +233,13 @@ export interface FetchedDiscoveryJson {
   error?: string;
 }
 
+/**
+ * GET (or `init`) one JSON document, bounded.
+ *
+ * SENDS NONE OF THE CALLER'S HEADERS. `url` may be on any origin, so this adds
+ * only `accept`. A caller that speaks MCP to the endpoint passes
+ * `resolveMcpHeaders(options)` in `init.headers` itself.
+ */
 export async function fetchDiscoveryJson(
   url: string,
   options: DirectoryDiscoveryOptions,
@@ -223,7 +257,6 @@ export async function fetchDiscoveryJson(
       ...init,
       headers: {
         accept: "application/json",
-        ...options.headers,
         ...init?.headers,
       },
       signal: controller.signal,
@@ -291,6 +324,16 @@ export async function fetchDiscoveryJson(
   }
 }
 
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    const origin = new URL(a).origin;
+    // Every opaque origin serializes as "null", so two of them are not "same".
+    return origin !== "null" && origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 export interface DirectoryRedirectHop {
   url: string;
   status: number;
@@ -309,6 +352,11 @@ export interface DirectoryRedirectTrace {
  * The transport follows redirects internally and reports only where it landed;
  * the endpoint checks need each HOP, because a chain that downgrades in the
  * middle and recovers is invisible from the destination alone.
+ *
+ * Each `Location` is chosen by the server, so `mcpHeaders` go only on a hop
+ * that is still on the entered URL's origin. That is stricter than Fetch,
+ * which strips only `Authorization` on a cross-origin hop: a credential can
+ * also be a custom header.
  */
 export async function traceRedirects(
   options: DirectoryDiscoveryOptions,
@@ -316,6 +364,7 @@ export async function traceRedirects(
   const maxRedirects =
     options.maxRedirects ?? DIRECTORY_DISCOVERY_DEFAULTS.maxRedirects;
   const chain: DirectoryRedirectHop[] = [];
+  const mcpHeaders = resolveMcpHeaders(options);
   let current = options.enteredUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
@@ -330,7 +379,9 @@ export async function traceRedirects(
       response = await options.fetchFn(current, {
         method: "HEAD",
         redirect: "manual",
-        headers: options.headers,
+        headers: isSameOrigin(current, options.enteredUrl)
+          ? mcpHeaders
+          : undefined,
         signal: controller.signal,
       });
     } catch {
