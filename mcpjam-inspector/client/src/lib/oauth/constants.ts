@@ -27,19 +27,6 @@ const HOSTED_REDIRECT_HOSTNAMES = new Set([
 ]);
 
 /**
- * The public CIMD document has a fixed redirect allowlist. Railway preview
- * hosts are intentionally absent because every PR creates a new hostname.
- * Those hosts must use DCR (which registers the exact callback per flow)
- * instead of advertising the production CIMD identity with an unregistered
- * redirect URI.
- */
-export function supportsMcpJamCimdRedirect(
-  locationLike: Pick<Location, "hostname">
-): boolean {
-  return !RAILWAY_INSPECTOR_PREVIEW_HOSTNAME.test(locationLike.hostname);
-}
-
-/**
  * Static Client ID Metadata Document URL for MCPJam Inspector
  * This URL hosts the client metadata per draft-parecki-oauth-client-id-metadata-document-03
  * Used when authorization servers support Client ID Metadata Documents
