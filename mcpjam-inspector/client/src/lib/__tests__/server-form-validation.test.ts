@@ -26,6 +26,18 @@ function httpForm(overrides?: Partial<ServerFormData>): ServerFormData {
 }
 
 describe("validateServerFormData", () => {
+  it.each([false, true])("rejects credential-bearing OAuth URLs in hosted=%s mode", async (hosted) => {
+    const validate = await importValidator(hosted);
+    for (const url of [
+      "https://mcp.example/mcp?api_key=dummy-secret",
+      "https://user:dummy-secret@mcp.example/mcp",
+    ]) {
+      expect(validate(httpForm({ url }))).toMatch(/must not contain credentials/);
+      expect(validate(httpForm({ url }))).not.toContain("dummy-secret");
+    }
+    expect(validate(httpForm({ url: "https://mcp.example/mcp?region=us" }))).toBeNull();
+  });
+
   it("accepts a valid HTTP(S) server", async () => {
     const validate = await importValidator(false);
     expect(validate(httpForm())).toBeNull();
