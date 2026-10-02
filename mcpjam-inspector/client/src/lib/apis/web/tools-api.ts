@@ -1,5 +1,5 @@
 import { webPost } from "./base";
-import { buildServerRequest } from "./context";
+import { buildServerBatchRequest, buildServerRequest } from "./context";
 import { webPostWithMrtr } from "./mrtr-api";
 
 export async function listHostedTools(request: {
@@ -12,6 +12,17 @@ export async function listHostedTools(request: {
     ...serverRequest,
     modelId: request.modelId,
     cursor: request.cursor,
+  });
+}
+
+export async function listHostedToolsMulti(request: {
+  serverNamesOrIds: string[];
+  modelId?: string;
+}): Promise<any> {
+  const batchRequest = buildServerBatchRequest(request.serverNamesOrIds);
+  return webPost("/api/web/tools/list-multi", {
+    ...batchRequest,
+    modelId: request.modelId,
   });
 }
 
