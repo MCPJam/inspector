@@ -154,6 +154,37 @@ describe("FirstRunOnboardingOverlay", () => {
     ).not.toContain("Private value");
   });
 
+  it.each([
+    [
+      "connected",
+      {
+        status: "connected",
+        serverName: "Restored",
+        serverKind: "personal",
+        toolCount: 2,
+      },
+    ],
+    [
+      "demo_failure",
+      {
+        status: "failed",
+        serverName: "Restored",
+        serverKind: "demo",
+        error: "boom",
+      },
+    ],
+  ] as const)(
+    "records only the %s screen when resuming a restored connection",
+    (expectedScreen, connectionState) => {
+      renderOverlay(connectionState, true);
+
+      expect(analyticsState.entered.mock.calls).toEqual([[expectedScreen]]);
+      expect(analyticsState.screenViewed.mock.calls).toEqual([
+        [expectedScreen],
+      ]);
+    },
+  );
+
   it("tracks setup-later without form contents", () => {
     const { onSkip } = renderOverlay();
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));

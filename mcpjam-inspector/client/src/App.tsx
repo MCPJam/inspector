@@ -414,21 +414,26 @@ const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 const FIRST_RUN_PLAYGROUND_ROLLOUT_MS = Date.parse("2026-06-16T00:00:00.000Z");
 const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
-function isFirstRunAuthentication(
-  value: unknown,
-): value is FirstRunAuthentication {
-  return value === "auto" || value === "oauth" || value === "none";
+function firstRunAuthentication(source: {
+  authMethod?: unknown;
+  useOAuth?: boolean;
+}): FirstRunAuthentication | undefined {
+  const { authMethod } = source;
+  if (
+    authMethod === "auto" ||
+    authMethod === "oauth" ||
+    authMethod === "none"
+  ) {
+    return authMethod;
+  }
+  return source.useOAuth === false ? "none" : undefined;
 }
 
 function firstRunAnalyticsContextFromDraft(
   serverKind: FirstRunAnalyticsServerKind,
   draft: Pick<ServerFormData, "type" | "authMethod" | "useOAuth">,
 ): FirstRunConnectionAnalyticsContext {
-  const authentication = isFirstRunAuthentication(draft.authMethod)
-    ? draft.authMethod
-    : draft.useOAuth === false
-    ? "none"
-    : undefined;
+  const authentication = firstRunAuthentication(draft);
   return {
     serverKind,
     transport: draft.type,
@@ -445,11 +450,7 @@ function firstRunAnalyticsContextFromServer(
   }
   if (!server) return { serverKind };
 
-  const authentication = isFirstRunAuthentication(server.authMethod)
-    ? server.authMethod
-    : server.useOAuth === false
-    ? "none"
-    : undefined;
+  const authentication = firstRunAuthentication(server);
   return {
     serverKind,
     transport: server.config.command ? "stdio" : "http",
@@ -461,11 +462,7 @@ function mergeFirstRunAnalyticsContext(
   current: FirstRunConnectionAnalyticsContext | null,
   fallback: FirstRunConnectionAnalyticsContext,
 ): FirstRunConnectionAnalyticsContext {
-  return {
-    ...fallback,
-    ...current,
-    serverKind: current?.serverKind ?? fallback.serverKind,
-  };
+  return { ...fallback, ...current };
 }
 
 function getHostedOAuthCallbackErrorMessage(): string {

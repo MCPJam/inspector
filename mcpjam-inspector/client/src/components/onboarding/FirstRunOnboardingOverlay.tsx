@@ -75,6 +75,26 @@ export interface FirstRunServerDraft {
   authentication: "auto" | "oauth" | "none";
 }
 
+/** The step a non-idle connection state forces; `null` leaves the user's step alone. */
+function stepForConnectionState(
+  connectionState: FirstRunConnectionState,
+): FirstRunOverlayStep | null {
+  switch (connectionState.status) {
+    case "preparing":
+    case "connecting":
+    case "loading-tools":
+      return "connecting";
+    case "connected":
+      return "connected";
+    case "failed":
+      return connectionState.serverKind === "demo"
+        ? "demo-failed"
+        : "server-details";
+    default:
+      return null;
+  }
+}
+
 function analyticsScreenForStep(
   step: FirstRunOverlayStep,
   connectionState: FirstRunConnectionState,
@@ -219,21 +239,8 @@ export function FirstRunOnboardingOverlay({
 
   useEffect(() => {
     if (!open) return;
-    if (
-      connectionState.status === "preparing" ||
-      connectionState.status === "connecting" ||
-      connectionState.status === "loading-tools"
-    ) {
-      setStep("connecting");
-    } else if (connectionState.status === "connected") {
-      setStep("connected");
-    } else if (connectionState.status === "failed") {
-      setStep(
-        connectionState.serverKind === "demo"
-          ? "demo-failed"
-          : "server-details",
-      );
-    }
+    const forcedStep = stepForConnectionState(connectionState);
+    if (forcedStep) setStep(forcedStep);
   }, [connectionState, open]);
 
   useEffect(() => {
@@ -242,6 +249,10 @@ export function FirstRunOnboardingOverlay({
       lastTrackedScreenRef.current = null;
       return;
     }
+    // A restored connection state reaches `step` one render late; recording
+    // the stale step would log a screen the user never saw.
+    const forcedStep = stepForConnectionState(connectionState);
+    if (forcedStep && forcedStep !== step) return;
 
     const screen = analyticsScreenForStep(step, connectionState);
     if (!wasOpenRef.current) {

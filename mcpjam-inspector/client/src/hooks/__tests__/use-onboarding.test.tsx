@@ -392,6 +392,7 @@ describe("useOnboarding", () => {
     const errorCapture = mockState.track.mock.calls.find(
       ([event]) => event === "onboarding_connect_excalidraw_error"
     );
+    expect(errorCapture).toBeDefined();
     expect(errorCapture?.[1]).not.toHaveProperty("error");
   });
 
