@@ -197,6 +197,48 @@ describe("runHttpServerDoctor", () => {
     expect(client.close).toHaveBeenCalled();
   });
 
+  it("reads ready + optional OAuth as anonymous access with OAuth available, and still connects", async () => {
+    // The lazy-authentication shape: the probe was served anonymously AND the
+    // server publishes Protected Resource Metadata. That is a design, not an
+    // authless server and not an OAuth wall, so the doctor connects without
+    // credentials and says what it saw.
+    const client = createMockClient();
+    const connectClient = jest.fn().mockResolvedValue(client);
+
+    const result = await runHttpServerDoctor(
+      {
+        config: { url: "https://example.com/mcp", timeout: 4_000 },
+        target: { label: "https://example.com/mcp" },
+        timeout: 4_000,
+      },
+      {
+        probeServer: jest.fn().mockResolvedValue(
+          createProbeResult({
+            oauth: {
+              required: false,
+              optional: true,
+              resourceMetadataUrl:
+                "https://example.com/.well-known/oauth-protected-resource/mcp",
+              registrationStrategies: ["dcr"],
+            },
+          })
+        ),
+        connectClient,
+      }
+    );
+
+    expect(result.status).toBe("ready");
+    expect(result.checks.probe.status).toBe("ok");
+    expect(result.checks.probe.detail).toMatch(
+      /Anonymous access is allowed; OAuth is available/
+    );
+    expect(result.checks.probe.detail).toMatch(/lazy-authentication shape/);
+    expect(result.checks.probe.detail).toContain(
+      "https://example.com/.well-known/oauth-protected-resource/mcp"
+    );
+    expect(connectClient).toHaveBeenCalled();
+  });
+
   it("returns oauth_required and skips connect when no credentials are supplied", async () => {
     const connectClient = jest.fn();
 

@@ -53,6 +53,8 @@ import {
 } from "./runner.js";
 import {
   redactConformanceReportForSharing,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 
@@ -81,6 +83,10 @@ export interface ExecuteHostedReadinessOptions {
   fetchFn: typeof fetch;
   /** The requester's opt-in, read off the run row at start. */
   includeLlmObservations: boolean;
+  /** The requester's lazy-auth probe opt-in. Credential-free by construction. */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. */
+  claimedFeatures?: DirectoryFeatureClaim[];
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -191,6 +197,12 @@ export async function executeHostedReadinessRun(
       mcpHeaders: options.mcpHeaders,
       fetchFn: options.fetchFn,
       signal: controller.signal,
+      ...(options.lazyAuthProbe !== undefined
+        ? { lazyAuthProbe: options.lazyAuthProbe }
+        : {}),
+      ...(options.claimedFeatures !== undefined
+        ? { claimedFeatures: options.claimedFeatures }
+        : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a
       // stronger guarantee than one that checks a flag before asking.

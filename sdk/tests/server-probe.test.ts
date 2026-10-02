@@ -57,6 +57,59 @@ describe("probeMcpServer", () => {
     expect(result.oauth.optional).toBe(false);
   });
 
+  it("reports a ready server that publishes PRM as anonymous access with OAuth optional", async () => {
+    // The lazy-authentication shape: initialize is served without a token,
+    // and Protected Resource Metadata still names an authorization server for
+    // the tools that need sign-in.
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+      if (url === serverUrl) {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          result: {
+            protocolVersion: "2025-11-25",
+            serverInfo: { name: "shop", version: "1.0.0" },
+            capabilities: { tools: {} },
+          },
+        });
+      }
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
+      return jsonResponse({ error: "unexpected" }, 404);
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      protocolVersion: "2025-11-25",
+      fetchFn,
+    });
+
+    expect(result.status).toBe("ready");
+    expect(result.oauth.required).toBe(false);
+    expect(result.oauth.optional).toBe(true);
+    expect(result.oauth.resourceMetadataUrl).toBe(resourceMetadataUrl);
+    expect(result.oauth.registrationStrategies).toContain("dcr");
+  });
+
   it("detects OAuth metadata and supported registration methods", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     const resourceMetadataUrl =

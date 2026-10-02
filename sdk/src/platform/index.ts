@@ -148,6 +148,7 @@ export type {
   PlatformConformanceRunReportSummary,
   PlatformConformanceSuiteKind,
   PlatformReadinessStageResult,
+  PlatformReadinessLazyAuthProbe,
   PlatformReadinessStartBody,
   PlatformReadinessSubmissionMode,
   PlatformEvalRun,

@@ -275,6 +275,98 @@ describe("v1 directory readiness", () => {
       });
     });
 
+    it("sends the backend neither lazy-auth key when the caller asked for neither", async () => {
+      // An older backend validates its args strictly; an unknown key there
+      // would fail every ordinary start.
+      await request(
+        "POST",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
+        { body: {} },
+      );
+      const args = convexMutationMock.mock.calls[0]![1] as Record<
+        string,
+        unknown
+      >;
+      expect("lazyAuthProbe" in args).toBe(false);
+      expect("claimedFeatures" in args).toBe(false);
+      const execution = executeHostedReadinessRunMock.mock.calls[0]![0];
+      expect("lazyAuthProbe" in execution).toBe(false);
+      expect("claimedFeatures" in execution).toBe(false);
+    });
+
+    it("forwards the lazy-auth probe and claims to the backend and the execution", async () => {
+      authorizeServerMock.mockResolvedValue({
+        ...HTTP_SERVER,
+        serverConfig: { ...HTTP_SERVER.serverConfig, useOAuth: true },
+        oauthAccessToken: "saved-token",
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
+        {
+          body: {
+            lazyAuthProbe: {
+              enabled: true,
+              toolName: "get_my_orders",
+              publicToolName: "get_weather",
+            },
+            claimedFeatures: ["lazy-authentication", "lazy-authentication"],
+          },
+        },
+      );
+      expect(res.status).toBe(202);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "claudeReadinessRuns:requestReadinessRun",
+        expect.objectContaining({
+          lazyAuthProbe: {
+            enabled: true,
+            toolName: "get_my_orders",
+            publicToolName: "get_weather",
+          },
+          claimedFeatures: ["lazy-authentication"],
+        }),
+      );
+      const execution = executeHostedReadinessRunMock.mock.calls[0]![0];
+      expect(execution).toMatchObject({
+        lazyAuthProbe: { enabled: true, toolName: "get_my_orders" },
+        claimedFeatures: ["lazy-authentication"],
+        // The saved credential still rides only in `mcpHeaders`, which the
+        // SDK keeps off discovery and off the probe.
+        mcpHeaders: { authorization: "Bearer saved-token" },
+      });
+    });
+
+    it.each([
+      ["a probe that is not literally enabled", { lazyAuthProbe: { enabled: false } }],
+      ["a stringly-typed enabled", { lazyAuthProbe: { enabled: "true" } }],
+      [
+        "an over-long tool name",
+        { lazyAuthProbe: { enabled: true, toolName: "x".repeat(129) } },
+      ],
+      [
+        "a credential smuggled beside the probe",
+        { lazyAuthProbe: { enabled: true, accessToken: "t" } },
+      ],
+      [
+        "the same tool as public and protected",
+        { lazyAuthProbe: { enabled: true, toolName: "a", publicToolName: "a" } },
+      ],
+      ["an unknown claim", { claimedFeatures: ["lazy-auth"] }],
+      [
+        "more than ten claims",
+        { claimedFeatures: Array(11).fill("lazy-authentication") },
+      ],
+    ])("refuses %s before anything is created", async (_label, body) => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
+        { body },
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+      expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    });
+
     it("refuses a server on a transport no directory can list", async () => {
       authorizeServerMock.mockResolvedValue({
         ...HTTP_SERVER,
@@ -391,6 +483,29 @@ describe("v1 directory readiness", () => {
       expect(executeHostedReadinessRunMock.mock.calls[0]![0]).toMatchObject({
         publisher: "openai",
         submissionMode: "mcp-imported-skills",
+      });
+    });
+
+    it("forwards a lazy-auth probe with no tool names", async () => {
+      // Without names the SDK picks tools by their securitySchemes.
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/openai",
+        {
+          body: {
+            submissionMode: "mcp-only",
+            lazyAuthProbe: { enabled: true },
+          },
+        },
+      );
+      expect(res.status).toBe(202);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "claudeReadinessRuns:requestReadinessRun",
+        expect.objectContaining({ lazyAuthProbe: { enabled: true } }),
+      );
+      expect(executeHostedReadinessRunMock.mock.calls[0]![0]).toMatchObject({
+        publisher: "openai",
+        lazyAuthProbe: { enabled: true },
       });
     });
   });
