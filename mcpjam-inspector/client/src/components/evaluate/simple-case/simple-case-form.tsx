@@ -42,6 +42,7 @@ import {
   withCaseJudgeSkipped,
 } from "../case-scorecard/case-scorecard-model";
 import { CaseScorecard } from "../case-scorecard/case-scorecard";
+import type { ToolCatalogStatus } from "../case-scorecard/route-row";
 import { AlsoInThisCase } from "./also-in-this-case";
 import { StatusDot, overlayStatus, type SimpleCaseOverlay } from "./status-dot";
 
@@ -62,6 +63,8 @@ export type SimpleCaseFormProps = {
   suiteDefaultPredicates?: Predicate[];
   suppressedSuiteStandardCheckIds?: string[];
   availableTools?: string[];
+  toolsStatus?: ToolCatalogStatus;
+  onRetryTools?: () => void;
   isNegativeTest?: boolean;
   /** Absent on surfaces with no deep step editor; the Steps buttons hide. */
   onOpenDeepEditor?: () => void;
@@ -129,6 +132,8 @@ export function SimpleCaseForm({
   suiteDefaultPredicates = [],
   suppressedSuiteStandardCheckIds,
   availableTools = [],
+  toolsStatus,
+  onRetryTools,
   isNegativeTest,
   onOpenDeepEditor,
   toolsChoice: controlledToolsChoice,
@@ -417,6 +422,8 @@ export function SimpleCaseForm({
       <CaseScorecard
         input={scorecardInput}
         availableTools={availableTools}
+        toolsStatus={toolsStatus}
+        onRetryTools={onRetryTools}
         readOnly={readOnly}
         checkPolicy={capabilities?.scorers?.checkPolicy === true}
         authorableKinds={authorablePredicateKinds(

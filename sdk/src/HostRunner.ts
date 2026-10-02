@@ -2,7 +2,10 @@
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
-import type { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
+import type {
+  McpjamAuthContext,
+  McpjamModelLeaseScope,
+} from "./mcpjam-model-lease.js";
 import {
   generateText,
   asSchema,
@@ -21,6 +24,7 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 /**
  * The registered custom-provider names, as `parseLLMString` wants them.
@@ -87,6 +91,28 @@ interface HostRunnerBaseConfig {
   /** @internal Lease ownership inherited by iteration clones. */
   mcpjamLeaseScope?: McpjamModelLeaseScope;
   mcpjamProject?: string;
+  /**
+   * For `mcpjam/…` models: mint as a caller whose credential refreshes (a CLI
+   * login) instead of with a fixed `sk_` `apiKey` — leave `apiKey` empty.
+   * Inherited by every clone. See `CreateModelOptions.mcpjamAuth`.
+   */
+  mcpjamAuth?: McpjamAuthContext;
+  /**
+   * @internal Build the language model for each run instead of
+   * `createModelFromString`. The local suite-file runner uses it to observe
+   * a provider's own refusals (a rejected key is not a task failure) and, in
+   * tests, to substitute a deterministic model. Never a public mock switch.
+   */
+  createLanguageModel?: (
+    model: string,
+    options: CreateModelOptions
+  ) => ReturnType<typeof createModelFromString>;
+  /**
+   * @internal The ids of calls a tool-policy gate refused, read after each
+   * run. Refused calls never reached a server, so they are left out of the
+   * result's tool calls — the same projection hosted grading uses.
+   */
+  policyBlockedToolCallIds?: () => ReadonlySet<string>;
   baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
@@ -274,6 +300,9 @@ export class HostRunner implements HostExecutor {
   private readonly apiKey: string;
   private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
   private readonly mcpjamProject?: string;
+  private readonly mcpjamAuth?: McpjamAuthContext;
+  private readonly createLanguageModel?: HostRunnerBaseConfig["createLanguageModel"];
+  private readonly policyBlockedToolCallIds?: HostRunnerBaseConfig["policyBlockedToolCallIds"];
   private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
@@ -395,6 +424,9 @@ export class HostRunner implements HostExecutor {
     this.apiKey = config.apiKey;
     this.mcpjamLeaseScope = config.mcpjamLeaseScope;
     this.mcpjamProject = config.mcpjamProject;
+    this.mcpjamAuth = config.mcpjamAuth;
+    this.createLanguageModel = config.createLanguageModel;
+    this.policyBlockedToolCallIds = config.policyBlockedToolCallIds;
     this.baseUrls = config.baseUrls;
     // An EMPTY system prompt is treated as "none given", the same as the
     // snapshot branch below already does. Anthropic refuses an empty system
@@ -633,6 +665,9 @@ export class HostRunner implements HostExecutor {
               }
 
               const result = await originalExecute(args, options);
+              // A policy refusal never reached the server, so there is no
+              // widget it could have rendered.
+              if (isToolPolicyBlockResult(result)) return result;
               await this.captureMcpAppSnapshot({
                 toolName: name,
                 tool,
@@ -822,10 +857,14 @@ export class HostRunner implements HostExecutor {
         apiKey: this.apiKey,
         mcpjamLeaseScope: this.mcpjamLeaseScope,
         mcpjamProject: this.mcpjamProject,
+        ...(this.mcpjamAuth ? { mcpjamAuth: this.mcpjamAuth } : {}),
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
-      const model = createModelFromString(this.model, modelOptions);
+      const model = (this.createLanguageModel ?? createModelFromString)(
+        this.model,
+        modelOptions
+      );
       const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
         options?.stopAfterToolCall
       );
@@ -897,11 +936,14 @@ export class HostRunner implements HostExecutor {
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
           lastCompletedStepMessages = stepMessages;
+          const blocked = this.policyBlockedToolCallIds?.();
           completedToolCalls.push(
-            ...stepResult.toolCalls.map((toolCall) => ({
-              toolName: toolCall.toolName,
-              arguments: (toolCall.input ?? {}) as Record<string, unknown>,
-            }))
+            ...stepResult.toolCalls
+              .filter((toolCall) => !blocked?.has(toolCall.toolCallId))
+              .map((toolCall) => ({
+                toolName: toolCall.toolName,
+                arguments: (toolCall.input ?? {}) as Record<string, unknown>,
+              }))
           );
           pendingStepToolCalls.length = 0;
         },
@@ -910,7 +952,11 @@ export class HostRunner implements HostExecutor {
       const result = await generateText(generateTextOptions);
 
       const e2eMs = Date.now() - startTime;
-      const toolCalls = extractToolCalls(result);
+      const blockedToolCallIds = this.policyBlockedToolCallIds?.();
+      const toolCalls = extractToolCalls(
+        result,
+        blockedToolCallIds ? { excludeToolCallIds: blockedToolCallIds } : {}
+      );
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
       const outputTokens = usage?.outputTokens ?? 0;
@@ -971,12 +1017,15 @@ export class HostRunner implements HostExecutor {
         ...lastCompletedStepMessages,
         ...this.buildPartialAssistantMessages(pendingStepToolCalls),
       ];
+      const blockedAtFailure = this.policyBlockedToolCallIds?.();
       const partialToolCalls = [
         ...completedToolCalls,
-        ...pendingStepToolCalls.map((toolCall) => ({
-          toolName: toolCall.toolName,
-          arguments: toolCall.arguments,
-        })),
+        ...pendingStepToolCalls
+          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId))
+          .map((toolCall) => ({
+            toolName: toolCall.toolName,
+            arguments: toolCall.arguments,
+          })),
       ];
       const totalTokens = partialInputTokens + partialOutputTokens;
 
@@ -1071,6 +1120,11 @@ export class HostRunner implements HostExecutor {
       apiKey: options.apiKey ?? this.apiKey,
       mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
       mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
+      mcpjamAuth: options.mcpjamAuth ?? this.mcpjamAuth,
+      createLanguageModel:
+        options.createLanguageModel ?? this.createLanguageModel,
+      policyBlockedToolCallIds:
+        options.policyBlockedToolCallIds ?? this.policyBlockedToolCallIds,
       baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,

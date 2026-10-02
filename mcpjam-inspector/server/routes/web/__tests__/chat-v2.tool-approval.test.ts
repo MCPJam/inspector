@@ -111,6 +111,7 @@ import {
   mintToolApprovalId,
   TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
   toolApprovalBindingFor,
+  toolApprovalClaimKey,
 } from "../../../utils/tool-approval-token.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
@@ -837,6 +838,79 @@ describe("web chat tool approval (MJ-008)", () => {
         { output?: { value?: unknown } } | undefined;
       expect(String(answer?.output?.value)).toMatch(/did not execute it/);
       expect(v1Calls).toEqual([]);
+    });
+  });
+
+  describe("with approvals recorded by the backend", () => {
+    const CLAIM_URL = `${CONVEX_URL}/internal/v1/tool-approvals/claim`;
+    /** Nonce digests the backend holds a claim for, from anywhere. */
+    let claimed: Set<string>;
+    let backendUp: boolean;
+
+    beforeEach(() => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
+      claimed = new Set();
+      backendUp = true;
+      const edges = global.fetch;
+      global.fetch = vi.fn(async (input, init) => {
+        if (String(input) !== CLAIM_URL) return edges(input, init);
+        if (!backendUp) return v1Json({ ok: false });
+        const { nonceHash } = JSON.parse(String(init?.body ?? "{}"));
+        if (claimed.has(nonceHash))
+          return v1Json({ status: "already_claimed" });
+        claimed.add(nonceHash);
+        return v1Json({ status: "claimed" });
+      }) as typeof fetch;
+    });
+
+    function answerFor(chatId: string, approvalId: string) {
+      return resumeTurn(chatId, {
+        toolName: "create_project_server",
+        toolCallId: "call-create",
+        input: SERVER_INPUT,
+        approvalId,
+      });
+    }
+
+    it("creates the server once the backend records the claim", async () => {
+      const chatId = newChatId();
+      const approvalId = await pauseOnCreate(chatId, "call-create");
+
+      modelSteps = [REPLY];
+      const chunks = await send(answerFor(chatId, approvalId));
+      expect(outputFor(chunks, "call-create")?.type).toBe(
+        "tool-output-available",
+      );
+      expect(claimed).toEqual(new Set([toolApprovalClaimKey(approvalId)]));
+      expect(v1Writes()).toHaveLength(1);
+    });
+
+    it("creates nothing for an approval already used elsewhere in the deployment", async () => {
+      const chatId = newChatId();
+      const approvalId = await pauseOnCreate(chatId, "call-create");
+      claimed.add(toolApprovalClaimKey(approvalId)!);
+
+      modelSteps = [REPLY];
+      const chunks = await send(answerFor(chatId, approvalId));
+      const shown = outputFor(chunks, "call-create") as
+        { type?: string; errorText?: string } | undefined;
+      expect(shown?.type).toBe("tool-output-error");
+      expect(shown?.errorText).toMatch(/already used/);
+      expect(v1Writes()).toEqual([]);
+    });
+
+    it("creates nothing when the backend can't confirm the claim", async () => {
+      const chatId = newChatId();
+      const approvalId = await pauseOnCreate(chatId, "call-create");
+      backendUp = false;
+
+      modelSteps = [REPLY];
+      const chunks = await send(answerFor(chatId, approvalId));
+      const shown = outputFor(chunks, "call-create") as
+        { type?: string; errorText?: string } | undefined;
+      expect(shown?.type).toBe("tool-output-error");
+      expect(shown?.errorText).toMatch(/couldn't confirm/);
+      expect(v1Writes()).toEqual([]);
     });
   });
 

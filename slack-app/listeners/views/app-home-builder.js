@@ -132,10 +132,15 @@ export function buildAppHomeView(state = { connected: false }) {
     const options = capped.map((project) => ({
       // Slack rejects an EMPTY plain_text outright, failing the whole
       // `views.publish` — so an unnamed project would blank the entire Home
-      // tab rather than showing one odd row.
+      // tab rather than showing one odd row. The cap counts code points, not
+      // UTF-16 units: an emoji straddling 75 would otherwise leave a lone
+      // surrogate, which can fail the publish the same way.
       text: {
         type: /** @type {const} */ ('plain_text'),
-        text: (project.name || '').trim().slice(0, 75) || 'Untitled project',
+        text:
+          Array.from((project.name || '').trim())
+            .slice(0, 75)
+            .join('') || 'Untitled project',
       },
       value: project.id,
     }));

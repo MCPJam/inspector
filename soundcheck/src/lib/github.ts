@@ -537,6 +537,49 @@ export async function getJobAnnotations(
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+   Pull requests (the release's version PR)
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface PullRequestInfo {
+  number: number;
+  title: string;
+  url: string;
+  updatedAt: string;
+}
+
+/** The open PR whose head is `branch` in the same repo, if there is one. */
+export async function findOpenPullRequest(
+  owner: string,
+  repo: string,
+  branch: string,
+  opts: FetchOptions = {}
+): Promise<PullRequestInfo | null> {
+  const qs = new URLSearchParams({
+    state: "open",
+    head: `${owner}:${branch}`,
+    per_page: "1"
+  });
+  const data = (await githubFetch(
+    `/repos/${owner}/${repo}/pulls?${qs.toString()}`,
+    opts
+  )) as {
+    number: number;
+    title: string;
+    html_url: string;
+    updated_at: string;
+  }[];
+  const pr = data[0];
+  return pr
+    ? {
+        number: pr.number,
+        title: pr.title,
+        url: pr.html_url,
+        updatedAt: pr.updated_at
+      }
+    : null;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
    Workflow dispatch (Run Release button — write scope)
    ────────────────────────────────────────────────────────────────────────── */
 
