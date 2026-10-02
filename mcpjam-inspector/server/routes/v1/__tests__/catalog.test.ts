@@ -70,26 +70,26 @@ describe("v1 catalog read proxies", () => {
       "https://convex-http.example.com/v1/projects?organizationId=org_1",
     ],
     [
-      "/api/v1/projects/p1/servers",
-      "https://convex-http.example.com/v1/project-servers?projectId=p1",
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers",
+      "https://convex-http.example.com/v1/project-servers?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     ],
     [
-      "/api/v1/projects/p1/eval-suites",
-      "https://convex-http.example.com/v1/eval-suites?projectId=p1",
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+      "https://convex-http.example.com/v1/eval-suites?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     ],
     [
-      "/api/v1/chat-sessions?projectId=p1&status=archived&limit=10&before=123",
-      "https://convex-http.example.com/v1/chat-sessions?projectId=p1&status=archived&limit=10&before=123",
+      "/api/v1/chat-sessions?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&status=archived&limit=10&before=123",
+      "https://convex-http.example.com/v1/chat-sessions?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&status=archived&limit=10&before=123",
     ],
     [
-      "/api/v1/projects/p1/scenarios",
-      "https://convex-http.example.com/v1/scenarios?projectId=p1",
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/scenarios",
+      "https://convex-http.example.com/v1/scenarios?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     ],
     [
       // Project-NESTED, and every search param forwarded verbatim — `cursor`
       // is NOT renamed here, unlike `/chat-sessions` above.
-      "/api/v1/projects/p1/sessions?q=refund&scope=transcripts&sourceType=direct,eval&status=archived&limit=10&cursor=abc",
-      "https://convex-http.example.com/v1/sessions?projectId=p1&sourceType=direct%2Ceval&status=archived&q=refund&scope=transcripts&limit=10&cursor=abc",
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/sessions?q=refund&scope=transcripts&sourceType=direct,eval&status=archived&limit=10&cursor=abc",
+      "https://convex-http.example.com/v1/sessions?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&sourceType=direct%2Ceval&status=archived&q=refund&scope=transcripts&limit=10&cursor=abc",
     ],
   ])(
     "maps %s onto the Convex read surface",
@@ -128,7 +128,7 @@ describe("v1 catalog read proxies", () => {
     );
     const res = await request(
       makeApp(),
-      "/api/v1/projects/p1/sessions?q=refund&scope=transcripts"
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/sessions?q=refund&scope=transcripts"
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ items: [], scope: "transcripts" });
@@ -140,7 +140,7 @@ describe("v1 catalog read proxies", () => {
     // meant to be compared against.
     captureServerEventMock.mockClear();
     fetchMock.mockResolvedValue(jsonResponse({ items: [], scope: "titles" }));
-    await request(makeApp(), "/api/v1/projects/p1/sessions?q=");
+    await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/sessions?q=");
 
     const [, event, props] = captureServerEventMock.mock.calls.at(-1)!;
     expect(event).toBe("api_sessions_search");
@@ -161,7 +161,7 @@ describe("v1 catalog read proxies", () => {
     );
     await request(
       makeApp(),
-      "/api/v1/projects/p1/sessions?q=super-secret-term&scope=transcripts&sourceType=direct,eval"
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/sessions?q=super-secret-term&scope=transcripts&sourceType=direct,eval"
     );
 
     const [, , props] = captureServerEventMock.mock.calls.at(-1)!;
@@ -197,7 +197,7 @@ describe("v1 catalog read proxies", () => {
     );
     const res = await request(
       makeApp(),
-      "/api/v1/trace-exports/otlp?projectId=p1&cursor=c1&includeContent=true"
+      "/api/v1/trace-exports/otlp?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&cursor=c1&includeContent=true"
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ resourceSpans: [] });
@@ -205,7 +205,7 @@ describe("v1 catalog read proxies", () => {
     expect(res.headers.get("x-mcpjam-export-complete")).toBe("false");
     const [target] = fetchMock.mock.calls[0] as [URL];
     expect(String(target)).toBe(
-      "https://convex-http.example.com/v1/trace-exports/otlp?projectId=p1&cursor=c1&includeContent=true"
+      "https://convex-http.example.com/v1/trace-exports/otlp?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&cursor=c1&includeContent=true"
     );
   });
 
@@ -224,7 +224,7 @@ describe("v1 catalog read proxies", () => {
       nextCursor: "cur_2",
     };
     fetchMock.mockResolvedValue(jsonResponse(page));
-    const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(page);
   });
@@ -233,7 +233,7 @@ describe("v1 catalog read proxies", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "NOT_FOUND", message: "Project not found" }, 404)
     );
-    const res = await request(makeApp(), "/api/v1/projects/p_bad/servers");
+    const res = await request(makeApp(), "/api/v1/projects/pbadxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ code: "NOT_FOUND" });
   });
@@ -281,13 +281,13 @@ describe("v1 catalog read proxies", () => {
   it("returns the scenario detail when the path projectId matches", async () => {
     const detail = {
       id: "cbx_1",
-      projectId: "p1",
+      projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       name: "Support Scenario",
       modelId: "gpt-4o-mini",
       servers: [{ id: "srv_1", name: "server-a", url: null, useOAuth: false }],
     };
     fetchMock.mockResolvedValue(jsonResponse(detail));
-    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/cbx_1");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/scenarios/cbx_1");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(detail);
     expect(String((fetchMock.mock.calls[0] as [URL])[0])).toBe(
@@ -299,7 +299,7 @@ describe("v1 catalog read proxies", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ id: "cbx_1", projectId: "p2", name: "Support Scenario" })
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/cbx_1");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/scenarios/cbx_1");
     expect(res.status).toBe(404);
     expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
   });
@@ -308,7 +308,7 @@ describe("v1 catalog read proxies", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "VALIDATION_ERROR", message: "bad id" }, 400)
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/bad");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/scenarios/bad");
     expect(res.status).toBe(400);
     expect(((await res.json()) as { code?: string }).code).toBe(
       "VALIDATION_ERROR"
@@ -336,12 +336,12 @@ describe("v1 catalog read proxies", () => {
     fetchMock.mockResolvedValue(jsonResponse({ items: [], scope: "titles" }));
     const res = await request(
       makeApp(),
-      "/api/v1/projects/p1/sessions?q=refund"
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/sessions?q=refund"
     );
     expect(res.status).toBe(200);
     const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(String(target)).toBe(
-      "https://convex-http.example.com/v1/sessions?projectId=p1&q=refund"
+      "https://convex-http.example.com/v1/sessions?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&q=refund"
     );
     expect((init.headers as Record<string, string>)["Authorization"]).toBe(
       "Bearer tok"

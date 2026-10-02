@@ -497,16 +497,67 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only — `role: "advisory"` is required and a required one is refused. |
 | `toolLatencyUnder` | `ms`, `toolName?` | Response | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
 | `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | Response | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
+| `toolResultMatches` | `patterns`, `toolName?`, `path?`, `flags?`, `min?`, `max?` | Response | A tool result in scope (every result, or only `toolName`'s) whose content matches **every** pattern — all within that one result — occurred at least `min` (default 1) and at most `max` times. `min` and `max` count **matching** results, not all results. See [Matching tool input and output](#matching-tool-input-and-output). |
 | `toolResultMatchesSchema` | `schema`, `toolName?` | Response | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
 | `toolResultSizeUnder` | `maxBytes`, `toolName?` | Response | Every tool result in scope is strictly under `maxBytes`, measured on what the server returned and **before** the transcript's own 64 000-character text cap. Bytes, not tokens. |
 | `argumentsMatchToolSchema` | `toolName?` | Tool call | Every call's arguments validate against the tool's declared `inputSchema`, classified as `missing-required`, `wrong-type`, `bad-enum` or `hallucinated-param`. A key merely absent from `properties` is legal and is reported, never failed. Schema validity does not establish that the arguments match the user's intent. |
 | `noRepeatedIdenticalCall` | `toolName?` | Tool call | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Advisory only. |
+| `toolInputMatches` | `toolName`, `patterns`, `path?`, `flags?`, `min?`, `max?` | Tool call | A call to `toolName` whose input matches **every** pattern — all within that one call — occurred at least `min` (default 1) and at most `max` times. `min` and `max` count **matching** calls, not all calls. See [Matching tool input and output](#matching-tool-input-and-output). |
 | `toolCallCountUnder` | `count`, `toolName?` | Selection | Strictly fewer than `count` calls in scope. Total calls, which is not the same as calls before the right tool. |
 | `toolCalledBefore` | `toolName`, `beforeToolName` | Selection | Every call to `beforeToolName` was preceded by a call to `toolName`. Vacuously true when `beforeToolName` never ran. |
 | `noDeprecatedToolCalled` | — | Selection | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Advisory only. |
 | `noDestructiveToolCalled` | — | Selection | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
 | `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Advisory only. |
 | `fullPageHasContinuation` | `toolName?` | Response | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Advisory only. |
+
+#### Matching tool input and output
+
+`toolInputMatches` checks what went **into** a tool call, and `toolResultMatches` checks what came **out**. `toolCalledWith` compares argument values exactly, `argumentsMatchToolSchema` only checks that they are valid, and `toolResultContains` looks for one literal; these two ask whether a call's input, or a result's content, contains what it should.
+
+Both read one **unit** at a time — a call for `toolInputMatches`, a result for `toolResultMatches` — and share every field but `toolName`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `toolName` | `string` | `toolInputMatches`: required; calls to other tools are ignored. `toolResultMatches`: optional; omit it to read every tool's results. |
+| `patterns` | `string[]` (1–8, each 1–512 characters) | Regular expressions. A unit matches only when **every** pattern matches that same unit. For "any of these", use alternation inside one pattern (`Idea\|Plan`). Kept in authored order. |
+| `flags` | `"i" \| "m" \| "s" \| "im" \| "is" \| "ms" \| "ims"` | Applies to every pattern: `i` ignores case, `m` makes `^`/`$` match at line breaks, `s` lets `.` match a newline. |
+| `path` | `string` (2–257 characters) | A JSON Pointer ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) to **one** top-level key, such as `"/elements"`. Inside the key, `~1` stands for `/` and `~0` for `~`. When set, only that value is matched — a string as it is, anything else as canonical JSON — and a unit without the key does not match. Omit it to match the whole unit. `""` and `"/"` are refused. |
+| `min` | `integer ≥ 0` | Fewest **matching** units. Default 1. `min: 0` requires `max`. |
+| `max` | `integer ≥ min` | Most **matching** units. At least 1 when `min` is omitted. |
+
+**What is matched.** For `toolInputMatches`, the whole arguments object as canonical JSON (sorted keys, no whitespace), or the argument at `path`. For `toolResultMatches`, the same content `toolResultContains` searches — the text, then `structuredContent`, then the JSON output part, with each JSON part as canonical JSON — or, with `path`, the value at that key in `structuredContent` (in the JSON output part when there is no `structuredContent`). Results with `isError: true` are read like any other; an error is still what the tool returned.
+
+**Counting.** `min` and `max` count units that matched every pattern, never all units: matching calls for `toolInputMatches`, matching results for `toolResultMatches`. The default — `min` 1, no `max` — means "at least one matches": one correct call among ten others still passes. `min: 0, max: 0` means **none matches**; it does not mean the tool was never called, which is `toolNeverCalled`. Every reason names which case it hit: nothing to read (the tool was never called, or returned no results), N units and none matched all patterns, or N units and M matched when at most K were allowed.
+
+**One unit, all patterns.** The check below passes only when a single `create_view` call carries all three labels. Three diagrams with one label each is three calls with one match apiece, and fails:
+
+```typescript
+{
+  type: "toolInputMatches",
+  toolName: "create_view",
+  path: "/elements",
+  patterns: ["Idea", "Build", "Ship"],
+  flags: "i",
+}
+```
+
+The output side reads the same way. This passes when one `search` result's `title` mentions both words:
+
+```typescript
+{
+  type: "toolResultMatches",
+  toolName: "search",
+  path: "/title",
+  patterns: ["refund", "policy"],
+  flags: "i",
+}
+```
+
+**Engine.** Patterns run on [re2js](https://github.com/le0pard/re2js), a linear-time engine, so no pattern can stall a run: there is no lookahead, lookbehind or backreference, and a pattern that uses one is refused when the check is written. `patterns` replaces the usual lookahead idiom for "contains A and B". Named groups (`(?<name>…)`) are accepted.
+
+**Units that cannot be read.** The matched text is capped at 100,000 characters. A unit over that, one whose value cannot be serialized, or — for `toolResultMatches` without `path` — a result whose text was truncated for storage, is counted neither as a match nor as a non-match. `toolResultMatches` also cannot count results the run did not capture: when the capture is incomplete, a match it did read still proves `min`, and a count already over `max` still fails, but "no result matched" is not established. Whenever unread units could change the verdict, the row is `status: "error"` rather than a pass or a fail.
+
+Reasons never print a value without its key, so a value under a sensitive key such as `apiKey` is redacted, and displayed patterns are scrubbed of token-shaped text and shortened. The stored check keeps the patterns you wrote.
 
 #### Standard checks
 
