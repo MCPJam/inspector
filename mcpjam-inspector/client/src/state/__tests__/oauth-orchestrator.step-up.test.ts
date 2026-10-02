@@ -18,7 +18,6 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   hasOAuthConfig: vi.fn(),
   initiateOAuth: initiateOAuthMock,
   readStoredOAuthConfig: readStoredOAuthConfigMock,
-  resolveOAuthCustomHeaders: vi.fn(async () => undefined),
   resolveStoredIssuer: resolveStoredIssuerMock,
 }));
 

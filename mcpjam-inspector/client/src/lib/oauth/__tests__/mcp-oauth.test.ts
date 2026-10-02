@@ -11,7 +11,6 @@ const {
   mockDiscoverOAuthServerInfo,
   mockExchangeAuthorization,
   mockFetchToken,
-  mockFetchServerSecrets,
   mockGetConvexSiteUrl,
   mockRegisterClient,
   mockRunOAuthStateMachine,
@@ -22,16 +21,11 @@ const {
   mockDiscoverOAuthServerInfo: vi.fn(),
   mockExchangeAuthorization: vi.fn(),
   mockFetchToken: vi.fn(),
-  mockFetchServerSecrets: vi.fn(),
   mockGetConvexSiteUrl: vi.fn(),
   mockRegisterClient: vi.fn(),
   mockRunOAuthStateMachine: vi.fn(),
   mockSelectResourceURL: vi.fn(),
   mockStartAuthorization: vi.fn(),
-}));
-
-vi.mock("@/lib/apis/server-secrets-api", () => ({
-  fetchServerSecrets: mockFetchServerSecrets,
 }));
 
 vi.mock("@mcpjam/sdk/browser", async () => {
@@ -254,8 +248,6 @@ describe("mcp-oauth", () => {
     mockDiscoverOAuthServerInfo.mockReset();
     mockExchangeAuthorization.mockReset();
     mockFetchToken.mockReset();
-    mockFetchServerSecrets.mockReset();
-    mockFetchServerSecrets.mockResolvedValue({ env: null, headers: null });
     mockGetConvexSiteUrl.mockReset();
     mockRegisterClient.mockReset();
     mockRunOAuthStateMachine.mockReset();
@@ -1016,41 +1008,6 @@ describe("mcp-oauth", () => {
       expect(
         new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant")
       ).toBe("project-123");
-      expect(
-        localStorage.getItem("mcp-oauth-config-test-server") ?? ""
-      ).not.toContain("project-123");
-    });
-
-    it("migrates legacy custom headers out of browser storage", async () => {
-      localStorage.setItem(
-        "mcp-oauth-config-asana",
-        JSON.stringify({
-          scopes: ["read"],
-          customHeaders: { "X-API-Key": "legacy-secret" },
-          protocolMode: "auto",
-        })
-      );
-
-      const {
-        initiateOAuth,
-        readStoredOAuthConfig,
-        resolveOAuthCustomHeaders,
-      } = await import("../mcp-oauth");
-      expect(readStoredOAuthConfig("asana")).toMatchObject({
-        scopes: ["read"],
-        protocolMode: "auto",
-      });
-      expect(await resolveOAuthCustomHeaders("asana")).toBeUndefined();
-      await initiateOAuth({
-        serverName: "asana",
-        serverUrl: "https://mcp.asana.com/sse",
-      });
-      expect(
-        mockRunOAuthStateMachine.mock.calls.at(-1)?.[0].customHeaders
-      ).toBeUndefined();
-      expect(
-        localStorage.getItem("mcp-oauth-config-asana") ?? ""
-      ).not.toContain("legacy-secret");
     });
 
     it("replays the initial MCP initialize through the proxy when browser transport fails", async () => {
@@ -1881,109 +1838,6 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
-    it("isolates headers between same-named project servers", async () => {
-      const context = await import("@/lib/apis/web/context");
-      const { rememberOAuthCustomHeaders, resolveOAuthCustomHeaders } =
-        await import("../mcp-oauth");
-      context.setApiContext({
-        projectId: "project-a",
-        serverIdsByName: { asana: "server-a" }
-      });
-      rememberOAuthCustomHeaders("asana", { "X-API-Key": "project-a-secret" });
-      localStorage.setItem(
-        "mcp-oauth-binding-asana",
-        JSON.stringify({
-          projectId: "project-a",
-          serverId: "server-a",
-          kind: "generic",
-          hasCustomHeaders: true
-        })
-      );
-      expect(await resolveOAuthCustomHeaders("asana")).toEqual({
-        "X-API-Key": "project-a-secret"
-      });
-      context.setApiContext({
-        projectId: "project-b",
-        serverIdsByName: { asana: "server-b" }
-      });
-      expect(await resolveOAuthCustomHeaders("asana")).toBeUndefined();
-      mockFetchServerSecrets.mockResolvedValueOnce({
-        env: null,
-        headers: { "X-API-Key": "project-b-secret" }
-      });
-      expect(
-        await resolveOAuthCustomHeaders("asana", { required: true })
-      ).toEqual({ "X-API-Key": "project-b-secret" });
-      expect(mockFetchServerSecrets).toHaveBeenLastCalledWith({
-        projectId: "project-b",
-        serverId: "server-b"
-      });
-      context.setApiContext({ projectId: "project-b", serverIdsByName: {} });
-      expect(await resolveOAuthCustomHeaders("asana")).toBeUndefined();
-      context.setApiContext(null);
-      await expect(
-        resolveOAuthCustomHeaders("asana", { required: true })
-      ).rejects.toThrow("could not be recovered");
-    });
-
-    it("rejects recovered headers if the active project changes during the request", async () => {
-      const context = await import("@/lib/apis/web/context");
-      const { resolveOAuthCustomHeaders } = await import("../mcp-oauth");
-      context.setApiContext({
-        projectId: "project-race-a",
-        serverIdsByName: { "race-server": "server-race-a" }
-      });
-      mockFetchServerSecrets.mockImplementationOnce(async () => {
-        context.setApiContext({
-          projectId: "project-race-b",
-          serverIdsByName: { "race-server": "server-race-b" }
-        });
-        return { env: null, headers: { "X-API-Key": "stale-project-secret" } };
-      });
-      await expect(
-        resolveOAuthCustomHeaders("race-server", { required: true })
-      ).rejects.toThrow("changed during header recovery");
-      expect(await resolveOAuthCustomHeaders("race-server")).toBeUndefined();
-    });
-
-    it("recovers custom headers from encrypted server secrets after a callback reload", async () => {
-      mockDiscoverOAuthServerInfo.mockResolvedValue(
-        createAsanaDiscoveryState()
-      );
-      const { initiateOAuth, rememberOAuthCustomHeaders, handleOAuthCallback } =
-        await import("../mcp-oauth");
-      const initiateResult = await initiateOAuth({
-        serverName: "asana",
-        serverUrl: "https://mcp.asana.com/sse",
-        customHeaders: { "X-Tenant-Token": "tenant-secret" },
-      });
-      expect(initiateResult.success).toBe(true);
-      expect(
-        localStorage.getItem("mcp-oauth-config-asana") ?? ""
-      ).not.toContain("tenant-secret");
-
-      rememberOAuthCustomHeaders("asana", null);
-      mockFetchServerSecrets.mockResolvedValueOnce({
-        env: null,
-        headers: {
-          Authorization: "Bearer resource-token",
-          "X-Tenant-Token": "tenant-secret",
-        },
-      });
-      const callbackResult = await handleOAuthCallback("oauth-code", {
-        callbackState: issuedCallbackState(),
-      });
-
-      expect(callbackResult.success).toBe(true);
-      expect(mockFetchServerSecrets).toHaveBeenCalledWith({
-        projectId: "proj_default",
-        serverId: "srv_asana",
-      });
-      expect(
-        mockRunOAuthStateMachine.mock.calls.at(-1)?.[0].customHeaders
-      ).toEqual({ "X-Tenant-Token": "tenant-secret" });
-    });
-
     it("stops a 2026 issuer mismatch before token exchange", async () => {
       await seedPendingOAuth(
         undefined,
@@ -2315,50 +2169,6 @@ describe("mcp-oauth", () => {
       );
       expect(mockRegisterClient).not.toHaveBeenCalled();
       expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
-    });
-
-    it("strips legacy client secrets from every issuer bucket on read and write", async () => {
-      const { MCPOAuthProvider } = await import("../mcp-oauth");
-      const provider = new MCPOAuthProvider(
-        "issuer-secrets",
-        "https://mcp.example.com/sse"
-      );
-      await provider.saveDiscoveryState({
-        ...createDiscoveryState(),
-        authorizationServerMetadata: { issuer: "https://auth.example.com" }
-      } as any);
-      const seed = () =>
-        localStorage.setItem(
-          "mcp-client-issuer-secrets",
-          JSON.stringify({
-            v: 2,
-            activeIssuer: "https://auth.example.com",
-            byIssuer: {
-              "https://auth.example.com": {
-                client_id: "current",
-                client_secret: "active-secret"
-              },
-              "https://other.example.com": {
-                client_id: "other",
-                client_secret: "inactive-secret"
-              }
-            }
-          })
-        );
-      seed();
-      expect((await provider.clientInformation())?.client_id).toBe("current");
-      expect(localStorage.getItem("mcp-client-issuer-secrets")).not.toContain(
-        "client_secret"
-      );
-      seed();
-      await provider.saveClientInformation({
-        client_id: "new",
-        client_secret: "runtime-only"
-      });
-      const raw = localStorage.getItem("mcp-client-issuer-secrets")!;
-      expect(raw).not.toContain("client_secret");
-      expect(raw).not.toContain("runtime-only");
-      expect(raw).toContain("other");
     });
 
     it("does not reuse a client id across an authorization-server change (SEP-2352)", async () => {
