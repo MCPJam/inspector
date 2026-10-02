@@ -238,3 +238,66 @@ describe.each(ALL_VERSIONS)(
     );
   }
 );
+
+// `authorization_servers` is copied out of the server's RFC 9728 document
+// unvalidated, so its entries are whatever the server wrote. A deployed server
+// listed objects, and the first entry reached the diagram chip as an object: a
+// React child React refuses, and the boundary took the OAuth panel down with
+// it (Sentry INSPECTOR-CLIENT-2F6). 2025-03-26 has no resource-metadata step.
+describe.each(ALL_VERSIONS.filter((version) => version !== "2025-03-26"))(
+  "sequence actions (%s / non-string authorization_servers entries)",
+  (protocolVersion) => {
+    const buildWith = (authorizationServers: unknown) =>
+      buildOAuthSequenceActions({
+        protocolVersion,
+        registrationStrategy: "dcr",
+        flowState: {
+          ...EMPTY_OAUTH_FLOW_STATE,
+          resourceMetadata: {
+            resource: "https://mcp-server.example.com/mcp",
+            authorization_servers: authorizationServers,
+          },
+        } as OAuthFlowState,
+      }).find((action) => action.id === "received_resource_metadata")?.details;
+
+    it.each<[unknown, string]>([
+      [
+        [
+          {
+            authorization_server: "https://auth-server.example.com",
+            scopes: ["mcp"],
+          },
+        ],
+        '{"authorization_server":"https://auth-server.example.com","scopes":["mcp"]} (not an absolute URL)',
+      ],
+      [[42], "42 (not an absolute URL)"],
+      [[null], "null (not an absolute URL)"],
+      [[""], '"" (not an absolute URL)'],
+      [
+        { authorization_server: "https://auth-server.example.com" },
+        '{"authorization_server":"https://auth-server.example.com"} (not an absolute URL)',
+      ],
+      [
+        [
+          "https://auth-server.example.com",
+          { authorization_server: "ignored" },
+        ],
+        "https://auth-server.example.com",
+      ],
+    ])(
+      "renders the first entry of %j as text",
+      (authorizationServers, displayed) => {
+        expect(buildWith(authorizationServers)).toEqual([
+          { label: "Auth Server", value: displayed },
+        ]);
+      }
+    );
+
+    it.each<[unknown]>([[[]], [null], [undefined]])(
+      "omits the row when the document names no server (%j)",
+      (authorizationServers) => {
+        expect(buildWith(authorizationServers)).toBeUndefined();
+      }
+    );
+  }
+);
