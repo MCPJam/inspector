@@ -4010,7 +4010,6 @@ export default function App() {
     firstRunOAuthReconnectServerRef.current = serverName;
     void handleReconnect(serverName, {
       forceOAuthFlow: false,
-      replaceExistingOAuthConnection: false,
       // OAuth has already returned to onboarding. This recovery pass may use
       // the credential that was just stored, but it must never launch a
       // second interactive flow (or its generic Authorize toast) while the

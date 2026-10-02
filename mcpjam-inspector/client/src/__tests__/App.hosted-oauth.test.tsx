@@ -5466,7 +5466,6 @@ describe("App hosted OAuth callback handling", () => {
     );
     expect(appState.handleReconnect).toHaveBeenCalledWith("OAuth server", {
       forceOAuthFlow: false,
-      replaceExistingOAuthConnection: false,
       allowInteractiveOAuthFlow: false,
       suppressErrors: true,
       suppressSuccessToast: true,
