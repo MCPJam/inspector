@@ -47,6 +47,7 @@ import {
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
 import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
+import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type {
@@ -851,6 +852,9 @@ export async function streamWebChatTurn(
         ? { toolCallCancellation: prepare.toolCallCancellation }
         : {}),
       customProviders: prepare.customProviders,
+      // Nothing has been streamed yet, so a hung MCP server would otherwise
+      // hold the request past the edge's first-byte limit (a Cloudflare 524).
+      toolListingTimeoutMs: WEB_CHAT_TOOL_LISTING_TIMEOUT_MS,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
       ...(prepare.tasks ? { tasks: prepare.tasks } : {}),

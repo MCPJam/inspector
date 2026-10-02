@@ -30,3 +30,12 @@ export const WEB_CALL_TIMEOUT_MS = 30_000;
 
 /** Streaming turns, which hold a connection open across many model calls. */
 export const WEB_STREAM_TIMEOUT_MS = 120_000;
+
+/**
+ * Connect + list tools before a hosted chat turn streams. Nothing reaches the
+ * browser until this finishes, and Cloudflare drops a request that has sent no
+ * first byte after 100 s (a 524) — so a hung MCP server has to fail the turn
+ * with our own 424 well inside that, not after the per-request timeout above
+ * and its retries.
+ */
+export const WEB_CHAT_TOOL_LISTING_TIMEOUT_MS = 30_000;

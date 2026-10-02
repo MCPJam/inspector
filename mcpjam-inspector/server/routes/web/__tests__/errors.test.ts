@@ -378,6 +378,19 @@ const TARGET_CONNECT_FAILURE =
   'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: fetch failed. SSE error: fetch failed.';
 
 describe("mapTargetServerError", () => {
+  it("maps the hosted chat tool-listing deadline to 424 TIMEOUT", () => {
+    // `prepareChatV2`'s budget for connecting + listing tools on a hosted
+    // turn. It fires before any byte is streamed, so a 5xx here would be
+    // swapped for the edge's own error page just like a connect failure.
+    const mapped = mapTargetServerError(
+      new Error(
+        'MCP server "DHL Tracking" timed out: connecting and listing tools took longer than 30s.',
+      ),
+    );
+    expect(mapped.status).toBe(424);
+    expect(mapped.code).toBe(ErrorCode.TIMEOUT);
+  });
+
   it("downgrades the connection class out of the 5xx range", () => {
     // The range is the load-bearing part, not the digits: Cloudflare replaces
     // an origin 5xx with its own error page, discarding the JSON envelope and
