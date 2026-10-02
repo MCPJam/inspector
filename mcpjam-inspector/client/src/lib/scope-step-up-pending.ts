@@ -40,10 +40,11 @@ export type PendingChatScopeStepUp = {
    */
   credentialBinding?: StepUpCredentialBinding;
   /**
-   * The authorization request's `state`. Only the callback for this flow may
-   * mark the call ready; another flow for the server cancels it.
+   * A digest of the authorization request's `state` (never the state itself;
+   * see `authorizationFlowDigest`). Only the callback for this flow may mark
+   * the call ready; another flow for the server cancels it.
    */
-  oauthState?: string;
+  flowDigest?: string;
 };
 
 function isPendingChatEvent(
@@ -84,8 +85,8 @@ function isPendingChatScopeStepUp(
       typeof candidate.cancellationMessage === "string") &&
     (candidate.credentialBinding === undefined ||
       isStepUpCredentialBinding(candidate.credentialBinding)) &&
-    (candidate.oauthState === undefined ||
-      typeof candidate.oauthState === "string") &&
+    (candidate.flowDigest === undefined ||
+      typeof candidate.flowDigest === "string") &&
     isPendingChatEvent(candidate.event) &&
     // Only a sign-in has a click to wait for.
     (candidate.phase !== "awaiting_click" ||
@@ -157,10 +158,10 @@ export function markPendingChatAuthRequiredClicked(
   return true;
 }
 
-/** Record the `state` of the authorization request the saved call waits on. */
-export function setPendingChatScopeStepUpOAuthState(
+/** Bind the saved call to the authorization flow it waits on. */
+export function setPendingChatScopeStepUpFlowDigest(
   serverName: string,
-  oauthState: string,
+  flowDigest: string,
 ): void {
   const pending = readPendingChatScopeStepUp();
   if (
@@ -170,7 +171,7 @@ export function setPendingChatScopeStepUpOAuthState(
   ) {
     return;
   }
-  writePending({ ...pending, oauthState });
+  writePending({ ...pending, flowDigest });
 }
 
 /** Record which credential the pending sign-in authorizes. */
@@ -191,7 +192,7 @@ export function setPendingChatScopeStepUpCredentialBinding(
 export function settlePendingChatScopeStepUpAfterCallback(
   serverName: string,
   callbackCredentialId: string | undefined,
-  callbackState?: string | null,
+  callbackDigest?: string,
 ): void {
   const pending = readPendingChatScopeStepUp();
   if (!pending || pending.serverName !== serverName) return;
@@ -199,9 +200,9 @@ export function settlePendingChatScopeStepUpAfterCallback(
   // belongs to some other flow.
   if (pending.phase === "awaiting_click") return;
   if (
-    pending.oauthState &&
-    callbackState &&
-    pending.oauthState !== callbackState
+    pending.flowDigest &&
+    callbackDigest &&
+    pending.flowDigest !== callbackDigest
   ) {
     markPendingChatScopeStepUpCancelled(
       serverName,

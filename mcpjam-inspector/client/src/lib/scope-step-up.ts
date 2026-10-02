@@ -48,11 +48,11 @@ import {
 } from "@/lib/scope-step-up-credential";
 import {
   setPendingChatScopeStepUpCredentialBinding,
-  setPendingChatScopeStepUpOAuthState,
+  setPendingChatScopeStepUpFlowDigest,
 } from "@/lib/scope-step-up-pending";
 import {
   setPendingDirectScopeStepUpReplayCredentialBinding,
-  setPendingDirectScopeStepUpReplayOAuthState,
+  setPendingDirectScopeStepUpReplayFlowDigest,
 } from "@/lib/scope-step-up-replay";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
 
@@ -465,10 +465,9 @@ export function driveScopeStepUp(
       beforeRedirect: () =>
         hostBridge?.prepareRedirect?.(server, connectionIntent),
       // Binds the saved call to THIS flow: only its own callback replays it.
-      onAuthorizationRedirect: ({ state }) => {
-        if (!state) return;
-        setPendingChatScopeStepUpOAuthState(server.name, state);
-        setPendingDirectScopeStepUpReplayOAuthState(server.name, state);
+      onAuthorizationFlow: ({ digest }) => {
+        setPendingChatScopeStepUpFlowDigest(server.name, digest);
+        setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest);
       },
     });
   };

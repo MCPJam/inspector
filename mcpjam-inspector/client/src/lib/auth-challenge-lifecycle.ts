@@ -36,13 +36,13 @@ import type { ServerWithName } from "@/state/app-types";
 import {
   savePendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
-  setPendingDirectScopeStepUpReplayOAuthState,
+  setPendingDirectScopeStepUpReplayFlowDigest,
   settlePendingDirectScopeStepUpReplayAfterCallback,
   type DirectScopeStepUpReplayDescriptor,
 } from "@/lib/scope-step-up-replay";
 import {
   setPendingChatScopeStepUpCredentialBinding,
-  setPendingChatScopeStepUpOAuthState,
+  setPendingChatScopeStepUpFlowDigest,
   settlePendingChatScopeStepUpAfterCallback,
 } from "@/lib/scope-step-up-pending";
 import {
@@ -59,6 +59,7 @@ import type {
 } from "@/shared/auth-challenge";
 import { SCOPE_STEP_UP_LIVE_TTL_MS } from "@/shared/scope-step-up";
 import { track } from "@/lib/analytics";
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import { authChallengeFromError } from "@/lib/apis/insufficient-scope";
 import {
   createInspectorCommandClientError,
@@ -445,10 +446,9 @@ export async function connectAuthChallenge(
       operation: card.operation,
       confirmed: true,
       beforeRedirect: () => bridge?.prepareRedirect?.(server, connectionIntent),
-      onAuthorizationRedirect: ({ state }) => {
-        if (!state) return;
-        setPendingDirectScopeStepUpReplayOAuthState(server.name, state);
-        setPendingChatScopeStepUpOAuthState(server.name, state);
+      onAuthorizationFlow: ({ digest }) => {
+        setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest);
+        setPendingChatScopeStepUpFlowDigest(server.name, digest);
       },
     });
     if (outcome.kind === "blocked") {
@@ -508,14 +508,17 @@ export function clearAuthChallengeCards(serverName: string): void {
  * bound to the callback's `state` and to the credential it produced. Returns
  * a message when the saved direct call was NOT replayed.
  */
-export function settleSignInCallback(
+export async function settleSignInCallback(
   serverName: string,
   callback: { state?: string | null; credentialId?: string },
-): string | undefined {
+): Promise<string | undefined> {
+  // Compared by digest: the saved calls recorded the flow's digest, never its
+  // `state`.
+  const digest = await authorizationFlowDigest(callback.state);
   // Bookkeeping never blocks the callback that completed the sign-in.
   let completed = 0;
   try {
-    completed = markAuthChallengeSignedIn(serverName, callback.state);
+    completed = markAuthChallengeSignedIn(serverName, digest);
   } catch {
     completed = 0;
   }
@@ -526,12 +529,12 @@ export function settleSignInCallback(
   settlePendingChatScopeStepUpAfterCallback(
     serverName,
     callback.credentialId,
-    callback.state,
+    digest,
   );
   return settlePendingDirectScopeStepUpReplayAfterCallback(
     serverName,
     callback.credentialId,
-    callback.state,
+    digest,
   );
 }
 

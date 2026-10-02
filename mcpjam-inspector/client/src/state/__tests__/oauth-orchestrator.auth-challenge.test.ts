@@ -35,6 +35,7 @@ import {
   resetAuthChallenge,
 } from "../oauth-orchestrator";
 import { persistRequestedScopes } from "@/lib/oauth/requested-scopes";
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 
 const ISSUER = "https://as.example";
 const PRM = "https://orders.example/.well-known/oauth-protected-resource/mcp";
@@ -251,22 +252,30 @@ describe("applyToolCallAuthChallenge", () => {
     expect(fresh).toEqual({ kind: "pendingConnect" });
   });
 
-  it("binds the attempt to its flow's state", async () => {
+  it("binds the attempt to a digest of its flow's state, never the state", async () => {
     initiateOAuthMock.mockImplementation(async (options) => {
-      options.onAuthorizationRedirect?.({ state: "state-1" });
+      await options.onAuthorizationRedirect?.({ state: "state-1" });
       return { success: true };
     });
     const server = createServer();
-    const redirected = vi.fn();
+    const flows: Array<{ digest: string }> = [];
     await applyToolCallAuthChallenge(server, signal(), {
       operation: OPERATION,
       confirmed: true,
-      onAuthorizationRedirect: redirected,
+      onAuthorizationFlow: (flow) => flows.push(flow),
     });
-    expect(redirected).toHaveBeenCalledWith({ state: "state-1" });
+    const digest = await authorizationFlowDigest("state-1");
+    expect(flows).toEqual([{ digest }]);
+    // Nothing stored holds the state itself.
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain("state-1");
     // A callback for another flow does not complete this attempt.
-    expect(markAuthChallengeSignedIn("orders", "state-other")).toBe(0);
-    expect(markAuthChallengeSignedIn("orders", "state-1")).toBe(1);
+    expect(
+      markAuthChallengeSignedIn(
+        "orders",
+        await authorizationFlowDigest("state-other"),
+      ),
+    ).toBe(0);
+    expect(markAuthChallengeSignedIn("orders", digest)).toBe(1);
   });
 
   it("does not spend the click when OAuth never started", async () => {
