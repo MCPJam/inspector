@@ -234,4 +234,96 @@ describe("CheckRow untouched state", () => {
     fireEvent.blur(screen.getByLabelText("Tool"));
     expect(screen.getByText("Enter a tool name")).toBeInTheDocument();
   });
+
+  it.each([
+    { type: "toolInputMatches", toolName: "", patterns: [""] },
+    { type: "toolResultMatches", patterns: [""] },
+  ])(
+    "words a $type pattern list's issues on its rows, not the row-level line",
+    (initial) => {
+      render(<Harness initial={[initial as Predicate]} />);
+      // Neutral until touched, like every other blank field.
+      expect(screen.queryByText("Enter a pattern")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+
+      fireEvent.blur(screen.getByLabelText("Pattern 1"));
+      expect(screen.getByText("Enter a pattern")).toBeInTheDocument();
+      expect(screen.getByLabelText("Pattern 1")).toHaveAttribute(
+        "aria-invalid",
+        "true",
+      );
+      // Zod's `patterns.0` wording would be a second, vaguer copy of it.
+      expect(screen.queryByText(ZOD_WORDING)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
+});
+
+describe("ToolNameField names that can never match", () => {
+  const toolCalledWith = (toolName: string): Predicate =>
+    ({ type: "toolCalledWith", toolName, args: { args: {} } }) as Predicate;
+
+  it("shows a saved name the loaded list lacks, and says it is not loaded", () => {
+    render(
+      <Harness
+        initial={[toolCalledWith("old_search")]}
+        availableTools={["search", "fetch"]}
+      />,
+    );
+    const tool = screen.getByRole("combobox", { name: "Tool" });
+    expect(tool).toHaveTextContent("old_search");
+    const warning = screen.getByText('No loaded tool is named "old_search".');
+    expect(tool).toHaveAttribute("aria-describedby", warning.id);
+  });
+
+  it("warns that a wildcard is literal, in the dropdown and in free text", () => {
+    const { unmount } = render(
+      <Harness
+        initial={[toolCalledWith("search*")]}
+        availableTools={["search"]}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Tool" })).toHaveTextContent(
+      "search*",
+    );
+    expect(
+      screen.getByText(
+        "Tool names match exactly. Wildcards such as * are not supported.",
+      ),
+    ).toBeInTheDocument();
+    unmount();
+
+    render(<Harness initial={[toolCalledWith("search*")]} />);
+    expect(
+      screen.getByText(
+        "Tool names match exactly. Wildcards such as * are not supported.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("flags a saved name that differs from a listed one only by spaces", () => {
+    render(
+      <Harness
+        initial={[toolCalledWith("search ")]}
+        availableTools={["search"]}
+      />,
+    );
+    expect(
+      screen.getByText('No loaded tool is named "search ".'),
+    ).toBeInTheDocument();
+  });
+
+  it("stays quiet for a listed name, and for free text it cannot check", () => {
+    const { unmount } = render(
+      <Harness
+        initial={[toolCalledWith("search")]}
+        availableTools={["search"]}
+      />,
+    );
+    expect(screen.queryByText(/No loaded tool|Wildcards/)).toBeNull();
+    unmount();
+
+    render(<Harness initial={[toolCalledWith("anything_typed")]} />);
+    expect(screen.queryByText(/No loaded tool|Wildcards/)).toBeNull();
+  });
 });

@@ -60,8 +60,8 @@ vi.mock("../../../services/sessionSimulation/launch-journey-run.js", () => ({
 import goals from "../goals.js";
 import { v1OnError } from "../envelope.js";
 
-const PROJECT = "proj_a";
-const OTHER_PROJECT = "proj_b";
+const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const OTHER_PROJECT = "projbxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const JOURNEY = "jrn_1";
 const RUN = "run_1";
 

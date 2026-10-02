@@ -47,10 +47,11 @@ npx -y @mcpjam/cli@latest --help
 
 ### Local MCP testing
 
-These stay at the program root. They reject `--api-key` / `--api-url` / `--project`.
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project` — except `test`, which accepts them only to reach MCPJam-hosted inference.
 
 | Group | Purpose | Key commands |
 |-------|---------|-------------|
+| [`test`](/cli/local-evals) | Run an eval suite file locally (BYOK or MCPJam-hosted inference); never uploads | `test <file>` |
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
@@ -136,6 +137,7 @@ mcpjam cloud link --remove
 | Where | What it selects |
 |-------|-----------------|
 | `server`, `tools`, `resources`, `prompts` | An **AI client** (`claude`, `chatgpt`, `cursor`, …). The CLI sends that host's `clientInfo`, capabilities, and protocol version in `initialize`. |
+| `test --host` | One host **template** to emulate for a local suite run: its handshake, tool visibility and model settings. Never the real client. |
 | `compat --host` | Which AI clients to report. Repeatable; default is all. |
 | `cloud eval --host`, `cloud goals`, `cloud studies` | A **saved project Host** (`<id-or-name>`), the client config an eval or goal run is stamped with. |
 | `cloud environments --host-id` | The project Host id the environment runs as. Distinct from eval's `--host`. |
