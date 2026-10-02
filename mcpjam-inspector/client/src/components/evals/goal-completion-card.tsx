@@ -255,7 +255,7 @@ export function GoalCompletionCard({
               {suiteConfig?.judgeSelection?.settings?.reasoningEffort &&
               selectedModelId === suiteModel ? (
                 <SelectionEffortControl
-                  variant="chip"
+                  variant="suffix"
                   row={availableModels.find(
                     (model) => String(model.id) === suiteModel,
                   )}

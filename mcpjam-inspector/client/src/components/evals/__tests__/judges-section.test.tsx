@@ -5,6 +5,7 @@ import { JudgesSection, pruneEmpty } from "../judges-section";
 import type { EvalJudgeConfig } from "../types";
 import type { ModelDefinition } from "@/shared/types";
 import { MANAGED_DEFAULT_JUDGE_MODEL } from "@/components/shared/session-quality/judge-config";
+import { pickEffort } from "@/test/effort";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -367,7 +368,7 @@ describe("JudgesSection — reasoning effort", () => {
       />,
     );
     await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await userEvent.click(await screen.findByRole("radio", { name: "High" }));
+    await pickEffort("High");
     const next = onChange.mock.calls.at(-1)![0] as EvalJudgeConfig;
     expect(next.goalCompletion?.judgeModel).toBe("anthropic/claude-haiku-4.5");
     expect(

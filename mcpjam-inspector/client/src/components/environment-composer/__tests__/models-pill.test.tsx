@@ -6,6 +6,7 @@ import {
   modelsPillTriggerLabel,
 } from "../models-pill";
 import type { ModelSelection } from "../environment-stack";
+import { pickEffort } from "@/test/effort";
 
 const mockModels = vi.hoisted(() => ({
   availableModels: [
@@ -497,7 +498,7 @@ describe("ModelsPill — reasoning effort", () => {
       },
     } as ModelSelection);
     await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await userEvent.click(await screen.findByRole("radio", { name: "High" }));
+    await pickEffort("High");
     const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
     expect(next.explicitModelIds).toEqual(["openai/gpt-5"]);
     expect(
@@ -543,10 +544,8 @@ describe("ModelsPill — reasoning effort", () => {
       />
     );
     await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    expect(
-      await screen.findByRole("radio", { name: "X-High" })
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: "Max" })).toBeNull();
+    expect(await screen.findByTestId("effort-stop-xhigh")).toBeInTheDocument();
+    expect(screen.queryByTestId("effort-stop-max")).toBeNull();
   });
 
   it("shows no chip for a model with no known capability", () => {
@@ -567,5 +566,68 @@ describe("ModelsPill — reasoning effort", () => {
       explicitModelIds: ["gpt-5"],
     });
     expect(screen.getByTestId("effort-control-trigger")).toBeDisabled();
+  });
+});
+
+describe("ModelsPill model source badge", () => {
+  const HOSTED_A = {
+    id: "openai/gpt-5",
+    name: "GPT-5",
+    provider: "openai",
+    hosted: true,
+  };
+  const HOSTED_B = {
+    id: "google/gemini-2.5-flash",
+    name: "Gemini 2.5 Flash",
+    provider: "google",
+    hosted: true,
+  };
+  const hostedSelection = (modelId: string) => ({
+    modelId,
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+  });
+
+  it("shows one badge per distinct source among the picks", () => {
+    mockModels.availableModels = [HOSTED_A, HOSTED_B];
+    renderPill({
+      includeClientDefaults: false,
+      explicitModelIds: ["openai/gpt-5", "google/gemini-2.5-flash"],
+      explicitModelSelections: {
+        "openai/gpt-5": hostedSelection("openai/gpt-5"),
+        "google/gemini-2.5-flash": hostedSelection("google/gemini-2.5-flash"),
+      },
+    } as ModelSelection);
+    const badges = screen.getAllByTestId("model-source-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("MCPJam credits");
+  });
+
+  it("claims nothing for picks saved without a selection", () => {
+    mockModels.availableModels = [HOSTED_A];
+    renderPill({
+      includeClientDefaults: false,
+      explicitModelIds: ["openai/gpt-5"],
+    });
+    expect(screen.queryByTestId("model-source-badge")).toBeNull();
+  });
+
+  it("asks to confirm backfilled picks and opens the picker", async () => {
+    mockModels.availableModels = [HOSTED_A];
+    renderPill(
+      {
+        includeClientDefaults: false,
+        explicitModelIds: ["openai/gpt-5"],
+        explicitModelSelections: {
+          "openai/gpt-5": hostedSelection("openai/gpt-5"),
+        },
+      } as ModelSelection,
+      { selectionOrigin: "backfill" },
+    );
+    expect(screen.getByTestId("model-source-backfill-hint")).toHaveTextContent(
+      "Set automatically",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(await screen.findByRole("option", { name: /^GPT-5/ })).toBeInTheDocument();
   });
 });
