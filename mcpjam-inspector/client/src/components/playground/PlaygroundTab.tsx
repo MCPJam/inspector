@@ -243,16 +243,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
       props.playgroundServerSelectorProps?.selectedMultipleServers,
   });
 
-  const hasReportedReadyRef = useRef(false);
   useEffect(() => {
-    if (
-      hasReportedReadyRef.current ||
-      playgroundState.loadingState.kind === "skeleton"
-    ) {
-      return;
-    }
-    hasReportedReadyRef.current = true;
-    props.onReady?.();
+    if (playgroundState.loadingState.kind !== "skeleton") props.onReady?.();
   }, [playgroundState.loadingState.kind, props.onReady]);
 
   // Rail collapse state — local to the workspace; not persisted per view.

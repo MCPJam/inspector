@@ -293,6 +293,7 @@ import {
   getHostedOAuthCallbackContext,
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
+import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import {
   clearScenarioSignInReturnPath,
   readScenarioSession,
@@ -2781,20 +2782,10 @@ export default function App() {
     readFirstRunServerChoiceState(),
   );
   const [isInitialFirstRunOAuthReturn] = useState(() => {
-    if (
-      initialFirstRunServerChoiceState?.status !== "started" ||
-      !initialFirstRunServerChoiceState.attemptedServerName ||
-      window.location.pathname !== "/oauth/callback"
-    ) {
-      return false;
-    }
-    const callbackContext = getHostedOAuthCallbackContext();
-    return (
-      callbackContext?.surface === "project" &&
-      callbackContext.serverName ===
-        initialFirstRunServerChoiceState.attemptedServerName
-    );
+    return getFirstRunOAuthReturnServerName() !== null;
   });
+  const isFirstRunOAuthReturnActive =
+    isInitialFirstRunOAuthReturn && !firstRunOverlayDismissed;
   const [firstRunOverlaySessionStarted, setFirstRunOverlaySessionStarted] =
     useState(isInitialFirstRunOAuthReturn);
   const skipFirstRunWelcome = Boolean(
@@ -2857,6 +2848,7 @@ export default function App() {
               | "oauthScopes"
               | "clientId"
               | "clientSecret"
+              | "clearClientSecret"
               | "oauthAllowPathScopedIssuer"
             >,
       ) => void)
@@ -3690,7 +3682,7 @@ export default function App() {
     : null;
   const shouldShowPendingDashboardOAuthGate =
     !!pendingDashboardOAuth && !pendingDashboardOAuthServer;
-  const effectiveHostedShellGateState = isInitialFirstRunOAuthReturn
+  const effectiveHostedShellGateState = isFirstRunOAuthReturnActive
     ? "ready"
     : shouldShowPendingDashboardOAuthGate
       ? "project-loading"
@@ -3893,6 +3885,7 @@ export default function App() {
             | "oauthScopes"
             | "clientId"
             | "clientSecret"
+            | "clearClientSecret"
             | "oauthAllowPathScopedIssuer"
           >
       >((resolve) => {
@@ -3942,6 +3935,7 @@ export default function App() {
             oauthScopes: draft.oauthScopes,
             clientId: draft.clientId,
             clientSecret: draft.clientSecret,
+            clearClientSecret: draft.clearClientSecret,
             oauthAllowPathScopedIssuer: draft.oauthAllowPathScopedIssuer,
           });
         } else {
@@ -5939,7 +5933,7 @@ export default function App() {
     );
   }
 
-  if (hostedOAuthHandling && !isInitialFirstRunOAuthReturn) {
+  if (hostedOAuthHandling && !isFirstRunOAuthReturnActive) {
     return <LoadingScreen />;
   }
 
@@ -5949,12 +5943,12 @@ export default function App() {
   if (
     isMcpOAuthCallback &&
     !isProjectMcpOAuthCallback &&
-    !isInitialFirstRunOAuthReturn
+    !isFirstRunOAuthReturnActive
   ) {
     return <LoadingScreen />;
   }
 
-  if (isOAuthCallback && !callbackCompleted && !isInitialFirstRunOAuthReturn) {
+  if (isOAuthCallback && !callbackCompleted && !isFirstRunOAuthReturnActive) {
     if (callbackRecoveryExpired) {
       return (
         <div
@@ -5987,7 +5981,7 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (isLoading && !isHostedChatRoute && !isInitialFirstRunOAuthReturn) {
+  if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
     return <LoadingScreen />;
   }
 
@@ -5998,7 +5992,7 @@ export default function App() {
     pendingCheckoutIntent !== null;
 
   if (
-    !isInitialFirstRunOAuthReturn &&
+    !isFirstRunOAuthReturnActive &&
     (shouldHoldHostedDefaultRouteForAuth ||
       shouldHoldHostedHomeRouteForAppReady)
   ) {
@@ -6008,7 +6002,7 @@ export default function App() {
   if (
     !isHostedChatRoute &&
     isAuthenticated &&
-    !isInitialFirstRunOAuthReturn &&
+    !isFirstRunOAuthReturnActive &&
     (currentUser === undefined ||
       // Session revocation can return a null user before Convex's auth state
       // changes or WorkOS finishes navigating away. That is expected at logout.

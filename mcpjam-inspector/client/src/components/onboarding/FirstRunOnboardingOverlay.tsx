@@ -634,15 +634,17 @@ export function FirstRunOnboardingOverlay({
       () => setVisibleCompletedConnectionSteps(3),
       400,
     );
-    const revealId = window.setTimeout(
-      () => setIsConnectedPresentationReady(true),
-      FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS,
-    );
+    let revealCompleted = false;
+    const revealId = window.setTimeout(() => {
+      revealCompleted = true;
+      setIsConnectedPresentationReady(true);
+    }, FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS);
     return () => {
       window.clearTimeout(firstId);
       window.clearTimeout(secondId);
       window.clearTimeout(thirdId);
       window.clearTimeout(revealId);
+      if (!revealCompleted) pacedConnectedServerRef.current = null;
     };
   }, [connectionState, open, prefersReducedMotion]);
 
