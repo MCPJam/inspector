@@ -4,9 +4,11 @@
  * Mirrors the gates `release.yml`'s preflight enforces, in its order:
  * "Require green CI for candidate SHA" (test.yml + lint.yml green for the
  * exact SHA — these replaced the old in-preflight `npm run verify`), "Require
- * green staging smoke for candidate SHA", and the Changesets plan in "Select
- * release scope". If every blocking check is ✅, running the Release workflow
- * will pass preflight.
+ * green staging smoke for candidate SHA", and "Compute release plan" (the
+ * versions main carries that npm does not have). release-trigger.yml starts
+ * Release by itself once the first three are green on a commit carrying such
+ * versions; the version PR and pending-changeset rows say how far the release
+ * is from that point.
  *
  * Referenced by step name rather than line number on purpose — the previous
  * line-number citations here went stale the first time preflight was edited.
@@ -18,6 +20,7 @@
 
 import {
   compareCommits,
+  findOpenPullRequest,
   findSuccessfulRunForSha,
   getBranchHead,
   getLatestEnvironmentDeployment,
@@ -27,6 +30,11 @@ import {
   type WorkflowRun
 } from "@/lib/github";
 import { fetchPendingChangesets } from "@/lib/changesets";
+import {
+  fetchUnpublishedVersions,
+  releaseLabel,
+  VERSION_PR_BRANCH
+} from "@/lib/release-state";
 import { formatRelativeTime, shortSha } from "@/lib/format";
 import { StatusDot, Tile, type StatusTone } from "@/components/ui";
 
@@ -132,7 +140,7 @@ export async function ReleaseReadiness() {
           rows.push({
             tone: "failure",
             label: `No successful ${gate.label} run for ${shortSha(inspectorHead.sha)}`,
-            detail: `Release.yml preflight will fail until ${gate.workflow} is green for this SHA. It may still be running, or it was cancelled by a newer push.`
+            detail: `Release will not start from this commit until ${gate.workflow} is green on it. It may still be running, or it was cancelled by a newer push, in which case the next green commit releases instead.`
           });
         }
       } catch (err) {
@@ -166,7 +174,7 @@ export async function ReleaseReadiness() {
         rows.push({
           tone: "failure",
           label: `No successful staging deploy for ${shortSha(inspectorHead.sha)}`,
-          detail: "Release.yml preflight will fail until deploy-staging.yml runs green for this SHA."
+          detail: "Release will not start from this commit until deploy-staging.yml is green on it."
         });
       }
     } catch (err) {
@@ -178,8 +186,54 @@ export async function ReleaseReadiness() {
     }
   }
 
-  // ── Pending changesets ────────────────────────────────────────────────
+  // ── The release in flight: unpublished versions → version PR → changesets
   if (inspectorHead) {
+    let unpublishedCount = 0;
+    try {
+      const unpublished = await fetchUnpublishedVersions(
+        INSPECTOR.owner,
+        INSPECTOR.repo,
+        inspectorHead.sha
+      );
+      unpublishedCount = unpublished.length;
+      if (unpublished.length > 0) {
+        rows.push({
+          tone: "running",
+          label: `${releaseLabel(unpublished)} is on main, not yet on npm`,
+          detail:
+            "The version PR merged. Release starts by itself once the gates above are green on the tip of main."
+        });
+      }
+    } catch (err) {
+      rows.push({
+        tone: "warning",
+        label: "Could not compare main's versions with npm",
+        detail: (err as Error).message
+      });
+    }
+
+    try {
+      const pr = await findOpenPullRequest(
+        INSPECTOR.owner,
+        INSPECTOR.repo,
+        VERSION_PR_BRANCH
+      );
+      if (pr) {
+        rows.push({
+          tone: "info",
+          label: `Version PR #${pr.number} is open`,
+          detail: `${pr.title}. Approve and merge it to release; updated ${formatRelativeTime(pr.updatedAt)}.`,
+          href: pr.url
+        });
+      }
+    } catch (err) {
+      rows.push({
+        tone: "warning",
+        label: "Could not look for an open version PR",
+        detail: (err as Error).message
+      });
+    }
+
     try {
       const changesets = await fetchPendingChangesets(
         INSPECTOR.owner,
@@ -195,13 +249,13 @@ export async function ReleaseReadiness() {
         rows.push({
           tone: "success",
           label: `${count} pending changeset${count === 1 ? "" : "s"}`,
-          detail: `Will bump: ${Array.from(packageSet).join(", ") || "nothing"}`
+          detail: `Will bump: ${Array.from(packageSet).join(", ") || "nothing"}. Start release versions them in a PR.`
         });
-      } else {
+      } else if (unpublishedCount === 0) {
         rows.push({
-          tone: "failure",
+          tone: "neutral",
           label: "No pending changesets",
-          detail: "Release.yml preflight will fail — add a changeset before running."
+          detail: "Nothing to release until a PR adds one."
         });
       }
     } catch (err) {
@@ -277,9 +331,9 @@ export async function ReleaseReadiness() {
   const hasWarning = rows.some((r) => r.tone === "warning");
   const accent = hasFailure ? "failure" : hasWarning ? "warning" : "success";
   const summary = hasFailure
-    ? "Preflight will fail — see blockers below."
+    ? "A release would wait — see blockers below."
     : hasWarning
-      ? "Preflight will pass, but check the nudges."
+      ? "A release would go through, but check the nudges."
       : "All checks green. You can ship.";
 
   return (

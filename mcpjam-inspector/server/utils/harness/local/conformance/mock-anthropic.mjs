@@ -172,11 +172,12 @@ const server = http.createServer((req, res) => {
         setTimeout(() => sse(res, textEvents(id, "SLOW DONE", inputTokens)), 8000);
         return;
       }
-      const m = /^(READFILE|BASH|WRITE|COUNT)\b\s*(.*)$/s.exec(t.split("\n").filter((l) => /^(READFILE|BASH|WRITE|COUNT)\b/.test(l)).pop() ?? "");
+      const m = /^(READFILE|BASH|WRITE|COUNT|MCPPROBE)\b\s*(.*)$/s.exec(t.split("\n").filter((l) => /^(READFILE|BASH|WRITE|COUNT|MCPPROBE)\b/.test(l)).pop() ?? "");
       if (m) {
         const [, kind, arg] = m;
         if (kind === "READFILE") return sse(res, toolEvents(id, "Read", { file_path: arg.trim() }, inputTokens));
         if (kind === "BASH") return sse(res, toolEvents(id, "Bash", { command: arg.trim() }, inputTokens));
+        if (kind === "MCPPROBE") return sse(res, toolEvents(id, "mcp__delivery_probe__ping", {}, inputTokens));
         if (kind === "WRITE") return sse(res, toolEvents(id, "Write", { file_path: arg.trim(), content: "written by the conformance mock\n" }, inputTokens));
         if (kind === "COUNT") return sse(res, textEvents(id, `USER_TURNS=${userTurns}`, inputTokens));
       }

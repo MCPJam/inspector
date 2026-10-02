@@ -32,7 +32,61 @@ function JsonEditorErrorFallback() {
   );
 }
 
-export function JsonEditor({
+/**
+ * View-only JSON with a plain `value` renders the tree without the edit
+ * buffer. The buffer keeps a serialized copy of `value` in state and updates
+ * it whenever `value` changes. A trace fed a new value on every streamed token
+ * (the Raw view, the timeline's detail pane) did that after every token's
+ * commit, and a fast stream can stack those into React's "Maximum update
+ * depth exceeded". View-only raw content still goes through the editor, which
+ * parses it. Turning `viewOnly` off mounts the editor from the current value.
+ */
+export function JsonEditor(props: JsonEditorProps) {
+  if (props.viewOnly && props.rawContent === undefined) {
+    return <ViewOnlyJson {...props} />;
+  }
+  return <EditableJsonEditor {...props} />;
+}
+
+function ViewOnlyJson({
+  value,
+  expandJsonStrings = false,
+  className,
+  height,
+  maxHeight,
+  collapsible = false,
+  defaultExpandDepth,
+  collapsedPaths,
+  onCollapseChange,
+  showLineNumbers = true,
+  collapseStringsAfterLength,
+  wrapLongLinesInView = true,
+}: JsonEditorProps) {
+  const viewValue = useMemo(
+    () => (expandJsonStrings ? expandJsonStringsInValue(value) : value),
+    [expandJsonStrings, value],
+  );
+
+  return (
+    <ErrorBoundary fallback={<JsonEditorErrorFallback />}>
+      <JsonEditorView
+        value={viewValue}
+        className={className}
+        height={height ?? "100%"}
+        maxHeight={maxHeight}
+        collapsible={collapsible}
+        defaultExpandDepth={defaultExpandDepth}
+        collapsedPaths={collapsedPaths}
+        onCollapseChange={onCollapseChange}
+        showLineNumbers={showLineNumbers}
+        collapseStringsAfterLength={collapseStringsAfterLength}
+        wrapLongLinesInView={wrapLongLinesInView}
+      />
+    </ErrorBoundary>
+  );
+}
+
+function EditableJsonEditor({
   value,
   onChange,
   rawContent,

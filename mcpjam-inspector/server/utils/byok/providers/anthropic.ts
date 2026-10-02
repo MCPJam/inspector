@@ -1,3 +1,4 @@
+import { ANTHROPIC_NATIVE_MODEL_IDS } from "@mcpjam/sdk/model-factory";
 import {
   getProviderJson,
   isRecord,
@@ -23,64 +24,12 @@ const MAX_PAGES = 10;
 
 // Anthropic native ids are dashed aliases (`claude-sonnet-4-5`); the canonical
 // ids are the hosted catalog's dotted spelling (`anthropic/claude-sonnet-4.5`).
-// The two differ by more than a prefix, which is why this is a table.
-// Every native id below is a `SUPPORTED_MODELS` row that `createLlmModel`
-// (server/utils/chat-helpers.ts) sends verbatim to api.anthropic.com.
-const VERBATIM =
-  "SUPPORTED_MODELS row sent verbatim to api.anthropic.com by createLlmModel";
-const HOSTED = `${VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
-
-export const ANTHROPIC_NATIVE_IDS: readonly NativeIdMapping[] = [
-  {
-    canonicalId: "anthropic/claude-fable-5",
-    nativeId: "claude-fable-5",
-    evidence: HOSTED,
-  },
-  // Not in the hosted catalog; canonical spelling follows claude-sonnet-5.
-  {
-    canonicalId: "anthropic/claude-opus-5",
-    nativeId: "claude-opus-5",
-    evidence: VERBATIM,
-  },
-  {
-    canonicalId: "anthropic/claude-sonnet-5",
-    nativeId: "claude-sonnet-5",
-    evidence: HOSTED,
-  },
-  {
-    canonicalId: "anthropic/claude-opus-4.8",
-    nativeId: "claude-opus-4-8",
-    evidence: HOSTED,
-  },
-  {
-    canonicalId: "anthropic/claude-opus-4.7",
-    nativeId: "claude-opus-4-7",
-    evidence: HOSTED,
-  },
-  {
-    canonicalId: "anthropic/claude-opus-4.6",
-    nativeId: "claude-opus-4-6",
-    evidence: HOSTED,
-  },
-  {
-    canonicalId: "anthropic/claude-sonnet-4.6",
-    nativeId: "claude-sonnet-4-6",
-    evidence: HOSTED,
-  },
-  {
-    canonicalId: "anthropic/claude-sonnet-4.5",
-    nativeId: "claude-sonnet-4-5",
-    // The dated snapshot the alias points at, as GET /v1/models lists it.
-    nativeAliases: ["claude-sonnet-4-5-20250929"],
-    evidence: `${HOSTED}; snapshot id from Anthropic's models overview`,
-  },
-  {
-    canonicalId: "anthropic/claude-haiku-4.5",
-    nativeId: "claude-haiku-4-5",
-    nativeAliases: ["claude-haiku-4-5-20251001"],
-    evidence: `${HOSTED}; snapshot id from Anthropic's models overview`,
-  },
-];
+// The two differ by more than a prefix, which is why this is a table. The
+// reviewed rows live in the SDK, which sends the native id on its own BYOK
+// Anthropic path: one table, so the model list this adapter reports and the id
+// an SDK eval sends cannot disagree.
+export const ANTHROPIC_NATIVE_IDS: readonly NativeIdMapping[] =
+  ANTHROPIC_NATIVE_MODEL_IDS;
 
 const table = createNativeIdTable(LABEL, ANTHROPIC_NATIVE_IDS);
 
