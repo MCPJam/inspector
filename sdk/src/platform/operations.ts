@@ -27,6 +27,7 @@ import type { PlatformSessionBrowserOperationResult } from "./types.js";
  */
 import { z } from "zod";
 import { stableStringifyJson } from "../widget-runtime/json-utils.js";
+import { comparisonKey } from "../host-config/reasoning-effort.js";
 import { opaqueIdSchema } from "../contract/identity.js";
 import {
   GATE_WAIVER_MAX_REASON_LENGTH,
@@ -3142,10 +3143,12 @@ export function expandComposeModelChoices(stack: {
   includeClientDefault?: boolean;
 }): Array<{ modelId: string | undefined; selection?: ModelSelection }> {
   // A selection IS a model choice (its `modelId`) that also says whose
-  // credentials serve it and at what effort. ONE selection per model: two
-  // different ones for the same model would be an effort axis, which is a
-  // later phase, and picking one silently would run a cell nobody asked for.
-  const selections = new Map<string, ModelSelection>();
+  // credentials serve it and at what effort. Each distinct selection is one
+  // cell, keyed by its `comparisonKey`: two efforts of one model are two
+  // cells (Sonnet at Low and at High), the same selection given twice — or
+  // spelled with its keys in another order — is one.
+  const selectionsByKey = new Map<string, ModelSelection>();
+  const selectionsByModel = new Map<string, ModelSelection[]>();
   for (const selection of [
     ...(stack.modelSelections ?? []),
     ...(stack.modelSelection ? [stack.modelSelection] : []),
@@ -3153,21 +3156,28 @@ export function expandComposeModelChoices(stack: {
     const id = selection.modelId.trim();
     // Stored with the trimmed id, so the cell carries the id the map is keyed by.
     const normalized: ModelSelection = { ...selection, modelId: id };
-    const seen = selections.get(id);
-    // Canonical (key-order independent) comparison: the same selection spelled
-    // with its keys in another order is one selection, not a conflict.
-    if (seen && stableStringifyJson(seen) !== stableStringifyJson(normalized)) {
-      throw operationInputError(
-        `Two different model selections were given for "${id}". A composed run takes one selection per model (comparing efforts of one model is not supported yet).`
-      );
+    const key = comparisonKey(normalized);
+    const seen = selectionsByKey.get(key);
+    if (seen) {
+      // Same target, different spelling of what is not identity (fallback):
+      // picking one silently would run a cell nobody asked for.
+      if (stableStringifyJson(seen) !== stableStringifyJson(normalized)) {
+        throw operationInputError(
+          `Two model selections for "${id}" name the same target but differ in their fallback. Give one selection per target.`
+        );
+      }
+      continue;
     }
-    selections.set(id, normalized);
+    selectionsByKey.set(key, normalized);
+    const forModel = selectionsByModel.get(id);
+    if (forModel) forModel.push(normalized);
+    else selectionsByModel.set(id, [normalized]);
   }
   const explicit = [
     ...new Set([
       ...(stack.models ?? []),
       ...(stack.model ? [stack.model] : []),
-      ...selections.keys(),
+      ...selectionsByModel.keys(),
     ]),
   ];
   const includeDefault =
@@ -3176,8 +3186,12 @@ export function expandComposeModelChoices(stack: {
     [];
   if (includeDefault) choices.push({ modelId: undefined });
   for (const modelId of explicit) {
-    const selection = selections.get(modelId.trim());
-    choices.push(selection ? { modelId, selection } : { modelId });
+    const selections = selectionsByModel.get(modelId.trim());
+    if (selections) {
+      for (const selection of selections) choices.push({ modelId, selection });
+    } else {
+      choices.push({ modelId });
+    }
   }
   return choices;
 }
@@ -4079,7 +4093,7 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Explicit model cells that also say whose credentials serve the model and at what reasoning effort. Each selection mints one cell for its `modelId` (add plain `models` for cells that need neither). One selection per model."
+        "Explicit model cells that also say whose credentials serve the model and at what reasoning effort. Each distinct selection mints one cell for its `modelId` (add plain `models` for cells that need neither); several selections may share a model to compare efforts (e.g. one at `low`, one at `high`)."
       ),
     includeClientDefault: z
       .boolean()

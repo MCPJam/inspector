@@ -7,6 +7,13 @@ import {
   snapshotTestModels,
 } from "../evals/helpers";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import {
+  iterationTargetKey,
+  modelIdFromTargetKey,
+  runIterationTargetKey,
+  runTargetKey,
+  targetKeyLabels,
+} from "@/lib/eval-target-key";
 
 export function launchRuns(run: EvalSuiteRun, runs: readonly EvalSuiteRun[]) {
   return [
@@ -78,10 +85,10 @@ export function buildRunResultsMatrix({
     );
     const models = new Map<string, EvalIteration[]>();
     for (const iteration of targetIterations) {
+      // Keyed by TARGET (`targetKey`, the bare model id for a default
+      // selection), so two efforts of one model are two columns.
       const model =
-        targetRun.effectiveModelId ??
-        iteration.testCaseSnapshot?.model ??
-        "Client default";
+        runIterationTargetKey(targetRun, iteration) ?? "Client default";
       const bucket = models.get(model) ?? [];
       bucket.push(iteration);
       models.set(model, bucket);
@@ -115,10 +122,11 @@ export function buildRunResultsMatrix({
     if (targetIterations.length === 0) {
       for (const test of snapshotTests) {
         const snapshotModels = snapshotTestModels(test).map(
-          (entry) => entry.model,
+          (entry) =>
+            iterationTargetKey({ testCaseSnapshot: entry }) ?? entry.model,
         );
         for (const model of targetRun.effectiveModelId
-          ? [targetRun.effectiveModelId]
+          ? [runTargetKey(targetRun) ?? targetRun.effectiveModelId]
           : snapshotModels.length
             ? snapshotModels
             : ["Client default"]) {
@@ -127,12 +135,16 @@ export function buildRunResultsMatrix({
       }
     }
     if (!models.size)
-      models.set(targetRun.effectiveModelId ?? "Client default", []);
+      models.set(runTargetKey(targetRun) ?? "Client default", []);
     return [...models].map(([model, items]) => ({
       key: JSON.stringify([targetRun._id, model]),
       run: targetRun,
       client: runClientIdentity(targetRun, hostNamesById).name,
-      modelId: model,
+      /** The model id this target ran (the target key without its selection). */
+      modelId: modelIdFromTargetKey(model),
+      /** `comparisonKey` of the selection; the bare model id when default. */
+      targetKey: model,
+      // Relabelled below once every target is known (only what differs).
       model: compactModelIdTail(model),
       iterations: items,
       counts: resultCounts(items),
@@ -146,6 +158,14 @@ export function buildRunResultsMatrix({
       ),
     }));
   });
+  const labels = targetKeyLabels(
+    targets
+      .map((target) => target.targetKey)
+      .filter((key) => key !== "Client default"),
+  );
+  for (const target of targets) {
+    target.model = labels.get(target.targetKey) ?? target.model;
+  }
   const rows = [...cases.values()].sort((a, b) => {
     const failures = (key: string) =>
       targets.reduce(

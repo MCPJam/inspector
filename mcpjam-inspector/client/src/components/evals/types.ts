@@ -1,4 +1,5 @@
 import type { JudgeRubric } from "@mcpjam/sdk/contract";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
@@ -205,7 +206,12 @@ export type EvalSuiteConfigTest = {
   title: string;
   query: string;
   /** Persisted cases use models; singular fields support older snapshots. */
-  models?: Array<{ model: string; provider: string }>;
+  models?: Array<{
+    model: string;
+    provider: string;
+    /** The entry's saved selection (two entries of one model differ here). */
+    selection?: RequestedModelSelection;
+  }>;
   provider?: string;
   model?: string;
   runs: number;
@@ -468,6 +474,14 @@ export type EvalCase = {
   models: Array<{
     model: string;
     provider: string;
+    /**
+     * The entry's saved selection. Two entries may share a model when their
+     * selections differ (Sonnet at Low and at High); read the model as
+     * `selection?.modelId ?? model`.
+     */
+    selection?: RequestedModelSelection;
+    /** Set when a conversion (bare-id save, backfill) chose the selection. */
+    selectionOrigin?: "backfill";
   }>;
   runs: number;
   expectedToolCalls: Array<{
@@ -567,6 +581,8 @@ export type EvalIteration = {
     query: string;
     provider: string;
     model: string;
+    /** The case entry's selection, copied at precreate (non-default only). */
+    selection?: RequestedModelSelection;
     runs?: number;
     expectedToolCalls: Array<{
       toolName: string;
@@ -605,6 +621,12 @@ export type EvalIteration = {
     probeConfig?: import("@/shared/probe-config").ProbeConfig;
   };
   suiteRunId?: string;
+  /**
+   * `comparisonKey` of the selection this iteration ran with: the bare model
+   * id for a default selection. Absent on older backends — read it through
+   * `iterationTargetKey` (`lib/eval-target-key`).
+   */
+  targetKey?: string | null;
   /** How the iteration was triggered, stamped at creation by the backend.
    *  Absent on legacy rows → readers fall back to the `suiteRunId` heuristic. */
   trigger?: "quick" | "suite" | "replay";
@@ -1145,6 +1167,13 @@ export type EvalSuiteRun = {
    * Absent on pre-attribution rows — fall back to the env join.
    */
   effectiveModelId?: string;
+  /**
+   * `comparisonKey` of the run's effective selection — what result views key
+   * columns, lanes and baselines by. Equals `effectiveModelId` for a default
+   * selection; absent (or null) on older backends. Read it through
+   * `runTargetKey` (`lib/eval-target-key`).
+   */
+  targetKey?: string | null;
   /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
   client?: RunClientDescriptor;
   modelSource?: "client_default" | "override" | "case";
