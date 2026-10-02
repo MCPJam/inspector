@@ -14,6 +14,7 @@ import {
   projectRunRollup,
 } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
+import { isActiveRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import type { EvalSuiteOverviewEntry } from "../evals/types";
 
@@ -31,10 +32,13 @@ export function buildSuiteHealth(
         const run = details.get(row._id)?.run;
         return run && runClientIdentity(run).key === clientKey;
       });
+      // The detail's status too: the chart draws from the previous snapshot
+      // while a refresh is in flight, so a run that just finished can still
+      // carry the partial iterations read while it ran.
       if (
         !members.length ||
-        members.some((row) =>
-          ["pending", "running", "grading"].includes(row.status),
+        members.some(
+          (row) => isActiveRun(row) || isActiveRun(details.get(row._id)!.run),
         )
       )
         return [];

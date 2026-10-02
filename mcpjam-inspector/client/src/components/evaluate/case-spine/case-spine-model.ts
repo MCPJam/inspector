@@ -13,11 +13,17 @@ import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import {
   actionRows,
   countModelSteps,
+  insertStepAfter,
   isAssertStep,
+  newStepId,
   stepTurnIndices,
   type TestStep,
 } from "@/shared/steps";
-import { removeStepById } from "../simple-case/simple-case-model";
+import {
+  isToolCalledWithAssert,
+  removeStepById,
+  type SimpleCaseTool,
+} from "../simple-case/simple-case-model";
 import type { CasePredicates } from "@/shared/eval-matching";
 import type {
   CaseScorecard,
@@ -235,4 +241,80 @@ export function isQuietCase(input: {
     return false;
   }
   return true;
+}
+
+/**
+ * The tools each LATER prompt expects, keyed by that prompt's step id.
+ *
+ * The runner grades a `toolCalledWith` against the turn it sits in, so a tool
+ * written under prompt 2 is prompt 2's expectation. The case-wide tool block
+ * reads every one of them (`readSimpleCase`) and used to draw them all under
+ * prompt 1, which left the later prompts looking like they checked nothing.
+ * The first prompt keeps whatever this map does not claim, so a case that
+ * opens with a check or a pinned call reads exactly as before.
+ */
+export function toolsByLaterAction(
+  steps: TestStep[],
+): Map<string, SimpleCaseTool[]> {
+  const out = new Map<string, SimpleCaseTool[]>();
+  for (const action of actionRows(steps).actions) {
+    if (action.ordinal === 1) continue;
+    const tools = action.checks.flatMap(({ step }) =>
+      isToolCalledWithAssert(step) &&
+      step.kind === "assert" &&
+      "type" in step.assertion &&
+      step.assertion.type === "toolCalledWith"
+        ? [
+            {
+              id: step.id,
+              toolName: step.assertion.toolName,
+              arguments: step.assertion.args?.args ?? {},
+            },
+          ]
+        : [],
+    );
+    if (tools.length > 0) out.set(action.step.id, tools);
+  }
+  return out;
+}
+
+/**
+ * Replace the tools ONE prompt expects, leaving every other step where it is.
+ *
+ * A kept tool is rewritten in place (same id, same position), a dropped one is
+ * removed, and a new one goes at the end of that prompt's block, in the order
+ * given, so it grades the same turn and never jumps ahead of an older gate.
+ */
+export function replaceActionTools(
+  steps: TestStep[],
+  actionStepId: string,
+  current: readonly SimpleCaseTool[],
+  next: readonly SimpleCaseTool[],
+): TestStep[] {
+  const toStep = (tool: SimpleCaseTool, id: string): TestStep => ({
+    id,
+    kind: "assert",
+    assertion: {
+      type: "toolCalledWith",
+      toolName: tool.toolName,
+      args: { args: tool.arguments ?? {} },
+    },
+  });
+  const currentIds = new Set(current.map((tool) => tool.id));
+  const nextById = new Map(
+    next.filter((tool) => tool.id).map((tool) => [tool.id as string, tool]),
+  );
+  let out = steps.flatMap((step) => {
+    if (!currentIds.has(step.id)) return [step];
+    const kept = nextById.get(step.id);
+    return kept ? [toStep(kept, step.id)] : [];
+  });
+  let anchor = actionStepId;
+  for (const tool of next) {
+    if (tool.id && currentIds.has(tool.id)) continue;
+    const id = tool.id ?? newStepId("assert");
+    out = insertStepAfter(out, anchor, toStep(tool, id));
+    anchor = id;
+  }
+  return out;
 }
