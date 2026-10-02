@@ -281,3 +281,66 @@ test("npm runs through its JS entry point, never a Windows .cmd shim", () => {
   assert.equal(underPnpm.command, "npm");
   assert.deepEqual(underPnpm.args(["run", "x"]), ["run", "x"]);
 });
+
+test("on Windows without npm's entry point the launcher refuses instead of spawning npm.cmd", () => {
+  assert.throws(
+    () => npmInvocation({ env: {}, platform: "win32", execPath: "node.exe" }),
+    /through npm/,
+  );
+});
+
+test("an empty --env-file is an error, not the default profile", () => {
+  assert.throws(() => parseLauncherArgs(["1", "--env-file="]), /needs a path/);
+  assert.throws(
+    () => parseLauncherArgs(["1", "--env-file", ""]),
+    /needs a path/,
+  );
+});
+
+test("a relative --env-file is resolved from the directory npm was run in", () => {
+  const w = inspectorDir();
+  try {
+    const plan = planLaunch({
+      args: parseLauncherArgs([
+        "1",
+        "--env-file",
+        "mcpjam-inspector/.env.local",
+      ]),
+      inspectorDir: w.dir,
+      env: { INIT_CWD: join(w.dir, "..") },
+    });
+    assert.equal(
+      plan.childEnv.CONVEX_HTTP_URL,
+      "https://energized-ant-201.convex.site",
+    );
+  } finally {
+    w.done();
+  }
+});
+
+test(
+  "a child whose leader already exited still has its process group stopped",
+  { skip: process.platform === "win32" },
+  async () => {
+    const supervisor = createSupervisor({ log: () => {} });
+    // Like an npm wrapper that exits while the vite it started keeps running.
+    const leader = supervisor.start(
+      "client",
+      process.execPath,
+      [
+        "-e",
+        "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'inherit'});console.log('GRANDCHILD',c.pid);setTimeout(()=>process.exit(0),200)",
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const grandchildPid = await new Promise((resolve) => {
+      leader.stdout.on("data", (chunk) => {
+        const match = /GRANDCHILD (\d+)/.exec(String(chunk));
+        if (match) resolve(Number(match[1]));
+      });
+    });
+    assert.equal(await supervisor.done, 0);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(alive(grandchildPid), false);
+  },
+);

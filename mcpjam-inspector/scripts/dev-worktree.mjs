@@ -41,6 +41,7 @@ import {
   describeProfile,
   findMainInspectorDir,
   formatEnvAssignment,
+  resolveInvocationPath,
   resolveRuntimeProfile,
 } from "../bin/runtime-profile.mjs";
 
@@ -76,6 +77,9 @@ export function parseLauncherArgs(argv) {
     else if (arg.startsWith("--"))
       throw new RuntimeConfigError(`Unknown option: ${arg}`);
     else positional.push(arg);
+  }
+  if (options.envFile === "") {
+    throw new RuntimeConfigError("--env-file needs a path to a profile.");
   }
 
   const instance = Number(positional[0]);
@@ -128,7 +132,7 @@ export function planLaunch({
   const ports = computeInstancePorts(args.instance, args.portOverrides);
   const profile = resolveRuntimeProfile({
     target: args.target,
-    envFile: args.envFile,
+    envFile: args.envFile && resolveInvocationPath(args.envFile, env),
     previewUrls: args.previewUrls,
     inspectorDir,
     // A main-worktree profile is a fallback for the default target ONLY.
@@ -201,18 +205,39 @@ export function createSupervisor({
   });
   let exitCode = 0;
 
-  const signalGroup = (child, signal) => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = (child) =>
+    child.exitCode !== null || child.signalCode !== null;
+
+  // On POSIX the group outlives its leader: an npm wrapper can exit while the
+  // vite/tsx/workerd it started still hold their ports.
+  const gone = (child) => {
+    if (child.pid === undefined) return true;
+    if (!exited(child)) return false;
+    if (process.platform === "win32") return true;
     try {
-      if (process.platform === "win32") {
+      process.kill(-child.pid, 0);
+      return false;
+    } catch (error) {
+      if (error.code === "ESRCH") return true;
+      throw error;
+    }
+  };
+
+  const signalGroup = (child, signal) => {
+    if (child.pid === undefined) return;
+    if (process.platform === "win32") {
+      // taskkill /T walks the tree from a live leader only.
+      if (!exited(child)) {
         spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
           stdio: "ignore",
         });
-      } else {
-        process.kill(-child.pid, signal);
       }
-    } catch {
-      // Already gone.
+      return;
+    }
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
     }
   };
 
@@ -221,20 +246,20 @@ export function createSupervisor({
     stopping = true;
     exitCode = code;
     for (const child of children) signalGroup(child, "SIGTERM");
+    const finish = () => {
+      clearInterval(poll);
+      clearTimeout(force);
+      resolveDone(exitCode);
+    };
+    const poll = setInterval(() => {
+      if ([...children].every(gone)) finish();
+    }, 100);
+    // An orphan that is already dead can linger as a zombie (and keep its
+    // group "alive") until something reaps it, so stop waiting after SIGKILL.
     const force = setTimeout(() => {
       for (const child of children) signalGroup(child, "SIGKILL");
+      finish();
     }, 5_000);
-    force.unref();
-    const check = () => {
-      if (
-        [...children].every((c) => c.exitCode !== null || c.signalCode !== null)
-      ) {
-        clearTimeout(force);
-        resolveDone(exitCode);
-      }
-    };
-    for (const child of children) child.once("exit", check);
-    check();
   };
 
   return {
@@ -286,10 +311,13 @@ export function npmInvocation({
   if (npmCli && /npm-cli\.[cm]?js$/.test(npmCli)) {
     return { command: execPath, args: (args) => [npmCli, ...args] };
   }
-  return {
-    command: platform === "win32" ? "npm.cmd" : "npm",
-    args: (args) => args,
-  };
+  if (platform === "win32") {
+    throw new RuntimeConfigError(
+      "On Windows, start the launcher through npm (npm run dev:worktree -- <instance>) " +
+        "so it can run npm without a shell.",
+    );
+  }
+  return { command: "npm", args: (args) => args };
 }
 
 function runToCompletion(command, args, options) {
@@ -306,10 +334,12 @@ function runToCompletion(command, args, options) {
 
 async function main() {
   const inspectorDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const { command: npm, args: npmArgs } = npmInvocation();
+  let npm;
+  let npmArgs;
   let args;
   let plan;
   try {
+    ({ command: npm, args: npmArgs } = npmInvocation());
     args = parseLauncherArgs(process.argv.slice(2));
     const common = gitCommonDir(inspectorDir);
     plan = planLaunch({
@@ -348,17 +378,6 @@ async function main() {
     );
   }
 
-  const conflicts = await findPortConflicts(
-    workerVars ? ports : { client: ports.client, server: ports.server },
-  );
-  if (conflicts.length > 0) {
-    process.stderr.write(
-      `dev:worktree: ${conflicts.map((c) => `${c.role} port ${c.port}`).join(", ")} already in use. ` +
-        "Pick another instance number or pass --client-port/--server-port/--worker-port/--debugger-port.\n",
-    );
-    process.exit(1);
-  }
-
   if (args.prepare) {
     try {
       await runToCompletion(npm, npmArgs(["run", "sdk:build"]), {
@@ -375,6 +394,17 @@ async function main() {
       );
       process.exit(1);
     }
+  }
+
+  const conflicts = await findPortConflicts(
+    workerVars ? ports : { client: ports.client, server: ports.server },
+  );
+  if (conflicts.length > 0) {
+    process.stderr.write(
+      `dev:worktree: ${conflicts.map((c) => `${c.role} port ${c.port}`).join(", ")} already in use. ` +
+        "Pick another instance number or pass --client-port/--server-port/--worker-port/--debugger-port.\n",
+    );
+    process.exit(1);
   }
 
   const launchToken = createLaunchToken(childEnv);

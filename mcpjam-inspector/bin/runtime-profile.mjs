@@ -19,8 +19,8 @@
  *   --env-file F     F alone. Explicit selection wins over everything.
  *   staging          public staging defaults, the MCPJAM_STAGING_* URLs, then
  *                    this worktree's `.env.staging.local`.
- *   preview A B      public staging WorkOS defaults, the two URLs, then
- *                    `--env-file` if given.
+ *   preview A B      public staging defaults (WorkOS client, hosted guest
+ *                    authority), then `--env-file` if given, then the two URLs.
  *
  * Settings that belong together are resolved as a GROUP: the backend group
  * (Convex addresses, guest authority, every backend-bound credential) and the
@@ -174,7 +174,12 @@ export function parseEnvText(text) {
         body += `\n${lines[i]}`;
         end = closingQuoteIndex(body, quote);
       }
-      value = end === -1 ? body : body.slice(0, end);
+      if (end === -1) {
+        throw new RuntimeConfigError(
+          `The value of ${key} opens a ${quote} quote that is never closed.`,
+        );
+      }
+      value = body.slice(0, end);
       if (quote === '"') value = decodeDoubleQuoted(value);
     } else {
       value = value.replace(/\s+#.*$/, "").trim();
@@ -194,6 +199,14 @@ export function formatEnvAssignment(name, value) {
     .replace(/\r/g, "\\r")
     .replace(/"/g, '\\"');
   return `${name}="${escaped}"`;
+}
+
+/**
+ * A path the user typed, resolved against the directory they ran npm from:
+ * `npm run -w <workspace>` runs the script from the workspace directory.
+ */
+export function resolveInvocationPath(path, env = process.env) {
+  return resolve(env.INIT_CWD ?? process.cwd(), path);
 }
 
 export function readEnvFile(path, fs = { existsSync, readFileSync }) {
@@ -283,11 +296,60 @@ export function resolveProfileLayers(args) {
     return values;
   };
 
+  if (target === "preview") {
+    const [viteConvexUrl, convexHttpUrl] = (args.previewUrls ?? []).map(
+      nonEmpty,
+    );
+    if (!viteConvexUrl || !convexHttpUrl) {
+      throw new RuntimeConfigError(
+        "The preview target needs explicit VITE_CONVEX_URL and CONVEX_HTTP_URL arguments.",
+      );
+    }
+    layers.push({
+      name: "preview defaults",
+      values: {
+        WORKOS_CLIENT_ID: STAGING_WORKOS_CLIENT_ID,
+        VITE_WORKOS_CLIENT_ID: STAGING_WORKOS_CLIENT_ID,
+      },
+    });
+    const path = args.envFile ? resolve(args.envFile) : undefined;
+    const fileValues = path ? readEnvFile(path, fs) : null;
+    if (path && !fileValues) {
+      throw new RuntimeConfigError(
+        `--env-file ${args.envFile} does not exist.`,
+      );
+    }
+    const urls = {
+      VITE_CONVEX_URL: viteConvexUrl,
+      CONVEX_URL: viteConvexUrl,
+      CONVEX_HTTP_URL: convexHttpUrl,
+    };
+    for (const [key, value] of Object.entries(urls)) {
+      const fromFile = nonEmpty(fileValues?.[key]);
+      if (fromFile && fromFile !== value) {
+        throw new RuntimeConfigError(
+          `--env-file ${args.envFile} sets ${key} to a different backend than the preview arguments.`,
+        );
+      }
+    }
+    // Like staging: the URLs, the hosted guest authority and the file are ONE
+    // layer, so the file can supply the preview backend's credentials without
+    // replacing the backend the arguments name.
+    layers.push({
+      name: path ? `preview with --env-file ${args.envFile}` : "preview",
+      path,
+      values: {
+        MCPJAM_GUEST_AUTHORITY: "hosted",
+        MCPJAM_GUEST_AUTHORITY_ORIGIN: STAGING_HOSTED_ORIGIN,
+        ...(fileValues ?? {}),
+        ...urls,
+      },
+    });
+    return { target, explicit: true, layers };
+  }
+
   if (args.envFile) {
     const path = resolve(args.envFile);
-    if (target === "preview") {
-      layers.push(previewLayer(args.previewUrls));
-    }
     if (!read(`--env-file ${args.envFile}`, path)) {
       throw new RuntimeConfigError(
         `--env-file ${args.envFile} does not exist.`,
@@ -333,11 +395,6 @@ export function resolveProfileLayers(args) {
     return { target, explicit: true, layers };
   }
 
-  if (target === "preview") {
-    layers.push(previewLayer(args.previewUrls));
-    return { target, explicit: true, layers };
-  }
-
   // local: the standard OSS profile, then a developer overlay.
   read("standard profile (.env.local)", join(args.inspectorDir, ".env.local"));
   const own = join(args.inspectorDir, ".env.development.local");
@@ -349,25 +406,6 @@ export function resolveProfileLayers(args) {
     read("main worktree profile (read in place)", main);
   }
   return { target, explicit: false, layers };
-}
-
-function previewLayer(urls) {
-  const [viteConvexUrl, convexHttpUrl] = urls ?? [];
-  if (!nonEmpty(viteConvexUrl) || !nonEmpty(convexHttpUrl)) {
-    throw new RuntimeConfigError(
-      "The preview target needs explicit VITE_CONVEX_URL and CONVEX_HTTP_URL arguments.",
-    );
-  }
-  return {
-    name: "preview",
-    values: {
-      WORKOS_CLIENT_ID: STAGING_WORKOS_CLIENT_ID,
-      VITE_WORKOS_CLIENT_ID: STAGING_WORKOS_CLIENT_ID,
-      VITE_CONVEX_URL: viteConvexUrl,
-      CONVEX_URL: viteConvexUrl,
-      CONVEX_HTTP_URL: convexHttpUrl,
-    },
-  };
 }
 
 /**
@@ -566,9 +604,12 @@ export function computeInstanceEnv({
   const serverOrigin = `http://${host}:${ports.server}`;
   const keepPublic = (name) => {
     const value = nonEmpty(profile[name]);
-    return value && !isLoopbackOrigin(value)
-      ? new URL(value).origin
-      : undefined;
+    if (!value || isLoopbackOrigin(value)) return undefined;
+    try {
+      return new URL(value).origin;
+    } catch {
+      return undefined;
+    }
   };
   const cliOrigin = keepPublic("CLI_AUTH_PUBLIC_ORIGIN") ?? browserOrigin;
   const extraOrigins = (profile.WEB_ALLOWED_ORIGINS ?? "")

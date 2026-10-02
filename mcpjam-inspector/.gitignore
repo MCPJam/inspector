@@ -54,6 +54,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env
 .env.development
+.env.*.local
 client/.env
 client/.env.*
 

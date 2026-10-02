@@ -30,7 +30,9 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
+  accessSync,
   chmodSync,
+  constants,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -41,7 +43,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatEnvAssignment, parseEnvText } from "../bin/runtime-profile.mjs";
+import {
+  formatEnvAssignment,
+  parseEnvText,
+  resolveInvocationPath,
+} from "../bin/runtime-profile.mjs";
 
 const SELECTOR = /^dev:([a-z0-9]+(?:-[a-z0-9]+)*-\d+)$/;
 
@@ -96,15 +102,15 @@ function generateGuestKeyPair(now) {
 
 /**
  * Plan and apply. `convex` is `{ list(): Promise<string[]>, get(name):
- * Promise<string|null>, set(name, value): Promise<void> }` bound to the one
- * selected deployment.
+ * Promise<string|null>, setAll(entries): Promise<void> }` bound to the one
+ * selected deployment; `setAll` applies every `[name, value]` in one update.
  */
 export async function setupGuestAuth({
   selector,
   envFile,
   dryRun = false,
   convex,
-  fs = { existsSync, readFileSync, writeFileSync, chmodSync },
+  fs = { existsSync, readFileSync, writeFileSync, chmodSync, accessSync },
   now = Date.now(),
   log = () => {},
 }) {
@@ -214,6 +220,19 @@ export async function setupGuestAuth({
     }
   }
 
+  if (localWrites.length > 0) {
+    // Refuse an unwritable profile before the deployment changes: once the
+    // deployment has new secrets, a later run cannot regenerate them to match.
+    const target = fs.existsSync(profilePath)
+      ? profilePath
+      : dirname(profilePath);
+    try {
+      fs.accessSync(target, constants.W_OK);
+    } catch (error) {
+      throw new SetupError(`${envFile} cannot be written (${error.code}).`);
+    }
+  }
+
   const plan = {
     deployment: selector,
     remote: remoteWrites.map(([key]) => key),
@@ -228,9 +247,7 @@ export async function setupGuestAuth({
   );
   if (dryRun) return { ...plan, applied: false };
 
-  for (const [key, value] of remoteWrites) {
-    await convex.set(key, value);
-  }
+  if (remoteWrites.length > 0) await convex.setAll(remoteWrites);
   if (localWrites.length > 0) {
     const prefix = existingText && !existingText.endsWith("\n") ? "\n" : "";
     const block = [
@@ -258,7 +275,11 @@ function convexCliPath() {
   );
 }
 
-export function createIsolatedConvex(selector, baseEnv = process.env) {
+export function createIsolatedConvex(
+  selector,
+  baseEnv = process.env,
+  cli = convexCliPath(),
+) {
   const workdir = mkdtempSync(join(tmpdir(), "mcpjam-guest-auth-setup-"));
   // The CLI insists on a package.json that depends on convex; nothing else
   // lives here, so there is no .env.local or convex.json for it to find.
@@ -271,10 +292,9 @@ export function createIsolatedConvex(selector, baseEnv = process.env) {
     }),
   );
   const env = isolatedConvexEnv(baseEnv, selector);
-  const cli = convexCliPath();
-  const run = (args) =>
+  const run = (args, { label = args.join(" "), input = "" } = {}) =>
     new Promise((resolvePromise, reject) => {
-      execFile(
+      const child = execFile(
         process.execPath,
         [cli, ...args],
         {
@@ -286,14 +306,24 @@ export function createIsolatedConvex(selector, baseEnv = process.env) {
         },
         (error, stdout, stderr) => {
           if (!error) return resolvePromise({ stdout, stderr });
-          // stderr can name the deployment but never carries a value we sent.
-          reject(
-            new SetupError(
-              `convex ${args[0]} ${args[1] ?? ""} failed: ${stderr?.trim() || error.message}`,
-            ),
-          );
+          // Never error.message: it repeats the command line. stderr can name
+          // the deployment but never carries a value we sent.
+          const detail =
+            stderr?.trim() ||
+            (error.signal
+              ? `signal ${error.signal}`
+              : `exit code ${error.code}`);
+          reject(new SetupError(`convex ${label} failed: ${detail}`));
         },
       );
+      // A CLI that fails before reading its input closes the pipe; the exit
+      // callback above reports that failure.
+      child.stdin.on("error", (error) => {
+        if (error.code !== "EPIPE") {
+          reject(new SetupError(`convex ${label} failed: ${error.code}`));
+        }
+      });
+      child.stdin.end(input);
     });
   return {
     workdir,
@@ -309,8 +339,18 @@ export function createIsolatedConvex(selector, baseEnv = process.env) {
       const value = stdout.replace(/\r?\n$/, "");
       return value === "" ? null : value;
     },
-    async set(name, value) {
-      await run(["env", "set", name, "--", value]);
+    /**
+     * `env set` with no name reads a dotenv document from stdin and applies it
+     * in one update, refusing all of it if any variable already differs. The
+     * values stay out of argv, so out of the process list and error messages.
+     */
+    async setAll(entries) {
+      await run(["env", "set"], {
+        label: `env set ${entries.map(([name]) => name).join(", ")}`,
+        input: `${entries
+          .map(([name, value]) => formatEnvAssignment(name, value))
+          .join("\n")}\n`,
+      });
     },
     dispose() {
       rmSync(workdir, { recursive: true, force: true });
@@ -331,6 +371,9 @@ function parseArgs(argv) {
     else if (arg === "--dry-run") out.dryRun = true;
     else throw new SetupError(`Unknown argument: ${arg}`);
   }
+  if ("envFile" in out && !out.envFile) {
+    throw new SetupError("--env-file needs a path.");
+  }
   return out;
 }
 
@@ -341,8 +384,9 @@ async function main() {
     const args = parseArgs(process.argv.slice(2));
     const selector = args.selector;
     parseDevelopmentSelector(selector);
-    const envFile =
-      args.envFile ?? join(inspectorDir, ".env.development.local");
+    const envFile = args.envFile
+      ? resolveInvocationPath(args.envFile)
+      : join(inspectorDir, ".env.development.local");
     convex = createIsolatedConvex(selector);
     const result = await setupGuestAuth({
       selector,

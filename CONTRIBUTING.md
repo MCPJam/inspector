@@ -137,11 +137,15 @@ worker debugger `9229+N` (`--client-port`, `--server-port`, `--worker-port`,
 resolves ONE profile for the instance and passes it to the server, Vite and the
 worker, none of which then reads `.env` files on its own:
 
-- `--env-file <profile>` is the whole profile and wins over everything.
+- `--env-file <profile>` is the whole profile and wins over everything, except
+  with `preview`: there the two URLs name the backend and the file supplies its
+  other settings (for example its guest credentials). A relative path is
+  resolved from the directory you ran npm in.
 - `local` (default): the committed `.env.local`, overlaid by this worktree's
   `.env.development.local` — or, only when you named no target, the main
   worktree's, read in place (secrets are never copied between worktrees).
-- `staging` / `preview` never inherit the local profile.
+- `staging` / `preview` never inherit the local profile. Both default to the
+  hosted guest authority at `staging.mcpjam.com`.
 
 Backend settings (Convex addresses, guest authority, service tokens, `COMPUTERS_*`,
 `DEPLOYMENT_SESSION_JWT_*`) and sign-in settings (WorkOS, CLI/Slack/Discord auth) are

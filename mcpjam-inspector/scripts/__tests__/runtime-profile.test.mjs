@@ -12,6 +12,7 @@ import {
   describeProfile,
   formatEnvAssignment,
   parseEnvText,
+  resolveInvocationPath,
   resolveRuntimeProfile,
 } from "../../bin/runtime-profile.mjs";
 
@@ -367,4 +368,117 @@ test("a quoted value ends at its closing quote, not at the end of the line", () 
     MULTI: "line one\nline two",
     AFTER: "1",
   });
+});
+
+test("an unterminated quote is an error naming the key, not the rest of the file", () => {
+  assert.throws(
+    () => parseEnvText('A=1\nSECRET="abc\nB=2\n'),
+    (error) =>
+      error instanceof RuntimeConfigError &&
+      /SECRET/.test(error.message) &&
+      !error.message.includes("abc"),
+  );
+});
+
+test("an unparseable public origin is dropped, not a startup failure", () => {
+  const env = computeInstanceEnv({
+    ports: { server: 6274 },
+    browserPort: 6274,
+    profile: { CLI_AUTH_PUBLIC_ORIGIN: "not a url" },
+  });
+  assert.equal(env.CLI_AUTH_PUBLIC_ORIGIN, "http://localhost:6274");
+});
+
+const PREVIEW_URLS = [
+  "https://brave-fox-42.convex.cloud",
+  "https://brave-fox-42.convex.site",
+];
+
+test("preview alone uses the staging WorkOS client and the hosted guest authority", () => {
+  const w = worktree();
+  try {
+    const profile = resolveRuntimeProfile({
+      inspectorDir: w.dir,
+      target: "preview",
+      previewUrls: PREVIEW_URLS,
+      env: {},
+    });
+    assert.equal(profile.values.CONVEX_HTTP_URL, PREVIEW_URLS[1]);
+    assert.equal(profile.values.VITE_CONVEX_URL, PREVIEW_URLS[0]);
+    assert.equal(
+      profile.values.WORKOS_CLIENT_ID,
+      "client_01K4C1TVA6CMQ3G32F1P301A9G",
+    );
+    assert.equal(profile.values.MCPJAM_GUEST_AUTHORITY, "hosted");
+    assert.equal(
+      profile.values.MCPJAM_GUEST_AUTHORITY_ORIGIN,
+      "https://staging.mcpjam.com",
+    );
+  } finally {
+    w.done();
+  }
+});
+
+test("preview with --env-file keeps the preview URLs and takes the file's guest credentials", () => {
+  const w = worktree({
+    "preview.env": [
+      "MCPJAM_GUEST_AUTHORITY=backend",
+      "MCPJAM_GUEST_SESSION_SHARED_SECRET=preview-secret",
+      "OPENAI_API_KEY=sk-x",
+    ].join("\n"),
+    "other.env": [
+      "CONVEX_HTTP_URL=https://someone-else-9.convex.site",
+      "MCPJAM_GUEST_SESSION_SHARED_SECRET=other-secret",
+    ].join("\n"),
+  });
+  try {
+    const profile = resolveRuntimeProfile({
+      inspectorDir: w.dir,
+      target: "preview",
+      previewUrls: PREVIEW_URLS,
+      envFile: join(w.dir, "preview.env"),
+      env: {},
+    });
+    assert.equal(profile.values.CONVEX_HTTP_URL, PREVIEW_URLS[1]);
+    assert.equal(profile.values.CONVEX_URL, PREVIEW_URLS[0]);
+    assert.equal(profile.values.MCPJAM_GUEST_AUTHORITY, "backend");
+    assert.equal(
+      profile.values.MCPJAM_GUEST_SESSION_SHARED_SECRET,
+      "preview-secret",
+    );
+    assert.equal(profile.values.OPENAI_API_KEY, "sk-x");
+    assert.equal(
+      profile.values.WORKOS_CLIENT_ID,
+      "client_01K4C1TVA6CMQ3G32F1P301A9G",
+    );
+
+    // A file that names another backend would pair its secret with the
+    // preview deployment.
+    assert.throws(
+      () =>
+        resolveRuntimeProfile({
+          inspectorDir: w.dir,
+          target: "preview",
+          previewUrls: PREVIEW_URLS,
+          envFile: join(w.dir, "other.env"),
+          env: {},
+        }),
+      /different backend/,
+    );
+  } finally {
+    w.done();
+  }
+});
+
+test("a relative path is resolved from where npm was run, not the workspace", () => {
+  assert.equal(
+    resolveInvocationPath("mcpjam-inspector/.env.development.local", {
+      INIT_CWD: join(tmpdir(), "repo"),
+    }),
+    join(tmpdir(), "repo", "mcpjam-inspector", ".env.development.local"),
+  );
+  assert.equal(
+    resolveInvocationPath("x.env", {}),
+    join(process.cwd(), "x.env"),
+  );
 });
