@@ -145,8 +145,10 @@ const MAX_PASSTHROUGH_REASON_LENGTH = 300;
  * Form feed is in the set because the toast renders with `white-space:
  * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
  * U+000D — so it breaks lines on screen even though it looks inert in a string.
+ * Vertical tab and next-line complete it: with CR, LF, FF and the two Unicode
+ * separators, these are every mandatory break in UAX #14.
  */
-const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
+const LINE_BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 
 /**
  * A human-readable reason from a backend launch rejection.

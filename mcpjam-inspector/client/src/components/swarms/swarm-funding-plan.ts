@@ -157,10 +157,11 @@ function ineligibilityClause(
       return one
         ? "it runs a coding-agent harness"
         : "they run a coding-agent harness";
+    // Also stamped for the Bash and Browser built-in tools, not only a computer.
     case "computer_target":
       return one
-        ? "it uses a computer or shell"
-        : "they use a computer or shell";
+        ? "it uses a computer, shell or browser"
+        : "they use a computer, shell or browser";
     case "unresolved":
       return one
         ? "its setup could not be read"

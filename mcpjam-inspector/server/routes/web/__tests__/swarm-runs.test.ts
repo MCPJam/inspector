@@ -782,6 +782,8 @@ describe("web routes — swarm funding preview", () => {
       ["a newline", "first\nsecond"],
       ["a carriage return", "first\rsecond"],
       ["a form feed", "first\fsecond"],
+      ["a vertical tab", "first\vsecond"],
+      ["a next-line character", "first\u0085second"],
       ["a Unicode line separator", "first second"],
       ["a Unicode paragraph separator", "first second"],
       ["more than a sentence", "x".repeat(301)],
