@@ -171,10 +171,25 @@ export function environmentsForModelCell<
   );
   if (cell.modelId === undefined || !cell.efforts) return sameCell;
   const wanted = modelTarget(cell.modelId, cell.picked);
-  return sameCell.filter((environment) =>
+  const exact = sameCell.filter((environment) =>
     sameModelTarget(
       modelTarget(cell.modelId!, environment.modelSelection),
       wanted,
     ),
   );
+  if (exact.length > 0) return exact;
+  // An environment saved before selections has none; the composer fills the
+  // cell's target from the catalog row (an org-only model gets an `org`
+  // selection), which the environment never chose against. Such a pick
+  // without settings is still the environment's own cell: reuse it rather
+  // than derive a twin and detach it with its history. A pick WITH settings
+  // (an effort) is a different target, as before.
+  const settings = cell.picked?.settings;
+  const plainPick =
+    settings === undefined ||
+    (settings.reasoningEffort === undefined &&
+      settings.temperature === undefined);
+  return plainPick
+    ? sameCell.filter((environment) => !environment.modelSelection)
+    : [];
 }
