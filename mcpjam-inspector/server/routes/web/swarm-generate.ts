@@ -26,6 +26,7 @@ import {
   generateSwarmPersona,
   generateSwarmPersonaBatch,
 } from "../../services/swarm-generate.js";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../shared/swarm-description.js";
 
 const swarmGenerate = new Hono();
 
@@ -57,8 +58,13 @@ export const generateBaseSchema = z.object({
   journeyCount: z.number().int().min(1).max(5).default(3),
   // Free-text audience description from the create flow. Capped to match the
   // backend's own slice so an over-long body fails here with a local 400
-  // instead of being silently truncated upstream.
-  description: z.string().trim().min(1).max(2000).optional(),
+  // instead of being silently truncated upstream — raise the two together.
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(SWARM_DESCRIPTION_MAX_CHARS)
+    .optional(),
   existingPersonas: z
     .array(
       z.object({

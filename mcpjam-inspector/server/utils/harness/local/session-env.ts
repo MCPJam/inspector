@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 /**
  * The environment a supervised local harness child is given.
  *
@@ -143,6 +144,8 @@ const SCOPED_NAME_DENYLIST = new Set([
   "APPDATA",
   "LOCALAPPDATA",
   "PWD",
+  "MCPJAM_LOCAL_CONTROL_ROOT",
+  "MCPJAM_LOCAL_DENIED_ROOTS",
   // Names the shell the vendor CLI runs commands through. A scoped override
   // would point it at any executable; the provider sets it from a path it
   // has verified exists.
@@ -175,9 +178,24 @@ export function buildLocalHarnessEnv(
     if (typeof value === "string" && value.length > 0) env[name] = value;
   }
 
-  env.PATH = systemPath(platform, base);
+  env.PATH = platform === "win32" && opts.gitBashPath ? `${path.dirname(opts.gitBashPath)}${path.delimiter}${systemPath(platform, base)}` : systemPath(platform, base);
   env.HOME = opts.syntheticHome;
   env.PWD = opts.sessionRoot;
+  env.MCPJAM_LOCAL_CONTROL_ROOT = path.dirname(path.dirname(opts.syntheticHome)).replace(/-sessions$/, "");
+  const deniedRoots: string[] = [];
+  const controlRoot = env.MCPJAM_LOCAL_CONTROL_ROOT;
+  // Deny other sessions/workspaces, preserving this session's skill home and
+  // working folder. These file-tool rules are defense in depth, not a sandbox.
+  for (const parent of [`${controlRoot}-sessions`, path.join(path.dirname(controlRoot), "harness-workspaces"), path.join(path.dirname(controlRoot), "harness-workspaces", "scratch")]) {
+    try {
+      for (const entry of readdirSync(parent, { withFileTypes: true })) {
+        const root = path.join(parent, entry.name);
+        if (entry.isDirectory() && ![opts.syntheticHome, opts.sessionRoot].some(active => active === root || active.startsWith(root + path.sep))) deniedRoots.push(root);
+      }
+    } catch { /* A new installation may not have any sibling sessions. */ }
+  }
+  env.MCPJAM_LOCAL_DENIED_ROOTS = JSON.stringify(deniedRoots);
+
   // Vendor CLIs write caches and temp files; point every conventional variable
   // at the session's own disposable state so nothing lands in the user's real
   // config and everything is removed with the session.
@@ -210,7 +228,17 @@ export function buildLocalHarnessEnv(
   env.CI = "1";
   env.NO_COLOR = "1";
 
-  for (const [name, value] of Object.entries(opts.scoped ?? {})) {
+  validateLocalHarnessScopedEnv(opts.scoped ?? {});
+  Object.assign(env, opts.scoped);
+
+  return env;
+}
+
+/** Validate caller-supplied secrets before reserving a runtime or model lease. */
+export function validateLocalHarnessScopedEnv(
+  scoped: Readonly<Record<string, string>>,
+): void {
+  for (const [name, value] of Object.entries(scoped)) {
     if (SCOPED_NAME_DENYLIST.has(name.toUpperCase())) {
       throw new LocalHarnessEnvError(
         `scoped environment entry ${name} is not allowed: it would redirect ` +
@@ -228,10 +256,21 @@ export function buildLocalHarnessEnv(
         `scoped environment value for ${name} contains a control character`,
       );
     }
-    env[name] = value;
   }
+}
 
-  return env;
+/** Project secrets must not impersonate runtime-owned model or bridge credentials. */
+export function validateLocalHarnessSecretEnv(
+  scoped: Readonly<Record<string, string>>,
+): void {
+  validateLocalHarnessScopedEnv(scoped);
+  for (const name of Object.keys(scoped)) {
+    if (/^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i.test(name)) {
+      throw new LocalHarnessEnvError(
+        `Project secret ${name} conflicts with the local harness runtime.`,
+      );
+    }
+  }
 }
 
 /**

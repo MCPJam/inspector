@@ -43,12 +43,10 @@ function isRevocationResponse(
 /**
  * Revoke the WorkOS AuthKit session an access token belongs to, in Convex.
  *
- * WorkOS's logout ends a session — no more refreshes — but cannot recall the
- * access tokens it already issued, and Convex accepts those on signature and
- * expiry alone. The backend's `authSessions:revokeCurrentSession` records the
- * token's session id (`sid`) so every later request carrying a token from that
- * session is treated as signed out (see the backend's
- * `lib/sessionRevocation.ts`).
+ * WorkOS's logout ends the session for refreshes. The backend's
+ * `authSessions:revokeCurrentSession` records the token's session id (`sid`),
+ * and every later request carrying a token from that session is treated as
+ * signed out (see the backend's `lib/sessionRevocation.ts`).
  *
  * The mutation only ever revokes the session of the token that calls it, so
  * this is safe to call with any bearer: a token without a session id, or one

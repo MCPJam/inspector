@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "../config.js";
 /**
  * Convex bearer resolution for the public /api/v1 surface.
  *
@@ -317,6 +318,13 @@ export async function getBackgroundRunBearerForRequest(
     requireFresh: false,
     path: c.req.path,
   });
+  // Native installs have no service credential. Keep the verified member
+  // bearer; expiration/revocation stops work rather than elevating it.
+  if (!HOSTED_MODE) return async () => {
+    await verifyAuthKitToken(bearer);
+    assertSessionServable(session.sid, { requireFresh: false, path: c.req.path });
+    return bearer;
+  };
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new WebRouteError(

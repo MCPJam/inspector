@@ -59,6 +59,20 @@ describe("client sentry init", () => {
     expect(resolveClientSentryConfig().dist).toBe("npm");
   });
 
+  it("reports by default", async () => {
+    const { resolveClientSentryConfig } = await import("../sentry");
+
+    expect(resolveClientSentryConfig().enabled).toBe(true);
+  });
+
+  it("stops reporting when the bundle is built with VITE_DISABLE_SENTRY", async () => {
+    vi.stubEnv("VITE_DISABLE_SENTRY", "true");
+    vi.resetModules();
+    const { resolveClientSentryConfig } = await import("../sentry");
+
+    expect(resolveClientSentryConfig().enabled).toBe(false);
+  });
+
   it("tags hosted when the bundle is built for hosted mode", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.resetModules();

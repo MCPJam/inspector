@@ -60,7 +60,30 @@ interface AuthorizationServerFailure {
   url: string;
   status: number;
   body: string;
+  /** "token" when this was the `grant_type=refresh_token` request itself. */
+  phase: string | null;
 }
+
+/**
+ * Set instead of a failure when nothing answered at all. Travels as
+ * `details.transport` on the same 503.
+ */
+interface AuthorizationServerTransport {
+  phase: string | null;
+  kind: string | null;
+  cause: string | null;
+}
+
+/**
+ * The authorization server's own RFC 6749 reply when it refused the refresh.
+ * Travels as `details.declined` on the 401 (`refresh_token_invalid`).
+ */
+interface RefreshDecline {
+  error: string;
+  description: string;
+}
+
+const REFRESH_REQUEST = "grant_type=refresh_token";
 
 function structuredPartsOf(error: unknown): {
   code: string | null;
@@ -94,7 +117,52 @@ function failureOf(
     url: record.url,
     status: record.status,
     body: typeof record.body === "string" ? record.body : "",
+    phase: typeof record.phase === "string" ? record.phase : null,
   };
+}
+
+function transportOf(
+  details: Record<string, unknown> | null
+): AuthorizationServerTransport | null {
+  const transport = details?.transport;
+  if (!transport || typeof transport !== "object") {
+    return null;
+  }
+  const record = transport as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return {
+    phase: text(record.phase),
+    kind: text(record.kind),
+    cause: text(record.cause),
+  };
+}
+
+function declineOf(
+  details: Record<string, unknown> | null
+): RefreshDecline | null {
+  const declined = details?.declined;
+  if (!declined || typeof declined !== "object") {
+    return null;
+  }
+  const record = declined as Record<string, unknown>;
+  if (typeof record.error !== "string" || !record.error) {
+    return null;
+  }
+  return {
+    error: record.error,
+    description:
+      typeof record.description === "string" ? record.description.trim() : "",
+  };
+}
+
+/** Why nothing answered, in a word or two: "timed out", "ECONNREFUSED", ... */
+function transportReason(transport: AuthorizationServerTransport): string {
+  if (transport.kind === "timeout") {
+    return "timed out";
+  }
+  return transport.cause && transport.cause !== "unknown"
+    ? transport.cause
+    : "no response";
 }
 
 function toMessage(error: unknown): string {
@@ -156,6 +224,18 @@ export function describeHostedOAuthFailure(
     details?.authorizationServerUnreachable === true
   ) {
     const failure = failureOf(details);
+    if (failure?.phase === "token") {
+      return {
+        kind: "unreachable",
+        title: "Token refresh failed",
+        detail: [
+          failure.body
+            ? `The server answered ${REFRESH_REQUEST} with HTTP ${failure.status}: "${failure.body}"`
+            : `The server answered ${REFRESH_REQUEST} with HTTP ${failure.status}`,
+        ],
+        action: "retry",
+      };
+    }
     if (failure) {
       return {
         kind: "unreachable",
@@ -165,6 +245,17 @@ export function describeHostedOAuthFailure(
           failure.body
             ? `HTTP ${failure.status}, ${failure.body}`
             : `HTTP ${failure.status}`,
+        ],
+        action: "retry",
+      };
+    }
+    const transport = transportOf(details);
+    if (transport?.phase === "token") {
+      return {
+        kind: "unreachable",
+        title: "Token refresh failed",
+        detail: [
+          `The server didn't answer ${REFRESH_REQUEST} (${transportReason(transport)}).`,
         ],
         action: "retry",
       };
@@ -182,16 +273,26 @@ export function describeHostedOAuthFailure(
     details?.refreshTokenInvalid === true
   ) {
     // The backend's own message here is generic ("...is invalid. Please
-    // reconnect."), which only restates the title. When the authorization
-    // server declined under the wrong RFC 6749 code, the note naming that
-    // violation is the one line worth the space — it is what the user can
-    // take back to their own server.
-    const specNote =
-      typeof details?.specNote === "string" ? details.specNote.trim() : "";
+    // reconnect."), which only restates the title. The authorization server's
+    // own reply is the one line worth the space — it is what the user can take
+    // back to their own server.
+    const declined = declineOf(details);
+    if (declined) {
+      return {
+        kind: "declined",
+        title: "Token refresh rejected",
+        detail: [
+          declined.description
+            ? `The server refused ${REFRESH_REQUEST} with ${declined.error}: "${declined.description}"`
+            : `The server refused ${REFRESH_REQUEST} with ${declined.error}`,
+        ],
+        action: "reconnect",
+      };
+    }
     return {
       kind: "declined",
       title: `Refresh token declined for ${serverName}`,
-      detail: [specNote || message],
+      detail: [message],
       action: "reconnect",
     };
   }

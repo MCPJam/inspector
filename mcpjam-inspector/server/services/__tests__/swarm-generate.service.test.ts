@@ -239,6 +239,27 @@ describe("swarm-generate service — response shape validation", () => {
     expect(result.persona.name).toBe("P");
     expect(result.journeys).toHaveLength(2);
   });
+
+  it("forwards the description and dedup hints in single-persona mode too", async () => {
+    mockOk({
+      ok: true,
+      persona: { name: "P", role: "R" },
+      journeys: [{ goal: "g" }],
+    });
+    const description = "x".repeat(10_000);
+
+    await generateSwarmPersona(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      description,
+      existingPersonas: [{ name: "Ana", role: "Ops" }],
+    });
+
+    const init = vi.mocked(fetch).mock.calls[0]![1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      description,
+      existingPersonas: [{ name: "Ana", role: "Ops" }],
+    });
+  });
 });
 
 describe("swarm-generate service — client-facing error copy", () => {
