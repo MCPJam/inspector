@@ -203,32 +203,67 @@ export class HttpInboxClient implements InboxPort {
     environmentId: string | null;
     bindingKey: string;
     dispatch: boolean;
+    idempotencyKey: string;
     pendingTtlMs?: number;
   }): Promise<InboxSlotAllocation> {
-    const result = await this.request<{
-      slotId: string;
-      callbackUrl: string;
-      secret: string;
-    }>("slot allocation", "POST", this.adminPath("/slots"), {
-      logicalSubscriptionId: args.logicalSubscriptionId,
-      projectId: args.projectId,
-      environmentId: args.environmentId,
-      bindingKey: args.bindingKey,
-      dispatch: args.dispatch,
-      ...(args.pendingTtlMs !== undefined ? { pendingTtlMs: args.pendingTtlMs } : {}),
-    });
+    const result = await this.request<unknown>(
+      "slot allocation",
+      "POST",
+      this.adminPath("/slots"),
+      {
+        logicalSubscriptionId: args.logicalSubscriptionId,
+        projectId: args.projectId,
+        environmentId: args.environmentId,
+        bindingKey: args.bindingKey,
+        dispatch: args.dispatch,
+        idempotencyKey: args.idempotencyKey,
+        ...(args.pendingTtlMs !== undefined ? { pendingTtlMs: args.pendingTtlMs } : {}),
+      },
+    );
+    return this.allocationFrom("slot allocation", result);
+  }
+
+  async findAllocation(idempotencyKey: string): Promise<InboxSlotAllocation | null> {
+    try {
+      const result = await this.request<unknown>(
+        "slot allocation lookup",
+        "POST",
+        this.adminPath("/slots"),
+        { idempotencyKey, recoverOnly: true },
+      );
+      return this.allocationFrom("slot allocation lookup", result);
+    } catch (error) {
+      if (
+        error instanceof InboxHttpError &&
+        error.httpStatus === 404 &&
+        error.inboxError === "unknown_allocation"
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private allocationFrom(operation: string, raw: unknown): InboxSlotAllocation {
+    const result = raw as {
+      slotId?: unknown;
+      callbackUrl?: unknown;
+      secret?: unknown;
+      state?: unknown;
+    };
     if (
       typeof result.slotId !== "string" ||
       typeof result.callbackUrl !== "string" ||
       typeof result.secret !== "string"
     ) {
-      throw new InboxHttpError("slot allocation", 200, "malformed_response");
+      throw new InboxHttpError(operation, 200, "malformed_response");
     }
     return {
       inboxId: this.inboxId,
       slotId: result.slotId,
       callbackUrl: result.callbackUrl,
       secret: result.secret,
+      ...(typeof result.state === "string" ? { state: result.state } : {}),
     };
   }
 

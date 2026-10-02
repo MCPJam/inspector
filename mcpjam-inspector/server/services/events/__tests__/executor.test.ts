@@ -483,7 +483,9 @@ describe("durable intent before tool effects", () => {
     expect(calls(fixture)).toHaveLength(1);
     // The first write the backend acknowledged names call_1, and it landed
     // before the journal began the call.
-    const first = backend.checkpointRun.mock.calls[0]![0] as { messages: unknown };
+    const first = (backend.checkpointRun.mock.calls[0] as unknown[])[0] as {
+      messages: unknown;
+    };
     expect(ids(first.messages)).toContain('"toolCallId":"call_1"');
     expect(backend.checkpointRun.mock.invocationCallOrder[0]).toBeLessThan(
       backend.beginCall.mock.invocationCallOrder[0]!,

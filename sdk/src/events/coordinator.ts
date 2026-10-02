@@ -41,6 +41,7 @@ import {
   type EventsRpcPort,
   type InboxAppendEntry,
   type InboxPort,
+  type InboxSlotAllocation,
   type SubscriptionFailure,
   type SubscriptionPatch,
   type SubscriptionRecord,
@@ -106,6 +107,40 @@ const DEFAULTS = {
 };
 
 const BASE_BACKOFF_MS = 5_000;
+
+/**
+ * Replacements of an expired slot one step may chain (a replayed allocation
+ * can itself come back expired). Removal walks further: see
+ * {@link EventsCoordinator.unrecordedAllocations}.
+ */
+const MAX_SLOT_REPLACEMENTS_PER_STEP = 3;
+const MAX_UNRECORDED_SLOTS = 16;
+
+/**
+ * The idempotency key of one receiver slot incarnation (contract C3): the
+ * subscription's first slot (`replaces: null`), or the slot that replaces the
+ * expired `replaces`.
+ *
+ * It is derived only from what the registry held BEFORE the allocation —
+ * never from the generation — so when the commit of a step that allocated is
+ * lost (a crash, a lost response, a user edit that wins the compare-and-set),
+ * the retry asks for the same incarnation and the inbox answers with the same
+ * slot, URL and secret. A fresh URL would be a different upstream
+ * subscription that nothing records and so nothing ever unsubscribes.
+ */
+export function computeSlotAllocationKey(args: {
+  logicalSubscriptionId: string;
+  replaces: string | null;
+}): string {
+  return sha256Hex(
+    canonicalJson({
+      v: 1,
+      kind: "slot-allocation",
+      logicalSubscriptionId: args.logicalSubscriptionId,
+      replaces: args.replaces,
+    })
+  );
+}
 
 /**
  * When to refresh a webhook grant: `max(60 s, 10% of the remaining grant)`
@@ -379,13 +414,32 @@ export class EventsCoordinator {
     }
     if (!slotId || !callbackUrl) {
       try {
-        const allocation = await inbox.allocateSlot({
-          logicalSubscriptionId: record.id,
-          projectId: record.projectId,
-          environmentId: record.environmentId,
-          bindingKey: record.bindingKey,
-          dispatch: true,
-        });
+        // Keyed by incarnation, so a step whose commit was lost gets back
+        // the slot it already allocated (and maybe already subscribed).
+        let replaces = record.slotId ?? null;
+        let allocation: InboxSlotAllocation;
+        for (let attempt = 1; ; attempt += 1) {
+          allocation = await inbox.allocateSlot({
+            logicalSubscriptionId: record.id,
+            projectId: record.projectId,
+            environmentId: record.environmentId,
+            bindingKey: record.bindingKey,
+            dispatch: true,
+            idempotencyKey: computeSlotAllocationKey({
+              logicalSubscriptionId: record.id,
+              replaces,
+            }),
+          });
+          // A replayed slot whose retries outlived its pending TTL is dead
+          // like a recorded one: replace it with the next incarnation.
+          if (
+            allocation.state !== "expired" ||
+            attempt >= MAX_SLOT_REPLACEMENTS_PER_STEP
+          ) {
+            break;
+          }
+          replaces = allocation.slotId;
+        }
         slotId = allocation.slotId;
         callbackUrl = allocation.callbackUrl;
         secret = allocation.secret;
@@ -648,13 +702,24 @@ export class EventsCoordinator {
    * unsubscribe → tombstone the slot → wait out any refresh still in flight →
    * unsubscribe AGAIN → settled. A delivery that lands on the removed slot
    * meanwhile makes the registry reschedule this step immediately.
+   *
+   * A webhook's receivers are the recorded slot plus any the inbox holds
+   * under this subscription's allocation keys that the registry never
+   * recorded (a commit lost after allocating, perhaps after subscribing), so
+   * removal leaves no live URL upstream however the earlier steps ended.
    */
   private async stepRemoval(record: SubscriptionRecord): Promise<StepOutcome> {
     const now = this.now();
     if (record.observedState === "removed" && record.settledRemovalAt !== undefined) {
       return this.idle();
     }
-    if (record.mode !== "webhook" || !record.callbackUrl) {
+    const settled: StepOutcome = {
+      patch: { observedState: "removed", settledRemovalAt: now },
+      nextActionAt: IDLE_NEXT_ACTION_AT,
+      appended: 0,
+      action: "removal_settled",
+    };
+    if (record.mode !== "webhook") {
       // Poll and push hold no server-side subscription: stopping is removal.
       if (record.slotId) {
         try {
@@ -664,45 +729,67 @@ export class EventsCoordinator {
           return this.fail(record, "inbox/remove", error);
         }
       }
-      return {
-        patch: { observedState: "removed", settledRemovalAt: now },
-        nextActionAt: IDLE_NEXT_ACTION_AT,
-        appended: 0,
-        action: "removal_settled",
-      };
+      return settled;
+    }
+
+    let inbox: InboxPort;
+    const receivers: Array<{ slotId?: string; callbackUrl: string }> = [];
+    try {
+      inbox = await this.options.inbox(record);
+      if (record.callbackUrl) {
+        receivers.push({
+          ...(record.slotId ? { slotId: record.slotId } : {}),
+          callbackUrl: record.callbackUrl,
+        });
+      }
+      for (const allocation of await this.unrecordedAllocations(record, inbox)) {
+        receivers.push(allocation);
+      }
+    } catch (error) {
+      return this.fail(record, "inbox/allocation", error);
+    }
+    if (receivers.length === 0) {
+      // No URL was ever handed out, so no server can be delivering to one.
+      if (record.slotId) {
+        try {
+          await inbox.remove(record.slotId);
+        } catch (error) {
+          return this.fail(record, "inbox/remove", error);
+        }
+      }
+      return settled;
     }
 
     try {
       const rpc = await this.options.rpc(record);
-      await rpc.unsubscribe({
-        name: record.eventName,
-        arguments: record.arguments,
-        delivery: { url: record.callbackUrl },
-      });
+      for (const receiver of receivers) {
+        await rpc.unsubscribe({
+          name: record.eventName,
+          arguments: record.arguments,
+          delivery: { url: receiver.callbackUrl },
+        });
+      }
     } catch (error) {
       const failure = classifyStepFailure("events/unsubscribe", error, now);
       if (failure.authLost) {
         // Without credentials there is nothing more we can do remotely; the
         // server's TTL reaps it. Settle locally rather than retry forever.
         return {
+          ...settled,
           patch: {
-            observedState: "removed",
-            settledRemovalAt: now,
+            ...settled.patch,
             lastError: { ...failure, retryable: false },
           },
-          nextActionAt: IDLE_NEXT_ACTION_AT,
-          appended: 0,
-          action: "removal_settled",
         };
       }
       return this.fail(record, "events/unsubscribe", error);
     }
 
     if (record.removalUnsubscribedAt === undefined) {
-      if (record.slotId) {
+      for (const receiver of receivers) {
+        if (!receiver.slotId) continue;
         try {
-          const inbox = await this.options.inbox(record);
-          await inbox.remove(record.slotId);
+          await inbox.remove(receiver.slotId);
         } catch (error) {
           return this.fail(record, "inbox/remove", error, {
             removalUnsubscribedAt: now,
@@ -732,6 +819,30 @@ export class EventsCoordinator {
       appended: 0,
       action: "removal_settled",
     };
+  }
+
+  /**
+   * Slots the inbox allocated for this subscription that the registry never
+   * recorded: the next incarnation after the recorded slot (or the first
+   * slot, when none is recorded), then the one after that, and so on. Only
+   * the last can be live — every earlier one was replaced for having
+   * expired — but each is cleaned up the same way.
+   */
+  private async unrecordedAllocations(
+    record: SubscriptionRecord,
+    inbox: InboxPort
+  ): Promise<InboxSlotAllocation[]> {
+    const found: InboxSlotAllocation[] = [];
+    let replaces = record.slotId ?? null;
+    while (found.length < MAX_UNRECORDED_SLOTS) {
+      const next = await inbox.findAllocation(
+        computeSlotAllocationKey({ logicalSubscriptionId: record.id, replaces })
+      );
+      if (!next || next.slotId === record.slotId) break;
+      found.push(next);
+      replaces = next.slotId;
+    }
+    return found;
   }
 }
 

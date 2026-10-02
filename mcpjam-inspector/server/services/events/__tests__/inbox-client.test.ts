@@ -123,6 +123,7 @@ describe("HttpInboxClient", () => {
       environmentId: null,
       bindingKey: "b".repeat(64),
       dispatch: true,
+      idempotencyKey: "alloc_1",
     });
     expect(allocation.secret).toMatch(/^whsec_/);
     expect(allocation.inboxId).toBe(stub!.memory.inboxId);
@@ -130,6 +131,28 @@ describe("HttpInboxClient", () => {
     expect(error).toBeInstanceOf(InboxHttpError);
     expect((error as Error).message).not.toContain(allocation.secret);
     expect((error as InboxHttpError).inboxError).toBe("unknown_slot");
+  });
+
+  it("replays an allocation by its key and finds it without allocating", async () => {
+    const inbox = await client();
+    const args = {
+      logicalSubscriptionId: "esub_1",
+      projectId: "proj_1",
+      environmentId: null,
+      bindingKey: "b".repeat(64),
+      dispatch: true,
+      idempotencyKey: "alloc_1",
+    };
+    expect(await inbox.findAllocation("alloc_1")).toBeNull();
+    const first = await inbox.allocateSlot(args);
+    expect(first.state).toBe("pending");
+    const replay = await inbox.allocateSlot(args);
+    expect(replay).toEqual(first);
+    expect(await inbox.findAllocation("alloc_1")).toEqual(first);
+    expect(stub!.requests.at(-1)).toMatchObject({
+      method: "POST",
+      path: `/admin/i/${stub!.memory.inboxId}/slots`,
+    });
   });
 
   it("reads the slot state with its secret, and unbinds a paused slot", async () => {
@@ -140,6 +163,7 @@ describe("HttpInboxClient", () => {
       environmentId: null,
       bindingKey: "b".repeat(64),
       dispatch: true,
+      idempotencyKey: "alloc_1",
     });
     expect(await inbox.getSecret(slotId)).toEqual({ secret, state: "pending" });
     await inbox.reconcile(slotId, "sub_1");

@@ -94,17 +94,23 @@ export async function startInboxAdminStub(options: {
     const rest = match[2] ?? "";
     try {
       if (rest === "slots" && req.method === "POST") {
-        const allocation = await memory.allocateSlot({
-          logicalSubscriptionId: body.logicalSubscriptionId,
-          projectId: body.projectId,
-          environmentId: body.environmentId ?? null,
-          bindingKey: body.bindingKey,
-          dispatch: body.dispatch === true,
-        });
+        const allocation =
+          body.recoverOnly === true
+            ? await memory.findAllocation(body.idempotencyKey)
+            : await memory.allocateSlot({
+                logicalSubscriptionId: body.logicalSubscriptionId,
+                projectId: body.projectId,
+                environmentId: body.environmentId ?? null,
+                bindingKey: body.bindingKey,
+                dispatch: body.dispatch === true,
+                idempotencyKey: body.idempotencyKey,
+              });
+        if (!allocation) return send(404, { error: "unknown_allocation" });
         return send(200, {
           slotId: allocation.slotId,
           callbackUrl: allocation.callbackUrl,
           secret: allocation.secret,
+          state: allocation.state,
           pendingExpiresAt: 0,
         });
       }

@@ -130,18 +130,37 @@ export interface InboxSlotAllocation {
   inboxId: string;
   slotId: string;
   callbackUrl: string;
+  /** The slot's current secret (a replay returns it as rotated since). */
   secret: string;
+  /**
+   * The slot's effective C3 state. A fresh allocation is `pending`; a replay
+   * may be anything, `expired` included (optional: absent reads as alive).
+   */
+  state?: string;
 }
 
 /** The inbox side (contract C5 admin API), for one project inbox. */
 export interface InboxPort {
+  /**
+   * Allocate the slot for one incarnation, keyed by `idempotencyKey`
+   * (`computeSlotAllocationKey`): a repeat with the same key and tenant
+   * returns the slot the first call allocated — its URL and current secret
+   * — instead of a new one. The same key with a different tenant is refused.
+   */
   allocateSlot(args: {
     logicalSubscriptionId: string;
     projectId: string;
     environmentId: string | null;
     bindingKey: string;
     dispatch: boolean;
+    idempotencyKey: string;
   }): Promise<InboxSlotAllocation>;
+  /**
+   * The slot allocated under `idempotencyKey`, removed or not, without
+   * allocating one; `null` when there is none. Removal uses it to find a slot
+   * whose allocation the registry never recorded.
+   */
+  findAllocation(idempotencyKey: string): Promise<InboxSlotAllocation | null>;
   /**
    * The slot's secrets, and its effective C3 `state` — `expired` is a pending
    * slot past its TTL, whose callback answers `410` (optional: an inbox that

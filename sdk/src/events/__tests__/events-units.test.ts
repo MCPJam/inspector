@@ -290,6 +290,7 @@ describe("MemoryEventInbox receive (C3 table)", () => {
       environmentId: null,
       bindingKey: "b",
       dispatch: true,
+      idempotencyKey: crypto.randomUUID(),
     });
   }
 

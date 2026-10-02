@@ -15,6 +15,7 @@ import {
   EventsCoordinator,
   IDLE_NEXT_ACTION_AT,
   applySubscriptionPatch,
+  computeSlotAllocationKey,
 } from "../../src/events/coordinator.js";
 import {
   InboxBackpressureError,
@@ -417,6 +418,145 @@ export function runEventsLifecycleSuite(adapter: LifecycleAdapter): void {
       expect(sub.callbackUrl).not.toBe(first.callbackUrl);
       expect(server.calls.at(-1)!.params.delivery.url).toBe(sub.callbackUrl);
       expect(sub.serverSubscriptionId).toBe("sub_1");
+      await harness.close?.();
+    });
+
+    // ---- allocation recovery (the registry commit can be lost) ----------
+
+    it("recovers the slot of a step whose commit was lost: same URL, same secret", async () => {
+      const { server, coordinator, harness } = await setup();
+      const record = baseRecord({ mode: "webhook" });
+      // Subscribed and reconciled, but the patch never reaches the registry.
+      const lost = await coordinator.step(record);
+      expect(lost.action).toBe("subscribed");
+      const recovered = await coordinator.step(record);
+      expect(recovered.action).toBe("subscribed");
+      const [first, second] = server.calls.filter(
+        (call) => call.method === "events/subscribe"
+      );
+      expect(second!.params.delivery).toEqual(first!.params.delivery);
+      expect(recovered.patch).toMatchObject({
+        slotId: lost.patch.slotId,
+        callbackUrl: lost.patch.callbackUrl,
+        serverSubscriptionId: "sub_1",
+      });
+      expect(recovered.patch.conflictingServerSubscriptionId).toBeUndefined();
+      await harness.close?.();
+    });
+
+    it("retries a lost allocation response into the slot it allocated", async () => {
+      const { clock, server, harness } = await setup();
+      // The inbox allocates, but its answer never arrives.
+      let dropped: { slotId: string; callbackUrl: string } | undefined;
+      const inbox = new Proxy(harness.inbox, {
+        get(target, property, receiver) {
+          if (property === "allocateSlot") {
+            return async (args: Parameters<InboxPort["allocateSlot"]>[0]) => {
+              const allocation = await target.allocateSlot(args);
+              if (!dropped) {
+                dropped = allocation;
+                throw new Error("socket hang up");
+              }
+              return allocation;
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const coordinator = new EventsCoordinator({
+        clock,
+        rpc: async () => server,
+        inbox: async () => inbox,
+      });
+      let sub = baseRecord({ mode: "webhook" });
+      const failed = await coordinator.step(sub);
+      expect(failed.action).toBe("failed");
+      expect(server.count("events/subscribe")).toBe(0);
+      sub = applySubscriptionPatch(sub, failed);
+      clock.value = sub.nextActionAt;
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("active");
+      expect(sub.slotId).toBe(dropped!.slotId);
+      expect(server.calls.at(-1)!.params.delivery.url).toBe(dropped!.callbackUrl);
+      expect(
+        await harness.inbox.findAllocation(
+          computeSlotAllocationKey({ logicalSubscriptionId: sub.id, replaces: null })
+        )
+      ).toMatchObject({ slotId: dropped!.slotId });
+      await harness.close?.();
+    });
+
+    it("replaces an expired slot with a new incarnation that a lost commit recovers too", async () => {
+      const { clock, server, coordinator, harness } = await setup();
+      let sub = baseRecord({ mode: "webhook" });
+      server.subscribeAnswers.push(new Error("socket hang up"));
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      const expired = { slotId: sub.slotId!, callbackUrl: sub.callbackUrl! };
+      clock.value = 1_000_000 + 16 * 60 * 1000; // past the 15 min pending TTL
+      const lost = await coordinator.step(sub);
+      expect(lost.patch.slotId).not.toBe(expired.slotId);
+      const recovered = await coordinator.step(sub);
+      expect(recovered.action).toBe("subscribed");
+      expect(recovered.patch.slotId).toBe(lost.patch.slotId);
+      expect(server.calls.at(-1)!.params.delivery.url).toBe(lost.patch.callbackUrl);
+      await harness.close?.();
+    });
+
+    it("removal finds a subscribed slot the registry never recorded and leaves nothing live", async () => {
+      const { clock, server, coordinator, harness } = await setup();
+      const record = baseRecord({ mode: "webhook" });
+      const lost = await coordinator.step(record);
+      expect(lost.action).toBe("subscribed");
+      // Removed before any step recovered the slot: the record holds none.
+      let sub: SubscriptionRecord = { ...record, desiredState: "removed", generation: 2 };
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("removing");
+      expect(server.calls.at(-1)).toMatchObject({
+        method: "events/unsubscribe",
+        params: { delivery: { url: lost.patch.callbackUrl } },
+      });
+      expect((await harness.inbox.getSecret(lost.patch.slotId!)).state).toBe("removed");
+      clock.value = sub.nextActionAt;
+      server.unsubscribeAnswers.push("already-gone");
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("removed");
+      expect(server.count("events/unsubscribe")).toBe(2);
+      await harness.close?.();
+    });
+
+    it("removal after a recovery unsubscribes the one URL the server knows", async () => {
+      const { server, coordinator, harness } = await setup();
+      const record = baseRecord({ mode: "webhook" });
+      await coordinator.step(record); // commit lost
+      let sub = applySubscriptionPatch(record, await coordinator.step(record));
+      sub = { ...sub, desiredState: "removed", generation: 2 };
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      expect(sub.observedState).toBe("removing");
+      const unsubscribed = server.calls
+        .filter((call) => call.method === "events/unsubscribe")
+        .map((call) => call.params.delivery.url);
+      expect(unsubscribed).toEqual([sub.callbackUrl]);
+      expect((await harness.inbox.getSecret(sub.slotId!)).state).toBe("removed");
+      await harness.close?.();
+    });
+
+    it("removal also unsubscribes an unrecorded replacement of an expired slot", async () => {
+      const { clock, server, coordinator, harness } = await setup();
+      let sub = baseRecord({ mode: "webhook" });
+      server.subscribeAnswers.push(new Error("socket hang up"));
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      const expired = { slotId: sub.slotId!, callbackUrl: sub.callbackUrl! };
+      clock.value = 1_000_000 + 16 * 60 * 1000;
+      const lost = await coordinator.step(sub); // replacement subscribed, commit lost
+      expect(lost.action).toBe("subscribed");
+      sub = { ...sub, desiredState: "removed", generation: 2 };
+      sub = applySubscriptionPatch(sub, await coordinator.step(sub));
+      const unsubscribed = server.calls
+        .filter((call) => call.method === "events/unsubscribe")
+        .map((call) => call.params.delivery.url);
+      expect(unsubscribed).toEqual([expired.callbackUrl, lost.patch.callbackUrl]);
+      expect((await harness.inbox.getSecret(lost.patch.slotId!)).state).toBe("removed");
       await harness.close?.();
     });
 

@@ -312,6 +312,8 @@ export async function runEventsConformance(
       environmentId: null,
       bindingKey: "conformance",
       dispatch: false,
+      // Every probe wants its own slot: nothing here retries an allocation.
+      idempotencyKey: crypto.randomUUID(),
     });
   }
 

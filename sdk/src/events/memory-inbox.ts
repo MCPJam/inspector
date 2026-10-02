@@ -108,6 +108,8 @@ function randomId(): string {
 export class MemoryEventInbox implements InboxPort {
   readonly inboxId: string;
   private readonly slots = new Map<string, Slot>();
+  /** Allocation idempotency key → the slot it allocated. */
+  private readonly allocations = new Map<string, string>();
   private readonly journal: JournalEntry[] = [];
   private readonly dedupe = new Map<string, number>();
   private readonly batches = new Map<string, { accepted: number; duplicates: number }>();
@@ -140,22 +142,49 @@ export class MemoryEventInbox implements InboxPort {
     environmentId: string | null;
     bindingKey: string;
     dispatch: boolean;
+    idempotencyKey: string;
   }): Promise<InboxSlotAllocation> {
+    const { idempotencyKey, ...tenant } = args;
+    const existing = this.allocations.get(idempotencyKey);
+    const replayed = existing === undefined ? undefined : this.slots.get(existing);
+    if (replayed) {
+      if (
+        replayed.logicalSubscriptionId !== tenant.logicalSubscriptionId ||
+        replayed.projectId !== tenant.projectId ||
+        replayed.environmentId !== tenant.environmentId ||
+        replayed.bindingKey !== tenant.bindingKey
+      ) {
+        throw new Error("Slot allocation key is already used by another subscription");
+      }
+      return this.allocationOf(replayed);
+    }
     const slotId = randomId();
-    const secret = generateWebhookSecret();
-    this.slots.set(slotId, {
+    const slot: Slot = {
       slotId,
-      ...args,
+      ...tenant,
       state: "pending",
-      secret,
+      secret: generateWebhookSecret(),
       observedSubscriptionIds: [],
       pendingExpiresAt: this.clock.now() + this.options.pendingTtlMs,
-    });
+    };
+    this.slots.set(slotId, slot);
+    this.allocations.set(idempotencyKey, slotId);
+    return this.allocationOf(slot);
+  }
+
+  async findAllocation(idempotencyKey: string): Promise<InboxSlotAllocation | null> {
+    const slotId = this.allocations.get(idempotencyKey);
+    const slot = slotId === undefined ? undefined : this.slots.get(slotId);
+    return slot ? this.allocationOf(slot) : null;
+  }
+
+  private allocationOf(slot: Slot): InboxSlotAllocation {
     return {
       inboxId: this.inboxId,
-      slotId,
-      callbackUrl: this.callbackUrlFor(slotId),
-      secret,
+      slotId: slot.slotId,
+      callbackUrl: this.callbackUrlFor(slot.slotId),
+      secret: slot.secret,
+      state: this.effectiveState(slot),
     };
   }
 
