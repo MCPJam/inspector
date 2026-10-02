@@ -96,10 +96,12 @@ proxy is a static bootstrap document that receives widget HTML via
 
 ### CSP
 
-The sandbox proxy already emits a `frame-ancestors` directive that includes
-every `https://` entry from `CORS_ORIGINS`. Make sure the host app origin
-(e.g. `https://app.example.com`) is in `CORS_ORIGINS` so the host page is
-allowed to frame the sandbox.
+The sandbox proxy emits a `frame-ancestors` directive, and accepts host
+messages, only from the origins this deploy serves the app from:
+`MCPJAM_HOSTED_ORIGIN` plus every `https://` entry in `WEB_ALLOWED_ORIGINS`.
+A hosted deploy does not include loopback origins. Make sure the host app
+origin (e.g. `https://app.example.com`) is `MCPJAM_HOSTED_ORIGIN` or is listed
+in `WEB_ALLOWED_ORIGINS` so the host page is allowed to frame the sandbox.
 
 ### Verifying a deploy
 

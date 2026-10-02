@@ -22,7 +22,6 @@ import {
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
-import { ExecutionProvenance } from "@/components/evals/execution-provenance";
 import { SPAN_LOAD_FAILURE_CONSEQUENCE } from "@/components/evals/turn-trace-spans";
 import {
   liveSessionTrace,
@@ -83,7 +82,7 @@ export type SwarmAttemptOutcome = {
   status: "pending" | "running" | "succeeded" | "failed" | "rate_limited";
   errorCode?: string | null;
   errorMessage?: string | null;
-  /** The session's execution record, raw; see `ExecutionProvenance`. */
+  /** The session's execution record, raw; read through `readExecutionRecord`. */
   execution?: unknown;
 };
 
@@ -685,14 +684,6 @@ export function SwarmLiveStreamPane({
           />
         </div>
       ) : null}
-
-      {/* What this session's target model ran on, and a deviation banner when
-          that differed from the request. Nothing for a session recorded before
-          the record existed. */}
-      <ExecutionProvenance
-        execution={attempt?.execution}
-        testIdPrefix="swarm-live-pane-execution"
-      />
 
       {/* Setup notes for this session — e.g. a host built-in that was
           deliberately not advertised. Shown as its own line, not folded into

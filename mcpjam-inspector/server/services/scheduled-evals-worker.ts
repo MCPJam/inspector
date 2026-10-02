@@ -86,7 +86,10 @@ async function postServiceRoute(
     );
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), SERVICE_ROUTE_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    SERVICE_ROUTE_TIMEOUT_MS,
+  );
   let response: Response;
   try {
     response = await fetch(`${env.convexUrl}${path}`, {
@@ -189,7 +192,8 @@ export async function executeClaimedRun(
     return;
   }
 
-  let manager: Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
+  let manager:
+    Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
     null;
   try {
     const bearer = await getConvexBearerForDelegation(
@@ -223,7 +227,12 @@ export async function executeClaimedRun(
             resolvedEnvironment: resolved,
           };
         })()
-      : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);
+      : await fetchSuiteRunServerSelection(
+          bearer,
+          claimed.suiteId,
+          undefined,
+          "authorized",
+        );
 
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
@@ -377,7 +386,8 @@ export function startScheduledEvalsWorker(options?: {
 
   const loop = (async () => {
     while (!abort.signal.aborted) {
-      let waitMs = POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
+      let waitMs =
+        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
       try {
         const claimed = await claim(claimedBy);
         if (claimed === "disabled") {

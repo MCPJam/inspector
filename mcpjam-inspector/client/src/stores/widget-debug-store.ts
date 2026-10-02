@@ -6,6 +6,7 @@
  */
 
 import { create } from "zustand";
+import type { CspSubtypePolicy, CspClientContext } from "@mcpjam/widget-react";
 import type { CspMode } from "./ui-playground-store";
 import type {
   McpAppsCspConnectDomains,
@@ -17,6 +18,8 @@ import type {
 export type CspMountId = string | number;
 
 export interface CspApplicationIntent {
+  cspSubtypePolicy?: CspSubtypePolicy;
+  clientContext?: CspClientContext;
   csp?: {
     connectDomains?: string[];
     resourceDomains?: string[];

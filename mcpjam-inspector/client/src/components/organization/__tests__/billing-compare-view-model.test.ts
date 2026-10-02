@@ -111,6 +111,58 @@ describe("buildComparePlanSectionsFromCatalog", () => {
       free: { kind: "text", text: "30 days" },
       pro: { kind: "text", text: "Unlimited" },
     });
+    expect(
+      rows
+        .map(({ label }) => label)
+        .filter((label) =>
+          [
+            "Projects",
+            "Monthly credit roll-over",
+            "Additional credits",
+            "Swarm",
+            "CI/CD checks",
+            "Skills",
+            "WebMCP",
+          ].includes(label),
+        ),
+    ).toEqual([
+      "Projects",
+      "Monthly credit roll-over",
+      "Additional credits",
+      "Swarm",
+      "CI/CD checks",
+      "Skills",
+      "WebMCP",
+    ]);
+    v2.plans.team!.topUp = {
+      centsPerCredit: 0.9,
+      monthlyCapCredits: null,
+      eligible: true,
+    };
+    v2.plans.team!.rollover = { capMultiplier: 2, capCredits: 100000 };
+    v2.plans.enterprise.topUp = {
+      centsPerCredit: 1,
+      monthlyCapCredits: null,
+      eligible: true,
+    };
+    expect(
+      buildComparePlanSectionsFromCatalog(v2)
+        .flatMap(({ rows }) => rows)
+        .find(({ label }) => label === "Additional credits"),
+    ).toMatchObject({
+      free: { kind: "x" },
+      team: { kind: "text", text: "$9 / 1,000 credits" },
+      enterprise: { kind: "text", text: "Custom" },
+    });
+    expect(
+      buildComparePlanSectionsFromCatalog(v2)
+        .flatMap(({ rows }) => rows)
+        .find(({ label }) => label === "Monthly credit roll-over"),
+    ).toMatchObject({
+      free: { kind: "x" },
+      team: { kind: "text", text: "Up to 100,000" },
+      enterprise: { kind: "text", text: "Custom" },
+    });
     expect(rows.find(({ label }) => label === "Support tier")).toMatchObject({
       pro: { kind: "text", text: "Basic" },
       team: { kind: "text", text: "Priority" },
