@@ -4404,34 +4404,40 @@ export function useServerState({
         !!storedOAuthConfig.registryServerId &&
         storedOAuthConfig.useRegistryOAuthProxy === true;
       const existingServer = appStateServersRef.current[serverName];
+      let authChange: {
+        expectedUpdatedAt: number;
+        previous: {
+          authMethod: string | null;
+          useOAuth: boolean | null;
+          useXaa: boolean | null;
+        };
+      } | null = null;
       try {
-        // The debugger can target a server saved with another auth method.
-        // Persist the OAuth choice before the import route checks that choice.
+        // Resolve the saved target by project and id, never by a runtime name.
+        const rows = (await convex.query("servers:getProjectServers" as any, {
+          projectId: resolved.projectId,
+        })) as RemoteServer[];
+        const target = rows?.find(
+          (row) => row._id === resolved.serverId &&
+            remoteServerBelongsToProject(row, resolved.projectId)
+        );
+        if (!target) throw new Error("OAuth server is no longer in this project");
         if (
-          existingServer?.useOAuth !== true ||
-          (existingServer.authMethod !== undefined &&
-            existingServer.authMethod !== "oauth" &&
-            existingServer.authMethod !== "auto") ||
-          (existingServer.authMethod === "auto" && existingServer.useXaa)
+          target.useOAuth !== true ||
+          (target.authMethod !== undefined &&
+            target.authMethod !== "oauth" &&
+            target.authMethod !== "auto") ||
+          (target.authMethod === "auto" && target.useXaa)
         ) {
-          await convexUpdateServer({
+          authChange = await convexUpdateServer({
             serverId: resolved.serverId,
+            projectId: resolved.projectId,
             authMethod: "oauth",
             useOAuth: true,
             useXaa: false,
+            oauthImportTransition: { kind: "prepare" },
           });
-          if (existingServer) {
-            dispatch({
-              type: "UPSERT_SERVER",
-              name: serverName,
-              server: {
-                ...existingServer,
-                authMethod: "oauth",
-                useOAuth: true,
-                useXaa: false,
-              },
-            });
-          }
+          if (!authChange) throw new Error("Could not prepare OAuth token import");
         }
         await importHostedOAuthTokens({
           projectId: resolved.projectId,
@@ -4461,11 +4467,22 @@ export function useServerState({
           tokens: normalizedTokens,
         });
       } catch (error) {
-        return {
-          success: false,
-          error:
-            error instanceof Error ? error.message : "Could not store OAuth tokens",
-        };
+        let message = error instanceof Error
+          ? error.message
+          : "Could not store OAuth tokens";
+        if (authChange) {
+          try {
+            await convexUpdateServer({
+              serverId: resolved.serverId,
+              projectId: resolved.projectId,
+              oauthImportTransition: { kind: "rollback", ...authChange },
+            });
+          } catch {
+            message +=
+              ". Could not restore the previous auth settings. Check the server configuration.";
+          }
+        }
+        return { success: false, error: message };
       }
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
@@ -4558,6 +4575,7 @@ export function useServerState({
       guardedReconnectServer,
       withProjectConnectionDefaults,
       convexUpdateServer,
+      convex,
     ]
   );
 
