@@ -10,9 +10,11 @@
  *
  * Rows are identified by `modelRowKey` (source, connection, id), so the same
  * id listed by the hosted catalog and under an org connection are two rows:
- * the one checked is the one whose saved selection is stored for that id, and
- * picking the other swaps the stored selection. The id list stays keyed by
- * the legacy id, so one id is one choice.
+ * the one checked is the one the id's targets were saved from, and picking
+ * the other swaps them onto it. The value's targets are keyed by
+ * `comparisonKey`, so two efforts of one model (seeded from two environments,
+ * or added beside a matrix chip) are two targets: one checked row, one effort
+ * chip each.
  *
  * Cap awareness (D6): when `budget` is provided, an option that would
  * push the product over `maxTargets` is disabled with the product
@@ -33,11 +35,14 @@ import {
   modelRowKey,
 } from "@/components/chat-v2/shared/model-selection";
 import {
-  syncExplicitModelSelections,
+  modelTargetKey,
+  syncExplicitTargets,
   targetProductCapReason,
   type ModelSelection,
+  type ModelTarget,
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
+import { modelTarget } from "@/lib/model-target";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import {
@@ -130,28 +135,39 @@ export function ModelsPill({
     return byId;
   }, [availableModels, harnessTargets, purpose]);
 
-  const explicit = value.explicitModelIds;
-  // The row each explicit id refers to: the one whose selection is saved for
-  // it, else (a legacy pick) the hosted row with that id first.
+  const targets = value.explicitTargets;
+  const explicit = useMemo(
+    () => [...new Set(targets.map((target) => target.modelId))],
+    [targets],
+  );
+  // The row each explicit target refers to: the one its selection was saved
+  // from, else (a legacy pick) the hosted row with that id first.
   const pickedRows = useMemo(
     () =>
-      explicit.map((id) => ({
-        id,
+      targets.map((target) => ({
+        id: target.modelId,
+        key: modelTargetKey(target),
+        target,
         row: findModelForStoredChoice(
-          { modelId: id, selection: value.explicitModelSelections?.[id] },
+          { modelId: target.modelId, selection: target.selection },
           availableModels,
           undefined,
         ),
       })),
-    [explicit, value.explicitModelSelections, availableModels],
+    [targets, availableModels],
   );
-  const selectedModels = useMemo(
-    () => pickedRows.flatMap(({ row }) => (row ? [row] : [])),
-    [pickedRows],
-  );
-  const staleExplicit = pickedRows
-    .filter(({ row }) => !row)
-    .map(({ id }) => id);
+  // Two efforts of one model resolve to one row: the selector lists it once.
+  const selectedModels = useMemo(() => {
+    const seen = new Set<string>();
+    return pickedRows.flatMap(({ row }) => {
+      if (!row || seen.has(modelRowKey(row))) return [];
+      seen.add(modelRowKey(row));
+      return [row];
+    });
+  }, [pickedRows]);
+  const staleExplicit = [
+    ...new Set(pickedRows.filter(({ row }) => !row).map(({ id }) => id)),
+  ];
   const includeDefaults = value.includeClientDefaults;
   const nameForId = (id: string): string => {
     const row = pickedRows.find((picked) => picked.id === id)?.row;
@@ -168,14 +184,13 @@ export function ModelsPill({
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
 
-  // Every edit keeps the saved selections in step with the picked ids; the
-  // row just picked decides the selection saved for its id.
+  // Every edit fills in the saved selection of a target that has none; the
+  // row just picked decides the selection of its new target.
   const emit = (next: ModelSelection, picked?: ModelDefinition) => {
     setSelectionReviewed(true);
     onChange(
-      syncExplicitModelSelections(next, {
+      syncExplicitTargets(next, {
         models: availableModels,
-        previous: value,
         ...(picked ? { picked } : {}),
       }),
     );
@@ -183,11 +198,11 @@ export function ModelsPill({
 
   const toggleDefaults = (checked: boolean) => {
     if (mode === "single") {
-      emit({ includeClientDefaults: checked, explicitModelIds: [] });
+      emit({ includeClientDefaults: checked, explicitTargets: [] });
       return;
     }
     if (checked && replaceSoleChoice) {
-      emit({ includeClientDefaults: true, explicitModelIds: [] });
+      emit({ includeClientDefaults: true, explicitTargets: [] });
       return;
     }
     emit({ ...value, includeClientDefaults: checked });
@@ -196,31 +211,36 @@ export function ModelsPill({
   const removeModelId = (modelId: string) =>
     emit({
       ...value,
-      explicitModelIds: explicit.filter((id) => id !== modelId),
+      explicitTargets: targets.filter((target) => target.modelId !== modelId),
     });
 
   const addModel = (model: ModelDefinition) => {
     const modelId = String(model.id);
+    const added: ModelTarget = { modelId };
     if (mode === "single") {
-      emit(
-        { includeClientDefaults: false, explicitModelIds: [modelId] },
-        model,
-      );
+      emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
       return;
     }
     if (explicit.includes(modelId)) {
-      // Another row with this id was picked: this one takes its place.
-      emit(value, model);
-      return;
-    }
-    if (replaceSoleChoice) {
+      // Another row with this id was picked: this one takes its place (every
+      // target of the id moves onto the picked row's selection).
       emit(
-        { includeClientDefaults: false, explicitModelIds: [modelId] },
+        {
+          ...value,
+          explicitTargets: [
+            ...targets.filter((target) => target.modelId !== modelId),
+            added,
+          ],
+        },
         model,
       );
       return;
     }
-    emit({ ...value, explicitModelIds: [...explicit, modelId] }, model);
+    if (replaceSoleChoice) {
+      emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
+      return;
+    }
+    emit({ ...value, explicitTargets: [...targets, added] }, model);
   };
 
   // The selector reports the whole next list; one row was added or removed.
@@ -314,7 +334,7 @@ export function ModelsPill({
                     : "Client default",
                 ]
               : []),
-            ...explicit.map(nameForId),
+            ...targets.map((target) => nameForId(target.modelId)),
           ].join(", ") || "Select models"}
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -328,7 +348,7 @@ export function ModelsPill({
         className={cn(
           "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
           "outline-none transition-colors",
-          includeDefaults || explicit.length > 0
+          includeDefaults || targets.length > 0
             ? "border-border/60 bg-muted/40 hover:bg-muted/60"
             : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
           disabled && "cursor-not-allowed opacity-60",
@@ -350,13 +370,13 @@ export function ModelsPill({
   const effortHarness = harnessTargets?.find(Boolean)?.harnessId as
     | Harness
     | undefined;
-  const effortChips = pickedRows.flatMap(({ id, row }) =>
+  const effortChips = pickedRows.flatMap(({ key, target, row }) =>
     row ? (
       <SelectionEffortControl
-        key={id}
+        key={key}
         variant="suffix"
         row={row}
-        selection={value.explicitModelSelections?.[id]}
+        selection={target.selection}
         purpose="evalTarget"
         selectionsSupported={modelSelectionsSupported}
         harness={effortHarness}
@@ -364,15 +384,20 @@ export function ModelsPill({
         disabledReason="Editing is disabled."
         hint={`Applies to ${compactModelLabel(row.name)}`}
         onChange={(write) => {
-          const selections = { ...value.explicitModelSelections };
-          delete selections[id];
-          if (write.selection) selections[write.modelId] = write.selection;
+          // Only this target changes; a sibling effort of the model stays. A
+          // level a sibling already runs is not applied (no shared keys).
+          const next = modelTarget(write.modelId, write.selection);
+          const nextKey = modelTargetKey(next);
+          if (
+            nextKey !== key &&
+            targets.some((existing) => modelTargetKey(existing) === nextKey)
+          )
+            return;
           emit({
             ...value,
-            explicitModelIds: explicit.map((existing) =>
-              existing === id ? write.modelId : existing,
+            explicitTargets: targets.map((existing) =>
+              modelTargetKey(existing) === key ? next : existing,
             ),
-            explicitModelSelections: selections,
           });
         }}
       />
@@ -386,8 +411,7 @@ export function ModelsPill({
   // saved selection claim nothing.
   const sourceBadges = (() => {
     const seen = new Set<string>();
-    return explicit.flatMap((id) => {
-      const selection = value.explicitModelSelections?.[id];
+    return targets.flatMap(({ selection }) => {
       const label = modelSourceLabel(selection, { models: availableModels });
       if (!label || seen.has(label.text)) return [];
       seen.add(label.text);
@@ -449,7 +473,7 @@ export function modelsPillTriggerLabel(
     modelName?: (id: string) => string;
   },
 ): string {
-  const n = value.explicitModelIds.length;
+  const n = value.explicitTargets.length;
   const inheritedRaw = options?.clientDefaultLabel?.trim() ?? "";
   const inherited = inheritedRaw
     ? options?.modelName?.(inheritedRaw) || inheritedRaw
@@ -459,7 +483,7 @@ export function modelsPillTriggerLabel(
     return inherited ? `${inherited} +${n}` : `models +${n}`;
   }
   if (n === 1) {
-    const id = value.explicitModelIds[0];
+    const id = value.explicitTargets[0]!.modelId;
     return options?.modelName?.(id) || "1 model";
   }
   if (n > 1) return `${n} models`;

@@ -181,16 +181,47 @@ describe("environmentsForModelCell", () => {
     modelSelection,
   });
 
-  it("keeps effort-only siblings of the picked selection", () => {
+  it("matches by comparisonKey: each effort of a model is its own cell", () => {
     const high = env("h1", hostedSel({ reasoningEffort: "high" }));
+    const low = env("h1", hostedSel({ reasoningEffort: "low" }));
     const plain = env("h1", hostedSel());
-    const out = environmentsForModelCell([high, plain], {
-      hostId: "h1",
-      modelId: "openai/gpt-5",
-      picked: hostedSel({ reasoningEffort: "high" }),
-      efforts: true,
-    });
-    expect(out).toEqual([high, plain]);
+    const cell = (picked?: ModelSelection) =>
+      environmentsForModelCell([high, low, plain], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked,
+        efforts: true,
+      });
+    expect(cell(hostedSel({ reasoningEffort: "high" }))).toEqual([high]);
+    expect(cell(hostedSel({ reasoningEffort: "low" }))).toEqual([low]);
+    expect(cell(hostedSel())).toEqual([plain]);
+    // An unlabelled pick keys as the bare id, like a plain hosted selection.
+    expect(cell(undefined)).toEqual([plain]);
+  });
+
+  it("an unlabelled environment matches a plain pick of its id, as before", () => {
+    const bare = env("h1");
+    expect(
+      environmentsForModelCell([bare], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: hostedSel(),
+        efforts: true,
+      }),
+    ).toEqual([bare]);
+  });
+
+  it("matches on id alone where the deployment stores no selections", () => {
+    const high = env("h1", hostedSel({ reasoningEffort: "high" }));
+    const low = env("h1", hostedSel({ reasoningEffort: "low" }));
+    expect(
+      environmentsForModelCell([high, low], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: undefined,
+        efforts: false,
+      }),
+    ).toEqual([high, low]);
   });
 
   it("does not count an environment on a different connection as a sibling", () => {

@@ -12,7 +12,14 @@ import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities
 import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { compactModelIdTail } from "@/lib/environment-label";
-import type { ModelSelection } from "@/components/environment-composer/environment-stack";
+import {
+  emptyModelSelection,
+  type ModelSelection,
+} from "@/components/environment-composer/environment-stack";
+import {
+  dedupeModelTargets,
+  environmentModelTarget,
+} from "@/lib/model-target";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
@@ -64,27 +71,22 @@ export function seedRunMatrix(
     if (!environment) continue;
     const selection = (selections[environment.hostId] ??= {
       includeClientDefaults: false,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
-    if (environment.modelId) {
-      if (!selection.explicitModelIds.includes(environment.modelId)) {
-        selection.explicitModelIds.push(environment.modelId);
-        // The environment's own saved selection (its effort) is what the run
-        // reuses, so the matrix starts from it, not from the picker's row.
-        if (environment.modelSelection?.modelId === environment.modelId)
-          selection.explicitModelSelections = {
-            ...selection.explicitModelSelections,
-            [environment.modelId]: environment.modelSelection,
-          };
-      }
-    } else selection.includeClientDefaults = true;
+    // One cell per comparisonKey: the environment's own saved selection (its
+    // effort) is what the run reuses, so two efforts of one model seed two
+    // cells instead of collapsing onto the first.
+    const target = environmentModelTarget(environment);
+    if (target)
+      selection.explicitTargets = dedupeModelTargets([
+        ...selection.explicitTargets,
+        target,
+      ]);
+    else selection.includeClientDefaults = true;
   }
   if (!suite.environmentIds?.length) {
     for (const host of suite.hostAttachments ?? [])
-      selections[host.namedHostId] = {
-        includeClientDefaults: true,
-        explicitModelIds: [],
-      };
+      selections[host.namedHostId] = emptyModelSelection();
   }
   return selections;
 }
@@ -125,21 +127,22 @@ export function planRunMatrix(
     return environment;
   });
   return Object.entries(selections).flatMap(([hostId, selection]) => {
-    const models = [
+    const targets = [
       ...(selection.includeClientDefaults ? [undefined] : []),
-      ...selection.explicitModelIds,
+      // Without stored selections a target is its bare id: two efforts of
+      // one model would be one cell, so they are one target.
+      ...dedupeModelTargets(
+        options.modelSelections
+          ? selection.explicitTargets
+          : selection.explicitTargets.map(({ modelId }) => ({ modelId })),
+      ),
     ];
-    return models.flatMap<PlannedCombination>((modelId) => {
-      const picked =
-        modelId !== undefined
-          ? selection.explicitModelSelections?.[modelId]
-          : undefined;
-      const pickedSelection =
-        options.modelSelections && picked?.modelId === modelId
-          ? picked
-          : undefined;
-      // An environment is reused only while the cell's effort is one it runs;
-      // siblings that differ only by effort stay (see the helper).
+    return targets.flatMap<PlannedCombination>((target) => {
+      const modelId = target?.modelId;
+      const picked = target?.selection;
+      const pickedSelection = options.modelSelections ? picked : undefined;
+      // An environment is reused only when it runs this cell's target (same
+      // comparisonKey); each effort of a model is its own cell.
       const existing = environmentsForModelCell(attached, {
         hostId,
         modelId,
@@ -310,10 +313,7 @@ export function ConfiguredSuiteRunReview(
                 Object.fromEntries(
                   ids.map((id) => [
                     id,
-                    selections[id] ?? {
-                      includeClientDefaults: true,
-                      explicitModelIds: [],
-                    },
+                    selections[id] ?? emptyModelSelection(),
                   ]),
                 ),
               )

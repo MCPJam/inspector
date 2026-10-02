@@ -20,7 +20,7 @@ import {
   modelSelectionFromDefinition,
   selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
-import { selectionKey } from "@mcpjam/sdk/browser";
+import { modelTarget, sameModelTarget } from "@/lib/model-target";
 import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
 
 export function selectionReasoningEffort(
@@ -144,15 +144,14 @@ export function setEffortForRow(args: {
 }
 
 /**
- * The saved environments a matrix cell (one client + one model) reuses.
- *
- * A cell's picker holds one selection per model id, so environments that differ
- * ONLY by effort (Sonnet·High and Sonnet·default on one client) share a cell.
- * While the cell's effort is one the attached environments already run, all of
- * them are kept — seeding and saving must not skip or detach a sibling the
- * picker cannot show. Once the pick names an effort none of them run, the
- * effort was changed on purpose and none is reused (a new one is derived).
- * `efforts` off (a deployment without saved selections) matches on id alone.
+ * The saved environments a matrix cell (one client + one model target)
+ * reuses: the client's environments with the same `comparisonKey` (see
+ * `sameModelTarget`). Each effort of a model is its own cell, so Sonnet·High
+ * and Sonnet·Low on one client reuse their own environment each; a pick whose
+ * key no environment runs reuses none (a new one is derived). An environment
+ * with no saved selection and a cell with none match on the bare id, as
+ * before. `efforts` off (a deployment without saved selections) matches on
+ * id alone.
  */
 export function environmentsForModelCell<
   T extends { hostId: string; modelId?: string | null; modelSelection?: ModelSelection | null },
@@ -171,22 +170,11 @@ export function environmentsForModelCell<
       (environment.modelId ?? undefined) === cell.modelId,
   );
   if (cell.modelId === undefined || !cell.efforts) return sameCell;
-  // Same identity first (source, connection, native id): an environment on a
-  // different connection of the same model id is not this pick's sibling, and
-  // its effort must not count as "already represented". An environment with no
-  // saved selection stays (it matches on the model id alone).
-  const identity = cell.picked ? selectionKey(cell.picked) : undefined;
-  const candidates = identity
-    ? sameCell.filter(
-        (environment) =>
-          !environment.modelSelection ||
-          selectionKey(environment.modelSelection) === identity,
-      )
-    : sameCell;
-  const wanted = selectionReasoningEffort(cell.picked);
-  return candidates.some(
-    (environment) => selectionReasoningEffort(environment.modelSelection) === wanted,
-  )
-    ? candidates
-    : [];
+  const wanted = modelTarget(cell.modelId, cell.picked);
+  return sameCell.filter((environment) =>
+    sameModelTarget(
+      modelTarget(cell.modelId!, environment.modelSelection),
+      wanted,
+    ),
+  );
 }

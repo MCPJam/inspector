@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 import { RunIterationControl } from "../run-iteration-control";
 import { EvalTargetMatrix, EvalModelChoices } from "../eval-target-matrix";
+import { explicitModelIds } from "@/components/environment-composer/environment-stack";
 import { parseModelValue } from "../../evals/compare-playground-helpers";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -87,7 +88,7 @@ export function CaseRunSetup({
   const modelIds = controls.models.map((value) => parseModelValue(value).model);
   const selection = {
     includeClientDefaults: false,
-    explicitModelIds: modelIds,
+    explicitTargets: modelIds.map((modelId) => ({ modelId })),
   };
   const validCount =
     Number.isInteger(controls.trials) &&
@@ -148,7 +149,7 @@ export function CaseRunSetup({
                 disabled={Boolean(controls.disabled)}
                 testId="case-run-models"
                 onChange={(next) => {
-                  const values = next.explicitModelIds.map((id) => {
+                  const values = explicitModelIds(next).map((id) => {
                     const model = availableModels.find(
                       (model) => String(model.id) === id,
                     );

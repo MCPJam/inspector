@@ -17,13 +17,27 @@ import {
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
-import { ChevronDown, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, CopyPlus, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
+  emptyModelSelection,
   modelSelectionForHost,
-  syncExplicitModelSelections,
+  modelTargetKey,
+  syncExplicitTargets,
   type ModelSelection,
+  type ModelTarget,
 } from "@/components/environment-composer/environment-stack";
+import { modelTarget } from "@/lib/model-target";
+import { modelTargetLabel } from "@/lib/environment-label";
+import {
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import {
+  selectionReasoningEffort,
+  setEffortForRow,
+} from "@/lib/reasoning-effort-selection";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 
 import type { HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -95,8 +109,17 @@ function modelLabelsForSelection(
       defaultModel ? `Client default · ${defaultModel}` : "Client default",
     );
   }
-  for (const modelId of selection?.explicitModelIds ?? []) {
-    labels.push(modelNames.get(modelId) ?? compactModelLabel(modelId));
+  // Model name plus only what differs among its siblings: "Sonnet 4.5 · High"
+  // beside "Sonnet 4.5 · Low"; a lone model has no suffix.
+  const targets = selection?.explicitTargets ?? [];
+  for (const target of targets) {
+    labels.push(
+      modelTargetLabel(
+        target,
+        targets,
+        (modelId) => modelNames.get(modelId) ?? compactModelLabel(modelId),
+      ),
+    );
   }
   return labels;
 }
@@ -255,10 +278,7 @@ export function EvalTargetMatrix({
                     projectId={projectId}
                     value={modelSelectionForHost(
                       {
-                        modelSelection: modelSelection ?? {
-                          includeClientDefaults: true,
-                          explicitModelIds: [],
-                        },
+                        modelSelection: modelSelection ?? emptyModelSelection(),
                         modelSelectionsByHost,
                       },
                       row.hostId,
@@ -274,7 +294,7 @@ export function EvalTargetMatrix({
                   />
                 ) : (
                   <span className="block px-2 py-2 text-xs">
-                    {row.modelLabels.join(" · ")}
+                    {row.modelLabels.join(", ")}
                   </span>
                 )}
               </td>
@@ -447,6 +467,7 @@ export function EvalModelChoices({
       name: compactModelLabel(id),
       provider: "unknown",
     };
+  const targets = value.explicitTargets;
   const choices = [
     ...(value.includeClientDefaults
       ? [
@@ -454,40 +475,124 @@ export function EvalModelChoices({
             key: "default",
             model: resolveModel(defaultModelId ?? "Client default"),
             inherited: true,
+            target: undefined as ModelTarget | undefined,
           },
         ]
       : []),
-    ...value.explicitModelIds.map((id) => ({
-      key: id,
-      model: resolveModel(id),
+    ...targets.map((target) => ({
+      key: modelTargetKey(target),
+      model: resolveModel(target.modelId),
       inherited: false,
+      target: target as ModelTarget | undefined,
     })),
   ];
+  const emit = (next: ModelSelection, picked?: ModelDefinition) =>
+    onChange(
+      syncExplicitTargets(next, {
+        models: availableModels,
+        ...(picked ? { picked } : {}),
+      }),
+    );
+  // Replace (or, with no model, remove) one choice; the default row becomes
+  // an explicit target when a model is picked on it.
   const changeChoice = (
     key: string,
     inherited: boolean,
     model?: ModelDefinition,
   ) => {
-    const remaining = value.explicitModelIds.filter(
-      (id) => inherited || id !== key,
+    const remaining = targets.filter(
+      (target) => inherited || modelTargetKey(target) !== key,
     );
-    onChange(
-      syncExplicitModelSelections(
-        {
-          includeClientDefaults: inherited
-            ? false
-            : value.includeClientDefaults,
-          explicitModelIds: model
-            ? [...new Set([...remaining, String(model.id)])]
-            : remaining,
-        },
-        { models: availableModels, previous: value, picked: model },
+    emit(
+      {
+        includeClientDefaults: inherited ? false : value.includeClientDefaults,
+        explicitTargets: model
+          ? [...remaining, { modelId: String(model.id) }]
+          : remaining,
+      },
+      model,
+    );
+  };
+  // The catalog row a target was saved from (hosted-first for a legacy pick).
+  const rowFor = (target: ModelTarget): ModelDefinition | undefined =>
+    findModelForStoredChoice(
+      { modelId: target.modelId, selection: target.selection },
+      availableModels,
+      undefined,
+    ) ?? undefined;
+  // A new target goes right after the chip it was duplicated from.
+  const insertAfter = (key: string, added: ModelTarget) => {
+    const index = targets.findIndex((target) => modelTargetKey(target) === key);
+    emit({
+      ...value,
+      explicitTargets: [
+        ...targets.slice(0, index + 1),
+        added,
+        ...targets.slice(index + 1),
+      ],
+    });
+  };
+  // An effort a sibling target of the model already runs is not applied
+  // (the slider walks past it): two targets never share a comparisonKey, and
+  // merging them mid-drag would drop the chip being edited.
+  const replaceTarget = (key: string, next: ModelTarget) => {
+    const nextKey = modelTargetKey(next);
+    if (
+      nextKey !== key &&
+      targets.some((target) => modelTargetKey(target) === nextKey)
+    )
+      return;
+    emit({
+      ...value,
+      explicitTargets: targets.map((target) =>
+        modelTargetKey(target) === key ? next : target,
       ),
+    });
+  };
+  /**
+   * "Add another effort": the chip's model again, as a second target at the
+   * next supported level no target of this model uses yet. `null` when the
+   * model offers no unused level or its effort cannot be saved here.
+   */
+  const anotherEffortTarget = (
+    target: ModelTarget,
+    row: ModelDefinition | undefined,
+  ): ModelTarget | null => {
+    if (!row || !effortEditable || !selectionsSupported) return null;
+    const options = reasoningEffortOptions(
+      row,
+      reasoningEffortRouteForRow(row),
+      harness?.harnessId as Harness | undefined,
     );
+    if (options.length === 0) return null;
+    const used = new Set<ModelReasoningEffort | undefined>(
+      targets
+        .filter((other) => other.modelId === target.modelId)
+        .map((other) => selectionReasoningEffort(other.selection)),
+    );
+    const current = selectionReasoningEffort(target.selection);
+    const start = current === undefined ? 0 : options.indexOf(current) + 1;
+    const next = [...options.slice(start), ...options.slice(0, start)].find(
+      (level) => !used.has(level),
+    );
+    if (next === undefined) return null;
+    const write = setEffortForRow({
+      row,
+      selection: target.selection,
+      effort: next,
+      purpose: "evalTarget",
+    });
+    if (!write?.selection) return null;
+    const added = modelTarget(write.modelId, write.selection);
+    return targets.some(
+      (other) => modelTargetKey(other) === modelTargetKey(added),
+    )
+      ? null
+      : added;
   };
   return (
     <div data-testid={testId} className="space-y-1">
-      {choices.map(({ key, model, inherited }) => (
+      {choices.map(({ key, model, inherited, target }) => (
         <div key={key} className="flex min-w-0 items-start">
           <ModelSelector
             inModal={inModal}
@@ -517,46 +622,43 @@ export function EvalModelChoices({
               </Button>
             }
           />
-          {!inherited && effortEditable ? (
+          {!inherited && target && effortEditable ? (
             <SelectionEffortControl
               variant="suffix"
-              row={
-                findModelForStoredChoice(
-                  { modelId: key, selection: value.explicitModelSelections?.[key] },
-                  availableModels,
-                  undefined,
-                ) ?? undefined
-              }
-              selection={value.explicitModelSelections?.[key]}
+              row={rowFor(target)}
+              selection={target.selection}
               purpose="evalTarget"
               selectionsSupported={selectionsSupported}
               harness={harness?.harnessId as Harness | undefined}
               disabled={disabled}
               disabledReason="Editing is disabled."
               hint={`Applies to ${compactModelLabel(model.name)}`}
-              onChange={(write) => {
-                const { [key]: _replaced, ...otherSelections } =
-                  value.explicitModelSelections ?? {};
-                onChange(
-                  syncExplicitModelSelections(
-                    {
-                      ...value,
-                      explicitModelIds: value.explicitModelIds.map((id) =>
-                        id === key ? write.modelId : id,
-                      ),
-                      explicitModelSelections: {
-                        ...otherSelections,
-                        ...(write.selection
-                          ? { [write.modelId]: write.selection }
-                          : {}),
-                      },
-                    },
-                    { models: availableModels, previous: value },
-                  ),
-                );
-              }}
+              onChange={(write) =>
+                // Only this target changes; a sibling effort stays.
+                replaceTarget(key, modelTarget(write.modelId, write.selection))
+              }
             />
           ) : null}
+          {!inherited && target
+            ? (() => {
+                const another = anotherEffortTarget(target, rowFor(target));
+                return another ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={disabled}
+                    className="size-8 shrink-0 text-muted-foreground"
+                    aria-label={`Add another effort of ${model.name}`}
+                    title="Add another effort"
+                    data-testid={`${testId}-add-effort`}
+                    onClick={() => insertAfter(key, another)}
+                  >
+                    <CopyPlus className="size-3.5" />
+                  </Button>
+                ) : null;
+              })()
+            : null}
           {choices.length > 1 ? (
             <Button
               type="button"
@@ -590,14 +692,12 @@ export function EvalModelChoices({
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>
-          onChange(
-            syncExplicitModelSelections(
-              {
-                ...value,
-                explicitModelIds: [...value.explicitModelIds, String(model.id)],
-              },
-              { models: availableModels, previous: value, picked: model },
-            ),
+          emit(
+            {
+              ...value,
+              explicitTargets: [...targets, { modelId: String(model.id) }],
+            },
+            model,
           )
         }
         trigger={

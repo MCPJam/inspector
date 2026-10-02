@@ -56,7 +56,7 @@ vi.mock("../eval-target-matrix", () => ({
       onClick={() =>
         onModelSelectionChange("claude", {
           includeClientDefaults: false,
-          explicitModelIds: ["opus"],
+          explicitTargets: [{ modelId: "opus" }],
         })
       }
     >
@@ -84,7 +84,7 @@ const cases = [{ _id: "case", runs: 1, models: [] }] as unknown as EvalCase[];
 it("seeds model overrides and preserves existing environment ids", () => {
   const selection = seedRunMatrix(suite, environments);
   expect(selection).toEqual({
-    claude: { includeClientDefaults: false, explicitModelIds: ["sonnet"] },
+    claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "sonnet" }] },
   });
   expect(planRunMatrix(suite, environments, selection)[0].environmentId).toBe(
     "env",
@@ -97,7 +97,7 @@ it("keeps inherited models and preserves server scope for a new model", () => {
   ).toBe(true);
   expect(
     planRunMatrix(suite, environments, {
-      claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
+      claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] },
     })[0].stack,
   ).toEqual({
     hostId: "claude",
@@ -122,8 +122,8 @@ describe("reasoning effort in the run matrix", () => {
 
   it("seeds the matrix from the environment's own selection", () => {
     expect(
-      seedRunMatrix(suite, withEffort as never).claude.explicitModelSelections
-        ?.sonnet?.settings?.reasoningEffort,
+      seedRunMatrix(suite, withEffort as never).claude.explicitTargets[0]
+        ?.selection?.settings?.reasoningEffort,
     ).toBe("high");
   });
 
@@ -133,6 +133,71 @@ describe("reasoning effort in the run matrix", () => {
       modelSelections: true,
     });
     expect(cell.environmentId).toBe("env");
+  });
+
+  it("seeds two efforts of one model as two cells, each reusing its own environment", () => {
+    const siblings = [
+      { ...environments[0], environmentId: "env-low", modelSelection: selectionWith("low") },
+      { ...environments[0], environmentId: "env-high", modelSelection: selectionWith("high") },
+    ] as typeof environments;
+    const siblingSuite = { ...suite, environmentIds: ["env-low", "env-high"] };
+    const selection = seedRunMatrix(siblingSuite, siblings as never);
+    expect(
+      selection.claude.explicitTargets.map(
+        (target) => target.selection?.settings?.reasoningEffort,
+      ),
+    ).toEqual(["low", "high"]);
+    const cells = planRunMatrix(siblingSuite, siblings as never, selection, {
+      modelSelections: true,
+    });
+    expect(cells.map((cell) => cell.environmentId)).toEqual([
+      "env-low",
+      "env-high",
+    ]);
+  });
+
+  it("an added effort of a seeded model plans one new cell beside the reused one", () => {
+    const selection = seedRunMatrix(suite, withEffort as never);
+    const cells = planRunMatrix(
+      suite,
+      withEffort as never,
+      {
+        claude: {
+          ...selection.claude,
+          explicitTargets: [
+            ...selection.claude.explicitTargets,
+            { modelId: "sonnet", selection: selectionWith("low") as never },
+          ],
+        },
+      },
+      { modelSelections: true },
+    );
+    expect(cells).toHaveLength(2);
+    expect(cells[0].environmentId).toBe("env");
+    expect(cells[1].environmentId).toBeUndefined();
+    expect(cells[1].stack).toMatchObject({
+      modelSelection: { settings: { reasoningEffort: "low" } },
+    });
+  });
+
+  it("default-only rows seed and reuse exactly as before", () => {
+    const plain = [
+      { ...environments[0], environmentId: "a" },
+      { ...environments[0], environmentId: "b", modelId: "opus" },
+    ];
+    const plainSuite = { ...suite, environmentIds: ["a", "b"] };
+    const selection = seedRunMatrix(plainSuite, plain);
+    expect(selection).toEqual({
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "sonnet" }, { modelId: "opus" }],
+      },
+    });
+    expect(
+      planRunMatrix(plainSuite, plain, selection, { modelSelections: true }).map(
+        (cell) => cell.environmentId,
+      ),
+    ).toEqual(["a", "b"]);
   });
 
   it("keeps both environments that differ only by effort (High and default)", () => {
@@ -158,8 +223,9 @@ describe("reasoning effort in the run matrix", () => {
       {
         claude: {
           includeClientDefaults: false,
-          explicitModelIds: ["sonnet"],
-          explicitModelSelections: { sonnet: selectionWith("low") as never },
+          explicitTargets: [
+            { modelId: "sonnet", selection: selectionWith("low") as never },
+          ],
         },
       },
       { modelSelections: true },
@@ -179,8 +245,9 @@ describe("reasoning effort in the run matrix", () => {
       {
         claude: {
           includeClientDefaults: false,
-          explicitModelIds: ["sonnet"],
-          explicitModelSelections: { sonnet: selectionWith() as never },
+          explicitTargets: [
+            { modelId: "sonnet", selection: selectionWith() as never },
+          ],
         },
       },
       { modelSelections: true, lossless: true },
@@ -200,8 +267,9 @@ describe("reasoning effort in the run matrix", () => {
       {
         claude: {
           includeClientDefaults: false,
-          explicitModelIds: ["sonnet"],
-          explicitModelSelections: { sonnet: selectionWith("low") as never },
+          explicitTargets: [
+            { modelId: "sonnet", selection: selectionWith("low") as never },
+          ],
         },
       },
       {},
@@ -217,7 +285,7 @@ it("never derives a new cell's servers from the suite's legacy group", () => {
   const [cell] = planRunMatrix(
     { ...suite, serverAttachmentId: "legacy-group" },
     [{ ...environments[0], serverAttachmentId: undefined }],
-    { claude: { includeClientDefaults: false, explicitModelIds: ["opus"] } },
+    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
   );
   expect(cell.stack).not.toHaveProperty("serverAttachmentId");
   expect(cell.missingGroup).toBe(true);
@@ -230,7 +298,7 @@ it("blocks a new cell when the client's setups disagree", () => {
       environments[0],
       { ...environments[0], environmentId: "env-2", serverAttachmentId: "b" },
     ],
-    { claude: { includeClientDefaults: false, explicitModelIds: ["opus"] } },
+    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
   );
   expect(plan).toHaveLength(1);
   expect(plan[0].blocked).toMatch(/setups differ/);
@@ -245,7 +313,7 @@ it("blocks a new cell whose template carries what a one-run change can't copy", 
         secretSelection: { mode: "explicit", secretIds: ["secret"] },
       },
     ],
-    { claude: { includeClientDefaults: false, explicitModelIds: ["opus"] } },
+    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
   );
   expect(cell.blocked).toMatch(/grants project secrets/);
 });
@@ -433,7 +501,7 @@ it("derives a one-run cell from a pinned setup on the backend instead of blockin
     },
   ];
   const opus = {
-    claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
+    claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] },
   };
   expect(planRunMatrix(suite, pinned, opus)[0].blocked).toMatch(
     /pins plugin versions/,
