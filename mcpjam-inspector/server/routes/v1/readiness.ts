@@ -55,6 +55,7 @@ import {
   type ReadinessPublisher as Publisher,
 } from "../shared/readiness-runs.js";
 import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const readiness = new Hono();
 
@@ -280,7 +281,10 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
 });
 
 readiness.get("/projects/:projectId/readiness-runs", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.readiness",
+  );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   const publisher = c.req.query("readinessKind");

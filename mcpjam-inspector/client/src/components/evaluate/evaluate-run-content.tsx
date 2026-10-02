@@ -54,6 +54,8 @@ import {
 } from "./run-verdict-hero-deltas";
 import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
+import { useRunErrorBreakdownToast } from "./run-error-breakdown";
+import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -103,7 +105,10 @@ export function SingleRunContent({
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
   // decision to read, and asking anyway spends a request per poll to be told so.
-  const active = decisionSummaryEnabled && isTerminalEvalRunStatus(run.status);
+  const active =
+    Boolean(projectId) &&
+    decisionSummaryEnabled &&
+    isTerminalEvalRunStatus(run.status);
 
   const detail = useEvalRunDecisionDetail({
     projectId,
@@ -187,6 +192,33 @@ export function SingleRunContent({
     run,
     enabled: active,
   });
+
+  // Terminal runs only, and only once the decision read settled: the toast
+  // fires once per run, so it must not fire on the partial picture a running
+  // run or an in-flight read would give it.
+  const errorBreakdown = useMemo(
+    () =>
+      isTerminalEvalRunStatus(run.status) &&
+      (!active ||
+        (!["disabled", "loading"].includes(detail.status) &&
+          !["disabled", "loading"].includes(chains.status)))
+        ? buildRunErrorBreakdown({
+            iterations,
+            diagnostics: detail.diagnostics,
+            chains: chains.chains,
+          })
+        : null,
+    [
+      active,
+      run.status,
+      detail.status,
+      iterations,
+      detail.diagnostics,
+      chains.chains,
+      chains.status,
+    ],
+  );
+  useRunErrorBreakdownToast(String(run._id), errorBreakdown);
 
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({

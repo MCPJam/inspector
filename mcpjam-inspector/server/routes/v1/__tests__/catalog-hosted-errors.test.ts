@@ -87,7 +87,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     );
     const res = await request(
       makeApp(),
-      "/api/v1/projects/p1/sessions?sourceType=mcp-widgets",
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/sessions?sourceType=mcp-widgets",
     );
 
     expect(res.status).toBe(400);
@@ -112,7 +112,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "INTERNAL_ERROR", message: CONVEX_DETAIL }, 500),
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
 
     expect(res.status).toBe(500);
     const body = (await res.json()) as {
@@ -130,7 +130,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "VALIDATION_ERROR", message: CONVEX_DETAIL }, 400),
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
 
     const body = (await res.json()) as { details?: { requestId?: string } };
     const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
@@ -154,7 +154,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
           400,
         ),
       );
-      const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+      const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
 
       expect(res.status).toBe(400);
       const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
@@ -188,7 +188,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
         400,
       ),
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
 
     expect(res.status).toBe(400);
     const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
@@ -204,7 +204,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "NOT_FOUND", message: "Project not found" }, 404),
     );
-    const res = await request(makeApp(), "/api/v1/projects/p_bad/servers");
+    const res = await request(makeApp(), "/api/v1/projects/pbadxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
 
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({
@@ -218,7 +218,7 @@ describe("v1 read proxies, hosted Convex exception relays", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "VALIDATION_ERROR", message: CONVEX_DETAIL }, 400),
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/servers");
+    const res = await request(makeApp(), "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers");
 
     expect(res.status).toBe(400);
     expect(((await res.json()) as { message?: string }).message).toBe(
