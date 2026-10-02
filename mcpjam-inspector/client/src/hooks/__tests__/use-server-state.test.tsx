@@ -1578,7 +1578,111 @@ describe("useServerState OAuth callback failures", () => {
       })
     );
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(mockUpdateServer).not.toHaveBeenCalled();
   });
+
+  it.each(["none", "bearer", "xaa", "auto"] as const)(
+    "persists OAuth before importing debugger tokens for a %s server",
+    async (authMethod) => {
+      const appState = createAppState();
+      appState.servers["demo-server"].authMethod = authMethod;
+      appState.servers["demo-server"].useOAuth = authMethod !== "auto";
+      mockHostedMode.mockReturnValue(true);
+      let finishSave!: () => void;
+      mockUpdateServer.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSave = resolve;
+          }),
+      );
+      reconnectServerMock.mockResolvedValueOnce({
+        success: true,
+        initInfo: null,
+      });
+      const { result } = renderUseServerState(vi.fn(), appState);
+
+      let connecting!: Promise<void>;
+      act(() => {
+        connecting = result.current.handleConnectWithTokensFromOAuthFlow(
+          "demo-server",
+          { accessToken: "access-token", clientId: "client-id" },
+          "https://example.com/mcp",
+        );
+      });
+      await waitFor(() =>
+        expect(mockUpdateServer).toHaveBeenCalledWith({
+          serverId: "srv_demo",
+          authMethod: "oauth",
+          useOAuth: true,
+          useXaa: false,
+        }),
+      );
+      expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
+      expect(reconnectServerMock).not.toHaveBeenCalled();
+
+      await act(async () => {
+        finishSave();
+        await connecting;
+      });
+      expect(importHostedOAuthTokensMock).toHaveBeenCalledOnce();
+      expect(reconnectServerMock).toHaveBeenCalledOnce();
+      expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    },
+  );
+
+  it("does not import tokens or reconnect if saving the OAuth method fails", async () => {
+    const appState = createAppState();
+    appState.servers["demo-server"].useOAuth = false;
+    mockUpdateServer.mockRejectedValueOnce(
+      new Error("Could not save auth method"),
+    );
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        { accessToken: "access-token", clientId: "client-id" },
+        "https://example.com/mcp",
+      );
+    });
+
+    expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      errorToastMessage("Connection failed: Could not save auth method"),
+      { duration: 8000 },
+    );
+  });
+
+  it.each([
+    "handleConnectWithTokensFromOAuthFlow",
+    "handleRefreshTokensFromOAuthFlow",
+  ] as const)(
+    "%s handles an import failure without an unhandled rejection",
+    async (handler) => {
+      importHostedOAuthTokensMock.mockRejectedValueOnce(
+        new Error("Server does not require OAuth"),
+      );
+      const { result } = renderUseServerState(vi.fn());
+
+      await act(async () => {
+        await result.current[handler](
+          "demo-server",
+          { accessToken: "access-token", clientId: "client-id" },
+          "https://example.com/mcp",
+        );
+      });
+
+      expect(reconnectServerMock).not.toHaveBeenCalled();
+      expect(toastError).toHaveBeenCalledWith(
+        errorToastMessage(
+          `${handler === "handleConnectWithTokensFromOAuthFlow" ? "Connection failed" : "Token refresh failed"}: Server does not require OAuth`,
+        ),
+        { duration: 8000 },
+      );
+      expect(toastSuccess).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves the 2026 wire pin through the stored-credential probe and CONNECT_SUCCESS", async () => {
     // Regression: handleConnect must not rebuild a URL-only config that drops
