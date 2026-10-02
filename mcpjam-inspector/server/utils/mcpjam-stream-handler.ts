@@ -74,6 +74,10 @@ import {
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
 import { isScopeStepUpSuspendSignal } from "./scope-step-up-continuation.js";
 import {
+  settleSuspendedHistoryToolCalls,
+  type SettleSuspendedToolCall,
+} from "./direct-chat-scope-step-up.js";
+import {
   spliceMrtrToolResult,
   hasUnresolvedToolCall,
   type MrtrEngineResume,
@@ -1146,6 +1150,14 @@ export interface MCPJamHandlerOptions {
   mrtrResume?: MrtrEngineResume;
   /** SEP-2350 resume descriptor; driven before the first model step. */
   scopeStepUpResume?: MrtrEngineResume;
+  /**
+   * History settlement for mid-session sign-in. A call that a sign-in
+   * suspended can come back unresolved because the user sent another message
+   * instead of signing in; this answers it with the reason-aware text before
+   * the first model step, on every engine path and whether or not the history
+   * is client-supplied. Skipped on a resume, like the approval settlement.
+   */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   /**
    * Creates a continuation for an exact harness-proxied tools/call. The
    * harness supplies its model-visible toolCallId after correlating the proxy
@@ -3219,6 +3231,80 @@ function collectToolCallIds(messages: ModelMessage[]): Set<string> {
  * its tool, and SILENTLY — re-sending it would ask the browser to run it. The
  * model is never shown it or its answer (`presentHistoryForModel`).
  */
+/**
+ * Answer inherited calls a mid-session sign-in suspended, before the
+ * approval settlement below would answer them as unapproved. The answer is
+ * the reason-aware cancel text, never a run: the user moved on without
+ * signing in. Each call is re-introduced on this response first, like the
+ * unapproved ones, so the client has a part to attach the answer to.
+ */
+async function settleSuspendedSignInHistoryToolCalls(args: {
+  writer: StepContext["writer"];
+  messageHistory: ModelMessage[];
+  tools: ToolSet;
+  mcpClientManager: MCPClientManager;
+  traceTurn: LiveTraceTurnContext;
+  stepIndex: number;
+  settle: SettleSuspendedToolCall;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+}): Promise<void> {
+  const answers = await settleSuspendedHistoryToolCalls({
+    messageHistory: args.messageHistory,
+    settle: args.settle,
+  });
+  if (answers.length === 0) return;
+  const calls = new Map<string, ToolCallPart>();
+  for (const msg of args.messageHistory) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call") calls.set(part.toolCallId, part);
+    }
+  }
+  for (const answer of answers) {
+    for (const result of (answer as ToolModelMessage).content) {
+      if (result.type !== "tool-result") continue;
+      const part = calls.get(result.toolCallId);
+      if (!part) continue;
+      emitToolInput(args.writer, {
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input ?? {},
+        ...(part.providerOptions
+          ? { providerMetadata: part.providerOptions }
+          : {}),
+      });
+      if (args.onToolCall) {
+        try {
+          args.onToolCall({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: part.input,
+            stepIndex: args.stepIndex,
+            promptIndex: args.traceTurn.promptIndex,
+            serverId: readToolServerId(args.tools, part.toolName),
+          });
+        } catch (error) {
+          logger.warn(
+            "[mcpjam-stream-handler] onToolCall callback failed (suspended sign-in call)",
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+        }
+      }
+    }
+  }
+  await emitToolResults(
+    args.writer,
+    args.mcpClientManager,
+    answers,
+    args.traceTurn,
+    args.stepIndex,
+    args.onToolResult,
+  );
+}
+
 async function settleUnapprovedHistoryToolCalls(args: {
   writer: StepContext["writer"];
   messageHistory: ModelMessage[];
@@ -4989,6 +5075,22 @@ export async function runChatEngineLoop(
       // call in the history is unresolved, so nothing planted beside the
       // resumed call can run on that path either; it only keeps the turn
       // paused.
+      if (
+        options.settleSuspendedHistoryToolCall &&
+        !(scopeStepUpResume ?? mrtrResume)
+      ) {
+        await settleSuspendedSignInHistoryToolCalls({
+          writer: safeWriter,
+          messageHistory,
+          tools,
+          mcpClientManager,
+          traceTurn,
+          stepIndex: effectiveSteps(),
+          settle: options.settleSuspendedHistoryToolCall,
+          onToolResult,
+          onToolCall,
+        });
+      }
       if (options.clientSuppliedHistory && !(scopeStepUpResume ?? mrtrResume)) {
         await settleUnapprovedHistoryToolCalls({
           writer: safeWriter,
