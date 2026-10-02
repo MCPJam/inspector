@@ -401,6 +401,68 @@ describe("v1 eval-edit routes", () => {
     expect(args.minIterations).toBeNull();
   });
 
+  it("PATCH executionBudgets reaches the mutation, and null clears it", async () => {
+    // The settings-parity ratchet proves the SCHEMA parses
+    // `settings.executionBudgets.*`. It cannot prove the handler forwards it,
+    // and the first cut of this feature did not: the field parsed, the route
+    // returned 200, and the budget was silently dropped — the same shape as a
+    // runtime that shipped dark with green CI on both repos. This test is the
+    // half the ratchet structurally cannot cover.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { executionBudgets: { turnTimeoutMs: 300_000 } } },
+    );
+    expect(res.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      )![1].executionBudgets,
+    ).toEqual({ turnTimeoutMs: 300_000 });
+
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string) =>
+      defaultMutationImpl(name),
+    );
+
+    // `null` CLEARS back to the platform defaults and must survive as null.
+    const cleared = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { executionBudgets: null } },
+    );
+    expect(cleared.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args).toHaveProperty("executionBudgets");
+    expect(args.executionBudgets).toBeNull();
+  });
+
+  it("PATCH rejects an executionBudget above its platform ceiling", async () => {
+    // Refused by PARSING, before the ladder is consulted: the contract
+    // schema's `max` on each field is the platform ceiling.
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      // 31 minutes; the per-turn ceiling is 30.
+      { settings: { executionBudgets: { turnTimeoutMs: 1_860_000 } } },
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      ),
+    ).toBe(false);
+  });
+
   it("PATCH rejects a minimumIterations outside 1–10", async () => {
     for (const value of [0, 11, 2.5]) {
       vi.clearAllMocks();
@@ -415,6 +477,68 @@ describe("v1 eval-edit routes", () => {
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
     }
+  });
+
+  it("GET projects executionBudgets, and null when nothing is authored", async () => {
+    // The READ half of the pair. PATCH forwarding is covered above, but a
+    // caller that can write a budget and never read it back cannot tell a
+    // stored value from a dropped one — and a DTO that silently omitted the
+    // field would pass every assertion in this file without this test. That
+    // is not hypothetical: this exact surface shipped once with the schema
+    // accepting a path the handler and the DTO both ignored.
+    const unset = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    const unsetBody = (await unset.json()) as any;
+    // `null`, not absent: the key has to be PRESENT and empty, so a reader can
+    // distinguish "inherits the platform defaults" from "this build of the API
+    // does not know about budgets".
+    expect(unsetBody.settings).toHaveProperty("executionBudgets");
+    expect(unsetBody.settings.executionBudgets).toBeNull();
+
+    const stored = {
+      turnTimeoutMs: 300_000,
+      toolCallTimeoutMs: 60_000,
+      iterationTimeoutMs: 900_000,
+      runTimeoutMs: 3_600_000,
+      turnRetries: 0,
+    };
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, executionBudgets: stored })
+        : defaultQueryImpl(name),
+    );
+    const set = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    // Every clock, by value. A partial projection is the same failure as no
+    // projection for whichever field it drops, so this asserts the whole
+    // object rather than spot-checking one key.
+    expect(((await set.json()) as any).settings.executionBudgets).toEqual(
+      stored,
+    );
+  });
+
+  it("GET reports an authored zero, which is not the same as unauthored", async () => {
+    // `turnRetries: 0` is a real choice — never retry — and the one value a
+    // `??`-style projection is most likely to collapse into the empty case.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            executionBudgets: { turnRetries: 0 },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    expect(((await res.json()) as any).settings.executionBudgets).toEqual({
+      turnRetries: 0,
+    });
   });
 
   it("GET reports minimumIterations, null when the suite has no floor", async () => {
