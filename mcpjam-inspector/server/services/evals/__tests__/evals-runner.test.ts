@@ -4,6 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
+const localVenueMocks = vi.hoisted(() => ({
+  select: vi.fn(async () => false),
+  prepare: vi.fn(),
+}));
+vi.mock("../../../utils/harness/local/run-resources", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/harness/local/run-resources")>(),
+  shouldUseLocalHarness: localVenueMocks.select,
+  prepareLocalHarnessRun: localVenueMocks.prepare,
+}));
+
 const preparedToolsOverride = vi.hoisted(() => ({
   current: undefined as Record<string, any> | undefined,
 }));
@@ -497,6 +507,26 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       testCaseId: "case-1",
     };
   }
+
+  it("fails a pinned local run without cloud fallback when authorization disappears", async () => {
+    const config = buildQuickRunConfig();
+    config.config.tests[0].model = "claude-haiku-4.5";
+    config.config.tests[0].provider = "anthropic";
+    config.config.tests[0].runs = 2;
+    localVenueMocks.prepare.mockRejectedValue(new Error("Local authorization was forgotten"));
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      modelApiKeys: {},
+      orgModelConfigTarget: { projectId: "project-1" },
+      harnessRuntimeVenue: "local",
+      suiteHostConfig: { harness: "claude-code" },
+    } as any);
+    expect(localVenueMocks.prepare).toHaveBeenCalledTimes(1);
+    expect(localVenueMocks.select).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
 
   it("surfaces a clear error when the selected server is not connected at runtime", async () => {
     mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(

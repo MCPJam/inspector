@@ -1,3 +1,4 @@
+import { Profiler } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { JsonEditor } from "../json-editor";
@@ -171,6 +172,56 @@ describe("JsonEditor", () => {
       const treeRoot = container.querySelector(".overflow-auto.pl-7");
       expect(treeRoot).toBeTruthy();
       expect((treeRoot as HTMLElement).style.height).toBe("100%");
+    });
+  });
+
+  describe("view-only value changes", () => {
+    // A streaming trace hands the Raw view a new value on every token. The
+    // view-only tree renders `value` itself, so each change should commit
+    // once, with no follow-up state update from the edit buffer.
+    it("commits once per new value and shows the latest one", () => {
+      let commits = 0;
+      const viewer = (tokens: number) => (
+        <Profiler
+          id="json-editor"
+          onRender={() => {
+            commits += 1;
+          }}
+        >
+          <JsonEditor value={{ tokens }} viewOnly collapsible />
+        </Profiler>
+      );
+      const { rerender } = render(viewer(0));
+
+      const committedBeforeChanges = commits;
+      for (let tokens = 1; tokens <= 20; tokens++) {
+        rerender(viewer(tokens));
+      }
+
+      expect(commits - committedBeforeChanges).toBe(20);
+      expect(screen.getByText("20")).toBeInTheDocument();
+    });
+
+    // The tool card flips a view-only editor into edit mode once its input
+    // has finished streaming. The editor must start from the latest value.
+    it("starts the editor from the latest value when viewOnly turns off", () => {
+      const { rerender } = render(
+        <JsonEditor value={{ tokens: 1 }} viewOnly collapsible />,
+      );
+      rerender(<JsonEditor value={{ tokens: 2 }} viewOnly collapsible />);
+
+      rerender(
+        <JsonEditor
+          value={{ tokens: 2 }}
+          height="100%"
+          mode="edit"
+          onModeChange={() => {}}
+          showModeToggle={false}
+          editSurface="legacy"
+        />,
+      );
+
+      expect(screen.getByRole("textbox")).toHaveValue('{\n  "tokens": 2\n}');
     });
   });
 

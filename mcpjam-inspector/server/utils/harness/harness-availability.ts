@@ -21,6 +21,10 @@ import { getCanonicalModelId } from "@/shared/types";
 import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
+import {
+  MODEL_REASONING_EFFORTS,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk/browser";
 import type { HarnessModelPurpose } from "@/shared/harness-model-support";
 import {
   getHarnessAdapter,
@@ -201,6 +205,64 @@ export function externalAccountHostModelRefusalReason(args: {
 }
 
 /**
+ * Read a reasoning effort off an untyped value (a request field, a stored
+ * setting). Anything that is not one of the SDK's known levels reads as absent:
+ * an unknown string is not a request this gate can reason about, and the
+ * closed validators upstream have already refused it where it matters.
+ */
+export function readReasoningEffort(
+  value: unknown,
+): ModelReasoningEffort | undefined {
+  return typeof value === "string" &&
+    (MODEL_REASONING_EFFORTS as readonly string[]).includes(value)
+    ? (value as ModelReasoningEffort)
+    : undefined;
+}
+
+/** The effort a saved `ModelSelection` carries (`settings.reasoningEffort`). */
+export function selectionReasoningEffort(
+  selection: unknown,
+): ModelReasoningEffort | undefined {
+  if (!selection || typeof selection !== "object") return undefined;
+  const settings = (selection as { settings?: unknown }).settings;
+  if (!settings || typeof settings !== "object") return undefined;
+  return readReasoningEffort(
+    (settings as { reasoningEffort?: unknown }).reasoningEffort,
+  );
+}
+
+/**
+ * Why a harness turn must not run at this reasoning effort, or `undefined` when
+ * it may.
+ *
+ * "Refuse, never drop": every harness turn used to build its runtime from the
+ * model and credential alone, so a saved effort was silently ignored while the
+ * record claimed it. The adapter now declares the efforts it is verified to
+ * apply (`supportedReasoningEfforts`, empty until verified); anything else is
+ * refused BEFORE any spend. One helper, called from the pre-flight gate, the
+ * dispatch backstop and `runHarnessTurn`, so the three can never disagree.
+ */
+export function harnessReasoningEffortRefusalReason(args: {
+  adapter: HarnessRuntimeAdapter;
+  reasoningEffort?: ModelReasoningEffort;
+}): string | undefined {
+  const { adapter, reasoningEffort } = args;
+  if (reasoningEffort === undefined) return undefined;
+  if (adapter.supportedReasoningEfforts.includes(reasoningEffort)) {
+    return undefined;
+  }
+  const name = adapter.displayName;
+  return adapter.supportedReasoningEfforts.length === 0
+    ? `the ${name} harness can't apply a reasoning effort yet ` +
+        `("${reasoningEffort}") — remove the effort from this model, or use ` +
+        "the emulated engine"
+    : `the ${name} harness can't apply the "${reasoningEffort}" reasoning ` +
+        `effort — it supports ${adapter.supportedReasoningEfforts
+          .map((level) => `"${level}"`)
+          .join(", ")}`;
+}
+
+/**
  * The approval half of this pre-flight, as a value both gate sites share.
  *
  * `runHarnessTurn` has to re-assert exactly these rules, because the eval,
@@ -267,7 +329,11 @@ export type HarnessUnavailableKind =
   | "model-unsupported"
   /** The evidence table has not verified this model on the harness's runtime
    *  version. Refused for evals and swarms; chat runs it with a warning. */
-  | "model-unverified";
+  | "model-unverified"
+  /** A saved setting (today: reasoning effort) the harness adapter has not
+   *  verified it can apply. A property of the HOST's selection, not of the
+   *  model, so it is final at the first admission pass. */
+  | "setting-unsupported";
 
 export type HarnessAvailability =
   /** `warning`: the turn may run, but the reader should be told something —
@@ -355,6 +421,12 @@ export function checkHarnessRuntimeAvailable(args: {
    * reading — so a caller that forgets to say is never the lenient one.
    */
   purpose?: HarnessModelPurpose;
+  /**
+   * The reasoning effort this turn will run at (the request's, else the
+   * host's saved selection). Refused with `setting-unsupported` when the
+   * adapter has not verified it, rather than silently not applied.
+   */
+  reasoningEffort?: ModelReasoningEffort;
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
@@ -421,6 +493,16 @@ export function checkHarnessRuntimeAvailable(args: {
   });
   if (approvalRefusal) {
     return { ok: false, kind: "tool-approval", reason: approvalRefusal };
+  }
+
+  const effortRefusal = harnessReasoningEffortRefusalReason({
+    adapter,
+    ...(args.reasoningEffort !== undefined
+      ? { reasoningEffort: args.reasoningEffort }
+      : {}),
+  });
+  if (effortRefusal) {
+    return { ok: false, kind: "setting-unsupported", reason: effortRefusal };
   }
 
   // There is no MCP gate. Every adapter delivers the host's selected servers

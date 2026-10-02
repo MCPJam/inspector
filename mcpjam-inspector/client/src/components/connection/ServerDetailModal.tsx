@@ -554,13 +554,11 @@ export function ServerDetailModal({
   /**
    * The single condition that decides whether this configuration may be saved.
    *
-   * Extracted because the Save button's `disabled` and the form's submit
-   * handler were two different lists, and Enter in any configuration input
-   * submits the form — so every condition the button enforced was bypassable
-   * from the keyboard. That matters most for MJ-003's credential-clear
-   * acknowledgement, which is there precisely so a destructive save cannot
-   * happen without one, but it was equally true of the duplicate-name check,
-   * the auth-configuration block, and the in-flight reconnect guard.
+   * One list read by both the Save button's `disabled` and the form's submit
+   * handler, because Enter in any configuration input submits the form. It
+   * covers MJ-003's credential-clear acknowledgement, which is there so a
+   * destructive save cannot happen without one, as well as the duplicate-name
+   * check, the auth-configuration block, and the in-flight reconnect guard.
    */
   const saveBlocked =
     isDuplicateServerName ||
