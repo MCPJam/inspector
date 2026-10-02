@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useConvexAuth, useQueries } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -11,6 +11,7 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { convexErrMessage } from "@/lib/convex-error";
 import { getMcpServerDisplayName } from "@/lib/mcp-server-display-name";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import {
@@ -28,6 +29,8 @@ export type RunPreflight = {
   disconnected: string[];
   /** Servers the project no longer has: the run cannot start. */
   removed: string[];
+  /** The backend's own launch refusals (`ENV_*`): the run cannot start. */
+  refused: string[];
   /** Org provider keys a run model needs that the org has not enabled. */
   disabledProviders: string[];
 };
@@ -48,6 +51,7 @@ export function runPreflight(input: {
   availableModelIds?: readonly string[];
   /** Absent while loading: no provider reads as disabled. */
   orgConfig?: { providers: { providerKey: string; enabled: boolean }[] };
+  refused?: readonly string[];
 }): RunPreflight {
   const disconnected: string[] = [];
   const removed: string[] = [];
@@ -78,7 +82,12 @@ export function runPreflight(input: {
     )
       disabledProviders.add(provider);
   }
-  return { disconnected, removed, disabledProviders: [...disabledProviders] };
+  return {
+    disconnected,
+    removed,
+    refused: [...(input.refused ?? [])],
+    disabledProviders: [...disabledProviders],
+  };
 }
 
 type PreflightEnvironment = Pick<
@@ -122,31 +131,60 @@ export function preflightTargets({
   return { serverRefs: [...environmentServerRefs], models };
 }
 
-/** Names the server refs each attached environment's run would connect. */
-function useEnvironmentServerRefs(
+/**
+ * Each environment's launch resolution: the servers its run would connect,
+ * and the `ENV_*` refusals the launch itself would answer with. Any other
+ * failure is left to the run route to report.
+ */
+export function readEnvironmentResolutions(
+  results: Readonly<Record<string, unknown>>,
+): { serverRefs: string[]; refusals: string[] } {
+  const serverRefs: string[] = [];
+  const refusals = new Set<string>();
+  for (const resolved of Object.values(results)) {
+    if (resolved instanceof Error) {
+      const code = (resolved as { data?: { code?: unknown } }).data?.code;
+      if (typeof code === "string" && code.startsWith("ENV_"))
+        refusals.add(convexErrMessage(resolved, resolved.message));
+      continue;
+    }
+    const servers = (resolved as { servers?: unknown } | undefined)?.servers;
+    if (Array.isArray(servers))
+      for (const server of servers as Array<{
+        serverId: string;
+        name?: string;
+      }>)
+        serverRefs.push(server.name?.trim() || server.serverId);
+  }
+  return { serverRefs, refusals: [...refusals] };
+}
+
+export function useEnvironmentResolutions(
   projectId: string,
   environmentIds: readonly string[],
-): string[] {
-  const resolutions = useQueries(
-    Object.fromEntries(
-      environmentIds.map((environmentId) => [
-        environmentId,
-        {
-          query: "projectEnvironments:resolveEnvironmentForLaunch" as any,
-          // The rule the run route resolves with.
-          args: { projectId, environmentId, serverSource: "environment_only" },
-        },
-      ]),
-    ),
+) {
+  // Convex resubscribes whenever this object changes identity, and every
+  // resubscribe re-renders, so it is rebuilt only when its inputs change.
+  const key = environmentIds.join(",");
+  const queries = useMemo(
+    () =>
+      Object.fromEntries(
+        (key ? key.split(",") : []).map((environmentId) => [
+          environmentId,
+          {
+            query: "projectEnvironments:resolveEnvironmentForLaunch" as any,
+            // The rule the run route resolves with.
+            args: {
+              projectId,
+              environmentId,
+              serverSource: "environment_only",
+            },
+          },
+        ]),
+      ),
+    [projectId, key],
   );
-  return Object.values(resolutions).flatMap((resolved) =>
-    // A refused resolution is the run route's to report.
-    resolved && !(resolved instanceof Error) && Array.isArray(resolved.servers)
-      ? (resolved.servers as Array<{ serverId: string; name?: string }>).map(
-          (server) => server.name?.trim() || server.serverId,
-        )
-      : [],
-  );
+  return readEnvironmentResolutions(useQueries(queries));
 }
 
 export function useSuiteRunPreflight({
@@ -174,7 +212,7 @@ export function useSuiteRunPreflight({
   const { availableModels } = useAvailableModels({ projectId });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const manageModels = useOrgModelsHandoff(organizationId);
-  const environmentServerRefs = useEnvironmentServerRefs(
+  const environment = useEnvironmentResolutions(
     projectId,
     suite.environmentIds ?? [],
   );
@@ -184,8 +222,9 @@ export function useSuiteRunPreflight({
       cases,
       environments,
       hosts,
-      environmentServerRefs,
+      environmentServerRefs: environment.serverRefs,
     }),
+    refused: environment.refusals,
     servers: appState?.servers ?? {},
     projectServers,
     availableModelIds: availableModels.map((model) => String(model.id)),
@@ -214,7 +253,7 @@ export function useSuiteRunPreflight({
 }
 
 export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
-  return Boolean(preflight?.removed.length);
+  return Boolean(preflight?.removed.length || preflight?.refused.length);
 }
 
 export function RunPreflightNotices({
@@ -226,8 +265,14 @@ export function RunPreflightNotices({
 }) {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const { disconnected, removed, disabledProviders, serverName } = preflight;
-  if (!disconnected.length && !removed.length && !disabledProviders.length)
+  const { disconnected, removed, refused, disabledProviders, serverName } =
+    preflight;
+  if (
+    !disconnected.length &&
+    !removed.length &&
+    !refused.length &&
+    !disabledProviders.length
+  )
     return null;
   const openServers = (
     <Button
@@ -256,6 +301,11 @@ export function RunPreflightNotices({
       aria-label="Before you run"
       className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
     >
+      {refused.map((message) => (
+        <p key={`refused:${message}`} className="text-destructive">
+          {message} {openServers}
+        </p>
+      ))}
       {removed.map((ref) => (
         <p key={`removed:${ref}`} className="text-destructive">
           {serverName(ref)} is no longer in this project, so this suite can't

@@ -172,7 +172,7 @@ export function SuiteRunReviewContent({
   const disabledReason =
     blockedReason ??
     (hasBlockingPreflight(preflight)
-      ? "Fix the missing server before running."
+      ? "Fix the setup problem above before running."
       : null);
   const lock = useRef(false);
   const count = Number(iterations);

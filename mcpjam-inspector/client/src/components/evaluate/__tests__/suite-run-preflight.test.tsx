@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ConvexError } from "convex/values";
 import {
   preflightTargets,
+  readEnvironmentResolutions,
   runPreflight,
   RunPreflightNotices,
 } from "../suite-run-preflight";
@@ -155,6 +157,47 @@ describe("preflightTargets", () => {
   });
 });
 
+describe("readEnvironmentResolutions", () => {
+  const deletedServer = new ConvexError({
+    code: "ENV_SERVERS_UNRESOLVED",
+    message:
+      'Environment "Claude" has a deleted server "crm" in its server group. Choose the environment\'s servers again before running.',
+  });
+
+  it("collects each environment's servers by name, else by id", () => {
+    expect(
+      readEnvironmentResolutions({
+        "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+        "env-b": { servers: [{ serverId: "srv-2" }] },
+        "env-c": undefined,
+      }),
+    ).toEqual({ serverRefs: ["billing", "srv-2"], refusals: [] });
+  });
+
+  it("reports a launch refusal once, in the backend's words", () => {
+    expect(
+      readEnvironmentResolutions({
+        "env-a": deletedServer,
+        "env-b": deletedServer,
+      }).refusals,
+    ).toEqual([
+      'Environment "Claude" has a deleted server "crm" in its server group. Choose the environment\'s servers again before running.',
+    ]);
+  });
+
+  it("leaves a failure that is not a launch refusal to the run route", () => {
+    expect(
+      readEnvironmentResolutions({
+        "env-a": new Error("Not a member of this project"),
+        "env-b": new ConvexError({
+          code: "RATE_LIMITED",
+          message: "Slow down",
+        }),
+      }),
+    ).toEqual({ serverRefs: [], refusals: [] });
+  });
+});
+
 describe("RunPreflightNotices", () => {
   it("connects a disconnected server from the sheet", async () => {
     const connect = vi.fn().mockResolvedValue(undefined);
@@ -163,6 +206,7 @@ describe("RunPreflightNotices", () => {
         preflight={{
           disconnected: ["crm"],
           removed: [],
+          refused: [],
           disabledProviders: [],
           serverName: (ref) => ref,
           connect,
@@ -181,6 +225,7 @@ describe("RunPreflightNotices", () => {
         preflight={{
           disconnected: [],
           removed: [],
+          refused: [],
           disabledProviders: ["anthropic"],
           serverName: (ref) => ref,
           manageModels,
@@ -205,6 +250,29 @@ describe("Setup Run with a preflight", () => {
   } as unknown as EvalSuite;
   const cases = [{ _id: "one", runs: 1, models: [] }] as unknown as EvalCase[];
 
+  it("blocks Start on an environment the backend refuses to launch", () => {
+    render(
+      <SuiteRunReviewContent
+        suite={suite}
+        cases={cases}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+        preflight={{
+          disconnected: [],
+          removed: [],
+          refused: ['Environment "Claude" has a deleted server "crm".'],
+          disabledProviders: [],
+          serverName: (ref) => ref,
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeDisabled();
+    expect(
+      screen.getByText(/Environment "Claude" has a deleted server "crm"/),
+    ).toBeInTheDocument();
+  });
+
   it("blocks Start on a server the project no longer has", () => {
     render(
       <SuiteRunReviewContent
@@ -216,6 +284,7 @@ describe("Setup Run with a preflight", () => {
         preflight={{
           disconnected: [],
           removed: ["gone"],
+          refused: [],
           disabledProviders: [],
           serverName: (ref) => ref,
         }}
@@ -239,6 +308,7 @@ describe("Setup Run with a preflight", () => {
         preflight={{
           disconnected: ["crm"],
           removed: [],
+          refused: [],
           disabledProviders: ["anthropic"],
           serverName: (ref) => ref,
         }}
