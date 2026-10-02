@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false # job has write perms; Claude uses gh, not git auth
 
       - name: Classify and act
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # This workflow only ever fires for mintlify[bot] PRs (see the job
