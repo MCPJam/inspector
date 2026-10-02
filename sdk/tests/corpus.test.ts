@@ -883,6 +883,61 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
     ).toThrow(/negative case.*toolCalledWith check/s);
   });
 
+  // An advisory toolCalledWith can only warn, so it never contradicts a
+  // negative case, whichever of the three routes it arrives by.
+  const ADVISORY_TOOL_CALLED_WITH = {
+    ...TOOL_CALLED_WITH,
+    role: "advisory",
+    severity: "warn",
+  };
+
+  it("loads an advisory toolCalledWith as a step assertion", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion: ADVISORY_TOOL_CALLED_WITH },
+        ],
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY_TOOL_CALLED_WITH]);
+  });
+
+  it("loads an advisory toolCalledWith arriving as a case-level check", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        checks: { mode: "replace", list: [ADVISORY_TOOL_CALLED_WITH] },
+      })
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY_TOOL_CALLED_WITH]);
+  });
+
+  it("loads an advisory toolCalledWith inherited from the suite", () => {
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: true,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+      }),
+      { suiteChecks: [ADVISORY_TOOL_CALLED_WITH] }
+    ).getConfig();
+    expect(config.predicates).toEqual([ADVISORY_TOOL_CALLED_WITH]);
+  });
+
+  it('still refuses role: "required", the other spelling of gating', () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [{ ...TOOL_CALLED_WITH, role: "required" }] }
+      )
+    ).toThrow(/negative case.*toolCalledWith check/s);
+  });
+
   it("still allows a positive case to carry the same check", () => {
     // The guard keys on `isNegative`, not on the check — a suite-level
     // toolCalledWith is perfectly valid for every non-negative case, and

@@ -2624,6 +2624,28 @@ A turn whose spans could not be read reports `spansUnavailable: true` rather tha
 | `--no-spans` | Per-turn summaries without span payloads |
 | `--project <id-or-name>` | Optional project scope |
 
+### `cloud feedback`
+
+Tell the MCPJam team about MCPJam itself: a bug, a missing capability, something confusing, or a docs gap.
+
+**Your text is sent to the MCPJam team, outside your organization, and stored for 180 days.** It is kept in MCPJam's own database and never published. Summarize. Never paste secrets, tokens, or raw tool output. Requires a signed-in account (`cloud login` or an `sk_` key).
+
+When a Cloud command fails with an internal error or a missing capability and the response carries a request id, its error message ends with a ready-to-run `cloud feedback` command that carries that id, so the report can be matched to the server's logs. Gateway failures (502/503/504) and `cloud feedback` itself never suggest it.
+
+| Flag | Description |
+|------|-------------|
+| `--kind <kind>` | `bug`, `missing_capability`, `confusing`, `docs`, or `other` (required) |
+| `--summary <text>` | One line, up to 200 characters (required) |
+| `--details <text>` | What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried. Up to 8000 characters. |
+| `--details-file <path>` | Read `--details` from a file, or `-` for stdin. Conflicts with `--details`. |
+| `--operation <name>` | The command, tool or app page in use |
+| `--request-id <id>` | The request id from the failing command's error |
+| `--error-code <code>` | The failing command's error code |
+| `--project <id-or-name>` | A project the report is about. No project is assumed otherwise, not even a linked one or `MCPJAM_PROJECT`. |
+| `--idempotency-key <key>` | Retry key: a retry with the same key returns the original receipt instead of filing twice |
+
+The result is `{ id, receivedAt, duplicate }`. It means the report is stored. `duplicate: true` means you sent an identical report within the last day; it was counted, not filed again.
+
 ---
 
 ## `cloud login` / `logout` / `whoami`

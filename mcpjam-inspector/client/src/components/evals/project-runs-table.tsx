@@ -21,6 +21,7 @@ import {
   type RunPassRateChange,
 } from "./run-pass-rate-changes";
 import { useProjectRunHistory } from "./use-project-run-history";
+import { isActiveRun } from "./run-metrics";
 import {
   displayRunServerNames,
   isEphemeralCheckServerName,
@@ -115,8 +116,14 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  *
  * Each page costs one run read and one iteration read per run, so an uncapped
  * reach turns a mature project into thousands of queries on every visit.
+ * A Suite Health bar is one launch of one suite, so two pages (100 runs) fill
+ * its 60-bar window only when launches are mostly single runs, as with SDK
+ * runs started one model at a time. A suite that fans each launch out to three
+ * models gets ~33 bars from the same pages and says "read so far". At four
+ * pages, a project with ~200 SDK runs spent ~500 queries and ~45 MB per visit
+ * before the chart finished.
  */
-export const SUITE_HEALTH_AUTO_PAGES = 4;
+export const SUITE_HEALTH_AUTO_PAGES = 1;
 
 /**
  * One row of `testSuites:listProjectRuns` — the backend's explicit
@@ -824,9 +831,19 @@ export function ProjectRunsTable({
           // every page left one unreadable run able to withhold the chart for
           // good, and the retry it offered re-read the whole history to no
           // effect. What is missing is reported beside the chart instead.
-          complete={
-            !history.loading && rows.some((row) => history.details.has(row._id))
-          }
+          // Not gated on `history.loading` either: every auto-loaded page
+          // restarts that read, which put the chart back to its skeleton
+          // until the last page landed. While a read is in flight only a
+          // settled detail counts; an active one is skipped by the chart and
+          // would read as "No completed runs" until the refresh lands.
+          complete={rows.some((row) => {
+            const detail = history.details.get(row._id);
+            return (
+              detail !== undefined &&
+              (!history.loading ||
+                (!isActiveRun(row) && !isActiveRun(detail.run)))
+            );
+          })}
           partial={
             status !== "Exhausted" ||
             rows.some((row) => !history.details.has(row._id))

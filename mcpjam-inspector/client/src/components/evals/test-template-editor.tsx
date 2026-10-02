@@ -313,6 +313,7 @@ import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import type { ToolCatalogStatus } from "../evaluate/case-scorecard/route-row";
 import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 
@@ -1766,6 +1767,9 @@ export function TestTemplateEditor({
         (server) =>
           ids.includes(server.serverId) && server.action === "reconnect",
       );
+      // One server still needing authorization must not stop the others from
+      // refreshing; it is reported after they reload.
+      const unauthorized: string[] = [];
       for (const server of failed) {
         const name =
           projectServers?.find((candidate) => candidate._id === server.serverId)
@@ -1782,16 +1786,21 @@ export function TestTemplateEditor({
             allowInteractiveOAuthFlow: true,
           });
           if (!result.readyServerNames.includes(name))
-            throw new Error(
-              "Server authorization is required. Check the connection and retry.",
-            );
+            unauthorized.push(server.serverId);
         }
       }
       await loadEvalToolMetadata(
-        { ...metadataTarget, serverIds: ids },
+        {
+          ...metadataTarget,
+          serverIds: ids.filter((id) => !unauthorized.includes(id)),
+        },
         loadServerMetadata,
         true,
       );
+      if (unauthorized.length)
+        throw new Error(
+          "Server authorization is required. Check the connection and retry.",
+        );
     },
     [
       metadataTarget,
@@ -1822,6 +1831,37 @@ export function TestTemplateEditor({
   useEffect(() => {
     setAvailableTools(toolsMetadataState.tools);
   }, [toolsMetadataState]);
+  // Per server, not per merged list: harness built-ins or a second healthy
+  // server would otherwise hide one whose tools never arrived. A server that
+  // loaded empty, or kept its last catalogue through a failed refresh, owes
+  // nothing and is not reported.
+  const missingToolsStatus = (status: "loading" | "error") =>
+    toolsMetadataState.servers.some(
+      (server) => server.status === status && server.tools.length === 0,
+    );
+  const toolsStatus: ToolCatalogStatus | undefined = missingToolsStatus(
+    "loading",
+  )
+    ? "loading"
+    : missingToolsStatus("error")
+      ? "error"
+      : undefined;
+  // Retry can reconnect with an interactive OAuth flow; a second click while
+  // one runs would open a second.
+  const retryingToolsRef = useRef(false);
+  const handleRetryTools = useCallback(() => {
+    if (retryingToolsRef.current) return;
+    retryingToolsRef.current = true;
+    retryToolsMetadata()
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error ? error.message : "Couldn't reload tools",
+        );
+      })
+      .finally(() => {
+        retryingToolsRef.current = false;
+      });
+  }, [retryToolsMetadata]);
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
@@ -3591,62 +3631,70 @@ export function TestTemplateEditor({
             });
           } catch (error) {
             if (abortController.signal.aborted) {
-              let resolved!: CompareRunRecord;
-              setCompareRunRecords((previous) => {
-                const existing = previous[modelValue];
-                // A retry starts a newer request for this model and aborts the
-                // old controller. If that old abort rejects later, it must not
-                // overwrite the newer running/completed row as cancelled.
-                if (compareRequestGenByModelRef.current[modelValue] !== myGen) {
-                  resolved =
-                    existing ??
-                    buildCompareRunRecord({
-                      modelValue,
-                      modelLabel,
-                      iteration: null,
-                      completedAt: Date.now(),
-                    });
-                  return previous;
-                }
-                const base = buildCompareRunRecord({
-                  modelValue,
-                  modelLabel,
-                  iteration: null,
-                  cancelled: true,
-                  startedAt: existing?.startedAt ?? null,
-                  completedAt: Date.now(),
+              // Resolve from inside the updater, like the stream-completed path
+              // above: React may defer the updater, so a value assigned there
+              // isn't ready right after setCompareRunRecords returns.
+              return new Promise<CompareRunRecord>((resolve) => {
+                setCompareRunRecords((previous) => {
+                  const existing = previous[modelValue];
+                  // A retry starts a newer request for this model and aborts the
+                  // old controller. If that old abort rejects later, it must not
+                  // overwrite the newer running/completed row as cancelled.
+                  if (
+                    compareRequestGenByModelRef.current[modelValue] !== myGen
+                  ) {
+                    resolve(
+                      existing ??
+                        buildCompareRunRecord({
+                          modelValue,
+                          modelLabel,
+                          iteration: null,
+                          completedAt: Date.now(),
+                        }),
+                    );
+                    return previous;
+                  }
+                  const base = buildCompareRunRecord({
+                    modelValue,
+                    modelLabel,
+                    iteration: null,
+                    cancelled: true,
+                    startedAt: existing?.startedAt ?? null,
+                    completedAt: Date.now(),
+                  });
+                  const tokensUsed =
+                    existing?.streamingMetrics?.tokensUsed ??
+                    existing?.metrics.tokensUsed ??
+                    0;
+                  const toolCallCount =
+                    existing?.streamingMetrics?.toolCallCount ??
+                    existing?.metrics.toolCallCount ??
+                    0;
+                  const cancelledRecord: CompareRunRecord = {
+                    ...base,
+                    streamingTrace: existing?.streamingTrace,
+                    streamingDraftMessages: existing?.streamingDraftMessages,
+                    streamingActualToolCalls:
+                      existing?.streamingActualToolCalls,
+                    streamingMetrics:
+                      existing?.streamingMetrics != null
+                        ? existing.streamingMetrics
+                        : undefined,
+                    streamingStepStatus: existing?.streamingStepStatus,
+                    streamingLiveBrowserSteps:
+                      existing?.streamingLiveBrowserSteps,
+                    streamingLiveBrowserFrameSequence:
+                      existing?.streamingLiveBrowserFrameSequence,
+                    metrics: {
+                      ...base.metrics,
+                      toolCallCount,
+                      tokensUsed,
+                    },
+                  };
+                  resolve(cancelledRecord);
+                  return { ...previous, [modelValue]: cancelledRecord };
                 });
-                const tokensUsed =
-                  existing?.streamingMetrics?.tokensUsed ??
-                  existing?.metrics.tokensUsed ??
-                  0;
-                const toolCallCount =
-                  existing?.streamingMetrics?.toolCallCount ??
-                  existing?.metrics.toolCallCount ??
-                  0;
-                resolved = {
-                  ...base,
-                  streamingTrace: existing?.streamingTrace,
-                  streamingDraftMessages: existing?.streamingDraftMessages,
-                  streamingActualToolCalls: existing?.streamingActualToolCalls,
-                  streamingMetrics:
-                    existing?.streamingMetrics != null
-                      ? existing.streamingMetrics
-                      : undefined,
-                  streamingStepStatus: existing?.streamingStepStatus,
-                  streamingLiveBrowserSteps:
-                    existing?.streamingLiveBrowserSteps,
-                  streamingLiveBrowserFrameSequence:
-                    existing?.streamingLiveBrowserFrameSequence,
-                  metrics: {
-                    ...base.metrics,
-                    toolCallCount,
-                    tokensUsed,
-                  },
-                };
-                return { ...previous, [modelValue]: resolved };
               });
-              return resolved;
             }
             const message = getBillingErrorMessage(
               error,
@@ -4172,6 +4220,8 @@ export function TestTemplateEditor({
                   current ? { ...current, predicates: next } : current,
                 )
               }
+              toolsStatus={toolsStatus}
+              onRetryTools={handleRetryTools}
               availableTools={assertableTools}
               suiteServers={effectiveSuiteServers}
               projectServers={projectServers}
@@ -4861,6 +4911,8 @@ export function TestTemplateEditor({
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
                       }
+                      toolsStatus={toolsStatus}
+                      onRetryTools={handleRetryTools}
                       availableTools={assertableTools}
                       suiteServers={effectiveSuiteServers}
                       projectServers={projectServers}
@@ -4975,6 +5027,8 @@ export function TestTemplateEditor({
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
                       }
+                      toolsStatus={toolsStatus}
+                      onRetryTools={handleRetryTools}
                       availableTools={assertableTools.map((tool) =>
                         typeof tool === "string" ? tool : tool.name,
                       )}

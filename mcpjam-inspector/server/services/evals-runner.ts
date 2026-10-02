@@ -1907,6 +1907,7 @@ async function persistSetupFailedIteration(args: {
     resultSource: "reported" as const,
     metadata: {
       ...args.iterationMetadataBase,
+      evalExecutionFailure: { phase: "setup", reason: "setup_failed" },
       ...buildStageMetadata({
         ...(args.stageCase ? { stageCase: args.stageCase } : {}),
         // No real spans/prompts/messages: the analyzer reads that as

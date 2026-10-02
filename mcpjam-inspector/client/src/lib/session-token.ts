@@ -2,9 +2,8 @@
  * Session Token Module
  *
  * Handles authentication token management for the client.
- * The token is either:
- * 1. Injected into HTML by the server (production mode)
- * 2. Fetched from /api/session-token endpoint (development mode)
+ * The launcher delivers the token in a private access link. The browser
+ * retains it in memory and best-effort origin storage; the API only confirms it.
  *
  * This module provides utilities to:
  * - Initialize the token before any API calls
@@ -26,12 +25,12 @@ import {
   notifySessionRevoked,
 } from "@/lib/auth/session-revoked";
 
-// Extend window type for the injected token
-declare global {
-  interface Window {
-    __MCP_SESSION_TOKEN__?: string;
-  }
-}
+import {
+  ACCESS_REQUIRED_EVENT,
+  readAccessToken,
+  rememberAccessToken,
+  isAccessToken,
+} from "./access-link";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
@@ -49,10 +48,14 @@ let initPromise: Promise<string> | null = null;
  */
 export class SessionTokenError extends Error {
   readonly status: number;
-  constructor(status: number) {
+  readonly code?: string;
+  readonly restarted: boolean;
+  constructor(status: number, code?: string, restarted = false) {
     super(`Failed to get session token: ${status}`);
     this.name = "SessionTokenError";
     this.status = status;
+    this.code = code;
+    this.restarted = restarted;
   }
 }
 
@@ -158,72 +161,57 @@ function buildAuthFetchInit(
  * Initialize the session token.
  * Must be called before any API requests.
  *
- * In production, reads from injected window variable.
- * In development, fetches from /api/session-token endpoint.
+ * Confirms the access-link credential before the app starts.
  *
  * @returns The session token
  * @throws If token cannot be obtained
  */
+export async function confirmAccessToken(
+  token: string | null,
+): Promise<string> {
+  const response = await fetch("/api/session-token", {
+    headers: token ? { "X-MCP-Session-Auth": `Bearer ${token}` } : {},
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new SessionTokenError(response.status, body.code, !!token);
+  }
+  if (!isAccessToken(token) || (await response.json()).ok !== true) {
+    throw new Error("Invalid Inspector access response");
+  }
+  cachedToken = token;
+  rememberAccessToken(token);
+  return token;
+}
+
 export async function initializeSessionToken(): Promise<string> {
-  // Already initialized
-  if (cachedToken) {
-    return cachedToken;
-  }
-
-  // Check for injected token (production)
-  if (window.__MCP_SESSION_TOKEN__) {
-    cachedToken = window.__MCP_SESSION_TOKEN__;
-    return cachedToken;
-  }
-
-  // Fetch from API (development)
+  if (cachedToken) return cachedToken;
   if (!initPromise) {
-    initPromise = fetch("/api/session-token")
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new SessionTokenError(response.status);
-        }
-        const data = await response.json();
-        cachedToken = data.token;
-        return cachedToken!;
-      })
-      .catch((error) => {
-        initPromise = null; // Allow retry
-        throw error;
-      });
+    initPromise = confirmAccessToken(readAccessToken()).catch((error) => {
+      initPromise = null;
+      throw error;
+    });
   }
-
   return initPromise;
 }
 
-/**
- * Force a re-fetch of the dev session token.
- *
- * The local backend mints a fresh session token on every restart (see
- * `services/session-token.ts#generateSessionToken`). After a dev-server
- * restart the browser still holds the token cached at page load, so every
- * `/api/*` call 401s until a hard refresh. Clearing the cache and re-fetching
- * recovers transparently.
- *
- * In production the token is injected into the HTML and can't be refreshed at
- * runtime, so the injected value is returned as-is.
- *
- * @returns The refreshed token, or null if it couldn't be obtained.
- */
 export async function refreshSessionToken(): Promise<string | null> {
-  if (window.__MCP_SESSION_TOKEN__) {
-    cachedToken = window.__MCP_SESSION_TOKEN__;
-    return cachedToken;
-  }
-
-  // Drop the stale cache + any in-flight init so initializeSessionToken
-  // actually hits /api/session-token again instead of returning the old token.
   cachedToken = null;
   initPromise = null;
-
   try {
-    return await initializeSessionToken();
-  } catch {
+    return await confirmAccessToken(readAccessToken(true));
+  } catch (error) {
+    if (
+      error instanceof SessionTokenError &&
+      error.code === "ACCESS_LINK_REQUIRED"
+    ) {
+      window.dispatchEvent(
+        new CustomEvent(ACCESS_REQUIRED_EVENT, {
+          detail: { restarted: error.restarted },
+        }),
+      );
+    }
     return null;
   }
 }
@@ -238,11 +226,7 @@ export function getSessionToken(): string {
   if (cachedToken) {
     return cachedToken;
   }
-  if (window.__MCP_SESSION_TOKEN__) {
-    cachedToken = window.__MCP_SESSION_TOKEN__;
-    return cachedToken;
-  }
-  return "";
+  return readAccessToken() ?? "";
 }
 
 /**
@@ -251,7 +235,7 @@ export function getSessionToken(): string {
  * @returns true if token is available
  */
 export function hasSessionToken(): boolean {
-  return !!(cachedToken || window.__MCP_SESSION_TOKEN__);
+  return !!getSessionToken();
 }
 
 /**
@@ -632,25 +616,27 @@ export async function authFetch(
     return response;
   }
 
-  // Local session-token recovery (non-hosted). The dev backend regenerates its
-  // session token on every restart; if it restarted since page load the
-  // browser holds a stale token and each /api/* call 401s with a cryptic
-  // "Backend debug proxy error: 401 Unauthorized" until a manual page refresh.
-  // Re-fetch the current token and retry once so a backend restart doesn't
-  // strand the session. Skipped when the caller set its own Authorization, and
-  // when the 401 is the upstream MCP server demanding OAuth (refreshing the
-  // session token wouldn't change that outcome).
+  // Only Inspector's own session refusal triggers local recovery. Another tab
+  // may have saved a new access link; confirm it before retrying once. Upstream
+  // OAuth refusals must not prompt for an Inspector access link.
   if (
     response.status === 401 &&
     shouldAttachSessionHeaders(input) &&
-    !callerProvidedAuthorization &&
-    response.headers?.get("X-MCP-Auth-Required") !== "oauth"
+    response.headers?.get("X-MCPJam-Session") != null
   ) {
     const staleToken = getSessionToken();
     const refreshedToken = await refreshSessionToken();
     if (refreshedToken && refreshedToken !== staleToken) {
       const retryInit = buildAuthFetchInit(input, init, hostedAuthHeader);
-      return fetch(input, retryInit);
+      const retried = await fetch(input, retryInit);
+      if (retried.status === 401 && retried.headers.get("X-MCPJam-Session")) {
+        window.dispatchEvent(
+          new CustomEvent(ACCESS_REQUIRED_EVENT, {
+            detail: { restarted: true },
+          }),
+        );
+      }
+      return retried;
     }
   }
 

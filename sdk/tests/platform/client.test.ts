@@ -640,6 +640,35 @@ describe("PlatformApiClient", () => {
     }
   });
 
+  it("sends a defined idempotency key even when it is empty", async () => {
+    // `/feedback` refuses an empty key with a 400. Dropping it here would turn
+    // a caller's broken retry key into a silently keyless report.
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id: "fb_1", receivedAt: 1, duplicate: false }, { status: 201 })
+    );
+
+    await makeClient(fetchMock).sendFeedback(
+      { body: { kind: "bug", summary: "Broke" } },
+      { idempotencyKey: "" }
+    );
+
+    const headers = requestOf(fetchMock).init.headers as Record<string, string>;
+    expect(headers["idempotency-key"]).toBe("");
+  });
+
+  it("sends no idempotency key when none is given", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id: "fb_1", receivedAt: 1, duplicate: false }, { status: 201 })
+    );
+
+    await makeClient(fetchMock).sendFeedback({
+      body: { kind: "bug", summary: "Broke" },
+    });
+
+    const headers = requestOf(fetchMock).init.headers as Record<string, string>;
+    expect(headers).not.toHaveProperty("idempotency-key");
+  });
+
   it("resolves empty success bodies to undefined", async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
 

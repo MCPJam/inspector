@@ -207,7 +207,9 @@ import {
 } from "../../routes/web/hosted-elicitation.js";
 import {
   harnessModelPurposeForSourceType,
+  harnessReasoningEffortRefusalReason,
   harnessToolApprovalRefusalReason,
+  selectionReasoningEffort,
 } from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
@@ -736,6 +738,12 @@ export async function runHarnessTurn(
     );
   }
   const harnessAdapter = getHarnessAdapter(harness);
+  // The effort this turn asked for: the typed field, else the saved selection it
+  // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
+  // refusal below and `createHarness` further down cannot disagree.
+  const turnReasoningEffort =
+    options.reasoningEffort ??
+    selectionReasoningEffort(options.extraBodyFields?.modelSelection);
 
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
@@ -1196,6 +1204,22 @@ export async function runHarnessTurn(
       });
       if (approvalRefusal) {
         throw new Error(`Can't run this turn: ${approvalRefusal}.`);
+      }
+
+      //   (c) reasoning effort (refuse, never drop). The turn's own effort, else
+      //       the one on the selection it was sent with, must be one this
+      //       adapter is verified to apply. The interactive rails refuse at the
+      //       pre-flight and the dispatch refuses in `assistant-turn`; this is
+      //       the seam every eval, synthetic and unified harness turn shares,
+      //       so the check holds however the turn got here.
+      const effortRefusal = harnessReasoningEffortRefusalReason({
+        adapter: harnessAdapter,
+        ...(turnReasoningEffort !== undefined
+          ? { reasoningEffort: turnReasoningEffort }
+          : {}),
+      });
+      if (effortRefusal) {
+        throw new Error(`Can't run this turn: ${effortRefusal}.`);
       }
 
       // 1. Credential delivery gate. BROKER-ONLY (COMP-23): the lease is
@@ -2200,8 +2224,21 @@ export async function runHarnessTurn(
       let harnessRuntime =
         harnessAdapter.mcpDelivery === "native" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
-          ? harnessAdapter.createHarness({ modelId, auth, mcpJson })
-          : harnessAdapter.createHarness({ modelId, auth });
+          ? harnessAdapter.createHarness({
+              modelId,
+              auth,
+              mcpJson,
+              ...(turnReasoningEffort !== undefined
+                ? { reasoningEffort: turnReasoningEffort }
+                : {}),
+            })
+          : harnessAdapter.createHarness({
+              modelId,
+              auth,
+              ...(turnReasoningEffort !== undefined
+                ? { reasoningEffort: turnReasoningEffort }
+                : {}),
+            });
       if (localPrepared) harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the

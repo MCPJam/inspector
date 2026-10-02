@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
   endOrganizationDeletion,
@@ -693,6 +694,115 @@ describe("App hosted OAuth callback handling", () => {
       }
     },
   );
+
+  describe("guest whose user row disappears", () => {
+    let currentUser: unknown = null;
+    const reload = vi.fn();
+    const setup = (path = "/servers", { keepScenario = false } = {}) => {
+      clearHostedOAuthPendingState();
+      if (!keepScenario) clearScenarioSession();
+      window.history.replaceState({}, "", path);
+      reload.mockReset();
+      vi.stubGlobal("location", { ...window.location, reload });
+      currentUser = null;
+      mockUseQuery.mockImplementation((ref: string) =>
+        ref === "users:getCurrentUser" ? currentUser : undefined,
+      );
+    };
+
+    it("reloads once instead of showing the setup error", () => {
+      setup();
+      const first = render(<App />);
+      expect(screen.queryByTestId("user-setup-error")).not.toBeInTheDocument();
+      expect(reload).toHaveBeenCalledTimes(1);
+      first.unmount();
+
+      render(<App />);
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-arms the reload once a user row is back", () => {
+      setup();
+      sessionStorage.setItem("mcpjam:guest-row-reload", "1");
+      currentUser = existingConvexUser;
+      const view = render(<App />);
+      expect(sessionStorage.getItem("mcpjam:guest-row-reload")).toBeNull();
+
+      currentUser = null;
+      view.rerender(<App />);
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the setup error when the reload does not go through", () => {
+      vi.useFakeTimers();
+      try {
+        setup();
+        render(<App />);
+        expect(reload).toHaveBeenCalledTimes(1);
+        act(() => {
+          vi.advanceTimersByTime(10_000);
+        });
+        expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shows the setup error when storage cannot record the reload", () => {
+      setup();
+      const setItem = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {
+          throw new Error("QuotaExceededError");
+        });
+      try {
+        render(<App />);
+        expect(reload).not.toHaveBeenCalled();
+        expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      } finally {
+        setItem.mockRestore();
+      }
+    });
+
+    it.each(["/callback", "/oauth/callback"])(
+      "does not reload the one-shot %s page",
+      (path) => {
+        setup(path);
+        render(<App />);
+        expect(reload).not.toHaveBeenCalled();
+      },
+    );
+
+    it("shows the setup error when ensureUser never finished", () => {
+      setup();
+      mockDbUserState.isUserReady = false;
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    });
+
+    it("does not reload while AuthKit is still loading", () => {
+      setup();
+      mockWorkOsAuthState.isLoading = true;
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("does not reload a signed-in tab", () => {
+      setup();
+      mockWorkOsAuthState.user = { id: "user-1" };
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    });
+
+    it("does not reload the hosted chat route", () => {
+      setup("/servers", { keepScenario: true });
+      render(<App />);
+      expect(reload).not.toHaveBeenCalled();
+    });
+  });
 
   it("shows loading before any hosted authorize CTA can render", async () => {
     const view = render(<App />);
@@ -5321,5 +5431,53 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+  });
+
+  // `projectServerConfig:getConfig` is skipped for a local UUID (CONVEX-HQ,
+  // Kestral PLB-47). A skipped query reads as undefined, so the loading flag
+  // must use the same guard or `clientConfigSyncPending` never clears.
+  describe("project server config loading signal", () => {
+    function renderSyncPending(
+      sharedProjectId: string,
+      projectServerConfig: unknown,
+    ) {
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        projects: {
+          ws_local: { id: "ws_local", name: "Default", sharedProjectId },
+        },
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projectServerConfig:getConfig") {
+          return projectServerConfig;
+        }
+        return undefined;
+      });
+      render(<App />);
+      return vi.mocked(useApiContext).mock.calls.at(-1)?.[0]
+        .clientConfigSyncPending;
+    }
+
+    it("does not hold client config sync for a local UUID project id", () => {
+      expect(
+        renderSyncPending("c10f759d-0262-4805-b599-0aa7fa1c1cc1", undefined),
+      ).toBe(false);
+    });
+
+    it("holds it while a Convex project's config is unresolved", () => {
+      expect(renderSyncPending("jh7abc123def456ghi789jk", undefined)).toBe(
+        true,
+      );
+    });
+
+    it("releases it once that config answers", () => {
+      expect(
+        renderSyncPending("jh7abc123def456ghi789jk", {
+          serverIds: [],
+          overrides: {},
+        }),
+      ).toBe(false);
+    });
   });
 });

@@ -161,7 +161,7 @@ Every selected case is checked before any model or tool call, so an unsupported 
 ## Output
 
 - With `--format human` (the default on a terminal), a summary: the verdict, each case's gradeable-iteration count against its threshold, failing assertions, not-measured iterations, policy blocks and un-run judges.
-- With `--format json`, one JSON report on stdout (`kind: "eval-local-run"`).
+- With `--format json` (the default when stdout is not a terminal: a pipe, a CI log, or an agent's shell), one JSON report on stdout (`kind: "eval-local-run"`). Pass `--format human` to get the summary there instead.
 - `--reporter json-summary|junit-xml|html` writes that document to stdout; the human summary and progress go to stderr.
 - `--out <path>` writes the report atomically (in the `--reporter` format, else JSON) and prints the path.
 
