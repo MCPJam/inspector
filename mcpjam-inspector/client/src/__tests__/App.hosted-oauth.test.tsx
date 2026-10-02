@@ -86,6 +86,8 @@ const {
   mockTrack,
   mockUserTestingTab,
   mockGetGuestBearerToken,
+  mockFetchServerSecrets,
+  mockServersById,
   mockUseAuth,
   mockUseAppState,
   mockUseConvexAuth,
@@ -207,6 +209,8 @@ const {
       },
     },
     mockGetGuestBearerToken: vi.fn(),
+    mockFetchServerSecrets: vi.fn(),
+    mockServersById: new Map<string, string>(),
     mockUseAuth: vi.fn(),
     mockUseAppState: vi.fn(createAppStateMock),
     mockUseConvexAuth: vi.fn(),
@@ -323,7 +327,11 @@ vi.mock("../hooks/use-app-state", () => ({
 
 vi.mock("../hooks/useViews", () => ({
   useViewQueries: () => ({ viewsByServer: new Map() }),
-  useProjectServers: () => ({ serversById: new Map() }),
+  useProjectServers: () => ({ serversById: mockServersById }),
+}));
+
+vi.mock("@/lib/apis/server-secrets-api", () => ({
+  fetchServerSecrets: mockFetchServerSecrets,
 }));
 
 vi.mock("../hooks/hosted/use-hosted-api-context", () => ({
@@ -559,6 +567,8 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    mockServersById.clear();
+    mockFetchServerSecrets.mockReset();
     resetSignOutLatchForTests();
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -4367,7 +4377,7 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
-  it("explicitly clears a saved bearer header when onboarding switches to no authentication", async () => {
+  it("clears only the saved bearer header when onboarding switches to no authentication", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -4386,6 +4396,14 @@ describe("App hosted OAuth callback handling", () => {
       },
     );
     mockUseAppState.mockReturnValue(appState);
+    mockServersById.set("server-secure", "Secure");
+    mockFetchServerSecrets.mockResolvedValue({
+      env: null,
+      headers: {
+        Authorization: "Bearer old-token",
+        "X-API-Key": "other-secret",
+      },
+    });
 
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
@@ -4400,6 +4418,7 @@ describe("App hosted OAuth callback handling", () => {
       name: "Secure",
       config: { url: "https://secure.example/mcp" },
       hasBearerToken: true,
+      hasHeaders: true,
     } as (typeof appState.projectServers)[string];
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(
@@ -4413,9 +4432,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(appState.handleConnect.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         authMethod: "none",
-        secretPatch: { headers: {} },
+        headers: { "X-API-Key": "other-secret" },
+        secretPatch: { headers: { "X-API-Key": "other-secret" } },
       }),
     );
+    expect(mockFetchServerSecrets).toHaveBeenCalledWith({
+      projectId: "project-1",
+      serverId: "server-secure",
+    });
   });
 
   it("preserves quoted arguments in a first-run stdio command", async () => {

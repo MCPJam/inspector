@@ -319,6 +319,29 @@ export function FirstRunOnboardingOverlay({
     setXaaEmail("");
   }, []);
 
+  const changeServerAuthentication = useCallback(
+    (value: ServerFormAuthType) => {
+      if (
+        (serverAuthentication === "auto" ||
+          serverAuthentication === "oauth" ||
+          serverAuthentication === "xaa") &&
+        value !== "auto" &&
+        value !== "oauth" &&
+        value !== "xaa"
+      ) {
+        setClientId("");
+        setClientSecret("");
+        setClearClientCredentials(true);
+      }
+      setServerAuthentication(value);
+      setBearerTokenError(null);
+      setClientIdError(null);
+      setClientSecretError(null);
+      setXaaConfigurationError(null);
+    },
+    [serverAuthentication],
+  );
+
   const returnToChoice = useCallback(() => {
     onReturnToChoice();
     resetServerDraft();
@@ -371,7 +394,8 @@ export function FirstRunOnboardingOverlay({
     const usesPreregisteredCredentials =
       serverAuthentication === "xaa"
         ? registrationMode === "auto" || registrationMode === "preregistered"
-        : (serverAuthentication === "oauth" || serverAuthentication === "auto") &&
+        : (serverAuthentication === "oauth" ||
+            serverAuthentication === "auto") &&
           registrationMode === "preregistered";
     if (usesPreregisteredCredentials && clientId.trim().length < 3) {
       setClientIdError(
@@ -910,13 +934,7 @@ export function FirstRunOnboardingOverlay({
                   <AuthenticationSection
                     serverUrl={serverUrlOrCommand}
                     authType={serverAuthentication as ServerFormAuthType}
-                    onAuthTypeChange={(value) => {
-                      setServerAuthentication(value);
-                      setBearerTokenError(null);
-                      setClientIdError(null);
-                      setClientSecretError(null);
-                      setXaaConfigurationError(null);
-                    }}
+                    onAuthTypeChange={changeServerAuthentication}
                     showAuthSettings
                     bearerToken={bearerToken}
                     onBearerTokenChange={(value) => {
@@ -1213,13 +1231,7 @@ export function FirstRunOnboardingOverlay({
                 <AuthenticationSection
                   serverUrl={serverUrlOrCommand}
                   authType={serverAuthentication as ServerFormAuthType}
-                  onAuthTypeChange={(value) => {
-                    setServerAuthentication(value);
-                    setBearerTokenError(null);
-                    setClientIdError(null);
-                    setClientSecretError(null);
-                    setXaaConfigurationError(null);
-                  }}
+                  onAuthTypeChange={changeServerAuthentication}
                   showAuthSettings
                   bearerToken={bearerToken}
                   onBearerTokenChange={(value) => {

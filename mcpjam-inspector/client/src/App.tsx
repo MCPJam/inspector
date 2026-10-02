@@ -20,6 +20,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
@@ -308,6 +309,7 @@ import {
   readApiKeysSignInReturnPath,
 } from "./lib/api-keys-signin-return-path";
 import {
+  OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -485,7 +487,7 @@ function getHostedOAuthCallbackErrorMessage(): string {
   const description = params.get("error_description");
 
   if (error === "access_denied" && !description) {
-    return "Authorization was cancelled. Try again.";
+    return OAUTH_AUTHORIZATION_CANCELLED_MESSAGE;
   }
 
   return sanitizeHostedOAuthErrorMessage(
@@ -2891,8 +2893,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -3406,8 +3408,8 @@ export default function App() {
         !appReturnPath
           ? "absent"
           : restoredPath === appReturnPath
-            ? "restored"
-            : "superseded",
+          ? "restored"
+          : "superseded",
       );
       const projectReturnIntent =
         createProjectSignInReturnRecoveryIntent(restoredPath);
@@ -3534,6 +3536,19 @@ export default function App() {
       void signIn();
     },
   });
+  const activeProject = projects[activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const { serversById } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+  const hostedServerIdsByName = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
+      ),
+    [serversById],
+  );
   // Keep this explicit sign-out cleanup even though useAppState also cleans up
   // on auth-scope changes: WorkOS navigation can redirect before that effect
   // gets a chance to run.
@@ -3626,8 +3641,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -3685,8 +3700,8 @@ export default function App() {
   const effectiveHostedShellGateState = isFirstRunOAuthReturnActive
     ? "ready"
     : shouldShowPendingDashboardOAuthGate
-      ? "project-loading"
-      : baseHostedShellGateState;
+    ? "project-loading"
+    : baseHostedShellGateState;
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
@@ -3747,12 +3762,13 @@ export default function App() {
       !activeProjectId ||
       activeProjectId === "none");
   const openFirstRunServerConnection = useCallback(
-    (draft: FirstRunServerDraft) => {
+    async (draft: FirstRunServerDraft) => {
       // A token retry or edited submission replaces any OAuth authorization
       // challenge that is currently awaiting the user's decision.
       pendingFirstRunAuthorizationRef.current?.(false);
       pendingFirstRunAuthorizationRef.current = null;
       firstRunOAuthReturnServerRef.current = null;
+      const attemptId = ++firstRunConnectionAttemptRef.current;
       const authorizationServerName =
         firstRunConnectionState.status === "authorization-required"
           ? firstRunConnectionState.serverName
@@ -3774,6 +3790,66 @@ export default function App() {
       const clearSavedBearer =
         draft.authentication !== "bearer" &&
         savedServer?.hasBearerToken === true;
+      let headerPatch: Record<string, string> | undefined;
+      if (authorizationHeader || clearSavedBearer) {
+        let existingHeaders =
+          savedServer?.config && "headers" in savedServer.config
+            ? savedServer.config.headers
+            : undefined;
+        if (
+          savedServer?.hasHeaders &&
+          (!existingHeaders || Object.keys(existingHeaders).length === 0)
+        ) {
+          const serverId = hostedServerIdsByName[effectiveServerName];
+          if (!convexProjectId || !serverId) {
+            setFirstRunConnectionState({
+              status: "failed",
+              serverName: effectiveServerName,
+              serverKind: "personal",
+              error:
+                "Saved server headers are still loading. Try again before changing authentication.",
+            });
+            return;
+          }
+          try {
+            existingHeaders =
+              (
+                await fetchServerSecrets({
+                  projectId: convexProjectId,
+                  serverId,
+                })
+              ).headers ?? undefined;
+          } catch {
+            if (firstRunConnectionAttemptRef.current !== attemptId) return;
+            setFirstRunConnectionState({
+              status: "failed",
+              serverName: effectiveServerName,
+              serverKind: "personal",
+              error:
+                "Couldn't load this server's saved headers. Try again before changing authentication.",
+            });
+            return;
+          }
+          if (!existingHeaders) {
+            setFirstRunConnectionState({
+              status: "failed",
+              serverName: effectiveServerName,
+              serverKind: "personal",
+              error:
+                "Couldn't load this server's saved headers. Try again before changing authentication.",
+            });
+            return;
+          }
+        }
+        if (firstRunConnectionAttemptRef.current !== attemptId) return;
+        headerPatch = Object.fromEntries(
+          Object.entries(existingHeaders ?? {}).filter(
+            ([key]) => key.toLowerCase() !== "authorization",
+          ),
+        );
+        if (authorizationHeader)
+          headerPatch.Authorization = authorizationHeader;
+      }
       const formData: ServerFormData = {
         name: effectiveServerName,
         type: draft.transport,
@@ -3800,15 +3876,8 @@ export default function App() {
         xaaSubject: draft.xaaSubject,
         xaaEmail: draft.xaaEmail,
         authServerMode: draft.authentication === "xaa" ? "mcpjam" : undefined,
-        ...(authorizationHeader
-          ? {
-              headers: { Authorization: authorizationHeader },
-              secretPatch: {
-                headers: { Authorization: authorizationHeader },
-              },
-            }
-          : clearSavedBearer
-          ? { secretPatch: { headers: {} } }
+        ...(headerPatch
+          ? { headers: headerPatch, secretPatch: { headers: headerPatch } }
           : {}),
       };
       const analyticsContext = firstRunAnalyticsContextFromDraft(
@@ -3835,7 +3904,6 @@ export default function App() {
         return;
       }
 
-      firstRunConnectionAttemptRef.current += 1;
       markFirstRunServerChoiceStarted(formData.name);
       setPendingFirstRunConnection(formData);
       setFirstRunConnectionState({
@@ -3844,7 +3912,13 @@ export default function App() {
         serverKind: "personal",
       });
     },
-    [appState.servers, firstRunConnectionState, projectServers],
+    [
+      appState.servers,
+      convexProjectId,
+      firstRunConnectionState,
+      hostedServerIdsByName,
+      projectServers,
+    ],
   );
 
   const connectFirstRunDemo = useCallback(() => {
@@ -3871,8 +3945,7 @@ export default function App() {
   // normal save, handshake, compatibility, and tool-discovery path as soon as
   // that project is available instead of surfacing an unusable connection UI.
   const isFirstRunProjectReady =
-    !isConnectionPreflightPending &&
-    (!HOSTED_MODE || isAuthenticated);
+    !isConnectionPreflightPending && (!HOSTED_MODE || isAuthenticated);
   const requestFirstRunOAuthAuthorization = useCallback(
     (serverName: string, attemptId: number) =>
       new Promise<
@@ -4111,7 +4184,7 @@ export default function App() {
     }
 
     if (server.connectionStatus === "failed") {
-      if (server.lastError === "Authorization was cancelled. Try again.") {
+      if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
         firstRunOAuthReturnServerRef.current = null;
         firstRunAuthorizationRetryServerRef.current = null;
         firstRunOAuthReconnectServerRef.current = null;
@@ -4461,7 +4534,6 @@ export default function App() {
   );
 
   // Get the Convex project ID from the active project
-  const activeProject = projects[activeProjectId];
   const isClientConfigSyncPending =
     useProjectClientConfigSyncPending(activeProjectId);
   // Fallback chain: active named host (top-bar selection or project default
@@ -4478,7 +4550,6 @@ export default function App() {
     activeHost?.clientCapabilities,
     activeProject?.clientConfig,
   );
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
   const canQueryProjectServerConfig =
     isUserReady && shouldQueryProjectId(convexProjectId);
   const projectServerConfigDto = useQuery(
@@ -4504,7 +4575,7 @@ export default function App() {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
-    ? (routeOrganizationId ?? null)
+    ? routeOrganizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -4609,10 +4680,10 @@ export default function App() {
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
-      ? "Create or join an organization to create projects"
-      : insufficientOrgRoleForCreate
-        ? "You don't have permission to create projects"
-        : (projectCreationGate.denialMessage ?? undefined);
+    ? "Create or join an organization to create projects"
+    : insufficientOrgRoleForCreate
+    ? "You don't have permission to create projects"
+    : projectCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -4665,18 +4736,6 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
   ]);
 
-  // Fetch project servers to map server IDs to names
-  const { serversById } = useProjectServers({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
-  const hostedServerIdsByName = useMemo(
-    () =>
-      Object.fromEntries(
-        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
-      ),
-    [serversById],
-  );
   const oauthTokensByServerId = useMemo(
     () =>
       buildOAuthTokensByServerId(
@@ -5094,8 +5153,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -5365,10 +5424,7 @@ export default function App() {
       return;
     }
 
-    if (
-      routeOrganizationId === orgId &&
-      routeOrganizationSection === "plans"
-    ) {
+    if (routeOrganizationId === orgId && routeOrganizationSection === "plans") {
       return;
     }
 
@@ -5630,8 +5686,8 @@ export default function App() {
     })();
   const requestedFirstRunProjectId =
     typeof window !== "undefined"
-      ? (readProjectPathSegment(window.location.pathname) ??
-        readProjectDeepLinkParam(window.location.search))
+      ? readProjectPathSegment(window.location.pathname) ??
+        readProjectDeepLinkParam(window.location.search)
       : null;
   const hasProjectScopedFirstRunDestination =
     typeof window !== "undefined" &&
@@ -5726,7 +5782,7 @@ export default function App() {
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
-      : (allMembershipProjects?.[0]?._id ?? null);
+      : allMembershipProjects?.[0]?._id ?? null;
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
     membershipProjectIds: authoritativeMembershipProjectIds,
@@ -5890,7 +5946,8 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    PlaygroundServerSelectorProps | undefined => {
+    | PlaygroundServerSelectorProps
+    | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -6092,8 +6149,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-                ? () => setOauthServerModalNonce((n) => n + 1)
-                : undefined,
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
