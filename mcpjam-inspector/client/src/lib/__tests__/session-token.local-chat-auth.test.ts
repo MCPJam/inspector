@@ -1,8 +1,9 @@
+import { rememberAccessToken } from "../access-link";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getApiAuthorizationHeader } = vi.hoisted(() => ({
   getApiAuthorizationHeader: vi.fn(
-    async (): Promise<string | null> => "Bearer workos-jwt"
+    async (): Promise<string | null> => "Bearer workos-jwt",
   ),
 }));
 
@@ -25,10 +26,10 @@ import { authFetch } from "../session-token";
 describe("authFetch local chat bearer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    window.__MCP_SESSION_TOKEN__ = "local-session";
+    rememberAccessToken("local-session");
     vi.mocked(global.fetch).mockReset();
     vi.mocked(global.fetch).mockResolvedValue(
-      new Response("", { status: 200 })
+      new Response("", { status: 200 }),
     );
   });
 
@@ -63,7 +64,7 @@ describe("authFetch local chat bearer", () => {
     getApiAuthorizationHeader.mockRejectedValueOnce(error);
 
     await expect(
-      authFetch("/api/mcp/chat-v2", { method: "POST" })
+      authFetch("/api/mcp/chat-v2", { method: "POST" }),
     ).rejects.toBe(error);
     expect(global.fetch).not.toHaveBeenCalled();
   });

@@ -3,6 +3,10 @@ import {
   type ClientFeatureFlagValues,
 } from "../../../shared/client-feature-flags";
 import { getCachedGuestSession } from "./guest-session";
+import {
+  isSessionRevokedResponse,
+  notifySessionRevoked,
+} from "./auth/session-revoked";
 import { detectPlatform, VITE_PUBLIC_POSTHOG_KEY } from "./PosthogUtils";
 
 /**
@@ -44,7 +48,12 @@ export async function fetchServerFeatureFlags(
         : undefined,
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      // The access token's session was signed out elsewhere (MJ-011): the
+      // flags stay as they are, and the tab signs out.
+      if (await isSessionRevokedResponse(response)) notifySessionRevoked();
+      return null;
+    }
     const body = (await response.json()) as { flags?: unknown } | null;
     return pickClientFeatureFlags(body?.flags);
   } catch {

@@ -135,6 +135,8 @@ import type {
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
+  PlatformFeedbackReceipt,
+  PlatformFeedbackRequest,
   PlatformMe,
   PlatformModel,
   PlatformOrganization,
@@ -770,6 +772,31 @@ export class PlatformApiClient {
       "POST",
       `/browser-sessions/${operation}`,
       { body },
+      options
+    );
+  }
+
+  /**
+   * `POST /feedback` — send the MCPJam team a report about MCPJam itself: a
+   * bug, a missing capability, something confusing.
+   *
+   * THE TEXT GOES TO THE MCPJAM TEAM, outside the caller's organization, and
+   * is kept for 180 days. A resolved promise means the report is STORED;
+   * `duplicate: true` means an identical report from the caller already was.
+   * Requires a signed-in account (a guest token is refused with 401).
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, which the route validates strictly:
+   * a replay returns the original receipt, the same key with different content
+   * is a 409, and an empty or over-long key is a 400 rather than ignored.
+   */
+  sendFeedback(
+    params: { body: PlatformFeedbackRequest },
+    options?: RequestOptions
+  ): Promise<PlatformFeedbackReceipt> {
+    return this.request(
+      "POST",
+      "/feedback",
+      { body: params.body, declareLaunch: true },
       options
     );
   }
@@ -6292,6 +6319,10 @@ export class PlatformApiClient {
        * these headers describe a RUN's origin, and stamping them onto every
        * read and every unrelated write would put a claim on requests that
        * create nothing to claim.
+       *
+       * The one non-run caller is `sendFeedback`: a report is stored with the
+       * client that filed it, as a label beside the verified attribution, and
+       * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
     },
@@ -6339,7 +6370,10 @@ export class PlatformApiClient {
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }
-    if (options?.idempotencyKey) {
+    // Any DEFINED key goes out, even an empty one: a route that validates keys
+    // strictly (`/feedback`) has to see a bad key to refuse it, and the lenient
+    // routes already read an empty key as no key.
+    if (options?.idempotencyKey !== undefined) {
       headers["idempotency-key"] = options.idempotencyKey;
     }
 
@@ -6416,7 +6450,12 @@ export class PlatformApiClient {
         throw new PlatformApiError(
           `Failed to read the MCPJam API response (${response.status}) for ${path}`,
           "INTERNAL_ERROR",
-          { status: response.status, endpoint: path, cause: error }
+          {
+            status: response.status,
+            endpoint: path,
+            cause: error,
+            requestId: parseRequestId(response.headers.get("x-request-id")),
+          }
         );
       }
     } finally {
@@ -6444,7 +6483,12 @@ export class PlatformApiClient {
       throw new PlatformApiError(
         `The MCPJam API returned a non-JSON response (${response.status}) for ${path}`,
         "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: parseError }
+        {
+          status: response.status,
+          endpoint: path,
+          cause: parseError,
+          requestId: parseRequestId(response.headers.get("x-request-id")),
+        }
       );
     }
 
@@ -6486,6 +6530,7 @@ export class PlatformApiClient {
       retryAfter: parseRetryAfter(response.headers.get("retry-after")),
       endpoint: path,
       codeSource: sentCode !== undefined ? "envelope" : "status",
+      requestId: parseRequestId(response.headers.get("x-request-id")),
     });
   }
 }
@@ -6520,6 +6565,16 @@ function parseRetryAfter(
     return undefined;
   }
   return Math.max(0, Math.ceil((retryAt - now) / 1000));
+}
+
+// The shape the API itself mints and reflects (its request-log middleware
+// accepts nothing else). Checked here too because the id is repeated to
+// people and models and quoted in feedback reports: a value some proxy on
+// the path wrote in a different shape is dropped rather than passed on.
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+function parseRequestId(header: string | null): string | undefined {
+  return header && REQUEST_ID_PATTERN.test(header) ? header : undefined;
 }
 
 function errorMessage(error: unknown): string {

@@ -1,3 +1,7 @@
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../config.js")>()),
+  HOSTED_MODE: true,
+}));
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
@@ -781,7 +785,7 @@ describe("web routes — evals", () => {
     }>(response);
 
     expect(status).toBe(500);
-    expect(data.message).toContain("quota exceeded");
+    expect(data.message).toContain("reference");
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
   });
 

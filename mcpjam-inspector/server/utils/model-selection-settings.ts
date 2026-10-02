@@ -40,6 +40,7 @@
  */
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
+import { reasoningEffortProviderOptions as sdkReasoningEffortProviderOptions } from "@mcpjam/sdk/browser";
 import {
   modelDefinitionSupportsTemperature,
   type ModelDefinition,
@@ -203,71 +204,19 @@ export function resolveEffectiveModelSettings(
 
 // ── Reasoning effort on a direct provider call ─────────────────────────────
 
-const OPENAI_EFFORTS: readonly ModelReasoningEffort[] = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
-const ANTHROPIC_EFFORTS: readonly ModelReasoningEffort[] = [
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-];
-const GOOGLE_EFFORTS: readonly ModelReasoningEffort[] = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-];
-
-/** The model name without a `provider/` prefix. */
-function bareModelName(modelId: string): string {
-  const slash = modelId.indexOf("/");
-  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
-}
-
 /**
  * The provider options that apply `effort` on a direct AI SDK call, or
  * `undefined` when this provider/model has no effort control the installed
- * AI SDK provider exposes (the caller refuses the setting then). Levels are
- * the AI SDK provider's own enums; the model families are the ones whose
- * effort control the provider documents (OpenAI reasoning models, Claude,
- * Gemini 3+). The same mapping the backend uses for `/stream`.
+ * AI SDK provider exposes (the caller refuses the setting then). The level
+ * tables and model families live in `@mcpjam/sdk` beside the capability
+ * helper the pickers use, so what the UI offers and what the runner accepts
+ * are one table.
  */
 export function reasoningEffortProviderOptions(args: {
   providerKey: string;
   modelId: string;
   effort: ModelReasoningEffort;
 }): DirectProviderOptions | undefined {
-  const name = bareModelName(args.modelId);
-  switch (args.providerKey) {
-    case "openai":
-      return /^(gpt-5|o[1-9])(?:[.-]|$)/.test(name) &&
-        OPENAI_EFFORTS.includes(args.effort)
-        ? { openai: { reasoningEffort: args.effort } }
-        : undefined;
-    case "anthropic":
-      return /^claude-/.test(name) && ANTHROPIC_EFFORTS.includes(args.effort)
-        ? {
-            anthropic: {
-              effort: args.effort,
-              ...(/^claude-opus-4[.-]5(?:-|$)/.test(name)
-                ? {}
-                : { thinking: { type: "adaptive" } }),
-            },
-          }
-        : undefined;
-    case "google":
-      return /^gemini-([3-9]|[1-9][0-9])(?:[.-]|$)/.test(name) &&
-        GOOGLE_EFFORTS.includes(args.effort)
-        ? { google: { thinkingConfig: { thinkingLevel: args.effort } } }
-        : undefined;
-    default:
-      return undefined;
-  }
+  return sdkReasoningEffortProviderOptions(args) as
+    DirectProviderOptions | undefined;
 }

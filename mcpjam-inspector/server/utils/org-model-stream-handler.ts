@@ -523,7 +523,10 @@ export function handleLocalOrgChatModel(
 
   // Sign what this turn streams as the server's own (MJ-009); a no-op where
   // provenance is off.
-  const provenanceContext = historyProvenanceContextFor(options.projectId);
+  const provenanceContext = historyProvenanceContextFor(
+    options.projectId,
+    options.chatSessionId,
+  );
   const signChunk = provenanceContext
     ? createUiChunkProvenanceSigner(
         provenanceContext,
@@ -778,7 +781,9 @@ export function handleLocalOrgChatModel(
             continue;
           }
           const outgoing = withMcpToolOriginChunkMetadata(chunk, options.tools);
-          writer.write(signChunk ? signChunk(outgoing) : outgoing);
+          for (const out of signChunk ? signChunk(outgoing) : [outgoing]) {
+            writer.write(out);
+          }
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
