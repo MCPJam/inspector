@@ -1,5 +1,5 @@
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
-import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities } from "../../utils/harness/local/run-resources.js";
+import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
 import {
   isTransientSpendRefusal,
   humanizeSwarmAttemptError,
@@ -624,7 +624,7 @@ async function runJourneyFanOut(
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
   if (!opts.budgets) {
     // Only size a platform default. Explicit/frozen limits remain authoritative.
-    const localSessions = hosts.filter(host => (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(host.harness))).length * sessionsPerTarget;
+    const localSessions = hosts.filter(host => (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(host.harness, "unattended"))).length * sessionsPerTarget;
     budgets.runTimeoutMs = Math.min(
       platformExecutionBudgetCeilings("swarms").runTimeoutMs,
       Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
@@ -753,7 +753,7 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const localHarness = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness));
+    const localHarness = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness, "unattended"));
     const harnessNeedsBox = target.harness !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
@@ -761,7 +761,7 @@ async function runJourneyFanOut(
     let harnessTargetIntent: SandboxIntent | undefined;
     try {
       bearer = await getBearer();
-      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined });
+      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined, harnessId: target.harness });
 
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
@@ -982,7 +982,7 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness))
+        const releaseLocalSlot = (Boolean(opts.localHarnessActor) && isLocalHarnessVenue(target.harness, "unattended"))
           ? await acquireLocalHarnessSlot(sessionSignal)
           : undefined;
         try {
@@ -1327,7 +1327,9 @@ async function runJourneyFanOut(
           // the transcript is durable before we report the terminal below.
           if (stoppedByBackend) return;
           const runSession = async () => {
-            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor }) : undefined;
+            // Prepared for THIS target's harness — a Codex target gets a Codex
+            // runtime and grant, never the Claude Code one.
+            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor, harnessId: localHarnessIdOf(target.harness) ?? "claude-code" }) : undefined;
             try { return await runSyntheticHostSession({
             runId,
             projectId,

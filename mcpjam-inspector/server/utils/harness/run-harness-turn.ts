@@ -122,7 +122,8 @@ import {
   type PreparedLocalHarnessTurn,
 } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
-import { localPermissionModeFor } from "./local/compatibility.js";
+import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
+import { sandboxPolicyFingerprint } from "./codex-appserver/shared/sandbox-policy.js";
 import {
   resolveWorkingDirectory,
   HOME_ROOT,
@@ -574,6 +575,14 @@ export function harnessRuntimeFingerprint(parts: {
     permissionProfile: string;
   };
   /**
+   * The command-sandbox policy an unattended local turn runs under
+   * (`sandboxPolicyFingerprint`). A resumed Codex thread keeps the sandbox it
+   * was started with, so a policy change must fork rather than continue under
+   * terms nobody chose. Appended only when set — after `localTarget`, which
+   * only local turns carry — so no existing session's hash moves.
+   */
+  commandSandbox?: string;
+  /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
    * secret, so a rotation already forks through `secretsHash`; and the harness
@@ -613,6 +622,7 @@ export function harnessRuntimeFingerprint(parts: {
             `${parts.localTarget.permissionProfile}`,
         ]
       : []),
+    ...(parts.commandSandbox ? [`command-sandbox:${parts.commandSandbox}`] : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -1301,8 +1311,26 @@ export async function runHarnessTurn(
       const pluginServerOrigins = effectiveCapabilities
         ? pluginOriginByServerId(effectiveCapabilities)
         : undefined;
-      const localEvidence = harnessExecutionTarget && evalIterationId ? await localHarnessEvidence(authHeader, evalIterationId, turnId) : undefined;
-      if (localEvidence) onHarnessEvidenceDecision?.({ ...localEvidence.decision, turnId });
+      // Member evidence is captured where a NATIVE runtime's MCP traffic
+      // crosses MCPJam's local plane. A host-executed runtime (Codex) has no
+      // such traffic — its relayed calls run below in this process, under the
+      // same tool policy — so there is nothing to capture, the run was frozen
+      // with capture off, and asking the backend would only cost a round trip
+      // (and fail outright on a deployment that predates the narration
+      // answer). Report the decision the run actually has: narration grading.
+      const localEvidence =
+        harnessExecutionTarget && evalIterationId && nativeMcpDelivery
+          ? await localHarnessEvidence(authHeader, evalIterationId, turnId)
+          : undefined;
+      if (localEvidence) {
+        onHarnessEvidenceDecision?.({ ...localEvidence.decision, turnId });
+      } else if (harnessExecutionTarget && evalIterationId && !nativeMcpDelivery) {
+        onHarnessEvidenceDecision?.({
+          captureEnabled: false,
+          gradingSource: "narration",
+          turnId,
+        });
+      }
       if (harnessExecutionTarget && nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
         localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter });
       }
@@ -1632,15 +1660,37 @@ export async function runHarnessTurn(
       // Resolved here, before the fingerprint, from the same manifest mapping
       // `prepareLocalHarnessTurn` uses; the two are reconciled below once
       // preparation has run.
+      const localScope =
+        sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended";
       const localPermissionMode =
         harnessExecutionTarget != null
           ? localPermissionModeFor(
               harnessAdapter.id,
               harnessExecutionTarget.permissionProfile,
               harnessExecutionTarget.kind,
-              sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
+              localScope,
             )
           : null;
+      // D2: an unattended local Codex turn is `allow-all` (nobody is there to
+      // approve) INSIDE Codex's own command sandbox, with an explicit policy —
+      // never `danger-full-access` on a user's machine. Same manifest, same
+      // pre-flight position as the mode above; preparation then refuses any
+      // target that sandbox was not measured on.
+      const localSandboxPolicy =
+        harnessExecutionTarget != null
+          ? localSandboxPolicyFor(
+              harnessAdapter.id,
+              harnessExecutionTarget.permissionProfile,
+              harnessExecutionTarget.kind,
+              localScope,
+            )
+          : null;
+      if (localSandboxPolicy !== null && !harnessAdapter.acceptsSandboxPolicy) {
+        throw new Error(
+          `${harnessAdapter.displayName} cannot apply a command sandbox on this ` +
+            `transport, so it cannot run unattended on this machine.`,
+        );
+      }
       const permissionMode: HarnessV1PermissionMode =
         harnessExecutionTarget != null
           ? // A host asking for approval narrows further: `allow-reads` is the
@@ -1707,6 +1757,9 @@ export async function runHarnessTurn(
                 permissionProfile: harnessExecutionTarget.permissionProfile,
               },
             }
+          : {}),
+        ...(localSandboxPolicy !== null
+          ? { commandSandbox: sandboxPolicyFingerprint(localSandboxPolicy) }
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
@@ -2271,6 +2324,9 @@ export async function runHarnessTurn(
               auth,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
+                : {}),
+              ...(localSandboxPolicy !== null
+                ? { sandboxPolicy: localSandboxPolicy }
                 : {}),
             });
       if (localPrepared) harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);

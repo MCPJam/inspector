@@ -16,6 +16,7 @@ export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCodex } from "@ai-sdk/harness-codex";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { createCodexAppServer } from "./codex-appserver/index.js";
+import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import { codexAppServerTransportEnabled } from "./harness-flags.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
@@ -315,6 +316,12 @@ type HarnessRuntimeAdapterBase = {
    * never replayed into a new one.
    */
   liveApprovalRuntime?: boolean;
+  /**
+   * The adapter applies `HarnessCreateArgs.sandboxPolicy` to its runtime. An
+   * adapter without this flag cannot contain an unattended local turn, so the
+   * turn runner refuses to start one rather than run it unrestricted.
+   */
+  acceptsSandboxPolicy?: boolean;
   /** Human-facing runtime name for preflight/availability messages + UI. */
   displayName: string;
   /**
@@ -470,6 +477,16 @@ export type HarnessCreateArgs = {
    * first), so a value arriving here is always one the adapter declared.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The command-sandbox policy an UNATTENDED local turn runs under (D2), set
+   * only by the local arm from the compatibility manifest
+   * (`localSandboxPolicyFor`). It is not a permission mode: the turn is
+   * `allow-all` because nobody is there to approve, and this policy is what
+   * contains its commands. Only an adapter with `acceptsSandboxPolicy` may
+   * receive it; the turn refuses to hand it to any other rather than let it be
+   * silently dropped.
+   */
+  sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
 };
 
 /** Brokered model access: MCPJam supplies the credential, so the adapter needs
@@ -1009,6 +1026,9 @@ const codexAppServerAdapter: HarnessRuntimeAdapter = {
   ...codexExecAdapter,
   transport: "app-server",
   liveApprovalRuntime: true,
+  // `turn/start.sandboxPolicy`; the bridge refuses `allow-all` without it
+  // whenever it is supervised locally.
+  acceptsSandboxPolicy: true,
   // The pause is real on this transport. `HarnessAgent` also refuses to
   // construct with a non-allow-all mode unless the underlying harness declares
   // `supportsBuiltinToolApprovals`, which `createCodexAppServer` does.
@@ -1036,11 +1056,12 @@ const codexAppServerAdapter: HarnessRuntimeAdapter = {
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  createHarness({ modelId, auth }) {
+  createHarness({ modelId, auth, sandboxPolicy }) {
     const nativeModel = toCodexModel(modelId);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
       auth,
+      ...(sandboxPolicy ? { sandboxPolicy } : {}),
     }) as unknown as HarnessAgentAdapter;
   },
 };

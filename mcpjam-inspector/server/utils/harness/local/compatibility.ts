@@ -42,6 +42,10 @@ import {
   CODEX_LOCAL_ADAPTER_IDENTITY,
   PINNED_CODEX_VERSION,
 } from "../codex-appserver/local-identity.js";
+import {
+  LOCAL_UNATTENDED_SANDBOX_POLICY,
+  type CodexWorkspaceWriteSandboxPolicy,
+} from "../codex-appserver/shared/sandbox-policy.js";
 
 /** How the vendor runtime is obtained. */
 export type LocalHarnessRuntimePolicy =
@@ -164,6 +168,14 @@ export interface LocalHarnessCompatibility {
    * unattended local execution rather than running without the sandbox.
    */
   unattendedSandboxTargets?: readonly LocalPackTarget[];
+  /**
+   * The command-sandbox policy an unattended (`unrestricted`) local run of
+   * this harness starts under (D2). Declared together with
+   * `unattendedSandboxTargets`: a harness whose unattended runs depend on its
+   * own OS sandbox names the exact policy here, and the turn hands it to the
+   * adapter as a separate field — it is never a permission mode.
+   */
+  unattendedSandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
   /** Isolation backends conformance has passed for this harness, PER
    *  PLATFORM. A backend proven on Linux says nothing about macOS, and a
    *  single flat list would let one platform's evidence admit another's. */
@@ -288,12 +300,17 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     configStrategy: "explicit-config-root",
     // The app-server adapter raises real approval requests.
     supportsBuiltinToolApprovals: true,
-    // Attended only. `unrestricted` (unattended evals and swarms) is admitted
-    // in a separate step, behind the measured sandbox targets below; it is
-    // never a widening of these two.
+    // Attended profiles map to Codex `untrusted` (every command and file
+    // change asks). `unrestricted` — unattended evals and swarms only, never
+    // the Playground (`localPermissionModeFor` / `resolveLocalCompatibility`)
+    // — is `allow-all` ONLY together with `unattendedSandboxPolicy` below, and
+    // only on a target in `unattendedSandboxTargets`. The bridge refuses
+    // `allow-all` without that policy when supervised locally, so it can
+    // never become `danger-full-access` on a user's machine.
     permissionProfileMapping: {
       "read-only": "allow-reads",
       "workspace-edits": "allow-edits",
+      unrestricted: "allow-all",
     },
     // Evidence: the 2026-09-30 macOS arm64 product-assembly probe and the
     // linux-x64 app-server probes (`codex-appserver/README.md`). Every other
@@ -303,6 +320,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // No target has passed the unattended sandbox probe on the pinned binary
     // yet, so unattended local Codex is refused everywhere.
     unattendedSandboxTargets: [],
+    unattendedSandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
     isolatedBackends: {},
     // Dark until the Codex lifecycle conformance legs pass and are recorded.
     lifecycleConformanceVersion: "",
@@ -402,6 +420,41 @@ export function localPermissionModeFor(
     return null;
   }
   return manifest.permissionProfileMapping[permissionProfile] ?? null;
+}
+
+/**
+ * The command-sandbox policy a local turn of this harness must start under,
+ * or `null` when it runs without one.
+ *
+ * Non-null only for an UNATTENDED `unrestricted` native turn of a harness
+ * whose manifest names `unattendedSandboxPolicy` (Codex). Like
+ * `localPermissionModeFor`, this is the turn path's pre-flight answer: the
+ * policy is folded into the runtime fingerprint and handed to the adapter
+ * before preparation runs, and preparation (`resolveLocalCompatibility`) is
+ * what refuses a target the sandbox was never measured on.
+ */
+export function localSandboxPolicyFor(
+  harnessId: string,
+  permissionProfile: LocalPermissionProfile,
+  targetKind: "local-native" | "local-isolated",
+  scope: "attended" | "unattended" = "attended",
+): Readonly<CodexWorkspaceWriteSandboxPolicy> | null {
+  const manifests = LOCAL_HARNESS_MANIFEST as Record<
+    string,
+    LocalHarnessCompatibility | undefined
+  >;
+  const manifest = Object.prototype.hasOwnProperty.call(manifests, harnessId)
+    ? manifests[harnessId]
+    : undefined;
+  if (
+    manifest?.unattendedSandboxPolicy === undefined ||
+    permissionProfile !== "unrestricted" ||
+    targetKind !== "local-native" ||
+    scope !== "unattended"
+  ) {
+    return null;
+  }
+  return manifest.unattendedSandboxPolicy;
 }
 
 export function resolveLocalCompatibility(
@@ -559,6 +612,29 @@ export function resolveLocalCompatibility(
         `the unrestricted profile requires a verified isolation backend. ` +
         `Native mode has no host containment, so an unrestricted turn there ` +
         `would run with the OS user's full authority.`,
+    };
+  }
+
+  // An unattended run of a harness that depends on its OWN command sandbox
+  // (D2, Codex) needs that sandbox measured on this exact target. Anywhere
+  // else it is refused — never run without the sandbox. A caller that cannot
+  // state its target is refused too: this is the gate, not a hint.
+  if (
+    query.permissionProfile === "unrestricted" &&
+    query.targetKind === "local-native" &&
+    manifest.unattendedSandboxTargets !== undefined &&
+    (query.packTarget == null ||
+      !manifest.unattendedSandboxTargets.includes(query.packTarget))
+  ) {
+    return {
+      ok: false,
+      status: "backend-not-verified",
+      message:
+        `unattended local ${query.harnessId} runs inside its own command ` +
+        `sandbox, and that sandbox has not been verified on ` +
+        `${query.packTarget ?? "this architecture"} yet (verified: ` +
+        `${manifest.unattendedSandboxTargets.join(", ") || "none"}). ` +
+        `Run this eval or swarm in the cloud.`,
     };
   }
 

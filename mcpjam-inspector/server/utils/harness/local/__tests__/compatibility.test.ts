@@ -12,7 +12,9 @@ import {
   resolveLocalCompatibility,
   type LocalHarnessCompatibility,
   localPermissionModeFor,
+  localSandboxPolicyFor,
 } from "../compatibility.js";
+import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../../codex-appserver/shared/sandbox-policy.js";
 import {
   LOCAL_PERMISSION_PROFILES,
   SUPPORTED_LOCAL_HARNESS_IDS,
@@ -173,10 +175,19 @@ describe("codex runs locally only on the app-server adapter, attended, where cer
   const codex = (overrides: Partial<LocalHarnessCompatibility> = {}) =>
     conformed(LOCAL_HARNESS_MANIFEST.codex, overrides);
 
-  it("offers only the attended profiles — never unrestricted", () => {
+  it("maps the attended profiles to approval modes and unrestricted to allow-all inside the sandbox", () => {
     expect(LOCAL_HARNESS_MANIFEST.codex.permissionProfileMapping).toEqual({
       "read-only": "allow-reads",
       "workspace-edits": "allow-edits",
+      unrestricted: "allow-all",
+    });
+    // allow-all is only ever paired with the explicit D2 policy.
+    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxPolicy).toEqual({
+      type: "workspaceWrite",
+      writableRoots: [],
+      networkAccess: false,
+      excludeSlashTmp: true,
+      excludeTmpdirEnvVar: false,
     });
   });
 
@@ -221,21 +232,81 @@ describe("codex runs locally only on the app-server adapter, attended, where cer
     expect(LOCAL_HARNESS_MANIFEST.codex.nativePlatforms).not.toContain("win32");
   });
 
-  it("refuses unrestricted even for an unattended scheduler", () => {
+  const unattended = (
+    overrides: Partial<Parameters<typeof resolveLocalCompatibility>[0]> = {},
+    manifest: Partial<LocalHarnessCompatibility> = {},
+  ) =>
+    resolveLocalCompatibility(
+      {
+        scope: "unattended",
+        harnessId: "codex",
+        platform: "linux",
+        targetKind: "local-native",
+        packTarget: "linux-x64",
+        installedAdapterVersion: PINNED_CODEX,
+        permissionProfile: "unrestricted",
+        ...overrides,
+      },
+      codex(manifest),
+    );
+
+  it("refuses unattended runs on a target whose sandbox was never measured", () => {
+    // As shipped: no target has passed, so unattended local Codex is refused
+    // everywhere — never run without the sandbox.
+    const refused = unattended();
+    expect(refused).toMatchObject({ ok: false, status: "backend-not-verified" });
+    expect((refused as { message: string }).message).toMatch(/sandbox/);
     expect(
-      resolveLocalCompatibility(
-        {
-          scope: "unattended",
-          harnessId: "codex",
-          platform: "linux",
-          targetKind: "local-native",
-          packTarget: "linux-x64",
-          installedAdapterVersion: PINNED_CODEX,
-          permissionProfile: "unrestricted",
-        },
-        codex(),
+      unattended({}, { unattendedSandboxTargets: ["darwin-arm64"] }),
+    ).toMatchObject({ ok: false, status: "backend-not-verified" });
+  });
+
+  it("admits unattended allow-all on a target whose sandbox was measured", () => {
+    expect(
+      unattended({}, { unattendedSandboxTargets: ["linux-x64"] }),
+    ).toMatchObject({ ok: true, permissionMode: "allow-all" });
+  });
+
+  it("refuses an unattended caller that cannot state its target", () => {
+    expect(
+      unattended(
+        { packTarget: undefined },
+        { unattendedSandboxTargets: ["linux-x64"] },
       ),
-    ).toMatchObject({ status: "permission-profile-not-supported" });
+    ).toMatchObject({ ok: false, status: "backend-not-verified" });
+    // No pack target at all is already refused by the D8 certification gate.
+    expect(
+      unattended({ packTarget: null }, { unattendedSandboxTargets: ["linux-x64"] }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("never admits unrestricted to the Playground, sandbox or not", () => {
+    expect(
+      unattended(
+        { scope: "attended" },
+        { unattendedSandboxTargets: ["linux-x64"] },
+      ),
+    ).toMatchObject({ ok: false, status: "permission-profile-not-supported" });
+    expect(
+      localPermissionModeFor("codex", "unrestricted", "local-native", "attended"),
+    ).toBeNull();
+    expect(
+      localPermissionModeFor("codex", "unrestricted", "local-native", "unattended"),
+    ).toBe("allow-all");
+  });
+
+  it("hands the explicit policy only to an unattended unrestricted native turn", () => {
+    expect(
+      localSandboxPolicyFor("codex", "unrestricted", "local-native", "unattended"),
+    ).toBe(LOCAL_UNATTENDED_SANDBOX_POLICY);
+    for (const [harnessId, profile, kind, scope] of [
+      ["codex", "unrestricted", "local-native", "attended"],
+      ["codex", "workspace-edits", "local-native", "unattended"],
+      ["codex", "unrestricted", "local-isolated", "unattended"],
+      ["claude-code", "unrestricted", "local-native", "unattended"],
+      ["toString", "unrestricted", "local-native", "unattended"],
+    ] as const)
+      expect(localSandboxPolicyFor(harnessId, profile, kind, scope)).toBeNull();
   });
 
   it("records no target as passing the unattended sandbox yet", () => {

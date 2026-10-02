@@ -32,19 +32,39 @@ export function localHarnessIdOf(harness: string | undefined): SupportedLocalHar
  * kill switch on, a pack built for this target, lifecycle conformance recorded
  * (or the development override), and — for a harness certified per target
  * (D8) — this target among them.
+ *
+ * `unattended` (evals and swarms) additionally needs, for a harness whose
+ * unattended runs depend on its own command sandbox (Codex, D2), this target
+ * among the ones that sandbox was measured on. This is the VENUE decision,
+ * made before a launch exists: a run is never started locally and then moved,
+ * and a target outside the set simply never selects the local venue for
+ * unattended work (preparation refuses it too, independently).
  */
-export const isLocalHarnessVenue = (harness: string | undefined) => {
+export const isLocalHarnessVenue = (
+  harness: string | undefined,
+  scope: "attended" | "unattended" = "attended",
+) => {
   const id = localHarnessIdOf(harness);
   if (id === null || HOSTED_MODE || !LOCAL_HARNESS_ENABLED) return false;
   const target = localPackTarget();
   if (target === null || !expectedPackFor(id, target)) return false;
   const manifest = localHarnessManifestsForDevelopment(LOCAL_HARNESS_MANIFEST)[id];
   if (!manifest?.lifecycleConformanceVersion) return false;
-  return manifest.nativeTargets === undefined || manifest.nativeTargets.includes(target);
+  if (manifest.nativeTargets !== undefined && !manifest.nativeTargets.includes(target)) return false;
+  return (
+    scope === "attended" ||
+    manifest.unattendedSandboxTargets === undefined ||
+    manifest.unattendedSandboxTargets.includes(target)
+  );
 };
-export async function shouldUseLocalHarness(harness: string | undefined, bearer?: string, projectId?: string) {
+export async function shouldUseLocalHarness(
+  harness: string | undefined,
+  bearer?: string,
+  projectId?: string,
+  options: { scope?: "attended" | "unattended" } = {},
+) {
   const id = localHarnessIdOf(harness);
-  return id !== null && isLocalHarnessVenue(id) && await localHarnessAccountEnabled(bearer, projectId, id);
+  return id !== null && isLocalHarnessVenue(id, options.scope) && await localHarnessAccountEnabled(bearer, projectId, id);
 }
 
 /** All schedulers share these slots; waiting happens before iteration deadlines. */

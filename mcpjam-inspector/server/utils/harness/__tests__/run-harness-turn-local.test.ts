@@ -16,6 +16,7 @@ const harnessState = vi.hoisted(() => ({
   teardown: vi.fn(async () => {}),
   discardState: vi.fn(async () => {}),
   liveApprovalRuntime: false,
+  adapterOverrides: {} as Record<string, unknown>,
   park: vi.fn((_args: unknown) => true),
   unpark: vi.fn(() => {}),
   session: {
@@ -79,6 +80,7 @@ vi.mock("../registry.js", () => ({
     liveApprovalRuntime: harnessState.liveApprovalRuntime,
     createHarness: harnessState.createRuntime,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
+    ...harnessState.adapterOverrides,
   })),
 }));
 
@@ -172,6 +174,13 @@ vi.mock("../local/local-turn.js", () => ({
   })),
 }));
 
+vi.mock("../local/evidence.js", () => ({
+  localHarnessEvidence: vi.fn(async () => ({
+    decision: { captureEnabled: false, gradingSource: "narration" },
+  })),
+}));
+import { localHarnessEvidence } from "../local/evidence.js";
+
 vi.mock("../preseed-adapter-skills.js", () => ({
   handOffLegacySkillDirs: vi.fn(async () => {}),
   preseedAdapterSkills: vi.fn(async () => {}),
@@ -236,6 +245,7 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.supportsSkills = false;
     harnessState.streamError = null;
     harnessState.liveApprovalRuntime = false;
+    harnessState.adapterOverrides = {};
     harnessState.park.mockReset().mockReturnValue(true);
     harnessState.unpark.mockReset();
     harnessState.session.suspendTurn.mockImplementation(async () => ({ type: "continue-turn" }));
@@ -565,6 +575,110 @@ describe("runHarnessTurn local continuity", () => {
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
       expect(harnessState.create).not.toHaveBeenCalled();
+    });
+  });
+  describe("an unattended local Codex eval (D2/D6)", () => {
+    const defaultPrepare = vi.mocked(prepareLocalHarnessTurn).getMockImplementation();
+    afterEach(() => {
+      if (defaultPrepare) vi.mocked(prepareLocalHarnessTurn).mockImplementation(defaultPrepare);
+    });
+    const codexEval = (overrides: Record<string, unknown> = {}) =>
+      baseOptions({
+        harness: "codex",
+        modelId: "openai/gpt-5.5",
+        sourceType: "eval",
+        evalIterationId: "iteration-1",
+        chatSessionId: undefined,
+        harnessExecutionTarget: {
+          kind: "local-native", machineId: "machine-1", runtimeId: "runtime-1",
+          workspaceGrantId: "scratch-1", permissionProfile: "unrestricted",
+          policyVersion: "v1", grantToken: "grant", actingUserId: "user-1",
+        },
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      harnessState.liveApprovalRuntime = true;
+      // Preparation resolves the same manifest mapping: unrestricted → allow-all.
+      vi.mocked(prepareLocalHarnessTurn).mockImplementation(async (args: any) => ({
+        ok: true,
+        prepared: {
+          plan: { runtime: { runtimeId: "runtime-1" } },
+          sandbox: {}, auth: {}, sandboxWorkDir: "project",
+          skillsBaseDir: "/private/local/home/.agents/skills",
+          permissionMode:
+            args?.target?.permissionProfile === "unrestricted" ? "allow-all" : "allow-edits",
+          sessionStateExists: harnessState.stateExists,
+          teardown: harnessState.teardown,
+          discardState: harnessState.discardState,
+          park: harnessState.park,
+          unpark: harnessState.unpark,
+        },
+      }) as any);
+      harnessState.adapterOverrides = {
+        id: "codex",
+        displayName: "Codex",
+        mcpDelivery: "host-executed",
+        mcpNativeDelivery: undefined,
+        acceptsSandboxPolicy: true,
+      };
+    });
+
+    it("builds the runtime allow-all inside the explicit workspace-write sandbox", async () => {
+      await runHarnessTurn(codexEval() as any, "none");
+      expect(harnessState.createRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxPolicy: {
+            type: "workspaceWrite",
+            writableRoots: [],
+            networkAccess: false,
+            excludeSlashTmp: true,
+            excludeTmpdirEnvVar: false,
+          },
+        }),
+      );
+      expect(harnessState.agentOptions.permissionMode).toBe("allow-all");
+    });
+
+    it("never hands the sandbox policy to an attended Playground turn", async () => {
+      await runHarnessTurn(
+        baseOptions({ harness: "codex", modelId: "openai/gpt-5.5" }) as any,
+        "none",
+      );
+      expect(harnessState.createRuntime).toHaveBeenCalled();
+      expect(
+        (harnessState.createRuntime.mock.calls[0] as unknown[])[0],
+      ).not.toHaveProperty("sandboxPolicy");
+    });
+
+    it("refuses an unrestricted target outside an eval or swarm, before preparing anything", async () => {
+      await runHarnessTurn(
+        codexEval({ sourceType: "direct", evalIterationId: undefined, chatSessionId: "chat-1" }) as any,
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+      expect(harnessState.createRuntime).not.toHaveBeenCalled();
+    });
+
+    it("refuses to run unattended on a transport that cannot apply the sandbox", async () => {
+      harnessState.adapterOverrides = {
+        ...harnessState.adapterOverrides,
+        acceptsSandboxPolicy: false,
+      };
+      await runHarnessTurn(codexEval() as any, "none");
+      expect(harnessState.createRuntime).not.toHaveBeenCalled();
+    });
+
+    it("skips member evidence for the host-executed engine and reports narration grading", async () => {
+      const onHarnessEvidenceDecision = vi.fn();
+      await runHarnessTurn(
+        codexEval({ onHarnessEvidenceDecision }) as any,
+        "none",
+      );
+      expect(localHarnessEvidence).not.toHaveBeenCalled();
+      expect(onHarnessEvidenceDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ captureEnabled: false, gradingSource: "narration" }),
+      );
     });
   });
 });

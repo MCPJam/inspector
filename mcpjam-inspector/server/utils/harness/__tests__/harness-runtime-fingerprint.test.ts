@@ -3,6 +3,10 @@ import {
   harnessRuntimeFingerprint,
   toToolResultOutput,
 } from "../run-harness-turn";
+import {
+  LOCAL_UNATTENDED_SANDBOX_POLICY,
+  sandboxPolicyFingerprint,
+} from "../codex-appserver/shared/sandbox-policy.js";
 
 // Regression: the fingerprint must be STABLE across turns of one chat so the
 // session resumes. App/widget chats mutate the system prompt every turn (live
@@ -58,6 +62,42 @@ describe("harnessRuntimeFingerprint", () => {
     // session keeps resuming across this deploy.
     expect(harnessRuntimeFingerprint(base)).toBe(
       harnessRuntimeFingerprint({ ...base, localTarget: undefined }),
+    );
+  });
+
+  // D2: an unattended local Codex turn runs inside an explicit command
+  // sandbox, and a resumed thread keeps the sandbox it started with — so the
+  // policy is a lane dimension, appended only when set.
+  it("forks on the command-sandbox policy, and leaves turns without one untouched", () => {
+    const local = {
+      ...base,
+      harnessId: "codex",
+      transport: "app-server",
+      localTarget: {
+        runtimeId: "rt_1",
+        workspaceGrantId: "scratch_1",
+        policyVersion: "v1",
+        permissionProfile: "unrestricted",
+      },
+    };
+    const sandboxed = {
+      ...local,
+      commandSandbox: sandboxPolicyFingerprint(LOCAL_UNATTENDED_SANDBOX_POLICY),
+    };
+    expect(harnessRuntimeFingerprint(local)).toBe(
+      harnessRuntimeFingerprint({ ...local, commandSandbox: undefined }),
+    );
+    expect(harnessRuntimeFingerprint(sandboxed)).not.toBe(
+      harnessRuntimeFingerprint(local),
+    );
+    expect(harnessRuntimeFingerprint(sandboxed)).not.toBe(
+      harnessRuntimeFingerprint({
+        ...local,
+        commandSandbox: sandboxPolicyFingerprint({
+          ...LOCAL_UNATTENDED_SANDBOX_POLICY,
+          networkAccess: true,
+        }),
+      }),
     );
   });
 
