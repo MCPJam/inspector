@@ -242,6 +242,41 @@ describe("OAuth copy log formatters", () => {
     expect(copied).not.toContain("1. Request Tokens with Authorization Code");
   });
 
+  it("copies a range of selected steps, preserving each step's original number", () => {
+    const state = { currentStep: "token_request" } as OAuthFlowState;
+    const groups = [
+      {
+        step: "request_without_token" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 1,
+      },
+      {
+        step: "received_401_unauthorized" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 2,
+      },
+      {
+        step: "token_request" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 3,
+      },
+    ];
+
+    const copied = generateGuideText(state, groups, {
+      steps: ["received_401_unauthorized", "token_request"],
+    });
+
+    expect(copied).not.toContain("Initial MCP Request");
+    expect(copied).toContain("2. 401 Unauthorized Received");
+    expect(copied).toContain("3. Request Tokens with Authorization Code");
+
+    const firstIndex = copied.indexOf("2. 401 Unauthorized Received");
+    const secondIndex = copied.indexOf(
+      "3. Request Tokens with Authorization Code"
+    );
+    expect(secondIndex).toBeGreaterThan(firstIndex);
+  });
+
   it("prints raw request and response halves under their own steps", () => {
     const httpEntry = {
       step: "request_without_token" as OAuthFlowStep,

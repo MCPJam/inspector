@@ -170,8 +170,13 @@ const appendError = (
 export function generateXAAFlowText(
   flowState: XAAFlowState,
   summary: XAAFlowCopySummary,
-  options?: { step?: XAAFlowStep }
+  options?: { step?: XAAFlowStep; steps?: XAAFlowStep[] }
 ): string {
+  const selectedSteps = options?.steps
+    ? new Set(options.steps)
+    : options?.step
+    ? new Set([options.step])
+    : undefined;
   let text = "=== XAA Debugger - Flow ===\n\n";
   text += `Server URL: ${sanitizeUrl(
     summary.serverUrl || flowState.serverUrl || "Not set"
@@ -216,7 +221,7 @@ export function generateXAAFlowText(
 
   for (const entry of flowState.infoLogs ?? []) {
     if (getXAAStepIndex(entry.step) > currentStepIndex) continue;
-    if (options?.step && entry.step !== options.step) continue;
+    if (selectedSteps && !selectedSteps.has(entry.step)) continue;
     add(entry.step, {
       type: "info",
       timestamp: entry.timestamp,
@@ -236,7 +241,7 @@ export function generateXAAFlowText(
       Boolean(flowState.error || flowState.negativeProbe),
   })) {
     if (getXAAStepIndex(item.step) > currentStepIndex) continue;
-    if (options?.step && item.step !== options.step) continue;
+    if (selectedSteps && !selectedSteps.has(item.step)) continue;
     add(item.step, {
       type: "http",
       timestamp: item.timestamp,
@@ -245,8 +250,10 @@ export function generateXAAFlowText(
     });
   }
 
-  const steps = options?.step
-    ? [options.step]
+  const steps = selectedSteps
+    ? Array.from(selectedSteps).sort(
+        (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
+      )
     : Array.from(byStep.keys()).sort(
         (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
       );

@@ -111,6 +111,17 @@ export function OAuthFlowLogger({
     null
   );
   const copyStepTimerRef = useRef<number | null>(null);
+  const [rangeSelectMode, setRangeSelectMode] = useState(false);
+  const [selectedSteps, setSelectedSteps] = useState<Set<OAuthFlowStep>>(
+    new Set()
+  );
+  const [lastToggledStepIndex, setLastToggledStepIndex] = useState<
+    number | null
+  >(null);
+  const [copyRangeState, setCopyRangeState] = useState<
+    "idle" | "success" | "error"
+  >("idle");
+  const copyRangeTimerRef = useRef<number | null>(null);
 
   const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
 
@@ -391,8 +402,93 @@ export function OAuthFlowLogger({
       if (copyStepTimerRef.current !== null) {
         window.clearTimeout(copyStepTimerRef.current);
       }
+      if (copyRangeTimerRef.current !== null) {
+        window.clearTimeout(copyRangeTimerRef.current);
+      }
     };
   }, []);
+
+  // Range selection only applies to the Guide tab's step cards.
+  useEffect(() => {
+    if (activeTab !== "guide" && rangeSelectMode) {
+      setRangeSelectMode(false);
+      setSelectedSteps(new Set());
+      setLastToggledStepIndex(null);
+    }
+  }, [activeTab, rangeSelectMode]);
+
+  const handleExitRangeSelect = () => {
+    setRangeSelectMode(false);
+    setSelectedSteps(new Set());
+    setLastToggledStepIndex(null);
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+    setCopyRangeState("idle");
+  };
+
+  const handleEnterRangeSelect = () => {
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+    setCopyRangeState("idle");
+    setRangeSelectMode(true);
+  };
+
+  useEffect(() => {
+    if (groups.length === 0 && rangeSelectMode) {
+      handleExitRangeSelect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups.length]);
+
+  const handleToggleStepSelection = (
+    step: OAuthFlowStep,
+    index: number,
+    shiftKey: boolean
+  ) => {
+    setSelectedSteps((prev) => {
+      const next = new Set(prev);
+      if (shiftKey && lastToggledStepIndex !== null) {
+        const [start, end] =
+          lastToggledStepIndex <= index
+            ? [lastToggledStepIndex, index]
+            : [index, lastToggledStepIndex];
+        for (let i = start; i <= end; i++) {
+          next.add(groups[i].step);
+        }
+      } else if (next.has(step)) {
+        next.delete(step);
+      } else {
+        next.add(step);
+      }
+      return next;
+    });
+    setLastToggledStepIndex(index);
+  };
+
+  const handleCopySelectedSteps = async () => {
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+
+    const orderedSteps = groups
+      .map((group) => group.step)
+      .filter((step) => selectedSteps.has(step));
+    const text = generateGuideText(oauthFlowState, groups, {
+      steps: orderedSteps,
+    });
+
+    const success = await copyToClipboard(text);
+    setCopyRangeState(success ? "success" : "error");
+    copyRangeTimerRef.current = window.setTimeout(() => {
+      setCopyRangeState("idle");
+      copyRangeTimerRef.current = null;
+    }, 2000);
+  };
 
   return (
     <div className="h-full border-l border-border flex flex-col">
@@ -544,14 +640,59 @@ export function OAuthFlowLogger({
             <TabsTrigger value="guide">Guide</TabsTrigger>
             <TabsTrigger value="raw">Raw</TabsTrigger>
           </TabsList>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCopyLogs}
-            className="h-8"
-          >
-            {copySuccess ? "Copied!" : "Copy"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {activeTab === "guide" && rangeSelectMode ? (
+              <>
+                <span className="text-xs text-muted-foreground">
+                  {selectedSteps.size} selected
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleExitRangeSelect}
+                  className="h-8"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleCopySelectedSteps()}
+                  disabled={selectedSteps.size === 0}
+                  className="h-8"
+                >
+                  {copyRangeState === "error"
+                    ? "Copy failed"
+                    : copyRangeState === "success"
+                    ? "Copied!"
+                    : `Copy ${selectedSteps.size} step${
+                        selectedSteps.size === 1 ? "" : "s"
+                      }`}
+                </Button>
+              </>
+            ) : (
+              <>
+                {activeTab === "guide" && groups.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleEnterRangeSelect}
+                    className="h-8"
+                  >
+                    Select step
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyLogs}
+                  className="h-8"
+                >
+                  {copySuccess ? "Copied!" : "Copy all"}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         <TabsContent value="guide" className="flex-1 overflow-hidden">
@@ -711,15 +852,51 @@ export function OAuthFlowLogger({
                           role="button"
                           tabIndex={0}
                           aria-expanded={isExpanded}
-                          onClick={() => toggleStep(group.step)}
+                          onClick={(event) => {
+                            if (rangeSelectMode) {
+                              handleToggleStepSelection(
+                                group.step,
+                                groupIndex,
+                                event.shiftKey
+                              );
+                            } else {
+                              toggleStep(group.step);
+                            }
+                          }}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              toggleStep(group.step);
+                              if (rangeSelectMode) {
+                                handleToggleStepSelection(
+                                  group.step,
+                                  groupIndex,
+                                  event.shiftKey
+                                );
+                              } else {
+                                toggleStep(group.step);
+                              }
                             }
                           }}
                           className="w-full px-4 py-3 flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
                         >
+                          {rangeSelectMode && (
+                            <input
+                              type="checkbox"
+                              checked={selectedSteps.has(group.step)}
+                              onChange={() => {}}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleToggleStepSelection(
+                                  group.step,
+                                  groupIndex,
+                                  event.shiftKey
+                                );
+                              }}
+                              aria-label={`Select step ${stepNumber}: ${info.title}`}
+                              className="h-4 w-4 mt-1 shrink-0 cursor-pointer accent-blue-500"
+                            />
+                          )}
+
                           {/* Status icon */}
                           <div className="flex-shrink-0 mt-0.5">
                             {hasError ? (
