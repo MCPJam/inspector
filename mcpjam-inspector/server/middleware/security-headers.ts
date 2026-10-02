@@ -10,19 +10,28 @@
  * HTML documents also get a Permissions-Policy denying hardware and sensor
  * features nothing here uses, and a Content-Security-Policy (MJ-016):
  * - an ENFORCING policy limited to directives that cannot break the app:
- *   `frame-ancestors 'self'` (what X-Frame-Options already says), no plugin
- *   content, and no `<base>` pointing elsewhere;
+ *   `frame-ancestors 'self'` (what X-Frame-Options already says) and no
+ *   plugin content. It is inherited by srcdoc iframes, including MCP-UI
+ *   rawHtml widgets, so it holds nothing a widget document may rely on;
  * - in hosted mode, a REPORT-ONLY policy describing the full intended source
  *   list, built from this deploy's runtime config. It blocks nothing; its
  *   reports are what a later enforcing policy gets tuned against. The app
  *   integrates with many external services (WorkOS, PostHog, Sentry, Convex,
  *   Stripe, MCP servers with OAuth), which is why it is not enforced yet.
+ *   The header goes on every hosted response, documents and assets alike
+ *   (MJ-016), but only a sampled share of responses
+ *   carries the report-uri directive (CSP_REPORT_SAMPLE_RATE), which is what
+ *   bounds how many violation reports page views produce — a report-only
+ *   policy without a report endpoint only logs to the console. On documents,
+ *   its script-src allows the inline scripts the server writes into the
+ *   document through a per-response nonce (documentScriptNonce).
  *
  * A response that sets its own Content-Security-Policy (the MCP Apps sandbox
  * proxy does) keeps it: those routes know their framing rules better than a
  * global default does.
  */
 
+import { randomBytes } from "node:crypto";
 import type { Context, Next } from "hono";
 import { HOSTED_MODE, SANDBOX_HOSTS } from "../config.js";
 import { getInspectorClientRuntimeConfig } from "../env.js";
@@ -30,7 +39,7 @@ import { SENTRY_DSN } from "../../shared/sentry-config.js";
 
 /** Enforced on every HTML document that does not set its own policy. */
 export const DOCUMENT_CONTENT_SECURITY_POLICY =
-  "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+  "frame-ancestors 'self'; object-src 'none'";
 
 /**
  * Denied on every HTML document (MJ-016). Only hardware and sensor features
@@ -58,7 +67,54 @@ export const DOCUMENT_PERMISSIONS_POLICY = [
   "window-management=()",
 ].join(", ");
 
+/**
+ * Share of hosted responses whose report-only policy carries report-uri,
+ * which bounds how many violation reports page views produce. The policy
+ * itself is on every hosted response.
+ */
+export const CSP_REPORT_SAMPLE_RATE = 0.05;
+
 const DEFAULT_WORKOS_API_HOSTNAME = "api.workos.com";
+
+// Stripe.js, per https://docs.stripe.com/security/guide#content-security-policy,
+// plus the fraud-detection frame and telemetry hosts Stripe.js contacts.
+const STRIPE_SCRIPT_SOURCES = [
+  "https://js.stripe.com",
+  "https://*.js.stripe.com",
+  "https://maps.googleapis.com",
+];
+const STRIPE_FRAME_SOURCES = [
+  "https://js.stripe.com",
+  "https://*.js.stripe.com",
+  "https://hooks.stripe.com",
+  "https://m.stripe.network",
+];
+const STRIPE_CONNECT_SOURCES = [
+  "https://api.stripe.com",
+  "https://maps.googleapis.com",
+  "https://r.stripe.com",
+];
+
+const scriptNonces = new WeakMap<Context, string>();
+
+/**
+ * The nonce for inline scripts a handler writes into this response's HTML
+ * document; the same value on every call for one request. The report-only
+ * policy's script-src allows scripts that carry it.
+ */
+export function documentScriptNonce(c: Context): string {
+  let nonce = scriptNonces.get(c);
+  if (!nonce) {
+    nonce = randomBytes(16).toString("base64");
+    scriptNonces.set(c, nonce);
+  }
+  return nonce;
+}
+
+/** `script` (an inline `<script>…</script>` element) carrying `nonce`. */
+export function withScriptNonce(script: string, nonce: string): string {
+  return script.replace(/^<script(?=[\s>])/i, `<script nonce="${nonce}"`);
+}
 
 function originOf(value: string | undefined): URL | null {
   if (!value) return null;
@@ -92,15 +148,13 @@ export function sentryCspTargets(
   };
 }
 
-/**
- * The full intended policy, sent as Content-Security-Policy-Report-Only.
- * Inputs are process configuration, never the request.
- */
-export function buildReportOnlyContentSecurityPolicy(
-  runtimeConfig = getInspectorClientRuntimeConfig(),
-  sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
-  sentryDsn: string = SENTRY_DSN.client,
-): string {
+type Directive = [name: string, sources: Iterable<string>];
+
+function reportOnlyDirectives(
+  runtimeConfig: ReturnType<typeof getInspectorClientRuntimeConfig>,
+  sandboxHosts: ReadonlySet<string>,
+  sentryDsn: string,
+): Directive[] {
   const sentry = sentryCspTargets(sentryDsn);
   const workosHost =
     runtimeConfig.workosApiHostname ?? DEFAULT_WORKOS_API_HOSTNAME;
@@ -110,23 +164,24 @@ export function buildReportOnlyContentSecurityPolicy(
     ...convexSources(runtimeConfig.convexSiteUrl),
     `https://${workosHost}`,
     ...(sentry ? [sentry.ingestOrigin] : []),
-    "https://api.stripe.com",
+    ...STRIPE_CONNECT_SOURCES,
   ]);
   const frameSources = new Set<string>(["'self'"]);
   for (const host of sandboxHosts) {
     frameSources.add(`https://${host}`);
     frameSources.add(`https://*.${host}`);
   }
-  for (const source of [
-    "https://js.stripe.com",
-    "https://hooks.stripe.com",
-    "https://www.youtube.com",
-  ]) {
+  for (const source of [...STRIPE_FRAME_SOURCES, "https://www.youtube.com"]) {
     frameSources.add(source);
   }
 
-  const directives: Array<[string, Iterable<string>]> = [
-    ["script-src", ["'self'", "https://js.stripe.com"]],
+  return [
+    // The fallback for fetch directives not listed below (media-src, …);
+    // report-only, so an unlisted source only produces a report.
+    ["default-src", ["'self'"]],
+    // 'unsafe-eval': JSON Schema validators (ajv) compile schemas at runtime
+    // with `new Function`.
+    ["script-src", ["'self'", "'unsafe-eval'", ...STRIPE_SCRIPT_SOURCES]],
     [
       "style-src",
       ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
@@ -136,27 +191,64 @@ export function buildReportOnlyContentSecurityPolicy(
     ["frame-src", frameSources],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["worker-src", ["'self'", "blob:"]],
-    ...(sentry
-      ? ([["report-uri", [sentry.reportUri]]] as Array<
-          [string, Iterable<string>]
-        >)
-      : []),
+    ["base-uri", ["'self'"]],
+    ...(sentry ? ([["report-uri", [sentry.reportUri]]] as Directive[]) : []),
   ];
+}
+
+function renderPolicy(
+  directives: Directive[],
+  scriptNonce?: string,
+  includeReportUri = true,
+): string {
   return directives
-    .map(([name, sources]) => `${name} ${Array.from(sources).join(" ")}`)
+    .filter(([name]) => includeReportUri || name !== "report-uri")
+    .map(([name, iterable]) => {
+      const sources = Array.from(iterable);
+      if (name === "script-src" && scriptNonce) {
+        sources.splice(1, 0, `'nonce-${scriptNonce}'`);
+      }
+      return `${name} ${sources.join(" ")}`;
+    })
     .join("; ");
 }
 
-let reportOnlyPolicy: string | null = null;
+/**
+ * The full intended policy, sent as Content-Security-Policy-Report-Only.
+ * Inputs are process configuration, never the request, plus the response's
+ * script nonce when the document has one.
+ */
+export function buildReportOnlyContentSecurityPolicy(
+  runtimeConfig = getInspectorClientRuntimeConfig(),
+  sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
+  sentryDsn: string = SENTRY_DSN.client,
+  scriptNonce?: string,
+  includeReportUri = true,
+): string {
+  return renderPolicy(
+    reportOnlyDirectives(runtimeConfig, sandboxHosts, sentryDsn),
+    scriptNonce,
+    includeReportUri,
+  );
+}
 
-function reportOnlyContentSecurityPolicy(): string {
-  reportOnlyPolicy ??= buildReportOnlyContentSecurityPolicy();
-  return reportOnlyPolicy;
+let reportOnlyBase: Directive[] | null = null;
+
+function reportOnlyContentSecurityPolicy(
+  scriptNonce: string | undefined,
+  includeReportUri: boolean,
+): string {
+  reportOnlyBase ??= reportOnlyDirectives(
+    getInspectorClientRuntimeConfig(),
+    SANDBOX_HOSTS,
+    SENTRY_DSN.client,
+  );
+  return renderPolicy(reportOnlyBase, scriptNonce, includeReportUri);
 }
 
 /** Test-only: drop the memoized report-only policy. */
 export function resetContentSecurityPolicyForTests(): void {
-  reportOnlyPolicy = null;
+  reportOnlyBase = null;
 }
 
 function isHtmlDocument(res: Response): boolean {
@@ -165,23 +257,27 @@ function isHtmlDocument(res: Response): boolean {
     .startsWith("text/html");
 }
 
-function setDocumentPolicies(headers: Headers, hosted: boolean): void {
-  headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
-  if (!headers.has("Permissions-Policy")) {
-    headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+function setResponsePolicies(
+  headers: Headers,
+  isDocument: boolean,
+  reportOnlyPolicy: string | null,
+): void {
+  if (isDocument) {
+    headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
+    if (!headers.has("Permissions-Policy")) {
+      headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+    }
   }
-  if (hosted) {
-    headers.set(
-      "Content-Security-Policy-Report-Only",
-      reportOnlyContentSecurityPolicy(),
-    );
+  if (reportOnlyPolicy) {
+    headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy);
   }
 }
 
 /**
  * Security headers middleware.
- * Adds standard security headers to all responses, and the document policies
- * above to HTML responses.
+ * Adds standard security headers to all responses, the document policies
+ * above to HTML responses, and (hosted) the report-only policy to every
+ * response that does not carry its own Content-Security-Policy.
  */
 export async function securityHeadersMiddleware(
   c: Context,
@@ -196,16 +292,26 @@ export async function securityHeadersMiddleware(
   await next();
 
   const res = c.res;
-  if (!isHtmlDocument(res) || res.headers.has("Content-Security-Policy")) {
+  if (res.headers.has("Content-Security-Policy")) {
+    return;
+  }
+  const isDocument = isHtmlDocument(res);
+  const reportOnlyPolicy = HOSTED_MODE
+    ? reportOnlyContentSecurityPolicy(
+        isDocument ? scriptNonces.get(c) : undefined,
+        Math.random() < CSP_REPORT_SAMPLE_RATE,
+      )
+    : null;
+  if (!isDocument && !reportOnlyPolicy) {
     return;
   }
   try {
-    setDocumentPolicies(res.headers, HOSTED_MODE);
+    setResponsePolicies(res.headers, isDocument, reportOnlyPolicy);
   } catch {
     // A response built from another Response (a proxied fetch) can carry
     // immutable headers; copy it into one whose headers can be set.
     const copy = new Response(res.body, res);
-    setDocumentPolicies(copy.headers, HOSTED_MODE);
+    setResponsePolicies(copy.headers, isDocument, reportOnlyPolicy);
     c.res = copy;
   }
 }

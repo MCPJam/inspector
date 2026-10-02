@@ -3,9 +3,13 @@ import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import relayRoutes, {
+  RELAY_BODY_READ_TIMEOUT_MS,
+  RELAY_MAX_BUFFERED_BYTES,
   RELAY_MAX_LARGE_PAYLOAD_CHECKS,
   RELAY_MAX_PAYLOAD_CHECKS,
+  RELAY_PARSE_MAX_BYTES,
   relayBodyLimit,
+  scanPayloadTokens,
 } from "../relay.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { securityHeadersMiddleware } from "../../middleware/security-headers.js";
@@ -599,32 +603,501 @@ describe("posthog relay proxy", () => {
       }
     });
 
-    it("answers 503 without reading the body of a payload it cannot admit", async () => {
+    it("classifies a replay batch by its inflated size, not its compressed size", async () => {
       vi.mocked(fetch).mockResolvedValue(upstreamResponse());
       const app = createTestApp();
-      const body = gzipSync(largeReplayBatch(2 * 1024 * 1024));
+      const large = gzipSync(largeReplayBatch(2 * 1024 * 1024));
       zlibControl.hold = true;
       const pending = Array.from(
         { length: RELAY_MAX_LARGE_PAYLOAD_CHECKS },
-        () => app.request("/tlm/s/", sized(body)),
+        () => app.request("/tlm/s/", sized(large)),
       );
       await vi.waitFor(() =>
         expect(zlibControl.held).toHaveLength(RELAY_MAX_LARGE_PAYLOAD_CHECKS),
       );
-
-      // A body that never finishes arriving: reading it first would hang.
-      const unfinished = new Request("http://localhost:6274/tlm/s/", {
-        method: "POST",
-        body: new ReadableStream({ start() {} }),
-        headers: { "content-length": String(3 * 1024 * 1024) },
-        duplex: "half",
-      } as RequestInit);
-      const refused = await app.request(unfinished);
-      expect(refused.status).toBe(503);
-
       zlibControl.hold = false;
+
+      // Well over 64 KiB compressed, well under the floor once inflated.
+      const replay = gzipSync(largeReplayBatch(256 * 1024));
+      expect(replay.length).toBeGreaterThan(64 * 1024);
+      const response = await app.request("/tlm/s/", sized(replay));
+      expect(response.status).toBe(200);
+
       for (const run of zlibControl.held.splice(0)) run();
       await Promise.all(pending);
+    });
+
+    it("refuses a gzip body that holds more than its trailer declares", async () => {
+      const body = Buffer.from(gzipSync(eventBatch()));
+      body.writeUInt32LE(8, body.length - 4);
+
+      const response = await createTestApp().request("/tlm/i/v0/e/", {
+        method: "POST",
+        body,
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "unreadable_payload" });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("body read deadline", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // A body that declares its length and never finishes arriving.
+    function stalledRequest(
+      path: string,
+      headers: Record<string, string> = { "content-length": "1000" },
+    ): Request {
+      return new Request(`http://localhost:6274${path}`, {
+        method: "POST",
+        body: new ReadableStream({ start() {} }),
+        headers,
+        duplex: "half",
+      } as RequestInit);
+    }
+
+    // A body that sends `mebibytes` MiB and then never finishes arriving.
+    // Every chunk is the same buffer, so the test itself holds 1 MiB.
+    const MIB = new Uint8Array(1024 * 1024);
+    function partialRequest(path: string, mebibytes: number): Request {
+      return new Request(`http://localhost:6274${path}`, {
+        method: "POST",
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let i = 0; i < mebibytes; i++) controller.enqueue(MIB);
+          },
+        }),
+        duplex: "half",
+      } as RequestInit);
+    }
+
+    it("answers 408 for a stalled body sent without a declared length", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const pending = createTestApp().request(
+        stalledRequest("/tlm/s/", { "transfer-encoding": "chunked" }),
+      );
+      await vi.advanceTimersByTimeAsync(RELAY_BODY_READ_TIMEOUT_MS);
+      const response = await pending;
+      expect(response.status).toBe(408);
+      expect(response.headers.get("connection")).toBe("close");
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a declared length over the cap without reading the body", async () => {
+      const response = await createTestApp().request(
+        stalledRequest("/tlm/i/v0/e/", {
+          "content-length": String(3 * 1024 * 1024),
+        }),
+      );
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ error: "payload_too_large" });
+    });
+
+    it("refuses bytes past the cap while reading", async () => {
+      const response = await createTestApp().request(
+        partialRequest("/tlm/i/v0/e/", 3),
+      );
+      expect(response.status).toBe(413);
+      expect(response.headers.get("connection")).toBe("close");
+      expect(await response.json()).toEqual({ error: "payload_too_large" });
+    });
+
+    it("answers 503 once buffered bodies reach the relay's budget, and recovers", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      const perRequest = 19;
+      const fit = Math.floor(
+        RELAY_MAX_BUFFERED_BYTES / (perRequest * 1024 * 1024),
+      );
+
+      const held = Array.from({ length: fit }, () =>
+        app.request(partialRequest("/tlm/s/", perRequest)),
+      );
+      // Let those reads take in everything that has arrived.
+      await new Promise((resolve) => setImmediate(resolve));
+      const refused = await app.request(partialRequest("/tlm/s/", perRequest));
+      expect(refused.status).toBe(503);
+      expect(refused.headers.get("connection")).toBe("close");
+      expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+      await vi.advanceTimersByTimeAsync(RELAY_BODY_READ_TIMEOUT_MS);
+      for (const response of await Promise.all(held)) {
+        expect(response.status).toBe(408);
+      }
+
+      // The budget is free again once those reads have ended.
+      const replay = await app.request(
+        "/tlm/s/",
+        sized(gzipSync(largeReplayBatch(2 * 1024 * 1024))),
+      );
+      expect(replay.status).toBe(200);
+    });
+
+    it("answers 408 for a stalled body, which never holds an admission slot", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+
+      const stalled = [
+        ...Array.from({ length: RELAY_MAX_PAYLOAD_CHECKS }, () =>
+          app.request(stalledRequest("/tlm/i/v0/e/")),
+        ),
+        ...Array.from({ length: RELAY_MAX_LARGE_PAYLOAD_CHECKS }, () =>
+          app.request(stalledRequest("/tlm/s/")),
+        ),
+      ];
+
+      // Every kind of capture request is still served meanwhile.
+      const small = await app.request("/tlm/i/v0/e/", sized(eventBatch()));
+      expect(small.status).toBe(200);
+      const gzipped = await app.request(
+        "/tlm/i/v0/e/",
+        sized(gzipSync(eventBatch())),
+      );
+      expect(gzipped.status).toBe(200);
+      const replay = await app.request(
+        "/tlm/s/",
+        sized(gzipSync(largeReplayBatch(2 * 1024 * 1024))),
+      );
+      expect(replay.status).toBe(200);
+      expect(fetch).toHaveBeenCalledTimes(3);
+
+      await vi.advanceTimersByTimeAsync(RELAY_BODY_READ_TIMEOUT_MS);
+      for (const response of await Promise.all(stalled)) {
+        expect(response.status).toBe(408);
+        expect(response.headers.get("connection")).toBe("close");
+        expect(await response.json()).toEqual({ error: "relay_body_timeout" });
+      }
+      expect(fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not time out a body that arrives before the deadline", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const bytes = Buffer.from(eventBatch());
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const pending = createTestApp().request(
+        new Request("http://localhost:6274/tlm/i/v0/e/", {
+          method: "POST",
+          body: new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+            },
+          }),
+          headers: { "content-length": String(bytes.length) },
+          duplex: "half",
+        } as RequestInit),
+      );
+
+      await vi.advanceTimersByTimeAsync(RELAY_BODY_READ_TIMEOUT_MS - 1);
+      controller.enqueue(new Uint8Array(bytes));
+      controller.close();
+
+      const response = await pending;
+      expect(response.status).toBe(200);
+      expect(
+        Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(bytes),
+      ).toBe(true);
+    });
+  });
+
+  describe("malformed large payloads", () => {
+    // The same malformed payload, below and above RELAY_PARSE_MAX_BYTES.
+    it.each([
+      ["a leading-zero number", `"n":01`],
+      ["an invalid escape", `"s":"\\q"`],
+      ["a raw control character", `"s":"a\u0001b"`],
+    ])("refuses %s at any size", async (_name, field) => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      for (const pad of ["", "x".repeat(RELAY_PARSE_MAX_BYTES)]) {
+        const json = `[{"event":"$snapshot","properties":{"token":"${POSTHOG_PROJECT_KEY}","pad":"${pad}",${field}}}]`;
+        const response = await app.request("/tlm/s/", {
+          method: "POST",
+          body: json,
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "unreadable_payload" });
+      }
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("large payload reads", () => {
+    type Events = Array<Record<string, unknown>>;
+
+    // Pads a payload past the size that is parsed outright, the way a replay
+    // batch's snapshot data does: a large value on each event.
+    function padded(events: Events): Events {
+      return events.map((event) => ({
+        ...event,
+        properties: {
+          ...(event.properties as Record<string, unknown>),
+          $snapshot_data: [
+            {
+              type: 2,
+              data: { token: OTHER_PROJECT_KEY, blob: "x".repeat(96 * 1024) },
+            },
+          ],
+        },
+      }));
+    }
+
+    const ours = POSTHOG_PROJECT_KEY;
+    const other = OTHER_PROJECT_KEY;
+
+    // [name, payload builder, expected status]. Each payload is sent both as
+    // it is and padded past RELAY_PARSE_MAX_BYTES.
+    const cases: Array<
+      [string, (pad: typeof padded) => unknown, 200 | 400 | 403]
+    > = [
+      [
+        "an event array for our project",
+        (pad) => pad([{ event: "$snapshot", properties: { token: ours } }]),
+        200,
+      ],
+      [
+        "a batch for our project",
+        (pad) => ({
+          api_key: ours,
+          batch: pad([{ event: "$pageview", properties: { token: ours } }]),
+        }),
+        200,
+      ],
+      [
+        "an event array naming another project",
+        (pad) => pad([{ event: "$snapshot", properties: { token: other } }]),
+        403,
+      ],
+      [
+        "a batch whose last event names another project",
+        (pad) => ({
+          api_key: ours,
+          batch: pad([
+            { event: "$pageview", properties: { token: ours } },
+            { event: "$pageview", properties: { token: ours } },
+            { event: "$pageview", properties: { token: other } },
+          ]),
+        }),
+        403,
+      ],
+      [
+        "a batch whose envelope names another project",
+        (pad) => ({
+          api_key: other,
+          batch: pad([{ event: "$pageview", properties: { token: ours } }]),
+        }),
+        403,
+      ],
+      [
+        "a batch with another project's envelope properties",
+        (pad) => ({
+          properties: { token: other },
+          batch: pad([{ event: "$pageview", properties: { token: ours } }]),
+        }),
+        403,
+      ],
+      [
+        "an event with another project in $token",
+        (pad) =>
+          pad([
+            { event: "$snapshot", $token: other, properties: { token: ours } },
+          ]),
+        403,
+      ],
+      [
+        "an event whose token is not a string",
+        (pad) =>
+          pad([{ event: "$snapshot", properties: { token: { value: ours } } }]),
+        403,
+      ],
+      [
+        "a single event object for another project",
+        (pad) => pad([{ event: "$snapshot", properties: { token: other } }])[0],
+        403,
+      ],
+      [
+        "an event array without a token",
+        (pad) => pad([{ event: "$snapshot", properties: {} }]),
+        400,
+      ],
+    ];
+
+    describe.each([
+      ["JSON", (json: string) => json],
+      ["gzip", (json: string) => gzipSync(json)],
+      ["base64 form", (json: string) => base64Form(json)],
+    ] as const)("%s", (_encoding, encode) => {
+      it.each(cases)("%s", async (_name, build, status) => {
+        vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+        const app = createTestApp();
+        const small = JSON.stringify(build((events) => events));
+        const large = JSON.stringify(build(padded));
+        expect(small.length).toBeLessThan(RELAY_PARSE_MAX_BYTES);
+        expect(large.length).toBeGreaterThan(RELAY_PARSE_MAX_BYTES);
+
+        for (const json of [small, large]) {
+          const response = await app.request("/tlm/s/", {
+            method: "POST",
+            body: encode(json),
+          });
+          expect(response.status).toBe(status);
+        }
+        expect(fetch).toHaveBeenCalledTimes(status === 200 ? 2 : 0);
+      });
+    });
+
+    it("reads a large payload without parsing it whole", async () => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const parse = vi.spyOn(JSON, "parse");
+      try {
+        const body = gzipSync(largeReplayBatch(3 * 1024 * 1024));
+        const response = await createTestApp().request("/tlm/s/", {
+          method: "POST",
+          body,
+        });
+        expect(response.status).toBe(200);
+        for (const [text] of parse.mock.calls) {
+          expect(String(text).length).toBeLessThanOrEqual(
+            RELAY_PARSE_MAX_BYTES,
+          );
+        }
+      } finally {
+        parse.mockRestore();
+      }
+    });
+
+    it.each([
+      [
+        "whitespace",
+        `[{"properties":{"token":"x"}}${" ".repeat(3 * 1024 * 1024)}]`,
+      ],
+      [
+        "a string",
+        `[{"properties":{"token":"x","d":"${"x".repeat(3 * 1024 * 1024)}"}}]`,
+      ],
+      [
+        "a number",
+        `[{"properties":{"token":"x","d":1${"0".repeat(3 * 1024 * 1024)}}}]`,
+      ],
+    ])(
+      "yields to the event loop inside a long run of %s",
+      async (_name, json) => {
+        const order: string[] = [];
+        setImmediate(() => order.push("other work"));
+        const tokens: unknown[] = [];
+        await scanPayloadTokens(Buffer.from(json), tokens).then(() =>
+          order.push("scan"),
+        );
+        expect(order).toEqual(["other work", "scan"]);
+        expect(tokens).toEqual(["x"]);
+      },
+    );
+
+    it("yields to the event loop while scanning", async () => {
+      const json = Buffer.from(
+        JSON.stringify(
+          Array.from({ length: 20_000 }, (_, i) => ({
+            event: "$snapshot",
+            properties: { token: POSTHOG_PROJECT_KEY, x: i, y: [i, i] },
+          })),
+        ),
+      );
+      const order: string[] = [];
+      setImmediate(() => order.push("other work"));
+      await scanPayloadTokens(json, []).then(() => order.push("scan"));
+      expect(order).toEqual(["other work", "scan"]);
+    });
+
+    it.each([
+      [
+        "a plain event",
+        `[{"event":"x","properties":{"token":"${POSTHOG_PROJECT_KEY}"}}]`,
+        [POSTHOG_PROJECT_KEY],
+      ],
+      [
+        "an escaped key",
+        `[{"properties":{"\\u0074oken":"${OTHER_PROJECT_KEY}"}}]`,
+        [OTHER_PROJECT_KEY],
+      ],
+      [
+        "an escaped value",
+        `[{"properties":{"token":"\\u0070${POSTHOG_PROJECT_KEY.slice(1)}"}}]`,
+        [POSTHOG_PROJECT_KEY],
+      ],
+      [
+        "a repeated key",
+        `{"api_key":"${OTHER_PROJECT_KEY}","api_key":"${POSTHOG_PROJECT_KEY}"}`,
+        [OTHER_PROJECT_KEY, POSTHOG_PROJECT_KEY],
+      ],
+      [
+        "a token inside a string",
+        `[{"properties":{"$snapshot_data":"{\\"token\\":\\"${OTHER_PROJECT_KEY}\\"}"}}]`,
+        [],
+      ],
+      [
+        "a token below the event",
+        `[{"properties":{"$snapshot_data":[{"token":"${OTHER_PROJECT_KEY}"}]}}]`,
+        [],
+      ],
+      [
+        "a token on a nested batch",
+        `{"batch":[{"batch":[{"token":"${OTHER_PROJECT_KEY}"}]}]}`,
+        [],
+      ],
+      [
+        "a numeric token",
+        `{"batch":[{"api_key":12}],"token":null}`,
+        [null, null],
+      ],
+      [
+        "every JSON number form and escape",
+        `[{"n":[0,-0,1,-12,1.5,-0.25,1e5,1E+5,2.5e-3,-0e0],"s":"\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9","properties":{"token":"${POSTHOG_PROJECT_KEY}"}}]`,
+        [POSTHOG_PROJECT_KEY],
+      ],
+    ])("scans %s", async (_name, json, expected) => {
+      const tokens: unknown[] = [];
+      await scanPayloadTokens(Buffer.from(json), tokens);
+      expect(tokens).toEqual(expected);
+    });
+
+    it.each([
+      ["truncated JSON", `[{"properties":{"token":"${POSTHOG_PROJECT_KEY}"}}`],
+      [
+        "an unterminated string",
+        `[{"properties":{"token":"${POSTHOG_PROJECT_KEY}`,
+      ],
+      [
+        "trailing data",
+        `[{"properties":{"token":"${POSTHOG_PROJECT_KEY}"}}] []`,
+      ],
+      ["a missing colon", `[{"properties" {"token":"x"}}]`],
+      ["a missing comma", `[{"a":1 "b":2}]`],
+      ["a mismatched bracket", `[{"a":1]}`],
+      ["a bad literal", `[{"a":nul}]`],
+      ["an empty payload", `   `],
+      ["a leading zero", `[{"n":01}]`],
+      ["a plus sign", `[{"n":+1}]`],
+      ["a bare minus", `[{"n":-}]`],
+      ["a doubled minus", `[{"n":--2}]`],
+      ["an empty fraction", `[{"n":1.}]`],
+      ["a leading point", `[{"n":.5}]`],
+      ["an empty exponent", `[{"n":1e}]`],
+      ["an exponent sign alone", `[{"n":1e+}]`],
+      ["a number at the very end", `1e`],
+      ["an invalid escape", `[{"s":"\\q"}]`],
+      ["a short unicode escape", `[{"s":"\\u12G4"}]`],
+      ["a raw control character", `[{"s":"a\u0001b"}]`],
+      ["a truncated literal", `[tru]`],
+      ["a literal with extra letters", `[nulll]`],
+      ["an unterminated escape", `[{"s":"\\`],
+    ])("refuses to scan %s", async (_name, json) => {
+      await expect(scanPayloadTokens(Buffer.from(json), [])).rejects.toThrow();
     });
   });
 });

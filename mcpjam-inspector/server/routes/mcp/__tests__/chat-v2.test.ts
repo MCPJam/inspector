@@ -365,6 +365,29 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
+  describe("host runtime-config gate", () => {
+    it("fails closed with the network code in the body, not the copy", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+        networkCode: "ENOTFOUND",
+      });
+
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostId: "host-1",
+      });
+
+      expect(res.status).toBe(502);
+      const body = await res.json();
+      expect(body.networkCode).toBe("ENOTFOUND");
+      expect(body.error).not.toContain("ENOTFOUND");
+    });
+  });
+
   describe("validation", () => {
     it("returns 400 when messages is missing", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {

@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/evaluators",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pure evaluator contracts, assertions and trajectory matching",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "bench": "vitest bench --run",
     "typecheck": "tsc --noEmit",
     "test:packaging": "npm run build && node scripts/pack-smoke.mjs",
     "test:packaging:all": "npm run test:clean-build && npm run build && node scripts/pack-smoke.mjs --pnpm",
@@ -37,6 +38,7 @@
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@noble/hashes": "^2.4.0",
+    "re2js": "2.8.6",
     "zod": "^4.2.0"
   },
   "devDependencies": {

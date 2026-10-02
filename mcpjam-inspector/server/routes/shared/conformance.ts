@@ -38,6 +38,7 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import { withHostedMcpAnswerBodies } from "../../utils/hosted-mcp-base-fetch.js";
 import {
   runDirectoryReadiness,
   type DirectoryReadinessResult,
@@ -87,7 +88,7 @@ const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * A no-op outside hosted mode, where reaching localhost is the point.
  */
 export function createConformanceFetch(targetLabel: string): typeof fetch {
-  return createStreamingPinnedFetch({
+  const fetchFn = createStreamingPinnedFetch({
     targetLabel,
     // DNS + connect + headers, summed across the redirect chain. Deliberately
     // NOT a bound on an established body: an SSE stream is long-lived by
@@ -98,6 +99,12 @@ export function createConformanceFetch(targetLabel: string): typeof fetch {
     bodyIdleTimeoutMs: CONFORMANCE_BODY_IDLE_TIMEOUT_MS,
     maxResponseBytes: CONFORMANCE_MAX_RESPONSE_BYTES,
   });
+  // An MCP server's answers are read as MCP (hosted: see
+  // `withHostedMcpAnswerBodies`). An OAuth endpoint's are not — its error
+  // bodies are what the OAuth suite grades.
+  return targetLabel === "MCP server"
+    ? withHostedMcpAnswerBodies(fetchFn)
+    : fetchFn;
 }
 
 // ── Result shapes shared with clients ───────────────────────────────────

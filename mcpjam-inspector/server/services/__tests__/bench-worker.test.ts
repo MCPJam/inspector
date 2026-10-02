@@ -240,9 +240,7 @@ describe("assertClaimExecutable", () => {
     // unknown, and launching it anyway would spend the payer's credits on an
     // exam the backend then refuses to attach.
     expect(() => assertClaimExecutable(claimed)).toThrow(JobUnexecutableError);
-    expect(() => assertClaimExecutable(claimed)).toThrow(
-      /environmentId\/namedHostId/,
-    );
+    expect(() => assertClaimExecutable(claimed)).toThrow(/environmentId/);
   });
 
   it("does not refuse the job over a cell that already ran", () => {
@@ -571,9 +569,7 @@ describe("executeClaimedJob", () => {
     await running;
 
     expect(recorded.launched).toEqual(["a", "b"]);
-    expect(recorded.completed).toEqual([
-      { stoppedReason: "budget_exhausted" },
-    ]);
+    expect(recorded.completed).toEqual([{ stoppedReason: "budget_exhausted" }]);
   });
 
   it("adopts a grant the heartbeat reissued, in the children already running", async () => {
@@ -883,8 +879,9 @@ describe("decodeClaimedJob", () => {
   });
 
   it("reads an idle claim as no job", () => {
-    expect(decodeClaimedJob({ ok: true, claimed: false, retryAfterMs: 5000 }))
-      .toBeNull();
+    expect(
+      decodeClaimedJob({ ok: true, claimed: false, retryAfterMs: 5000 }),
+    ).toBeNull();
   });
 
   it("refuses a claim missing a credential rather than executing without it", () => {
@@ -962,9 +959,7 @@ describe("claim transport", () => {
     // this convention exists to prevent.
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response("not found", { status: 404 }),
-      ),
+      vi.fn().mockResolvedValue(new Response("not found", { status: 404 })),
     );
 
     await expect(claimNextForTests(CLAIMED_BY)).resolves.toBe("disabled");
@@ -988,9 +983,11 @@ describe("claim transport", () => {
   it("refuses a 200 that carries no ok envelope", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ claimed: null }), { status: 200 }),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ claimed: null }), { status: 200 }),
+        ),
     );
 
     await expect(claimNextForTests(CLAIMED_BY)).rejects.toThrow(
@@ -1094,7 +1091,9 @@ describe("claim transport", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(null, {
         status: 307,
-        headers: { location: "https://attacker.test/internal/v1/bench/jobs/claim" },
+        headers: {
+          location: "https://attacker.test/internal/v1/bench/jobs/claim",
+        },
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -1157,7 +1156,9 @@ describe("post-claim routes carry the execution grant", () => {
    * a shared instance makes the SECOND route call fail on a consumed body,
    * which looks exactly like a broken route.
    */
-  function okFetch(body: Record<string, unknown> = { ok: true, leaseOk: true }) {
+  function okFetch(
+    body: Record<string, unknown> = { ok: true, leaseOk: true },
+  ) {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify(body), { status: 200 }),
     );
@@ -1246,9 +1247,7 @@ describe("post-claim routes carry the execution grant", () => {
       body: JSON.parse(call[1].body as string),
     }));
 
-    const record = calls.find(
-      (c) => c.path === "/internal/v1/bench/artifacts",
-    );
+    const record = calls.find((c) => c.path === "/internal/v1/bench/artifacts");
     expect(record?.grant).toBe("grant-token");
     expect(record?.body).toEqual({
       benchmarkRunId: "brun-1",
