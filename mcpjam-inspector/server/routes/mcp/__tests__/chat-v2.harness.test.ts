@@ -1,9 +1,9 @@
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
 vi.mock("../../../utils/harness/local/run-resources.js", () => ({
   shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code"),
   localHarnessIdOf: (harness: unknown) => (harness === "claude-code" || harness === "codex" ? harness : undefined),
 }));
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { Hono } from "hono";
 
 const {
   prepareChatV2Mock,

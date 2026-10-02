@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../utils/harness/local/run-resources.js", () => ({
   shouldUseLocalHarness: vi.fn(async () => true),
   // Claude Code is eligible, as `shouldUseLocalHarness` above says.
@@ -7,7 +8,6 @@ vi.mock("../../../utils/harness/local/run-resources.js", () => ({
 vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: vi.fn(async () => ({ target: {} })) }));
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
 import { SwarmAgentError } from "../../../services/swarm-agent.js";
 import { ErrorCode, WebRouteError } from "../errors.js";

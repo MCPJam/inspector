@@ -1,9 +1,9 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
 const accountRollout = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 vi.mock("../../../utils/harness/local/readiness.js", async importOriginal => ({
   ...await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>(), localHarnessAccountEnabled: accountRollout,
 }));
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The local-harness control routes' CONTRACTS.
