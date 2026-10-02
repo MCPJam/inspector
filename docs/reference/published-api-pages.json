@@ -131,6 +131,7 @@
   "/api-reference/execution/render-a-prompt",
   "/api-reference/execution/render-an-mcp-app-widget-headlessly",
   "/api-reference/export/export-a-server-snapshot",
+  "/api-reference/feedback/send-feedback-to-the-mcpjam-team",
   "/api-reference/harness/list-a-harnesss-native-built-in-tools",
   "/api-reference/hosts/create-a-host-from-a-template-or-a-full-config",
   "/api-reference/hosts/delete-a-host",

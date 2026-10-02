@@ -9,6 +9,7 @@ declare module "hono" {
   }
 
   interface ContextVariableMap {
+    bridgeCaller?: "local" | "tunnel";
     guestId?: string;
     requestLogContext?: RequestLogContext;
     /**
