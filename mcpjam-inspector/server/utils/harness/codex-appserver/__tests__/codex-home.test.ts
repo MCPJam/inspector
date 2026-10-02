@@ -30,6 +30,7 @@ describe("config.toml", () => {
       # it is rewritten on every session start.
 
       model_provider = "mcpjam"
+      preferred_auth_method = "apikey"
       model_reasoning_summary = "detailed"
       web_search = "live"
 
@@ -38,12 +39,13 @@ describe("config.toml", () => {
       base_url = "https://proxy.example/web/harness/model-proxy/openai/v1"
       env_key = "CODEX_API_KEY"
       wire_api = "responses"
+      supports_websockets = false
 
       [mcp_servers.mcpjam]
       command = "/usr/bin/node"
       args = ["/bootstrap/host-tools-mcp.mjs"]
       startup_timeout_sec = 30
-      tool_timeout_sec = 0
+      tool_timeout_sec = 3600
 
       [mcp_servers.mcpjam.env]
       MCPJAM_HOST_TOOL_RELAY_URL = "http://127.0.0.1:41234"
@@ -58,16 +60,24 @@ describe("config.toml", () => {
     expect(toml).toContain("[model_providers.mcpjam]");
   });
 
-  it("keeps the host-tool timeout at zero", () => {
-    // A host tool can be parked behind a human approval. ANY finite timeout
-    // here would cancel exactly the approvals this transport exists to serve.
+  it("bounds the host-tool wait at an hour, never zero", () => {
+    // A host tool can be parked behind a human approval, so the budget has to
+    // outlast a person. Codex reads 0 as a ZERO-second budget — every relayed
+    // call timed out at once — so the regression this pins is a 0 coming back.
     const toml = renderCodexConfigToml({
       ...base,
       hostToolsEntrypoint: "/b/host-tools-mcp.mjs",
       relayUrl: "http://127.0.0.1:1",
       relayCredential: "c",
     });
-    expect(toml).toContain("tool_timeout_sec = 0");
+    expect(toml).toContain("tool_timeout_sec = 3600");
+    expect(toml).not.toMatch(/tool_timeout_sec = 0\b/);
+  });
+
+  it("keeps Codex on API-key auth over plain HTTP", () => {
+    const toml = renderCodexConfigToml(base);
+    expect(toml).toContain('preferred_auth_method = "apikey"');
+    expect(toml).toContain("supports_websockets = false");
   });
 
   it("disables Codex's own web search unless the host asked for it", () => {

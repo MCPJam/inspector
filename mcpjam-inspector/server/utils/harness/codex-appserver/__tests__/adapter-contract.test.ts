@@ -18,7 +18,13 @@ import {
   createCodexAppServer,
   getCodexAppServerBootstrap,
 } from "../index.js";
-import { toCodexPermissions } from "../bridge/index.js";
+import {
+  CodexPermissionRefusedError,
+  isSupervisedLocally,
+  toCodexPermissions,
+} from "../bridge/index.js";
+import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../shared/sandbox-policy.js";
+import { startMessageSchema } from "../codex-appserver-bridge-protocol.js";
 
 describe("harness declaration", () => {
   const harness = createCodexAppServer();
@@ -117,6 +123,80 @@ describe("permission mapping", () => {
       approvalPolicy: "never",
       sandbox: "danger-full-access",
     });
+  });
+
+  it("refuses a mode it does not know instead of granting full access", () => {
+    // The old mapping's `default` arm turned ANY unrecognised string into
+    // `danger-full-access`: a typo was the widest grant there is.
+    for (const mode of ["allow-everything", "unrestricted", "", "ALLOW-ALL"]) {
+      expect(() => toCodexPermissions(mode), mode).toThrow(
+        CodexPermissionRefusedError,
+      );
+    }
+  });
+
+  it("refuses danger-full-access when supervised on a user's machine", () => {
+    expect(() =>
+      toCodexPermissions("allow-all", { supervisedLocally: true }),
+    ).toThrow(/danger-full-access/);
+    expect(() =>
+      toCodexPermissions(undefined, { supervisedLocally: true }),
+    ).toThrow(CodexPermissionRefusedError);
+  });
+
+  it("runs unattended local turns under the explicit workspace-write policy", () => {
+    // D2: approvalPolicy never, but inside Codex's OS sandbox — with /tmp
+    // excluded and the private TMPDIR kept, which the schema default does not.
+    expect(
+      toCodexPermissions("allow-all", {
+        supervisedLocally: true,
+        sandboxPolicy: { ...LOCAL_UNATTENDED_SANDBOX_POLICY, writableRoots: [] },
+      }),
+    ).toEqual({
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        writableRoots: [],
+        networkAccess: false,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: false,
+      },
+    });
+    // Attended modes keep prompting; a policy only narrows them further.
+    expect(
+      toCodexPermissions("allow-edits", {
+        supervisedLocally: true,
+        sandboxPolicy: { ...LOCAL_UNATTENDED_SANDBOX_POLICY, writableRoots: [] },
+      }).approvalPolicy,
+    ).toBe("untrusted");
+  });
+
+  it("knows it is supervised locally only from the supervisor's own marker", () => {
+    expect(isSupervisedLocally({})).toBe(false);
+    expect(isSupervisedLocally({ MCPJAM_LOCAL_CONTROL_ROOT: "" })).toBe(false);
+    expect(
+      isSupervisedLocally({ MCPJAM_LOCAL_CONTROL_ROOT: "/home/u/.mcpjam/x" }),
+    ).toBe(true);
+  });
+
+  it("accepts only a workspace-write sandbox policy on the wire", () => {
+    const start = { type: "start", prompt: "hi" };
+    expect(
+      startMessageSchema.safeParse({
+        ...start,
+        sandboxPolicy: { ...LOCAL_UNATTENDED_SANDBOX_POLICY, writableRoots: [] },
+      }).success,
+    ).toBe(true);
+    for (const sandboxPolicy of [
+      { type: "dangerFullAccess" },
+      { type: "readOnly", networkAccess: true },
+      { ...LOCAL_UNATTENDED_SANDBOX_POLICY, writableRoots: [], extra: 1 },
+    ]) {
+      expect(
+        startMessageSchema.safeParse({ ...start, sandboxPolicy }).success,
+      ).toBe(false);
+    }
   });
 });
 

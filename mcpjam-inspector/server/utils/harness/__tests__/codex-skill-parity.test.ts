@@ -34,6 +34,7 @@ import matter from "gray-matter";
 import { WebSocketServer } from "ws";
 import { createCodex } from "@ai-sdk/harness-codex";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { createCodexAppServer } from "../codex-appserver/index.js";
 import { getHarnessAdapter } from "../registry";
 import {
   prepareCodexSkills,
@@ -367,5 +368,82 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     const claudeParsed = matter(claudeWrite.content);
     expect(codexParsed.data).toEqual(claudeParsed.data);
     expect(codexParsed.content.trim()).toBe(claudeParsed.content.trim());
+  });
+});
+
+/**
+ * The same gate for MCPJam's own app-server adapter. It replaces the exec
+ * adapter (locally first, hosted later), so `supportsSkills` must stay true
+ * for EITHER transport — same root, same frontmatter, same name rule.
+ */
+describe("codex skill parity (MCPJam's codex app-server adapter)", () => {
+  it("writes delivered skills and supporting files under the advertised skillsBaseDir", async () => {
+    const adapter = getHarnessAdapter("codex");
+    const { writes, error } = await promptWithSkills(
+      createCodexAppServer() as never,
+      [
+        ...prepareCodexSkills([
+          skill({ skillId: "s1", name: "pdf-tools" }),
+          skill({ skillId: "s2", name: "csv-tools", description: "Read CSVs" }),
+        ]).payload,
+      ].map((entry) =>
+        entry.name === "pdf-tools"
+          ? { ...entry, files: [{ path: "scripts/run.py", content: "print(1)" }] }
+          : entry
+      )
+    );
+
+    expectReachedPrompt(error);
+    expect(
+      skillWrites(writes, adapter.skillsBaseDir)
+        .map((w) => w.path)
+        .sort()
+    ).toEqual([
+      `${adapter.skillsBaseDir}/csv-tools/SKILL.md`,
+      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
+      `${adapter.skillsBaseDir}/pdf-tools/scripts/run.py`,
+    ]);
+    expect(writes.filter((w) => w.path.includes("/.claude/skills/"))).toEqual(
+      []
+    );
+  });
+
+  it("writes byte-identical SKILL.md to the exec adapter for the same payload", async () => {
+    const payload = prepareCodexSkills([
+      skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
+    ]).payload;
+    const exec = await promptWithSkills(createCodex() as never, payload);
+    const appServer = await promptWithSkills(
+      createCodexAppServer() as never,
+      payload
+    );
+    expectReachedPrompt(exec.error);
+    expectReachedPrompt(appServer.error);
+    const skillMd = (writes: Write[]) =>
+      writes.find((w) => w.path.endsWith("/SKILL.md"))!;
+    expect(skillMd(appServer.writes)).toEqual(skillMd(exec.writes));
+    expect(matter(skillMd(appServer.writes).content).data.description).toBe(
+      'Process: PDFs "safely"'
+    );
+  });
+
+  it("accepts every name MCPJam accepts and refuses what MCPJam filters", async () => {
+    const names = ["a", "pdf-tools", "skill-2", "z".repeat(64)];
+    const prepared = prepareCodexSkills(
+      names.map((name, i) => skill({ skillId: `s${i}`, name }))
+    );
+    const ok = await promptWithSkills(
+      createCodexAppServer() as never,
+      prepared.payload
+    );
+    expectReachedPrompt(ok.error);
+    expect(
+      skillWrites(ok.writes, getHarnessAdapter("codex").skillsBaseDir)
+    ).toHaveLength(names.length);
+
+    const bad = await promptWithSkills(createCodexAppServer() as never, [
+      { name: "..", description: "d", content: "c" },
+    ]);
+    expect(bad.error).toBeDefined();
   });
 });

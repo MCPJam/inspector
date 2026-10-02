@@ -70,6 +70,10 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
     // metered proxy, the placeholder credential satisfies its auth check, and
     // the real lease is injected outside the VM by E2B.
     `model_provider = ${tomlString("mcpjam")}`,
+    // The credential is an API-key-shaped capability, never a ChatGPT login:
+    // without this Codex can prefer an interactive auth flow it will never
+    // complete. Parity with the published adapter's bridge.
+    'preferred_auth_method = "apikey"',
     // `detailed` is what makes reasoning summaries stream at all; without it
     // the reasoning parts are empty and the trace looks like the model thought
     // about nothing.
@@ -83,6 +87,9 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
     // The proxy allowlists exactly `POST /v1/responses` and `GET /v1/models`;
     // the responses wire API is what stays inside it.
     'wire_api = "responses"',
+    // Neither the hosted proxy nor the local gateway speaks the realtime
+    // WebSocket transport; Codex must stay on plain HTTP streaming.
+    "supports_websockets = false",
   ];
 
   if (input.hostToolsEntrypoint && input.relayUrl && input.relayCredential) {
@@ -94,11 +101,13 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
       // Generous: the server is a local node process, but a cold `node` start
       // on a loaded box is not instant.
       "startup_timeout_sec = 30",
-      // ZERO IS DELIBERATE. A host tool can be gated behind a human approval,
-      // so the call legitimately takes as long as a person takes to answer. Any
-      // finite timeout here would cancel exactly the approvals this transport
-      // exists to support.
-      "tool_timeout_sec = 0",
+      // An HOUR, not zero. A host tool can be gated behind a human approval,
+      // so the call legitimately takes as long as a person takes to answer —
+      // but Codex reads `0` as a zero-second budget, not "no limit": every
+      // relayed call timed out immediately. There is no unlimited setting, so
+      // the wait is bounded at an hour, longer than any approval the host
+      // keeps a session parked for. Never restore 0.
+      "tool_timeout_sec = 3600",
       "",
       `[mcp_servers.${RELAY_MCP_SERVER_NAME}.env]`,
       `MCPJAM_HOST_TOOL_RELAY_URL = ${tomlString(input.relayUrl)}`,

@@ -86,11 +86,19 @@ export async function bundleCodexAppServerBridge() {
     join(adapterDir, "bootstrap/package.json"),
     "utf8",
   );
+  // Committed (see `bootstrap/README.md`) so the framework can install with
+  // `--frozen-lockfile`: the vendor binary is then fixed by the lockfile's
+  // registry integrity, not by whatever the registry serves today.
+  const pnpmLock = readFileSync(
+    join(adapterDir, "bootstrap/pnpm-lock.yaml"),
+    "utf8",
+  );
 
   const version = createHash("sha256")
     .update(bridgeSource, "utf8")
     .update(hostToolsSource, "utf8")
     .update(packageJson, "utf8")
+    .update(pnpmLock, "utf8")
     .digest("hex")
     .slice(0, 32);
 
@@ -110,12 +118,23 @@ export const CODEX_APPSERVER_BOOTSTRAP_PACKAGE_JSON = ${JSON.stringify(
       packageJson,
     )};
 
+export const CODEX_APPSERVER_BOOTSTRAP_PNPM_LOCK = ${JSON.stringify(
+      pnpmLock,
+    )};
+
 /** sha256 over everything above, truncated. Feeds the bootstrap identity. */
 export const CODEX_APPSERVER_BUNDLE_VERSION = ${JSON.stringify(version)};
 `,
   );
 
-  return { bridgeSource, hostToolsSource, packageJson, version, outputPath };
+  return {
+    bridgeSource,
+    hostToolsSource,
+    packageJson,
+    pnpmLock,
+    version,
+    outputPath,
+  };
 }
 
 // Run as a script (the `bundle:*` npm task); importable as a module (the test).
