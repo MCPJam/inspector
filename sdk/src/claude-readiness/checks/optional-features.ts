@@ -111,6 +111,14 @@ function judgeLazyAuthProbe(
   }
 
   const publicCall = probe.publicCall;
+  // The probe sends `{}`. A tool that rejects that never reached its
+  // authorization decision, so its refusal is not evidence either way.
+  if (publicCall?.invalidArguments) {
+    return {
+      state: "undetermined",
+      detail: `the public tool "${publicCall.toolName}" rejected the probe's empty arguments before any authorization decision; name a public read-only tool that takes no required arguments`,
+    };
+  }
   if (publicCall && publicCall.outcome !== "unreachable" && publicCall.outcome !== "succeeded") {
     return {
       state: "unsupported",
@@ -131,6 +139,12 @@ function judgeLazyAuthProbe(
     return {
       state: "undetermined",
       detail: `"${call.toolName}" ran without credentials, so it is not a protected tool; name one that requires sign-in`,
+    };
+  }
+  if (call.invalidArguments) {
+    return {
+      state: "undetermined",
+      detail: `the protected tool "${call.toolName}" rejected the probe's empty arguments before any authorization decision; name a protected read-only tool that takes no required arguments`,
     };
   }
 
@@ -314,6 +328,7 @@ function summarizeProbe(
           selectedBy: entry.selectedBy,
           outcome: entry.outcome,
           status: entry.status,
+          invalidArguments: entry.invalidArguments,
           challengeSource: entry.challenge?.source,
           facets: entry.challenge?.facets,
         }

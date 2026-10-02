@@ -1341,6 +1341,11 @@ export async function applyToolCallAuthChallenge(
     /** Told the digest of the flow's `state`; see `authorizationFlowDigest`. */
     onAuthorizationFlow?: (flow: { digest: string }) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
+    /**
+     * The server already has a grant the browser cannot see: a hosted
+     * credential. Its scopes are kept, exactly as for browser tokens.
+     */
+    existingGrant?: boolean;
   },
 ): Promise<AuthChallengeOutcome> {
   const gate = gateAuthChallenge(signal.effectiveAuth);
@@ -1364,7 +1369,8 @@ export async function applyToolCallAuthChallenge(
   const serverUrl = readServerUrlForStepUp(server);
   const issuer = resolveStoredIssuer(server.name, serverUrl);
   const challengedScopes = parseOAuthScopes(signal.requiredScope);
-  const hasExistingGrant = Boolean(server.oauthTokens);
+  const hasExistingGrant =
+    Boolean(server.oauthTokens) || options.existingGrant === true;
   const scopes = challengedScopes
     ? hasExistingGrant
       ? stepUpScopeUnion(

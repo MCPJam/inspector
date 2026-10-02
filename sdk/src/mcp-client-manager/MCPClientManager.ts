@@ -26,6 +26,7 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
   wrapFetchForHttpErrors,
+  authChallengeOperationKey,
   type AuthChallengeRecorder,
 } from "./http-error-fetch.js";
 import {
@@ -1352,7 +1353,8 @@ export class MCPClientManager {
       serverId,
       request.request,
       request.retry ?? { retries: 0, retryDelayMs: 0 },
-      operation
+      operation,
+      { authChallengeOperation: authChallengeOperationKey("tools/call", toolName) }
     );
   }
 
@@ -1464,8 +1466,12 @@ export class MCPClientManager {
         mrtrCollect
       );
     }
-    return this.runRetryableReadOperation(serverId, options, (client) =>
-      client.readResource(params, this.withProgressHandler(serverId, options))
+    return this.runRetryableReadOperation(
+      serverId,
+      options,
+      (client) =>
+        client.readResource(params, this.withProgressHandler(serverId, options)),
+      authChallengeOperationKey("resources/read", params.uri)
     );
   }
 
@@ -1563,8 +1569,12 @@ export class MCPClientManager {
         mrtrCollect
       );
     }
-    return this.runRetryableReadOperation(serverId, options, (client) =>
-      client.getPrompt(params, this.withProgressHandler(serverId, options))
+    return this.runRetryableReadOperation(
+      serverId,
+      options,
+      (client) =>
+        client.getPrompt(params, this.withProgressHandler(serverId, options)),
+      authChallengeOperationKey("prompts/get", params.name)
     );
   }
 
@@ -4284,6 +4294,12 @@ export class MCPClientManager {
                 }
               ) as Promise<CallToolResult | InputRequiredResult>
           );
+        },
+        {
+          authChallengeOperation: authChallengeOperationKey(
+            "tools/call",
+            callParams.name
+          ),
         }
       );
 
@@ -4317,7 +4333,8 @@ export class MCPClientManager {
           client.readResource(req.params as ReadResourceParams, {
             ...this.withProgressHandler(serverId, options),
             allowInputRequired: true,
-          }) as Promise<ReadResourceResult | InputRequiredResult>
+          }) as Promise<ReadResourceResult | InputRequiredResult>,
+        authChallengeOperationKey("resources/read", params.uri)
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -4356,7 +4373,8 @@ export class MCPClientManager {
               ...this.withProgressHandler(serverId, options),
               allowInputRequired: true,
             }
-          ) as Promise<GetPromptResult | InputRequiredResult>
+          ) as Promise<GetPromptResult | InputRequiredResult>,
+        authChallengeOperationKey("prompts/get", params.name)
       );
 
     return runInputRequiredOperation<GetPromptResult>({
@@ -4801,7 +4819,8 @@ export class MCPClientManager {
   private async runRetryableReadOperation<T>(
     serverId: string,
     options: RequestOptions | undefined,
-    operation: (client: ManagedMcpClient) => Promise<T>
+    operation: (client: ManagedMcpClient) => Promise<T>,
+    authChallengeOperation?: string
   ): Promise<T> {
     return this.runRetriedOperation(
       serverId,
@@ -4811,7 +4830,10 @@ export class MCPClientManager {
         await this.ensureConnected(serverId, signal);
         return operation(this.getClientOrThrow(serverId));
       },
-      { resetConnectionOnRetry: false }
+      {
+        resetConnectionOnRetry: false,
+        ...(authChallengeOperation ? { authChallengeOperation } : {}),
+      }
     );
   }
 
@@ -4822,6 +4844,11 @@ export class MCPClientManager {
     operation: (signal?: AbortSignal) => Promise<T>,
     config: {
       resetConnectionOnRetry?: boolean;
+      /**
+       * The `authChallengeOperationKey` of the protected call this runs. Only
+       * that operation's recorded 401 is attached to its error.
+       */
+      authChallengeOperation?: string;
     } = {}
   ): Promise<T> {
     const { signal, cleanup } = this.createRetrySignal(
@@ -4855,13 +4882,23 @@ export class MCPClientManager {
           signal
         );
         if (!refreshed) {
-          this.attachRecordedAuthChallenge(serverId, error, startedAt);
+          this.attachRecordedAuthChallenge(
+            serverId,
+            error,
+            startedAt,
+            config.authChallengeOperation
+          );
           throw error;
         }
         try {
           return await runWithTransientRetry();
         } catch (retryError) {
-          this.attachRecordedAuthChallenge(serverId, retryError, startedAt);
+          this.attachRecordedAuthChallenge(
+            serverId,
+            retryError,
+            startedAt,
+            config.authChallengeOperation
+          );
           throw retryError;
         }
       }
@@ -4874,15 +4911,19 @@ export class MCPClientManager {
    * With an auth provider, the transport owns 401/403 and raises
    * `UnauthorizedError` (or "401 after re-authentication") without the
    * `WWW-Authenticate` header. Give the error back the challenge the fetch
-   * wrapper recorded during this operation.
+   * wrapper recorded for THIS operation: concurrent calls each have their
+   * own entry, so one call never reports another's scope or metadata URL.
    */
   private attachRecordedAuthChallenge(
     serverId: string,
     error: unknown,
-    startedAt: number
+    startedAt: number,
+    operationKey: string | undefined
   ): void {
-    const recorded =
-      this.liveClientStates.get(serverId)?.authChallengeRecorder?.last;
+    if (operationKey === undefined) return;
+    const recorded = this.liveClientStates
+      .get(serverId)
+      ?.authChallengeRecorder?.byOperation?.get(operationKey);
     if (!recorded || recorded.at < startedAt) return;
     if (!isUnauthorized401(error) || extractAuthChallenge(error)) return;
     attachAuthChallenge(error, recorded.challenge);

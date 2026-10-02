@@ -55,6 +55,13 @@ interface LazyServerOptions {
   protectedSchemes?: unknown;
   /** Refuse even `initialize`: a server that is not lazy at all. */
   initialize401?: boolean;
+  /**
+   * `get_weather` requires a `city`, and a call without one fails input
+   * validation: as a JSON-RPC `-32602`, or as an `isError` result.
+   */
+  weatherRequiresCity?: "rpc-error" | "tool-error";
+  /** Also list `get_time`: public, read-only, and takes no arguments. */
+  withNoArgPublicTool?: boolean;
 }
 
 const servers: http.Server[] = [];
@@ -174,10 +181,27 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
               {
                 name: "get_weather",
                 description: "Public weather.",
-                inputSchema: { type: "object" },
+                inputSchema: options.weatherRequiresCity
+                  ? {
+                      type: "object",
+                      properties: { city: { type: "string" } },
+                      required: ["city"],
+                    }
+                  : { type: "object" },
                 annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
                 securitySchemes: [{ type: "noauth" }],
               },
+              ...(options.withNoArgPublicTool
+                ? [
+                    {
+                      name: "get_time",
+                      description: "Public clock.",
+                      inputSchema: { type: "object", properties: {} },
+                      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+                      securitySchemes: [{ type: "noauth" }],
+                    },
+                  ]
+                : []),
               protectedTool,
               {
                 name: "cancel_order",
@@ -192,6 +216,38 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
       }
       if (body?.method === "tools/call") {
         const name = body.params?.name;
+        if (name === "get_time") {
+          return json(res, 200, {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { content: [{ type: "text", text: "noon" }] },
+          });
+        }
+        if (
+          name === "get_weather" &&
+          options.weatherRequiresCity &&
+          typeof body.params?.arguments?.city !== "string"
+        ) {
+          return options.weatherRequiresCity === "rpc-error"
+            ? json(res, 200, {
+                jsonrpc: "2.0",
+                id: body.id,
+                error: { code: -32602, message: "Invalid params: city is required" },
+              })
+            : json(res, 200, {
+                jsonrpc: "2.0",
+                id: body.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: "MCP error -32602: Input validation error: Invalid arguments for tool get_weather",
+                    },
+                  ],
+                },
+              });
+        }
         if (name === "get_weather") {
           return json(res, 200, {
             jsonrpc: "2.0",
@@ -488,6 +544,73 @@ describe("OpenAI: the runtime challenge, observed", () => {
 });
 
 // ── The gate ────────────────────────────────────────────────────────────
+
+describe("the probe's empty arguments", () => {
+  it.each(["rpc-error", "tool-error"] as const)(
+    "reads a public tool that rejects them (%s) as inconclusive, not as refused",
+    async (validation) => {
+      const server = await startLazyServer({
+        refusal: "bearer-401",
+        prmAt: "well-known",
+        weatherRequiresCity: validation,
+      });
+      const evidence = await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+        now: NOW,
+      });
+      expect(evidence.lazyAuthProbe?.publicCall).toMatchObject({
+        toolName: "get_weather",
+        invalidArguments: true,
+      });
+      const badge = gradeClaudeReadiness(evidence).badges.find(
+        (entry) => entry.id === "claude.features.lazy-authentication",
+      );
+      expect(badge?.state).not.toBe("unsupported");
+    },
+  );
+
+  it("picks a public tool that takes no required arguments", async () => {
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      prmAt: "well-known",
+      weatherRequiresCity: "tool-error",
+      withNoArgPublicTool: true,
+    });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true },
+      now: NOW,
+    });
+    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual([
+      "get_time",
+      "get_my_orders",
+    ]);
+    expect(
+      gradeClaudeReadiness(evidence).badges.find(
+        (entry) => entry.id === "claude.features.lazy-authentication",
+      ),
+    ).toMatchObject({ state: "supported" });
+  });
+
+  it("skips the public call, without calling, when every public tool needs arguments", async () => {
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      prmAt: "well-known",
+      weatherRequiresCity: "rpc-error",
+    });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true },
+      now: NOW,
+    });
+    expect(evidence.lazyAuthProbe?.publicCallSkipped).toMatch(/required inputs/);
+    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual(["get_my_orders"]);
+  });
+});
 
 describe("the gate", () => {
   it("refuses a truthy non-boolean and makes no call", async () => {

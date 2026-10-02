@@ -648,6 +648,7 @@ function gradeRuntimeChallenge(
     schemes: call.schemes.schemes.map((scheme) => scheme.type),
     outcome: call.outcome,
     status: call.status,
+    ...(call.invalidArguments ? { invalidArguments: true } : {}),
     challengeSource: call.challenge?.source,
     facets: call.challenge?.facets,
     protocolVersion: probe.protocolVersion,
@@ -671,6 +672,16 @@ function gradeRuntimeChallenge(
       );
     default:
       break;
+  }
+  // The probe sends `{}`; a tool that rejects that never reached its
+  // authorization decision, so the missing challenge is not a violation.
+  if (call.invalidArguments) {
+    return notEvaluated(
+      RUNTIME_CHALLENGE,
+      stamp,
+      `"${call.toolName}" rejected the probe's empty arguments before any authorization decision; name a protected read-only tool that takes no required arguments`,
+      details,
+    );
   }
 
   const signal = call.challenge;

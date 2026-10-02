@@ -51,6 +51,7 @@ import {
 } from "../scope-step-up-replay";
 import { registerScopeStepUpHostBridge } from "../scope-step-up";
 import { authorizationFlowDigest } from "../oauth/flow-digest";
+import { persistRequestedScopes } from "../oauth/requested-scopes";
 
 const PRM = "https://orders.example/.well-known/oauth-protected-resource/mcp";
 const OPERATION = { method: "tools/call" as const, operation: "list_orders" };
@@ -359,6 +360,22 @@ describe("auth challenge lifecycle", () => {
       expect(peekPendingDirectScopeStepUpReplay()).toMatchObject({
         requiresConfirmation: true,
       });
+    });
+
+    it("keeps the scopes of a hosted grant the browser cannot see", async () => {
+      persistRequestedScopes("orders", "https://as.example", ["profile"]);
+      const unregister = registerScopeStepUpHostBridge({
+        hasExistingGrant: async () => true,
+      });
+      try {
+        const card = await presentCard();
+        await connectAuthChallenge(card, server, { isTrusted: true });
+        expect(initiateOAuthMock).toHaveBeenCalledWith(
+          expect.objectContaining({ scopes: ["profile", "orders:read"] }),
+        );
+      } finally {
+        unregister();
+      }
     });
 
     it("never replays onto a shared credential", async () => {
