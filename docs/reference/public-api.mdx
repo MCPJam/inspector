@@ -68,6 +68,9 @@ What you can do with it today:
   assistant reply, the platform operations it invoked, references to any
   resources it created (eval suites), and token usage; the model is pinned
   server-side and billed to the project
+- **Send feedback** — report a bug, a missing capability, or something
+  confusing to the MCPJam team at the moment you hit it; the same endpoint the
+  `send_feedback` MCP tool calls
 
 All endpoints operate on servers you have already added to a project in the
 hosted inspector. Managing API keys remains UI-only — see
@@ -296,7 +299,7 @@ plugin pins whose version no longer exists.
 | `POST .../eval-ingest/runs/iterations` | Append an iteration batch to a started run |
 | `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
 | `POST .../eval-ingest/artifacts` | Store one artifact's raw bytes (widget HTML too large to send inline) and return its `storageId` |
-| `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (used by older SDK releases) |
+| `POST .../eval-ingest/artifacts/upload-url` | Retired. Answers `410 Gone` with `details.code: "SDK_UPGRADE_REQUIRED"`. `@mcpjam/sdk` 8.17.0 and later upload artifacts with `POST .../eval-ingest/artifacts` instead |
 
 **Agent** (`/projects/{projectId}/agent`) — a headless assistant turn for
 building conversational surfaces (the MCPJam Slack app is the first consumer):
@@ -534,6 +537,20 @@ violation. Read what you recognize; ignore the rest.
   than re-requesting; `force: true` deliberately takes a second slice, which is
   why it is never inferred from anything else.
 </Warning>
+
+**Feedback** — report a problem with MCPJam itself to the MCPJam team:
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /feedback` | Send a bug report, missing-capability note, or other feedback to the MCPJam team. Body: `{ kind, summary, details?, operation?, requestId?, errorCode?, projectId? }`. Responds `201 { id, receivedAt, duplicate }` once stored. Signed-in accounts only (guests get `401`). Rate-limited per user (`429` with `Retry-After`). Accepts `Idempotency-Key` (validated strictly — an empty or over-long key is `400`, not silently ignored; the same key with different content is `409`). **The text goes to the MCPJam team, outside your organization, and is kept for 180 days.** |
+
+<Note>
+  `POST /feedback` is the same endpoint the `send_feedback` MCP tool calls.
+  Include the failing call's `x-request-id` as `requestId` when you have one —
+  it lets the team find that request in the server logs. An identical report
+  from you in the last 24 hours returns `duplicate: true` with the original
+  receipt instead of filing a second report.
+</Note>
 
 **Planning** — one read that answers "may I?" before you try:
 

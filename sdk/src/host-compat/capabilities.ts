@@ -96,10 +96,11 @@ export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   },
   downloadFile: false,
   requestTeardown: false,
-  // Unmeasured — no capture carries ChatGPT's hostContext, so this
-  // preserves the emulator's existing behavior rather than inventing a
-  // measurement. Its catalog row is deliberately absent for the same reason.
+  // The 2026-09-29 capture (ChatGPT web) sends `hostContext.safeAreaInsets`
+  // (all 0) and offers only inline + fullscreen — the `pip` inherited from
+  // MCP_APPS_FULL was never observed.
   safeAreaInsets: true,
+  availableDisplayModes: ["inline", "fullscreen"],
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
@@ -118,7 +119,7 @@ export const MCP_APPS_MISTRAL: McpAppsCapabilities = frozen({
   safeAreaInsets: false,
 });
 
-/** Cursor 3.14.27 probe — full minus updateModelContext + message. */
+/** Cursor probe (3.14.27; re-confirmed on 3.21.16) — full minus updateModelContext + message. */
 export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   availableDisplayModes: ["inline"],

@@ -320,11 +320,10 @@ export async function forceRefreshHostedOAuthAccessToken(
             refreshTokenInvalid: true,
             serverId,
             serverName: options?.serverName ?? null,
-            // Present only when the authorization server declined under a code
-            // that does not mean "dead refresh token". Forwarded verbatim: it
-            // is the one part of this failure the user can fix on their side.
-            specNote:
-              typeof body?.specNote === "string" ? body.specNote : null,
+            // The authorization server's own RFC 6749 reply ({error,
+            // description}), null when it sent none. Forwarded verbatim: it is
+            // the one part of this failure the user can fix on their side.
+            declined: body?.declined ?? null,
           }
         : isAuthServerUnreachable
         ? {
@@ -332,6 +331,8 @@ export async function forceRefreshHostedOAuthAccessToken(
             serverId,
             serverName: options?.serverName ?? null,
             failure: body?.detail ?? null,
+            // Set instead of `failure` when nothing answered at all.
+            transport: body?.transport ?? null,
           }
         : undefined
     );
