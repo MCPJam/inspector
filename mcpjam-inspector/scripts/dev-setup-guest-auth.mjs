@@ -390,8 +390,14 @@ export function createIsolatedConvex(
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          if (child.exitCode === null) child.kill();
-          outcome();
+          // Windows refuses to remove the CLI's working directory until the
+          // process has exited, so a stopped CLI settles only once it closes.
+          if (child.exitCode === null && child.pid !== undefined) {
+            child.once("close", outcome);
+            child.kill();
+          } else {
+            outcome();
+          }
         };
         const timer = setTimeout(
           () =>
