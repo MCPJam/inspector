@@ -62,22 +62,42 @@ export function resolveInspectorEnvDir(serverDir: string): string {
   return process.cwd();
 }
 
+/**
+ * Set by a launcher that already resolved this instance's configuration
+ * (`bin/runtime-profile.mjs`): the environment it passed IS the configuration.
+ */
+export const RESOLVED_RUNTIME_MARKER = "MCPJAM_RESOLVED_RUNTIME";
+
+export function isResolvedRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env[RESOLVED_RUNTIME_MARKER] === "1";
+}
+
 export function loadInspectorEnv(serverDir: string): LoadedInspectorEnv {
   const mode = getInspectorEnvMode();
   const envDir = resolveInspectorEnvDir(serverDir);
   const loadedFiles: string[] = [];
 
-  for (const fileName of getInspectorEnvFileNames(mode)) {
-    const envPath = join(envDir, fileName);
-    if (!existsSync(envPath)) continue;
+  // Under a launcher-resolved runtime no file is read: dotenv never overrides
+  // a variable that is set, but it DOES fill one that is missing, which is
+  // exactly how a value the selected profile deliberately left out used to
+  // come back from another target's `.env` file.
+  if (!isResolvedRuntime()) {
+    for (const fileName of getInspectorEnvFileNames(mode)) {
+      const envPath = join(envDir, fileName);
+      if (!existsSync(envPath)) continue;
 
-    dotenv.config({ path: envPath });
-    loadedFiles.push(envPath);
+      dotenv.config({ path: envPath });
+      loadedFiles.push(envPath);
+    }
   }
 
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error(
-      `CONVEX_HTTP_URL is required but not set. Loaded from: ${loadedFiles.join(", ") || "(none)"}`,
+      isResolvedRuntime()
+        ? "CONVEX_HTTP_URL is required but the launcher-resolved configuration does not set it."
+        : `CONVEX_HTTP_URL is required but not set. Loaded from: ${loadedFiles.join(", ") || "(none)"}`,
     );
   }
 
